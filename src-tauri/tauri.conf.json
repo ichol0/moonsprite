@@ -1,0 +1,60 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "MoonSprite",
+  "version": "0.1.0",
+  "identifier": "art.moonpx.moonsprite",
+  "build": {
+    "beforeDevCommand": "pnpm dev:web",
+    "devUrl": "http://localhost:5173",
+    "beforeBuildCommand": "pnpm build:web && pnpm build:thumbnail",
+    "frontendDist": "../out/renderer"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "MoonSprite",
+        "width": 1440,
+        "height": 900,
+        "visible": false,
+        "minWidth": 1024,
+        "minHeight": 640,
+        "resizable": true,
+        "dragDropEnabled": true,
+        "backgroundColor": "#0f1116"
+      }
+    ],
+    "security": { "csp": null }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "icon": [
+      "icons/32x32.png",
+      "icons/64x64.png",
+      "icons/128x128.png",
+      "icons/256x256.png",
+      "icons/512x512.png",
+      "icons/icon.ico"
+    ],
+    "shortDescription": "Windows pixel art editor",
+    "resources": {
+      "thumbnail-provider/target/release/moonsprite_thumbnail.dll": "moonsprite_thumbnail.dll",
+      "resources/moonsprite-file.ico": "moonsprite-file.ico"
+    },
+    "fileAssociations": [
+      {
+        "ext": ["moonsprite"],
+        "name": "MoonSprite Project",
+        "description": "MoonSprite pixel art project",
+        "role": "Editor",
+        "mimeType": "application/x-moonsprite"
+      }
+    ],
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser",
+        "installerHooks": "windows/thumbnail-provider.nsh"
+      }
+    }
+  }
+}

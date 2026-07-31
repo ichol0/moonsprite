@@ -1,0 +1,6 @@
+{
+  "schemaVersion": 1,
+  "id": "mono-10",
+  "name": "像素灰阶 10",
+  "colors": ["#0B0C0FFF", "#1B1D22FF", "#30333AFF", "#484C55FF", "#626771FF", "#7F848DFF", "#9EA2A9FF", "#BEC1C6FF", "#DEDFE2FF", "#F7F7F7FF"]
+}

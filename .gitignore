@@ -1,0 +1,15 @@
+node_modules/
+.pnpm-store/
+out/
+release/
+coverage/
+.vite/
+*.tsbuildinfo
+*.log
+*.tmp
+artifacts/
+src-tauri/target/
+src-tauri/thumbnail-provider/target/
+src-tauri/gen/
+build/rustup-init.exe
+.DS_Store

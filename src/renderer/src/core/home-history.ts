@@ -1,0 +1,104 @@
+export interface RecentProject {
+  filePath: string
+  fileName: string
+  name: string
+  lastOpened: number
+  pinned: boolean
+}
+
+const recentStorageKey = 'moonsprite.recent-projects.v1'
+const galleryPinsStorageKey = 'moonsprite.gallery-pins.v1'
+
+const readJson = <T>(key: string, fallback: T): T => {
+  try {
+    const value = JSON.parse(localStorage.getItem(key) ?? 'null') as T | null
+    return value ?? fallback
+  } catch {
+    return fallback
+  }
+}
+
+const baseName = (filePath: string): string => filePath.split(/[\\/]/).pop() ?? filePath
+
+const normalizeRecentProjects = (projects: RecentProject[]): RecentProject[] => [
+  ...projects.filter((project) => project.pinned),
+  ...projects.filter((project) => !project.pinned)
+]
+
+const writeRecentProjects = (projects: RecentProject[]): RecentProject[] => {
+  const next = normalizeRecentProjects(projects).slice(0, 24)
+  try { localStorage.setItem(recentStorageKey, JSON.stringify(next)) } catch { /* Ignore unavailable renderer storage. */ }
+  return next
+}
+
+export function getRecentProjects(): RecentProject[] {
+  const value = readJson<unknown>(recentStorageKey, [])
+  if (!Array.isArray(value)) return []
+  const projects = value.flatMap((item): RecentProject[] => {
+    if (typeof item?.filePath !== 'string' || typeof item?.lastOpened !== 'number') return []
+    return [{
+      filePath: item.filePath,
+      fileName: typeof item.fileName === 'string' ? item.fileName : baseName(item.filePath),
+      name: typeof item.name === 'string' ? item.name : baseName(item.filePath),
+      lastOpened: item.lastOpened,
+      pinned: item.pinned === true
+    }]
+  })
+  return normalizeRecentProjects(projects)
+}
+
+export function recordRecentProject(filePath: string, name: string): void {
+  if (!/\.moonsprite$/i.test(filePath)) return
+  const previous = getRecentProjects().find((item) => item.filePath === filePath)
+  writeRecentProjects([
+    { filePath, fileName: baseName(filePath), name: name || baseName(filePath), lastOpened: Date.now(), pinned: previous?.pinned === true },
+    ...getRecentProjects().filter((item) => item.filePath !== filePath)
+  ])
+}
+
+export function toggleRecentProjectPinned(filePath: string): RecentProject[] {
+  const next = getRecentProjects().map((item) => item.filePath === filePath ? { ...item, pinned: !item.pinned } : item)
+  return writeRecentProjects(next)
+}
+
+export function removeRecentProject(filePath: string): RecentProject[] {
+  return writeRecentProjects(getRecentProjects().filter((project) => project.filePath !== filePath))
+}
+
+export function reorderRecentProjects(filePaths: string[]): RecentProject[] {
+  const current = getRecentProjects()
+  const byPath = new Map(current.map((project) => [project.filePath, project]))
+  const seen = new Set<string>()
+  const ordered = filePaths.flatMap((filePath): RecentProject[] => {
+    const project = byPath.get(filePath)
+    if (!project || seen.has(filePath)) return []
+    seen.add(filePath)
+    return [project]
+  })
+  for (const project of current) if (!seen.has(project.filePath)) ordered.push(project)
+  return writeRecentProjects(ordered)
+}
+
+export function clearRecentProjects(): RecentProject[] {
+  return writeRecentProjects(getRecentProjects().filter((project) => project.pinned))
+}
+
+export function getGalleryPins(): string[] {
+  const value = readJson<unknown>(galleryPinsStorageKey, [])
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : []
+}
+
+export function toggleGalleryPin(filePath: string): string[] {
+  const current = new Set(getGalleryPins())
+  if (current.has(filePath)) current.delete(filePath)
+  else current.add(filePath)
+  const next = [...current]
+  try { localStorage.setItem(galleryPinsStorageKey, JSON.stringify(next)) } catch { /* Ignore unavailable renderer storage. */ }
+  return next
+}
+
+export function removeGalleryPin(filePath: string): string[] {
+  const next = getGalleryPins().filter((path) => path !== filePath)
+  try { localStorage.setItem(galleryPinsStorageKey, JSON.stringify(next)) } catch { /* Ignore unavailable renderer storage. */ }
+  return next
+}
