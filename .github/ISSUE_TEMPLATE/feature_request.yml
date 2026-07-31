@@ -1,0 +1,29 @@
+name: 功能建议
+description: 提议新的用户能力或现有工作流改进
+title: "[Feature] "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: 用户问题
+      description: 先说明当前工作流的问题，不要只描述按钮位置。
+    validations:
+      required: true
+  - type: textarea
+    id: behavior
+    attributes:
+      label: 期望行为
+      description: 说明入口、默认状态、操作流程和结果。
+    validations:
+      required: true
+  - type: textarea
+    id: interaction
+    attributes:
+      label: 交互与边界
+      description: 说明快捷键、鼠标按钮、修饰键、Undo/Redo 和持久化预期。
+  - type: textarea
+    id: references
+    attributes:
+      label: 参考资料
+      description: 可附截图或其他软件的工作流参考，但不要提交受保护资产。

@@ -13,3 +13,10 @@ src-tauri/thumbnail-provider/target/
 src-tauri/gen/
 build/rustup-init.exe
 .DS_Store
+
+# 运行时用户数据
+/gallery/
+/brushes/
+/workspaces/
+/recovery/
+/recoveries/
