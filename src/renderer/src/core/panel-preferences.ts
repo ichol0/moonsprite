@@ -1,3 +1,7 @@
+import { readStoredJson, readStoredString, removeStoredValue, writeStoredString } from './storage'
+
+export { readStoredString, removeStoredValue, writeStoredString } from './storage'
+
 export interface FloatingPosition { x: number; y: number; width?: number; height?: number }
 
 interface PersistedFloatingPosition extends FloatingPosition {
@@ -7,22 +11,10 @@ interface PersistedFloatingPosition extends FloatingPosition {
 
 interface ViewportSize { width: number; height: number }
 
-export function readStoredString(key: string, storage?: Storage): string | null {
-  try { return (storage ?? window.localStorage).getItem(key) } catch { return null }
-}
-
-export function writeStoredString(key: string, value: string, storage?: Storage): void {
-  try { (storage ?? window.localStorage).setItem(key, value) } catch { return }
-}
-
-export function removeStoredValue(key: string, storage?: Storage): void {
-  try { (storage ?? window.localStorage).removeItem(key) } catch { return }
-}
-
 export function loadFloatingPosition(key: string | undefined, initialPosition: FloatingPosition | null, viewport: ViewportSize, responsiveToViewport: boolean, forceDocked: boolean, storage?: Storage): FloatingPosition | null {
   if (forceDocked || !key) return forceDocked ? null : initialPosition
   try {
-    const stored = JSON.parse((storage ?? window.localStorage).getItem(key) ?? 'null') as PersistedFloatingPosition | null
+    const stored = readStoredJson<PersistedFloatingPosition | null>(key, null, storage)
     if (stored && Number.isFinite(stored.x) && Number.isFinite(stored.y)) {
       const scaleX = responsiveToViewport && stored.viewportWidth ? viewport.width / stored.viewportWidth : 1
       const scaleY = responsiveToViewport && stored.viewportHeight ? viewport.height / stored.viewportHeight : 1

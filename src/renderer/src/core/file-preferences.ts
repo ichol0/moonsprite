@@ -1,4 +1,5 @@
 import type { ImageExportKind, SaveImageKind } from './png'
+import { readStoredString, writeStoredString } from './storage'
 
 export const SAVE_FORMAT_PREFERENCE_KEY = 'moonsprite.preference.save-format'
 export const EXPORT_FORMAT_PREFERENCE_KEY = 'moonsprite.preference.export-format'
@@ -115,10 +116,6 @@ export function saveImageKindForPreference(value: string | null): SaveImageKind 
   return null
 }
 
-function readStorage(storage?: Storage): Storage | null {
-  try { return storage ?? window.localStorage } catch { return null }
-}
-
 function parseSaveFormat(value: string | null): SaveFormatPreference {
   return value === 'png' || value === 'jpeg' || value === 'webp' || value === 'ase' || value === 'aseprite' ? value : 'moonsprite'
 }
@@ -138,10 +135,7 @@ function parseRecoveryMinutes(value: string | null): number {
 }
 
 export function loadEditorPreferences(storage?: Storage): EditorPreferences {
-  const source = readStorage(storage)
-  const get = (key: string): string | null => {
-    try { return source?.getItem(key) ?? null } catch { return null }
-  }
+  const get = (key: string): string | null => readStoredString(key, storage)
   return {
     language: parseLanguage(get(LANGUAGE_PREFERENCE_KEY)),
     saveFormat: parseSaveFormat(get(SAVE_FORMAT_PREFERENCE_KEY)),
@@ -157,8 +151,6 @@ export function loadEditorPreferences(storage?: Storage): EditorPreferences {
 }
 
 export function saveEditorPreferences(preferences: EditorPreferences, storage?: Storage): void {
-  const target = readStorage(storage)
-  if (!target) return
   const values: Record<string, string> = {
     [LANGUAGE_PREFERENCE_KEY]: preferences.language,
     [SAVE_FORMAT_PREFERENCE_KEY]: preferences.saveFormat,
@@ -171,9 +163,5 @@ export function saveEditorPreferences(preferences: EditorPreferences, storage?: 
     [DRAWING_BRUSH_PREVIEW_ENABLED_KEY]: String(preferences.drawingBrushPreviewEnabled),
     [RELATIVE_LUMINANCE_SCOPE_KEY]: preferences.relativeLuminanceScope
   }
-  try {
-    for (const [key, value] of Object.entries(values)) target.setItem(key, value)
-  } catch {
-    return
-  }
+  for (const [key, value] of Object.entries(values)) writeStoredString(key, value, storage)
 }

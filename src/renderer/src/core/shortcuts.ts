@@ -1,3 +1,5 @@
+import { readStoredString, writeStoredJson } from './storage'
+
 export const SHORTCUTS_KEY = 'moonsprite.shortcuts.v1'
 
 export const DEFAULT_SHORTCUTS = {
@@ -51,19 +53,11 @@ export function parseShortcutJson(value: string | null): ShortcutMap {
 }
 
 export function loadShortcuts(storage?: Storage): ShortcutMap {
-  try {
-    return { ...DEFAULT_SHORTCUTS, ...parseShortcutJson((storage ?? window.localStorage).getItem(SHORTCUTS_KEY)) }
-  } catch {
-    return { ...DEFAULT_SHORTCUTS }
-  }
+  return { ...DEFAULT_SHORTCUTS, ...parseShortcutJson(readStoredString(SHORTCUTS_KEY, storage)) }
 }
 
 export function saveShortcuts(shortcuts: ShortcutMap, storage?: Storage): void {
-  try {
-    ;(storage ?? window.localStorage).setItem(SHORTCUTS_KEY, JSON.stringify(shortcuts))
-  } catch {
-    return
-  }
+  writeStoredJson(SHORTCUTS_KEY, shortcuts, storage)
 }
 
 export function keyboardEventKey(event: KeyboardEvent): string {

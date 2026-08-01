@@ -1,5 +1,6 @@
 import type { BrushPaintMode, BrushShape, BrushTexture, FillMode, ImageBrushSettings, ProceduralBrushId, ProceduralBrushSettings, SelectionKind, SelectionMode, ShapeKind, ToolId } from '@shared/types'
 import { normalizeProceduralBrushSettings, PROCEDURAL_BRUSH_IDS } from './brushes'
+import { readStoredJson, writeStoredJson } from './storage'
 
 export const TOOL_SETTINGS_KEY = 'moonsprite.tool-settings.v1'
 export type BrushTool = 'pencil' | 'eraser' | 'fill'
@@ -90,7 +91,7 @@ export function normalizePersistedBrushProfile(stored: Partial<PersistedBrushPro
 
 export function loadToolSettings(storage?: Storage): PersistedToolSettings {
   try {
-    const stored = JSON.parse((storage ?? window.localStorage).getItem(TOOL_SETTINGS_KEY) ?? 'null') as Partial<PersistedToolSettings> | null
+    const stored = readStoredJson<Partial<PersistedToolSettings> | null>(TOOL_SETTINGS_KEY, null, storage)
     if (!stored) return { ...defaultToolSettings, proceduralBrushSettings: createDefaultProceduralBrushSettings() }
     const legacyProfile = normalizePersistedBrushProfile(stored, defaultToolSettings)
     if (stored.brushPaintModePreferenceVersion !== 1) legacyProfile.brushPaintMode = defaultToolSettings.brushPaintMode
@@ -120,5 +121,5 @@ export function loadToolSettings(storage?: Storage): PersistedToolSettings {
 }
 
 export function saveToolSettings(snapshot: PersistedToolSettings, storage?: Storage): void {
-  try { (storage ?? window.localStorage).setItem(TOOL_SETTINGS_KEY, JSON.stringify(snapshot)) } catch { return }
+  writeStoredJson(TOOL_SETTINGS_KEY, snapshot, storage)
 }

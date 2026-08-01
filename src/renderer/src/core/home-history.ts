@@ -1,3 +1,5 @@
+import { readStoredJson, writeStoredJson } from './storage'
+
 export interface RecentProject {
   filePath: string
   fileName: string
@@ -10,12 +12,8 @@ const recentStorageKey = 'moonsprite.recent-projects.v1'
 const galleryPinsStorageKey = 'moonsprite.gallery-pins.v1'
 
 const readJson = <T>(key: string, fallback: T): T => {
-  try {
-    const value = JSON.parse(localStorage.getItem(key) ?? 'null') as T | null
-    return value ?? fallback
-  } catch {
-    return fallback
-  }
+  const value = readStoredJson<T | null>(key, null)
+  return value ?? fallback
 }
 
 const baseName = (filePath: string): string => filePath.split(/[\\/]/).pop() ?? filePath
@@ -27,7 +25,7 @@ const normalizeRecentProjects = (projects: RecentProject[]): RecentProject[] => 
 
 const writeRecentProjects = (projects: RecentProject[]): RecentProject[] => {
   const next = normalizeRecentProjects(projects).slice(0, 24)
-  try { localStorage.setItem(recentStorageKey, JSON.stringify(next)) } catch { /* Ignore unavailable renderer storage. */ }
+  writeStoredJson(recentStorageKey, next)
   return next
 }
 
@@ -93,12 +91,12 @@ export function toggleGalleryPin(filePath: string): string[] {
   if (current.has(filePath)) current.delete(filePath)
   else current.add(filePath)
   const next = [...current]
-  try { localStorage.setItem(galleryPinsStorageKey, JSON.stringify(next)) } catch { /* Ignore unavailable renderer storage. */ }
+  writeStoredJson(galleryPinsStorageKey, next)
   return next
 }
 
 export function removeGalleryPin(filePath: string): string[] {
   const next = getGalleryPins().filter((path) => path !== filePath)
-  try { localStorage.setItem(galleryPinsStorageKey, JSON.stringify(next)) } catch { /* Ignore unavailable renderer storage. */ }
+  writeStoredJson(galleryPinsStorageKey, next)
   return next
 }
