@@ -20,6 +20,7 @@ platform/tauri-api ----> Tauri commands ----> Windows/file system
 - `platform/` 封装所有渲染器 IPC，组件不得直接散落调用 Tauri。
 - `src-tauri/` 校验所有来自前端的路径和参数，并返回可展示错误。
 - `src-tauri/src/platform_paths.rs` 统一管理随应用目录保存的图库、色板、笔刷和工作区目录；迁移用户数据位置时只从这里切换。
+- `src-tauri/src/platform_clipboard.rs`、`platform_files.rs` 和 `platform_resources.rs` 分别负责系统剪贴板、二进制文件和资源信息；`lib.rs` 只注册命令并协调窗口生命周期。
 
 ## 当前高风险模块
 

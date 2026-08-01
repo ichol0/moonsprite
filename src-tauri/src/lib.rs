@@ -1,21 +1,21 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use arboard::{Clipboard, ImageData};
 use rfd::FileDialog;
 use serde::{Deserialize, Serialize};
 use std::{
-    borrow::Cow,
     fs,
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
     time::Duration,
 };
-use sysinfo::System;
 use tauri::{AppHandle, DragDropEvent, Emitter, Manager, State, WindowEvent};
 
 mod close_coordinator;
+mod platform_clipboard;
 mod platform_dialogs;
+mod platform_files;
 mod platform_paths;
+mod platform_resources;
 mod platform_storage;
 use close_coordinator::CloseCoordinator;
 use platform_dialogs::{image_export_filter, project_save_filter};
@@ -41,14 +41,6 @@ struct OpenDialogResult {
 struct SaveDialogResult {
     canceled: bool,
     file_path: Option<String>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct ClipboardImage {
-    width: usize,
-    height: usize,
-    data: Vec<u8>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -1016,72 +1008,6 @@ fn open_brush_folder() -> Result<(), String> {
 }
 
 #[tauri::command]
-fn read_binary(file_path: String) -> Result<Vec<u8>, String> {
-    fs::read(file_path).map_err(|error| error.to_string())
-}
-
-#[tauri::command]
-fn write_binary_atomic(file_path: String, data: Vec<u8>) -> Result<(), String> {
-    atomic_write(Path::new(&file_path), &data)
-}
-
-fn clipboard_image_bytes(width: usize, height: usize) -> Result<usize, String> {
-    let pixels = width
-        .checked_mul(height)
-        .ok_or_else(|| "剪贴板图像尺寸过大。".to_string())?;
-    let bytes = pixels
-        .checked_mul(4)
-        .ok_or_else(|| "剪贴板图像尺寸过大。".to_string())?;
-    if width == 0 || height == 0 || bytes > 64 * 1024 * 1024 {
-        return Err("剪贴板图像尺寸无效或超过 64 MiB 限制。".to_string());
-    }
-    Ok(bytes)
-}
-
-#[tauri::command]
-fn write_clipboard_image(width: usize, height: usize, data: Vec<u8>) -> Result<(), String> {
-    let expected = clipboard_image_bytes(width, height)?;
-    if data.len() != expected {
-        return Err("剪贴板图像像素数据长度无效。".to_string());
-    }
-    let mut clipboard = Clipboard::new().map_err(|error| format!("无法访问系统剪贴板：{error}"))?;
-    clipboard
-        .set_image(ImageData {
-            width,
-            height,
-            bytes: Cow::Owned(data),
-        })
-        .map_err(|error| format!("无法写入系统剪贴板：{error}"))
-}
-
-#[tauri::command]
-fn read_clipboard_image() -> Result<Option<ClipboardImage>, String> {
-    let mut clipboard = Clipboard::new().map_err(|error| format!("无法访问系统剪贴板：{error}"))?;
-    match clipboard.get_image() {
-        Ok(image) => {
-            let expected = clipboard_image_bytes(image.width, image.height)?;
-            if image.bytes.len() != expected {
-                return Err("系统剪贴板图像数据无效。".to_string());
-            }
-            Ok(Some(ClipboardImage {
-                width: image.width,
-                height: image.height,
-                data: image.bytes.into_owned(),
-            }))
-        }
-        Err(arboard::Error::ContentNotAvailable) => Ok(None),
-        Err(error) => Err(format!("无法读取系统剪贴板图像：{error}")),
-    }
-}
-
-#[tauri::command]
-fn get_resource_info() -> (u64, u64) {
-    let mut system = System::new();
-    system.refresh_memory();
-    (system.total_memory(), system.available_memory())
-}
-
-#[tauri::command]
 fn list_recoveries(
     app: AppHandle,
     state: State<'_, AppState>,
@@ -1318,11 +1244,11 @@ pub fn run() {
             save_project,
             export_image,
             save_palette_image,
-            read_binary,
-            write_binary_atomic,
-            write_clipboard_image,
-            read_clipboard_image,
-            get_resource_info,
+            platform_files::read_binary,
+            platform_files::write_binary_atomic,
+            platform_clipboard::write_clipboard_image,
+            platform_clipboard::read_clipboard_image,
+            platform_resources::get_resource_info,
             list_palettes,
             save_palette,
             delete_palette,
