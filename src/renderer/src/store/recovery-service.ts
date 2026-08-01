@@ -1,0 +1,41 @@
+import type { MoonSpriteApi, RecoveryRecord, SpriteDocument } from '@shared/types'
+import { decodeProject, encodeProject } from '@/core/project-format'
+
+export class RecoveryService {
+  private queue: Promise<void> = Promise.resolve()
+
+  private enqueue(task: () => Promise<void>): Promise<void> {
+    const operation = this.queue.catch(() => undefined).then(task)
+    this.queue = operation
+    return operation
+  }
+
+  list(api: MoonSpriteApi): Promise<RecoveryRecord[]> {
+    return api.listRecoveries()
+  }
+
+  async restore(api: MoonSpriteApi, record: RecoveryRecord): Promise<SpriteDocument> {
+    const document = decodeProject(await api.readRecovery(record.id))
+    document.name = `${record.name}（恢复）`
+    document.dirty = true
+    return document
+  }
+
+  autosave(api: MoonSpriteApi, documents: readonly SpriteDocument[]): Promise<void> {
+    return this.enqueue(async () => {
+      await Promise.all(documents.map(async (document) => {
+        try { await api.writeRecovery(document.id, document.name, encodeProject(document)) } catch { /* Autosave remains non-blocking per document. */ }
+      }))
+    })
+  }
+
+  delete(api: MoonSpriteApi, id: string): Promise<void> {
+    return this.enqueue(() => api.deleteRecovery(id))
+  }
+
+  discard(api: MoonSpriteApi, id: string): Promise<void> {
+    return this.enqueue(async () => {
+      try { await api.deleteRecovery(id) } catch { /* Closing should not be blocked by stale recovery cleanup. */ }
+    })
+  }
+}

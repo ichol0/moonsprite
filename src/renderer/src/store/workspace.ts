@@ -4,8 +4,7 @@ import { checkResourceLimit } from '@/core/resource-policy'
 import { beginPixelEdit, commitPixelEdit, HistoryStack, recordPixel, revertPixelEdit, type HistoryEntry, type PixelEdit } from '@/core/history'
 import { convertDocumentColorMode, createDocument, createId, createLayer, duplicateLayer, findOrAddPaletteColor, getDescendantGroupIds, getGroup, getLayerIdsInGroup, getLayer, getActiveLayer, isLayerEffectivelyLocked, isLayerEffectivelyVisible, layerContentBounds, readLayerColor, readLayerColorAt, resizeDocumentAt, resizeDocumentImage, writeLayerColor } from '@/core/document'
 import { decodeProject, encodeProject } from '@/core/project-format'
-import { decodePng, exportDocumentImage, type ImageExportKind, type SaveImageKind } from '@/core/png'
-import { decodeAseprite } from '@/core/aseprite'
+import { fileNameFromPath } from '@/core/document-files'
 import { createSelectionBrush } from '@/core/brushes'
 import { applySelectionTransform, clampSelection, clearSelection, fillSelectionOrCanvas, flipLayer, flipSelection, moveSelection, outlineSelection, transformSelectionCopy, type SelectionTransformSource } from '@/core/tools'
 import { colorEquals, packColor, pixelIndex, unpackColor } from '@/core/raster'
@@ -16,18 +15,11 @@ import { mergeLayerDown, mergeLayerGroup, mergeRasterLayers, mergeVisibleLayers 
 import { applyColorAdjustment, type ColorAdjustment } from '@/core/adjustments'
 import { SAVE_FORMAT_PREFERENCE_KEY, saveImageKindForPreference } from '@/core/file-preferences'
 import { cloneProceduralSettings, defaultToolSettings, loadToolSettings, normalizePersistedBrushProfile, saveToolSettings, type BrushTool, type PersistedBrushProfile, type PersistedToolSettings } from '@/core/tool-preferences'
+import { readStoredString } from '@/core/storage'
+import { exportDocumentFile, openDocumentFile, saveDocumentFile, type ExportOptions, type SaveAsOptions } from './document-file-service'
+import { RecoveryService } from './recovery-service'
 
-export interface ExportOptions {
-  name: string
-  format: ImageExportKind
-  scalePercent: number
-}
-
-export interface SaveAsOptions {
-  name: string
-  format: 'moonsprite' | SaveImageKind
-  scalePercent: number
-}
+export type { ExportOptions, SaveAsOptions } from './document-file-service'
 
 export interface CanvasResizePreview {
   width: number
@@ -247,47 +239,6 @@ interface BrushProfile {
 
 const isBrushTool = (tool: ToolId): tool is BrushTool => tool === 'pencil' || tool === 'eraser' || tool === 'fill'
 
-const saveImageExtension = (format: SaveImageKind): 'png' | 'jpg' | 'webp' | 'svg' | 'ase' | 'aseprite' => {
-  if (format === 'jpeg') return 'jpg'
-  if (format === 'ase') return 'ase'
-  if (format === 'aseprite') return 'aseprite'
-  if (format === 'svg') return 'svg'
-  if (format === 'webp') return 'webp'
-  return 'png'
-}
-
-const saveImageDialogFormat = (format: SaveImageKind): 'png' | 'jpeg' | 'webp' | 'ase' | 'aseprite' => {
-  if (format === 'jpeg') return 'jpeg'
-  if (format === 'webp') return 'webp'
-  if (format === 'ase') return 'ase'
-  if (format === 'aseprite') return 'aseprite'
-  return 'png'
-}
-
-const saveImageKindForPath = (filePath: string): SaveImageKind | null => {
-  const match = filePath.toLowerCase().match(/\.([^.]+)$/)
-  if (!match) return null
-  if (match[1] === 'png') return 'png-auto'
-  if (match[1] === 'jpg' || match[1] === 'jpeg') return 'jpeg'
-  if (match[1] === 'webp') return 'webp'
-  if (match[1] === 'ase') return 'ase'
-  if (match[1] === 'aseprite') return 'aseprite'
-  return null
-}
-
-const normalizeSaveDialogPath = (filePath: string, format: SaveImageKind, extension: ReturnType<typeof saveImageExtension>): string => {
-  const lowerPath = filePath.toLowerCase()
-  const accepted = format === 'jpeg'
-    ? /\.(jpg|jpeg)$/i.test(lowerPath)
-    : format === 'ase' || format === 'aseprite'
-      ? /\.(ase|aseprite)$/i.test(lowerPath)
-      : lowerPath.endsWith(`.${extension}`)
-  if (accepted) return filePath
-  return /\.(moonsprite|png|jpg|jpeg|webp|svg|ase|aseprite)$/i.test(filePath)
-    ? filePath.replace(/\.(moonsprite|png|jpg|jpeg|webp|svg|ase|aseprite)$/i, `.${extension}`)
-    : `${filePath}.${extension}`
-}
-
 const brushProfileFromSession = (session: DocumentSession): BrushProfile => ({
   brushSize: session.brushSize,
   brushShape: session.brushShape,
@@ -452,10 +403,6 @@ const sessionFromDocument = (document: SpriteDocument): DocumentSession => {
   return session
 }
 
-const basename = (filePath: string): string => filePath.split(/[\\/]/).pop() ?? filePath
-const joinFilePath = (directory: string, fileName: string): string => `${directory}${/[\\/]$/.test(directory) ? '' : directory.includes('\\') ? '\\' : '/'}${fileName}`
-const extension = (filePath: string): string => filePath.split('.').pop()?.toLowerCase() ?? ''
-
 function touch(session: DocumentSession, dirty = true): void {
   if (dirty) {
     session.document.dirty = true
@@ -529,8 +476,7 @@ function commitLayerMerge(session: DocumentSession, beforeDocument: Uint8Array, 
   })
 }
 
-let autosaveQueue: Promise<void> = Promise.resolve()
-const saveOperations = new Map<string, Promise<boolean>>()
+const recoveryService = new RecoveryService()
 interface SelectionClipboard { width: number; height: number; pixels: Uint32Array; mask: Uint8Array }
 interface LayerClipboard { name: string; width: number; height: number; offsetX: number; offsetY: number; visible: boolean; locked: boolean; opacity: number; blendMode: RasterLayer['blendMode']; pixels: Uint8ClampedArray }
 
@@ -1951,58 +1897,32 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
   async saveActive(saveAs = false, options?: SaveAsOptions) {
     const session = activeSession(get())
     if (!session) return false
-    const preferredImageFormat = saveImageKindForPreference(typeof localStorage === 'undefined' ? null : localStorage.getItem(SAVE_FORMAT_PREFERENCE_KEY))
-    const existingFormat = session.document.filePath
-      ? (/\.moonsprite$/i.test(session.document.filePath) ? 'moonsprite' as const : saveImageKindForPath(session.document.filePath))
-      : null
-    const selectedFormat: 'moonsprite' | SaveImageKind = options?.format ?? existingFormat ?? preferredImageFormat ?? 'moonsprite'
-    const imageFormat = selectedFormat === 'moonsprite' ? null : selectedFormat
-    const fallbackName = session.document.name.replace(/\.(moonsprite|aseprite|ase|png|jpe?g|webp)$/i, '') || 'MoonSprite-export'
-    const requestedName = (options?.name.trim() || fallbackName).replace(/\.(moonsprite|aseprite|ase|png|jpe?g|webp)$/i, '').replace(/[\\/:*?"<>|]/g, '_')
     const documentId = session.document.id
-    const pending = saveOperations.get(documentId)
-    if (pending) return pending
     get().commitFloatingPaste()
-    const operation = (async (): Promise<boolean> => {
-      try {
-        let filePath = session.document.filePath
-        if ((!filePath || saveAs) && imageFormat) {
-          const extension = saveImageExtension(imageFormat)
-          const result = await window.moonSprite.saveProject(`${requestedName}.${extension}`, saveImageDialogFormat(imageFormat))
-          if (result.canceled || !result.filePath || !get().sessions.some((item) => item.document.id === documentId)) return false
-          filePath = normalizeSaveDialogPath(result.filePath, imageFormat, extension)
-        } else if (!filePath || saveAs) {
-          const defaultPath = `${requestedName}.moonsprite`
-          const result = await window.moonSprite.saveProject(defaultPath)
-          if (result.canceled || !result.filePath || !get().sessions.some((item) => item.document.id === documentId)) return false
-          filePath = result.filePath.endsWith('.moonsprite') ? result.filePath : `${result.filePath}.moonsprite`
-        }
-        const current = get().sessions.find((item) => item.document.id === documentId)
-        if (!current || !filePath) return false
-        const outputFormat = imageFormat ?? saveImageKindForPath(filePath)
-        const data = outputFormat ? (await exportDocumentImage(current.document, options?.scalePercent ?? 100, outputFormat)).bytes : encodeProject(current.document)
-        await window.moonSprite.writeBinaryAtomic(filePath, data)
-        const saved = get().sessions.find((item) => item.document.id === documentId)
-        if (!saved) return false
-        saved.document.filePath = filePath
-        saved.document.name = basename(filePath)
-        saved.document.dirty = false
-        set({ sessions: [...get().sessions] })
-        recordRecentProject(filePath, saved.document.name)
-        await get().autosaveDirty()
-        await window.moonSprite.deleteRecovery(documentId)
-        set({ message: '工程已保存。' })
-        return true
-      } catch (error) {
-        set({ message: error instanceof Error ? error.message : '保存工程失败。' })
-        return false
-      }
-    })()
-    saveOperations.set(documentId, operation)
     try {
-      return await operation
-    } finally {
-      if (saveOperations.get(documentId) === operation) saveOperations.delete(documentId)
+      const filePath = await saveDocumentFile({
+        api: window.moonSprite,
+        documentId,
+        getDocument: () => get().sessions.find((item) => item.document.id === documentId)?.document ?? null,
+        saveAs,
+        options,
+        preferredImageFormat: saveImageKindForPreference(readStoredString(SAVE_FORMAT_PREFERENCE_KEY))
+      })
+      if (!filePath) return false
+      const saved = get().sessions.find((item) => item.document.id === documentId)
+      if (!saved) return false
+      saved.document.filePath = filePath
+      saved.document.name = fileNameFromPath(filePath)
+      saved.document.dirty = false
+      set({ sessions: [...get().sessions] })
+      recordRecentProject(filePath, saved.document.name)
+      await get().autosaveDirty()
+      await recoveryService.delete(window.moonSprite, documentId)
+      set({ message: '工程已保存。' })
+      return true
+    } catch (error) {
+      set({ message: error instanceof Error ? error.message : '保存工程失败。' })
+      return false
     }
   },
 
@@ -2011,23 +1931,9 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     const session = activeSession(get())
     if (!session) return false
     try {
-      const scalePercent = Math.max(1, Math.min(6400, Math.round(options?.scalePercent ?? 100)))
-      const exportWidth = Math.max(1, Math.round(session.document.width * scalePercent / 100))
-      const exportHeight = Math.max(1, Math.round(session.document.height * scalePercent / 100))
-      if (!Number.isSafeInteger(exportWidth) || !Number.isSafeInteger(exportHeight)) throw new Error('导出尺寸超出安全范围。')
-      const resources = await window.moonSprite.getResourceInfo()
-      const check = checkResourceLimit(exportWidth, exportHeight, 1, 'rgba', resources)
-      if (!check.allowed) throw new Error(check.reason)
-      const fallbackName = session.document.name.replace(/\.(moonsprite|aseprite|ase|png|jpe?g|webp|svg)$/i, '')
-      const requestedName = (options?.name.trim() || fallbackName || 'MoonSprite-export').replace(/[\\/:*?"<>|]/g, '_')
-      const output = await exportDocumentImage(session.document, scalePercent, options?.format ?? 'png-auto')
-       const dialogFormat = output.extension === 'jpg' ? 'jpeg' : output.extension === 'png' ? 'png' : output.extension === 'svg' ? 'svg' : 'webp'
-       const result = await window.moonSprite.exportImage(`${requestedName}.${output.extension}`, dialogFormat)
-       if (result.canceled || !result.filePath) return false
-       const lowerPath = result.filePath.toLowerCase()
-       const path = lowerPath.endsWith(`.${output.extension}`) ? result.filePath : `${result.filePath}.${output.extension}`
-      await window.moonSprite.writeBinaryAtomic(path, output.bytes)
-      set({ message: output.indexed ? '已导出索引 PNG。' : `已导出 ${output.extension.toUpperCase()} 图像。` })
+      const message = await exportDocumentFile(window.moonSprite, session.document, options)
+      if (!message) return false
+      set({ message })
       return true
     } catch (error) {
       set({ message: error instanceof Error ? error.message : '导出图像失败。' })
@@ -2042,25 +1948,13 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
 
   async openPath(filePath, options) {
     try {
-      const data = await window.moonSprite.readBinary(filePath)
-       const fileExtension = extension(filePath)
-       const parsed = fileExtension === 'moonsprite'
-         ? decodeProject(data)
-         : fileExtension === 'ase' || fileExtension === 'aseprite'
-           ? decodeAseprite(data, basename(filePath).replace(/\.(aseprite|ase)$/i, ''))
-           : decodePng(data, basename(filePath).replace(/\.png$/i, ''))
-      const resources = await window.moonSprite.getResourceInfo()
-      const check = checkResourceLimit(parsed.width, parsed.height, parsed.layers.length, parsed.colorMode, resources)
-      if (!check.allowed) throw new Error(check.reason)
-       parsed.filePath = fileExtension === 'moonsprite' ? filePath : null
-      parsed.sourceFilePath = filePath
+      const parsed = await openDocumentFile(window.moonSprite, filePath)
       if (options?.duplicate) parsed.id = createId('doc')
-      parsed.name = basename(filePath)
       get().addSession(parsed)
       recordRecentProject(filePath, parsed.name)
       return true
     } catch (error) {
-      set({ message: error instanceof Error ? `${basename(filePath)}：${error.message}` : '打开文件失败。' })
+      set({ message: error instanceof Error ? `${fileNameFromPath(filePath)}：${error.message}` : '打开文件失败。' })
       return false
     }
   },
@@ -2087,7 +1981,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
 
   async restoreRecoveries() {
     try {
-      const recoveries = await window.moonSprite.listRecoveries()
+      const recoveries = await recoveryService.list(window.moonSprite)
       set({ recoveryRecords: recoveries })
     } catch {
       set({ recoveryRecords: [], message: '读取恢复栏目时出现问题。' })
@@ -2098,11 +1992,9 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     const record = get().recoveryRecords.find((item) => item.id === id)
     if (!record) return
     try {
-      const document = decodeProject(await window.moonSprite.readRecovery(record.id))
-      document.name = `${record.name}（恢复）`
-      document.dirty = true
+      const document = await recoveryService.restore(window.moonSprite, record)
       get().addSession(document)
-      await window.moonSprite.deleteRecovery(record.id)
+      await recoveryService.delete(window.moonSprite, record.id)
       set((state) => ({ recoveryRecords: state.recoveryRecords.filter((item) => item.id !== record.id), message: `已恢复“${record.name}”。` }))
     } catch {
       set({ message: `无法恢复“${record.name}”，草稿仍保留在恢复栏目。` })
@@ -2110,13 +2002,10 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
   },
 
   async autosaveDirty() {
-    autosaveQueue = autosaveQueue.catch(() => {}).then(async () => {
-      const dirty = get().sessions.filter((session) => session.document.dirty && !session.recoverySuppressed)
-      await Promise.all(dirty.map(async (session) => {
-        try { await window.moonSprite.writeRecovery(session.document.id, session.document.name, encodeProject(session.document)) } catch { /* Autosave failures stay non-blocking. */ }
-      }))
-    })
-    await autosaveQueue
+    const dirty = get().sessions
+      .filter((session) => session.document.dirty && !session.recoverySuppressed)
+      .map((session) => session.document)
+    await recoveryService.autosave(window.moonSprite, dirty)
   },
 
   async discardRecovery(id) {
@@ -2125,10 +2014,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       session.recoverySuppressed = true
       set({ sessions: [...get().sessions] })
     }
-    autosaveQueue = autosaveQueue.catch(() => {}).then(async () => {
-      try { await window.moonSprite.deleteRecovery(id) } catch { /* Closing should not be blocked by stale recovery cleanup. */ }
-    })
-    await autosaveQueue
+    await recoveryService.discard(window.moonSprite, id)
     set((state) => ({ recoveryRecords: state.recoveryRecords.filter((item) => item.id !== id) }))
   },
 
