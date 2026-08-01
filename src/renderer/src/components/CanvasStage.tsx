@@ -6,7 +6,7 @@ import { applyRelativeLuminance, blendOver, relativeLuminanceColor, TRANSPARENT 
 import { appendPerfectPixelSegment, applySelectionTransform, applySelectionTranslationPreview, brushMaskOffsets, brushStampAnchor, brushStampDimensions, captureSelectionTransform, floodFill, normalizeSelection, outlinePixelIndices, paintBrush, paintLine, paintShape, sampleCompositeColor, selectionTranslationPreviewEdit, shapePixelPoints, type SelectionTransformSource, type SelectionTranslationPreview } from '@/core/tools'
 import { useWorkspace, type DocumentSession } from '@/store/workspace'
 import { DRAWING_BRUSH_PREVIEW_ENABLED_KEY, ROTATION_INDICATOR_POSITION_KEY, parseDrawingBrushPreviewEnabled, parseRotationIndicatorPosition, type RotationIndicatorPosition } from '@/core/file-preferences'
-import { rotationIndicatorFitsCanvas, viewPanDeltaFromScreen, viewRotationPivot } from '@/core/view-geometry'
+import { documentPointFromViewportPoint, rotationIndicatorFitsCanvas, unrotateViewportPoint, unrotatedViewportBounds, viewCanvasOrigin, viewPanDeltaFromScreen, viewRotationPivot, zoomViewAroundViewportPoint } from '@/core/view-geometry'
 import { cloneSelection, combineSelection, ellipseSelection, lassoSelection, magicWandSelection, rectSelection, selectionBoundarySegments, selectionContains, transformSelectionMask } from '@/core/selection'
 import rotationBackground1 from '@/assets/rotation-indicator/background-1.png'
 import rotationBackground2 from '@/assets/rotation-indicator/background-2.png'
@@ -248,25 +248,6 @@ export function CanvasStage({ session }: { session: DocumentSession }) {
     context.translate(-pivot.x, -pivot.y)
   }
 
-  const unrotatedViewportBounds = (width: number, height: number, view: DocumentSession['view']): { left: number; top: number; right: number; bottom: number } => {
-    if (Math.abs(view.rotation) < 0.000001) return { left: 0, top: 0, right: width, bottom: height }
-    const pivot = viewRotationPivot(width, height, view.panX, view.panY, rotationIndicatorPosition)
-    const radians = -view.rotation * Math.PI / 180
-    const cosine = Math.cos(radians)
-    const sine = Math.sin(radians)
-    const points = [[0, 0], [width, 0], [0, height], [width, height]].map(([x, y]) => {
-      const deltaX = x - pivot.x
-      const deltaY = y - pivot.y
-      return { x: pivot.x + deltaX * cosine - deltaY * sine, y: pivot.y + deltaX * sine + deltaY * cosine }
-    })
-    return {
-      left: Math.min(...points.map((point) => point.x)),
-      top: Math.min(...points.map((point) => point.y)),
-      right: Math.max(...points.map((point) => point.x)),
-      bottom: Math.max(...points.map((point) => point.y))
-    }
-  }
-
   const updateRotationIndicator = (rotation: number, visible: boolean): void => {
     const indicator = rotationIndicatorRef.current
     const pointer = rotationPointerRef.current
@@ -475,9 +456,8 @@ export function CanvasStage({ session }: { session: DocumentSession }) {
   const geometry = (canvas: HTMLCanvasElement, selection: SelectionRect): { x: number; y: number; width: number; height: number } => {
     const bounds = stageBounds()
     const view = liveViewRef.current
-    const originX = bounds.width / 2 + view.panX - session.document.width * view.zoom / 2
-    const originY = bounds.height / 2 + view.panY - session.document.height * view.zoom / 2
-    return { x: originX + selection.x * view.zoom, y: originY + selection.y * view.zoom, width: selection.width * view.zoom, height: selection.height * view.zoom }
+    const origin = viewCanvasOrigin(bounds.width, bounds.height, session.document.width, session.document.height, view)
+    return { x: origin.x + selection.x * view.zoom, y: origin.y + selection.y * view.zoom, width: selection.width * view.zoom, height: selection.height * view.zoom }
   }
 
   const drawSelection = (context: RasterContext2D, selection: SelectionMask, box: { x: number; y: number; width: number; height: number }, showHandles = true): void => {
@@ -493,7 +473,7 @@ export function CanvasStage({ session }: { session: DocumentSession }) {
     const canvas = canvasRef.current
     const canvasWidth = canvas?.clientWidth ?? 0
     const canvasHeight = canvas?.clientHeight ?? 0
-    const viewport = unrotatedViewportBounds(canvasWidth, canvasHeight, liveViewRef.current)
+    const viewport = unrotatedViewportBounds(canvasWidth, canvasHeight, liveViewRef.current, rotationIndicatorPosition)
     // A noisy magic-wand selection can contain hundreds of thousands of edge
     // segments. Only put segments that can reach the visible overlay into the
     // Path2D. The cache key also prevents rebuilding that clipped path while
@@ -582,7 +562,7 @@ export function CanvasStage({ session }: { session: DocumentSession }) {
     displayContext.setTransform(dpr, 0, 0, dpr, 0, 0)
     displayContext.clearRect(0, 0, rect.width, rect.height)
     const rotated = Math.abs(liveViewRef.current.rotation) > 0.000001
-    const sceneBounds = rotated ? unrotatedViewportBounds(rect.width, rect.height, liveViewRef.current) : { left: 0, top: 0, right: rect.width, bottom: rect.height }
+    const sceneBounds = rotated ? unrotatedViewportBounds(rect.width, rect.height, liveViewRef.current, rotationIndicatorPosition) : { left: 0, top: 0, right: rect.width, bottom: rect.height }
     const sceneLeft = Math.floor(sceneBounds.left) - 2
     const sceneTop = Math.floor(sceneBounds.top) - 2
     const sceneWidth = Math.ceil(sceneBounds.right) - sceneLeft + 2
@@ -634,7 +614,7 @@ export function CanvasStage({ session }: { session: DocumentSession }) {
     const document = session.document
     const view = liveViewRef.current
     const rotated = Math.abs(view.rotation) > 0.000001
-    const viewport = unrotatedViewportBounds(rect.width, rect.height, view)
+    const viewport = unrotatedViewportBounds(rect.width, rect.height, view, rotationIndicatorPosition)
     const sceneLeft = Math.floor(viewport.left) - 2
     const sceneTop = Math.floor(viewport.top) - 2
     const sceneWidth = Math.ceil(viewport.right) - sceneLeft + 2
@@ -1219,23 +1199,14 @@ export function CanvasStage({ session }: { session: DocumentSession }) {
   const unrotatedStagePoint = (clientX: number, clientY: number): Point => {
     const bounds = stageBounds()
     const view = liveViewRef.current
-    const screenX = clientX - bounds.left
-    const screenY = clientY - bounds.top
-    const radians = -view.rotation * Math.PI / 180
     const pivot = viewRotationPivot(bounds.width, bounds.height, view.panX, view.panY, rotationIndicatorPosition)
-    const dx = screenX - pivot.x
-    const dy = screenY - pivot.y
-    return { x: pivot.x + dx * Math.cos(radians) - dy * Math.sin(radians), y: pivot.y + dx * Math.sin(radians) + dy * Math.cos(radians) }
+    return unrotateViewportPoint({ x: clientX - bounds.left, y: clientY - bounds.top }, pivot, view.rotation)
   }
 
   const localPointAt = (clientX: number, clientY: number): Point | null => {
     if (!canvasRef.current) return null
     const bounds = stageBounds()
-    const view = liveViewRef.current
-    const originX = bounds.width / 2 + view.panX - session.document.width * view.zoom / 2
-    const originY = bounds.height / 2 + view.panY - session.document.height * view.zoom / 2
-    const unrotated = unrotatedStagePoint(clientX, clientY)
-    return { x: Math.floor((unrotated.x - originX) / view.zoom), y: Math.floor((unrotated.y - originY) / view.zoom) }
+    return documentPointFromViewportPoint({ x: clientX - bounds.left, y: clientY - bounds.top }, bounds.width, bounds.height, session.document.width, session.document.height, liveViewRef.current, rotationIndicatorPosition)
   }
 
   const localPoint = (event: React.PointerEvent<HTMLCanvasElement>): Point | null => localPointAt(event.clientX, event.clientY)
@@ -1911,17 +1882,7 @@ export function CanvasStage({ session }: { session: DocumentSession }) {
         const view = liveViewRef.current
         const nextZoom = steppedZoom(view.zoom, event.button !== 2)
         if (nextZoom !== view.zoom) {
-          const originX = rect.width / 2 + view.panX - session.document.width * view.zoom / 2
-          const originY = rect.height / 2 + view.panY - session.document.height * view.zoom / 2
-          const unrotated = unrotatedStagePoint(event.clientX, event.clientY)
-          const docX = (unrotated.x - originX) / view.zoom
-          const docY = (unrotated.y - originY) / view.zoom
-          scheduleZoomPreview({
-            ...view,
-            zoom: nextZoom,
-            panX: unrotated.x - docX * nextZoom - rect.width / 2 + session.document.width * nextZoom / 2,
-            panY: unrotated.y - docY * nextZoom - rect.height / 2 + session.document.height * nextZoom / 2
-          })
+          scheduleZoomPreview({ ...view, ...zoomViewAroundViewportPoint(view, nextZoom, { x: event.clientX - rect.left, y: event.clientY - rect.top }, rect.width, rect.height, session.document.width, session.document.height, rotationIndicatorPosition) })
         }
       }
       finishZoomPreview()
@@ -2015,16 +1976,9 @@ export function CanvasStage({ session }: { session: DocumentSession }) {
     event.preventDefault()
     const liveView = liveViewRef.current
     const oldZoom = liveView.zoom
-    const oldPanX = liveView.panX
-    const oldPanY = liveView.panY
     const newZoom = steppedZoom(oldZoom, event.deltaY < 0)
-    const originX = rect.width / 2 + oldPanX - session.document.width * oldZoom / 2
-    const originY = rect.height / 2 + oldPanY - session.document.height * oldZoom / 2
-    const unrotated = unrotatedStagePoint(event.clientX, event.clientY)
-    const docX = (unrotated.x - originX) / oldZoom
-    const docY = (unrotated.y - originY) / oldZoom
     if (newZoom === oldZoom) return
-    scheduleZoomPreview({ ...liveView, zoom: newZoom, panX: unrotated.x - docX * newZoom - rect.width / 2 + session.document.width * newZoom / 2, panY: unrotated.y - docY * newZoom - rect.height / 2 + session.document.height * newZoom / 2 })
+    scheduleZoomPreview({ ...liveView, ...zoomViewAroundViewportPoint(liveView, newZoom, { x: event.clientX - rect.left, y: event.clientY - rect.top }, rect.width, rect.height, session.document.width, session.document.height, rotationIndicatorPosition) })
   }
 
   const rotationStyle = { transform: 'none', transformOrigin: '50% 50%' }
