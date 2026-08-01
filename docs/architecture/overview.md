@@ -51,6 +51,7 @@ platform/tauri-api ----> Tauri commands ----> Windows/file system
 - `store/clipboard-service.ts` 封装选区与图层剪贴板的快照、系统图片转换和内部回退。剪贴板是应用级临时状态，不属于任一文档的撤销历史；服务边界必须复制像素数组，避免粘贴或调用方意外改写复制来源。
 - `core/canvas-input.ts` 统一画布临时输入状态和可复用手势规则，包括当前拖拽、指针状态、修饰键、缩放级别、轴约束、选区缩放和旋转手柄。`CanvasStage.tsx` 仅编排事件与渲染，后续手势拆分必须复用此处规则。
 - `core/panel-layout.ts` 是栏目顺序、默认尺寸、最小尺寸、旧布局兼容和移动排序的唯一入口；`WorkspacePanels.tsx` 只负责将布局状态连接到栏目渲染和停靠交互。
+- `core/palette-layout.ts` 统一调色板色块尺寸、颜色比较、标记对比色和多选色块排序规则；`PalettePanel` 只负责 DOM 命中、文件操作与 store 编排。
 - `App.tsx` 只在实际进入对应流程时动态加载 `CanvasStage`、`HomeWorkspace` 和 `ComponentLibrary`，避免首页启动路径预先解析编辑器与组件库代码。动态加载模块必须保留明确的加载边界，不得把核心文档状态放进懒加载组件内部。
 - `core/project-format.ts` 通过 `PROJECT_SCHEMA_VERSION` 和 `migrateProjectManifest()` 作为工程格式入口。未知版本拒绝打开，不猜测字段；未来版本迁移只增加独立迁移分支。
 
