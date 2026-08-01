@@ -8,6 +8,7 @@ import { useWorkspace, type DocumentSession } from '@/store/workspace'
 import { DRAWING_BRUSH_PREVIEW_ENABLED_KEY, ROTATION_INDICATOR_POSITION_KEY, parseDrawingBrushPreviewEnabled, parseRotationIndicatorPosition, type RotationIndicatorPosition } from '@/core/file-preferences'
 import { documentPointFromViewportPoint, rotationIndicatorFitsCanvas, unrotateViewportPoint, unrotatedViewportBounds, viewCanvasOrigin, viewPanDeltaFromScreen, viewRotationPivot, zoomViewAroundViewportPoint } from '@/core/view-geometry'
 import { cloneSelection, combineSelection, ellipseSelection, lassoSelection, magicWandSelection, rectSelection, selectionBoundarySegments, selectionContains, transformSelectionMask } from '@/core/selection'
+import { CANVAS_RESIZE_PREVIEW_EVENT } from '@/core/canvas-resize-preview'
 import { CanvasInputState, clampCanvasZoom as clampZoom, constrainedTranslation, resizeSelectionBounds, rotationHandles, shapeBounds, steppedCanvasZoom as steppedZoom, type CanvasDragState as DragState, type CanvasPoint as Point, type SelectionHandle, type SelectionHit, type SelectionRotationHandle } from '@/core/canvas-input'
 import rotationBackground1 from '@/assets/rotation-indicator/background-1.png'
 import rotationBackground2 from '@/assets/rotation-indicator/background-2.png'
@@ -50,12 +51,6 @@ const toolCursor = (tool: DocumentSession['tool'], color: RgbaColor, available =
   if (colorCursorTools.has(tool)) return colorLuminance(color) < 145 ? canvasCursors.pencilWhite : canvasCursors.pencilBlack
   return canvasCursors.crosshair
 }
-const CANVAS_RESIZE_PREVIEW_EVENT = 'moonsprite:canvas-resize-preview'
-
-export function publishCanvasResizePreview(documentId: string, preview: DocumentSession['canvasResizePreview']): void {
-  window.dispatchEvent(new CustomEvent(CANVAS_RESIZE_PREVIEW_EVENT, { detail: { documentId, preview } }))
-}
-
 const selectionPreviewPixels = (selection: SelectionMask): Set<string> => {
   const pixels = new Set<string>()
   if (!selection.mask) {
