@@ -10,11 +10,12 @@ import { ColorPicker, colorCss, rgbaHex, type ColorPickerConfig, type ColorPicke
 import { NumberInput } from '@/components/NumberInput'
 import { ThemedSelect, type ThemedSelectGroup } from '@/components/ThemedSelect'
 import { parseColorPickerConfig, readStoredString, removeStoredValue, saveColorPickerConfig, writeStoredString } from '@/core/panel-preferences'
+import { COLOR_SQUARE_ANCHOR_STORAGE_KEY, COLOR_SQUARE_DOCK_STORAGE_KEY, DEFAULT_BOTTOM_WIDTHS, DEFAULT_INSPECTOR_ORDER, DEFAULT_INSPECTOR_SIZES, INSPECTOR_LAYOUT_STORAGE_KEY, MINIMUM_BOTTOM_WIDTHS, MINIMUM_INSPECTOR_SIZES, loadInspectorLayout, moveInspectorPanel, type WorkspacePanelId } from '@/core/panel-layout'
 import { FloatingDockPreview, PanelResizeHandles, panelDockZoneAt, useFloatingPanel } from './floating-panel'
 import type { FixedPanelDock, PanelDock } from './floating-panel'
 
 export type { PanelDock } from './floating-panel'
-export type WorkspacePanelId = 'color' | 'palette' | 'layers' | 'preview'
+export type { WorkspacePanelId } from '@/core/panel-layout'
 const notifyWorkspaceLayoutChanged = (): void => { window.dispatchEvent(new Event('moonsprite-workspace-layout-change')) }
 interface DockDragProps {
   docked?: boolean
@@ -930,50 +931,10 @@ export function LayersPanel({ session, docked = false, onDockDragStart, onFloati
   </>
 }
 
-const inspectorLayoutKey = 'moonsprite.inspector-layout.v2'
-const colorSquareDockKey = 'moonsprite.color-picker-square-dock'
-const colorSquareAnchorKey = 'moonsprite.color-picker-square-anchor'
-const defaultInspectorOrder: WorkspacePanelId[] = ['color', 'palette', 'layers', 'preview']
-const defaultInspectorSizes: Record<WorkspacePanelId, number> = { color: 370, palette: 90, layers: 150, preview: 180 }
-const minimumInspectorSizes: Record<WorkspacePanelId, number> = { color: 128, palette: 52, layers: 130, preview: 120 }
-const defaultBottomWidths: Record<WorkspacePanelId, number> = { color: 280, palette: 280, layers: 320, preview: 280 }
-const minimumBottomWidths: Record<WorkspacePanelId, number> = { color: 96, palette: 180, layers: 200, preview: 180 }
-
-function loadInspectorLayout(): { order: WorkspacePanelId[]; sizes: Record<WorkspacePanelId, number>; bottomWidths: Record<WorkspacePanelId, number> } {
-  try {
-    const value = JSON.parse(readStoredString(inspectorLayoutKey) ?? 'null') as { order?: WorkspacePanelId[]; sizes?: Partial<Record<WorkspacePanelId, number>>; bottomWidths?: Partial<Record<WorkspacePanelId, number>> } | null
-    const storedOrder = (value?.order ?? []).filter((id, index, values): id is WorkspacePanelId => defaultInspectorOrder.includes(id) && values.indexOf(id) === index)
-    const order = [...storedOrder, ...defaultInspectorOrder.filter((id) => !storedOrder.includes(id))]
-    return {
-      order,
-      sizes: Object.fromEntries(defaultInspectorOrder.map((id) => {
-        const stored = Number(value?.sizes?.[id])
-        const migrated = id === 'color' && stored === 250 ? defaultInspectorSizes.color : stored
-        return [id, Math.max(minimumInspectorSizes[id], migrated || defaultInspectorSizes[id])]
-      })) as Record<WorkspacePanelId, number>,
-      bottomWidths: Object.fromEntries(defaultInspectorOrder.map((id) => {
-        const stored = Number(value?.bottomWidths?.[id])
-        return [id, Math.max(minimumBottomWidths[id], stored || defaultBottomWidths[id])]
-      })) as Record<WorkspacePanelId, number>
-    }
-  } catch {
-    return { order: [...defaultInspectorOrder], sizes: { ...defaultInspectorSizes }, bottomWidths: { ...defaultBottomWidths } }
-  }
-}
-
 type InspectorDockTarget =
   | { kind: 'dock'; dock: FixedPanelDock; id?: WorkspacePanelId; insertAfter: boolean }
   | { kind: 'floating' }
 type SquareAnchor = 'start' | 'end'
-
-function moveInspectorPanel(order: WorkspacePanelId[], movingId: WorkspacePanelId, targetId?: WorkspacePanelId, insertAfter = true): WorkspacePanelId[] {
-  const next = order.filter((id) => id !== movingId)
-  if (!targetId) { next.push(movingId); return next }
-  const targetIndex = next.indexOf(targetId)
-  if (targetIndex < 0) return order
-  next.splice(targetIndex + (insertAfter ? 1 : 0), 0, movingId)
-  return next
-}
 
 export function InspectorPanels({ session, previewOpen, onClosePreview, panelDocks, leftDockHost, bottomDockHost, onPanelDockChange, relativeLuminanceInPreview = true }: {
   session: DocumentSession
@@ -990,10 +951,10 @@ export function InspectorPanels({ session, previewOpen, onClosePreview, panelDoc
   const [sizes, setSizes] = useState<Record<WorkspacePanelId, number>>(initialLayout.sizes)
   const [bottomWidths, setBottomWidths] = useState<Record<WorkspacePanelId, number>>(initialLayout.bottomWidths)
   const [colorSquareDock, setColorSquareDock] = useState<FixedPanelDock | null>(() => {
-    const stored = readStoredString(colorSquareDockKey)
+    const stored = readStoredString(COLOR_SQUARE_DOCK_STORAGE_KEY)
     return stored === 'left' || stored === 'right' || stored === 'bottom' ? stored : null
   })
-  const [colorSquareAnchor, setColorSquareAnchor] = useState<SquareAnchor>(() => readStoredString(colorSquareAnchorKey) === 'start' ? 'start' : 'end')
+  const [colorSquareAnchor, setColorSquareAnchor] = useState<SquareAnchor>(() => readStoredString(COLOR_SQUARE_ANCHOR_STORAGE_KEY) === 'start' ? 'start' : 'end')
   const [draggingPanel, setDraggingPanel] = useState<WorkspacePanelId | null>(null)
   const [detachPreview, setDetachPreview] = useState<React.CSSProperties | null>(null)
   const [dockDropTarget, setDockDropTarget] = useState<InspectorDockTarget | null>(null)
@@ -1014,7 +975,7 @@ export function InspectorPanels({ session, previewOpen, onClosePreview, panelDoc
 
   const persistLayout = (nextOrder = order, nextSizes = sizesRef.current, nextBottomWidths = bottomWidthsRef.current): void => {
     try {
-      writeStoredString(inspectorLayoutKey, JSON.stringify({ order: nextOrder, sizes: nextSizes, bottomWidths: nextBottomWidths }))
+      writeStoredString(INSPECTOR_LAYOUT_STORAGE_KEY, JSON.stringify({ order: nextOrder, sizes: nextSizes, bottomWidths: nextBottomWidths }))
       notifyWorkspaceLayoutChanged()
     } catch { /* Ignore unavailable renderer storage. */ }
   }
@@ -1022,11 +983,11 @@ export function InspectorPanels({ session, previewOpen, onClosePreview, panelDoc
     setColorSquareDock(dock)
     if (dock) {
       setColorSquareAnchor(anchor)
-      writeStoredString(colorSquareDockKey, dock)
-      writeStoredString(colorSquareAnchorKey, anchor)
+      writeStoredString(COLOR_SQUARE_DOCK_STORAGE_KEY, dock)
+      writeStoredString(COLOR_SQUARE_ANCHOR_STORAGE_KEY, anchor)
     } else {
-      removeStoredValue(colorSquareDockKey)
-      removeStoredValue(colorSquareAnchorKey)
+      removeStoredValue(COLOR_SQUARE_DOCK_STORAGE_KEY)
+      removeStoredValue(COLOR_SQUARE_ANCHOR_STORAGE_KEY)
     }
     notifyWorkspaceLayoutChanged()
   }
@@ -1040,8 +1001,8 @@ export function InspectorPanels({ session, previewOpen, onClosePreview, panelDoc
       if (bottomResize) {
         if (Math.abs(event.clientX - bottomResize.startX) > 1 && colorSquareDockRef.current === 'bottom') setSquareDock(null)
         const total = bottomResize.startWidths[bottomResize.leading] + bottomResize.startWidths[bottomResize.trailing]
-        const minimumLeading = minimumBottomWidths[bottomResize.leading]
-        const minimumTrailing = minimumBottomWidths[bottomResize.trailing]
+        const minimumLeading = MINIMUM_BOTTOM_WIDTHS[bottomResize.leading]
+        const minimumTrailing = MINIMUM_BOTTOM_WIDTHS[bottomResize.trailing]
         const leading = Math.max(minimumLeading, Math.min(total - minimumTrailing, bottomResize.startWidths[bottomResize.leading] + event.clientX - bottomResize.startX))
         const next = { ...bottomResize.startWidths, [bottomResize.leading]: leading, [bottomResize.trailing]: total - leading }
         bottomWidthsRef.current = next
@@ -1052,7 +1013,7 @@ export function InspectorPanels({ session, previewOpen, onClosePreview, panelDoc
       if (drag) {
         if (Math.abs(event.clientY - drag.startY) > 1 && colorSquareDockRef.current === drag.dock) setSquareDock(null)
         const start = drag.startSizes
-        const desired = Math.max(minimumInspectorSizes[drag.upper], start[drag.upper] + event.clientY - drag.startY)
+        const desired = Math.max(MINIMUM_INSPECTOR_SIZES[drag.upper], start[drag.upper] + event.clientY - drag.startY)
         const delta = desired - start[drag.upper]
         const next = { ...start, [drag.upper]: desired }
         const dockOrder = orderRef.current.filter((id) => dockFor(id) === drag.dock && (id !== 'preview' || previewOpen))
@@ -1061,7 +1022,7 @@ export function InspectorPanels({ session, previewOpen, onClosePreview, panelDoc
         if (delta > 0) {
           let remaining = delta
           for (const id of lowerPanels) {
-            const available = Math.max(0, next[id] - minimumInspectorSizes[id])
+            const available = Math.max(0, next[id] - MINIMUM_INSPECTOR_SIZES[id])
             const consumed = Math.min(available, remaining)
             next[id] -= consumed
             remaining -= consumed
@@ -1189,9 +1150,9 @@ export function InspectorPanels({ session, previewOpen, onClosePreview, panelDoc
       const activeSiblings = nextOrder.filter((id) => id !== 'color' && (id !== 'preview' || previewOpen) && dockFor(id) === targetDock)
 
       if (targetDock === 'bottom') {
-        const reservedWidth = activeSiblings.reduce((total, id) => total + minimumBottomWidths[id], 0) + activeSiblings.length * 7
-        const maximumWidth = Math.max(minimumBottomWidths.color, hostBounds.width - reservedWidth)
-        const targetWidth = Math.max(minimumBottomWidths.color, Math.min(maximumWidth, Math.round(panelBounds.width - fieldBounds.width + fieldBounds.height)))
+        const reservedWidth = activeSiblings.reduce((total, id) => total + MINIMUM_BOTTOM_WIDTHS[id], 0) + activeSiblings.length * 7
+        const maximumWidth = Math.max(MINIMUM_BOTTOM_WIDTHS.color, hostBounds.width - reservedWidth)
+        const targetWidth = Math.max(MINIMUM_BOTTOM_WIDTHS.color, Math.min(maximumWidth, Math.round(panelBounds.width - fieldBounds.width + fieldBounds.height)))
         const next = { ...bottomWidthsRef.current, color: targetWidth }
         bottomWidthsRef.current = next
         setBottomWidths(next)
@@ -1200,12 +1161,12 @@ export function InspectorPanels({ session, previewOpen, onClosePreview, panelDoc
         return
       }
 
-      const reservedHeight = activeSiblings.reduce((total, id) => total + minimumInspectorSizes[id], 0) + activeSiblings.length * 7
-      const maximumHeight = Math.max(minimumInspectorSizes.color, hostBounds.height - reservedHeight)
+      const reservedHeight = activeSiblings.reduce((total, id) => total + MINIMUM_INSPECTOR_SIZES[id], 0) + activeSiblings.length * 7
+      const maximumHeight = Math.max(MINIMUM_INSPECTOR_SIZES.color, hostBounds.height - reservedHeight)
       const dockOrder = nextOrder.filter((id) => id !== 'preview' || previewOpen).filter((id) => dockFor(id) === targetDock)
       const colorHasFollowingPanel = dockOrder.indexOf('color') < dockOrder.length - 1
       const separatorAllowance = colorHasFollowingPanel ? 7 : 0
-      const targetHeight = Math.max(minimumInspectorSizes.color, Math.min(maximumHeight, Math.round(panelBounds.height - fieldBounds.height + fieldBounds.width + separatorAllowance)))
+      const targetHeight = Math.max(MINIMUM_INSPECTOR_SIZES.color, Math.min(maximumHeight, Math.round(panelBounds.height - fieldBounds.height + fieldBounds.width + separatorAllowance)))
       const next = { ...sizesRef.current, color: targetHeight }
       sizesRef.current = next
       setSizes(next)
@@ -1226,7 +1187,7 @@ export function InspectorPanels({ session, previewOpen, onClosePreview, panelDoc
     return <PreviewPanel session={session} onClose={onClosePreview} relativeLuminanceInPreview={relativeLuminanceInPreview} {...dockProps} />
   }
 
-  const completeOrder = [...order, ...defaultInspectorOrder.filter((id) => !order.includes(id))]
+  const completeOrder = [...order, ...DEFAULT_INSPECTOR_ORDER.filter((id) => !order.includes(id))]
   const activeOrder = completeOrder.filter((id) => id !== 'preview' || previewOpen)
   const renderDock = (dock: FixedPanelDock) => {
     const dockOrder = activeOrder.filter((id) => dockFor(id) === dock)
@@ -1239,7 +1200,7 @@ export function InspectorPanels({ session, previewOpen, onClosePreview, panelDoc
       const nextId = dockOrder[index + 1]
       const squareLocked = id === 'color' && colorSquareDock === dock
       const fillsSpaceBeforeSquare = colorSquareDock === dock && ((squareAtEnd && index === squareIndex - 1) || (squareAtStart && index === squareIndex + 1))
-      return <Fragment key={id}><div className={`${horizontal ? 'bottom-panel-group' : 'inspector-panel-group'} ${draggingPanel === id ? 'dock-dragging' : ''} ${squareLocked ? 'square-locked' : ''}`} data-inspector-panel-id={id} style={horizontal ? { flex: squareLocked ? `0 0 ${bottomWidths[id]}px` : fillsSpaceBeforeSquare ? `1 1 ${bottomWidths[id]}px` : index === dockOrder.length - 1 ? `1 1 ${bottomWidths[id]}px` : `0 1 ${bottomWidths[id]}px`, minWidth: minimumBottomWidths[id], '--locked-size': `${bottomWidths[id]}px` } as React.CSSProperties : { flex: squareLocked ? `0 0 ${sizes[id]}px` : fillsSpaceBeforeSquare ? `1 1 ${sizes[id]}px` : index === dockOrder.length - 1 ? `1 1 ${sizes[id]}px` : `0 1 ${sizes[id] + 7}px`, minHeight: minimumInspectorSizes[id] + (index < dockOrder.length - 1 ? 7 : 0), '--locked-size': `${sizes[id]}px` } as React.CSSProperties}>
+      return <Fragment key={id}><div className={`${horizontal ? 'bottom-panel-group' : 'inspector-panel-group'} ${draggingPanel === id ? 'dock-dragging' : ''} ${squareLocked ? 'square-locked' : ''}`} data-inspector-panel-id={id} style={horizontal ? { flex: squareLocked ? `0 0 ${bottomWidths[id]}px` : fillsSpaceBeforeSquare ? `1 1 ${bottomWidths[id]}px` : index === dockOrder.length - 1 ? `1 1 ${bottomWidths[id]}px` : `0 1 ${bottomWidths[id]}px`, minWidth: MINIMUM_BOTTOM_WIDTHS[id], '--locked-size': `${bottomWidths[id]}px` } as React.CSSProperties : { flex: squareLocked ? `0 0 ${sizes[id]}px` : fillsSpaceBeforeSquare ? `1 1 ${sizes[id]}px` : index === dockOrder.length - 1 ? `1 1 ${sizes[id]}px` : `0 1 ${sizes[id] + 7}px`, minHeight: MINIMUM_INSPECTOR_SIZES[id] + (index < dockOrder.length - 1 ? 7 : 0), '--locked-size': `${sizes[id]}px` } as React.CSSProperties}>
         <div className="inspector-panel-slot">{panelFor(id, true)}</div>
         {!horizontal && index < dockOrder.length - 1 && <div className="panel-resizer" role="separator" aria-orientation="horizontal" aria-label={`调整${id}面板高度`} onPointerDown={(event) => {
           const measured = { ...sizesRef.current }
