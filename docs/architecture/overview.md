@@ -22,15 +22,17 @@ platform/tauri-api ----> Tauri commands ----> Windows/file system
 - `src-tauri/src/platform_paths.rs` 统一管理随应用目录保存的图库、色板、笔刷和工作区目录；迁移用户数据位置时只从这里切换。
 - `src-tauri/src/platform_clipboard.rs`、`platform_files.rs` 和 `platform_resources.rs` 分别负责系统剪贴板、二进制文件和资源信息；`lib.rs` 只注册命令并协调窗口生命周期。
 
-## 当前高风险模块
+## 当前风险状态
 
-- `workspace.ts` 同时承担会话、历史、文件、工具和布局状态。
-- `CanvasStage.tsx` 同时承担坐标、绘制、预览和输入状态机。
-- `App.tsx` 同时承担菜单、快捷键、弹窗和应用外壳。
-- `WorkspacePanels.tsx` 聚合多个业务栏目和停靠交互。
-- Rust `lib.rs` 聚合多数系统命令。
+五个原高风险入口已完成第一轮渐进拆分：
 
-后续使用渐进迁移拆分这些模块。每次只迁移一个有测试保护的职责，不进行一次性重写。
+- `App.tsx` 保留应用外壳、文档标签和工作区布局编排；菜单、设置、快捷键、调整、另存为弹窗及笔刷库生命周期已迁入 `components/app/` 与 `components/dialogs/`。
+- `CanvasStage.tsx` 保留画布事件编排和工具预览；选区轮廓、视图预览调度与文档合成缓存已迁入独立模块。
+- `workspace.ts` 保留 Zustand 公共 API 和命令编排；公开类型、会话构造、工具设置、历史快照与调色板命令已迁入 `workspace-*` 模块。
+- `WorkspacePanels.tsx` 仅负责编排停靠栏目，颜色、调色板、图层和预览均为独立组件。
+- Rust `lib.rs` 仅保留应用状态、命令注册、setup 和窗口生命周期协调；调色板、工作区、笔刷、图库、恢复和文件对话框分别位于 `platform_*` 模块。
+
+剩余风险集中在 `App.tsx` 的工作区/标签页编排、`CanvasStage.tsx` 的指针手势状态机和 `workspace.ts` 的图层/选区命令。后续功能开发应继续按职责迁移，禁止重新向入口文件加入无关规则；不以一次性重写替代渐进拆分。
 
 ## 目标模块边界
 
@@ -64,6 +66,10 @@ platform/tauri-api ----> Tauri commands ----> Windows/file system
 - `core/layer-operations.ts` 统一图层移动、跨组、组排序、建组与解组的结构变更和可撤销历史；`workspace.ts` 只负责调用命令、维护会话和展示被阻止操作的提示。
 - `App.tsx` 只在实际进入对应流程时动态加载 `CanvasStage`、`HomeWorkspace` 和 `ComponentLibrary`，避免首页启动路径预先解析编辑器与组件库代码。动态加载模块必须保留明确的加载边界，不得把核心文档状态放进懒加载组件内部。
 - `core/project-format.ts` 通过 `PROJECT_SCHEMA_VERSION` 和 `migrateProjectManifest()` 作为工程格式入口。未知版本拒绝打开，不猜测字段；未来版本迁移只增加独立迁移分支。
+- `components/app/useBrushLibrary.ts` 负责编排程序笔刷、项目笔刷和本地笔刷的加载、保存、删除与当前会话同步；`App.tsx` 只消费整理后的笔刷集合和命令。
+- `components/canvas-selection-renderer.ts` 负责选区屏幕几何、边界路径缓存和抓手绘制；`components/useCanvasViewPreview.ts` 负责平移、缩放预览及提交；`components/canvas-composite-cache.ts` 负责整图/分块合成缓存和局部失效。
+- `store/workspace-session.ts` 管理会话构造和工具设置持久化，`store/workspace-history.ts` 管理文档与图层历史快照，`store/workspace-palette.ts` 管理调色板选择、排序和历史命令。
+- Rust 平台命令按领域拆分为 `platform_palette.rs`、`platform_workspaces.rs`、`platform_brushes.rs`、`platform_gallery.rs`、`platform_recovery.rs` 和 `platform_dialogs.rs`；新增系统命令必须进入对应领域模块。
 
 后续拆分大模块时，优先把纯规则提取到 `core/` 并补测试，再让 `store/` 编排状态，最后由 React 组件接入。禁止把新的持久化 key、格式版本判断或坐标算法直接散落到 `App.tsx`、`CanvasStage.tsx` 或面板组件中。
 ## 工具设置边界

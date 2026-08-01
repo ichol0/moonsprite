@@ -20,84 +20,13 @@ import { readStoredString } from '@/core/storage'
 import { exportDocumentFile, openDocumentFile, saveDocumentFile, type ExportOptions, type SaveAsOptions } from './document-file-service'
 import { RecoveryService } from './recovery-service'
 import { ClipboardService, selectionClipboardImage } from './clipboard-service'
+import { captureAdjustmentSnapshot, captureLayerUi, commitLayerMerge, restoreAdjustmentSnapshot, restoreDocumentSnapshot } from './workspace-history'
+import { applyBrushProfile, brushProfileFromSession, clearSelectionBrushPaintColors, cloneSelectionMask, isBrushTool, persistToolSettings, remapSelectionBrushColors, rememberBrushProfile, sessionFromDocument, touch } from './workspace-session'
+import { addPaletteColor as addPaletteColorCommand, applyPalette as applyPaletteCommand, deletePaletteColors as deletePaletteColorsCommand, movePaletteColor as movePaletteColorCommand, reorderPaletteColors as reorderPaletteColorsCommand, selectPaletteColor as selectPaletteColorCommand } from './workspace-palette'
+import type { AdjustmentSnapshot, AppDialog, CanvasResizePreview, DocumentSession, OutlinePreview } from './workspace-types'
 
 export type { ExportOptions, SaveAsOptions } from './document-file-service'
-
-export interface CanvasResizePreview {
-  width: number
-  height: number
-  offsetX: number
-  offsetY: number
-}
-
-export interface AdjustmentSnapshot {
-  layerId: string
-  pixels: Uint8ClampedArray | Uint32Array
-  palette: SpriteDocument['palette']
-  nextColorId: number
-}
-
-export interface OutlinePreview {
-  color: RgbaColor
-  thickness: number
-  position: OutlinePosition
-  directions: OutlineDirections
-  kernel: OutlineKernel
-}
-
-export interface FloatingPaste {
-  layerId: string
-  beforeSelection: SelectionMask | null
-  source: SelectionTransformSource
-  target: SelectionMask
-  previewEdit: PixelEdit
-}
-
-export interface DocumentSession {
-  document: SpriteDocument
-  history: HistoryStack
-  tool: ToolId
-  primaryColor: RgbaColor
-  secondaryColor: RgbaColor
-  brushSize: number
-  brushShape: BrushShape
-  brushTexture: BrushTexture
-  brushTextureScale: number
-  brushPaintMode: BrushPaintMode
-  brushImageId: string | null
-  brushImage: ImageBrush | null
-  brushImageTemporary: boolean
-  brushImageSettings: ImageBrushSettings
-  brushProfiles: Record<BrushTool, BrushProfile>
-  proceduralBrushSettings: Record<ProceduralBrushId, ProceduralBrushSettings>
-  proceduralAntialias: boolean
-  proceduralAntialiasStrength: number
-  shapeKind: ShapeKind
-  fillMode: FillMode
-  moveAutoSelect: boolean
-  selection: SelectionMask | null
-  selectionKind: SelectionKind
-  selectionMode: SelectionMode
-  wandTolerance: number
-  wandContiguous: boolean
-  perfectPixels: boolean
-  lastPencilPoint: { x: number; y: number } | null
-  lastEraserPoint: { x: number; y: number } | null
-  canvasResizePreview: CanvasResizePreview | null
-  outlinePreview: OutlinePreview | null
-  pendingPaste: FloatingPaste | null
-  view: ViewState
-  paletteSelectionId: number | null
-  selectedPaletteIds: number[]
-  selectedGroupId: string | null
-  selectedLayerIds: string[]
-  collapsedGroupIds: string[]
-  revision: number
-  recoverySuppressed: boolean
-}
-
-export interface DialogChoice { id: string; label: string; tone?: 'primary' | 'danger' | 'quiet' }
-export interface AppDialog { title: string; message: string; detail?: string; choices: DialogChoice[]; resolve: (choice: string) => void }
+export type { AdjustmentSnapshot, AppDialog, CanvasResizePreview, DialogChoice, DocumentSession, FloatingPaste, OutlinePreview } from './workspace-types'
 
 interface WorkspaceState {
   sessions: DocumentSession[]
@@ -224,267 +153,12 @@ interface WorkspaceState {
   resolveDialog(choice: string): void
 }
 
-const defaultColor: RgbaColor = { r: 41, g: 121, b: 255, a: 255 }
-const defaultSecondary: RgbaColor = { r: 241, g: 244, b: 248, a: 255 }
-interface BrushProfile {
-  brushSize: number
-  brushShape: BrushShape
-  brushTexture: BrushTexture
-  brushTextureScale: number
-  brushPaintMode: BrushPaintMode
-  brushImageId: string | null
-  brushImage: ImageBrush | null
-  brushImageTemporary: boolean
-  brushImageSettings: ImageBrushSettings
-  proceduralBrushSettings: Record<ProceduralBrushId, ProceduralBrushSettings>
-  proceduralAntialias: boolean
-  proceduralAntialiasStrength: number
-}
-
-const isBrushTool = (tool: ToolId): tool is BrushTool => tool === 'pencil' || tool === 'eraser' || tool === 'fill'
-
-const brushProfileFromSession = (session: DocumentSession): BrushProfile => ({
-  brushSize: session.brushSize,
-  brushShape: session.brushShape,
-  brushTexture: session.brushTexture,
-  brushTextureScale: session.brushTextureScale,
-  brushPaintMode: session.brushPaintMode,
-  brushImageId: session.brushImageId,
-  brushImage: session.brushImage,
-  brushImageTemporary: session.brushImageTemporary,
-  brushImageSettings: { ...session.brushImageSettings },
-  proceduralBrushSettings: cloneProceduralSettings(session.proceduralBrushSettings),
-  proceduralAntialias: session.proceduralAntialias,
-  proceduralAntialiasStrength: session.proceduralAntialiasStrength
-})
-
-const applyBrushProfile = (session: DocumentSession, profile: BrushProfile): void => {
-  session.brushSize = profile.brushSize
-  session.brushShape = profile.brushShape
-  session.brushTexture = profile.brushTexture
-  session.brushTextureScale = profile.brushTextureScale
-  session.brushPaintMode = profile.brushPaintMode
-  session.brushImageId = profile.brushImageId
-  session.brushImage = profile.brushImage
-  session.brushImageTemporary = profile.brushImageTemporary
-  session.brushImageSettings = { ...profile.brushImageSettings }
-  session.proceduralBrushSettings = cloneProceduralSettings(profile.proceduralBrushSettings)
-  session.proceduralAntialias = profile.proceduralAntialias
-  session.proceduralAntialiasStrength = profile.proceduralAntialiasStrength
-}
-
-const remapSelectionBrushColors = (brush: ImageBrush, primary: RgbaColor, secondary: RgbaColor): ImageBrush => {
-  if (!brush.intrinsicSize || !brush.colors || brush.colors.length !== brush.width * brush.height) return brush
-  const paintColors = new Uint32Array(brush.colors.length)
-  for (let index = 0; index < brush.colors.length; index += 1) {
-    const source = unpackColor(brush.colors[index] ?? 0)
-    if (source.a === 0) continue
-    const luminance = (source.r * 2126 + source.g * 7152 + source.b * 722) / 10000
-    const replacement = luminance >= 128 ? primary : secondary
-    paintColors[index] = packColor({ ...replacement, a: Math.round(replacement.a * source.a / 255) })
-  }
-  return { ...brush, paintColors }
-}
-
-const clearSelectionBrushPaintColors = (brush: ImageBrush | null): ImageBrush | null => brush ? { ...brush, paintColors: undefined } : null
-
-const rememberBrushProfile = (session: DocumentSession): void => {
-  if (isBrushTool(session.tool)) session.brushProfiles[session.tool] = brushProfileFromSession(session)
-}
-
-let toolSettingsPersistTimer: number | null = null
-
-function persistedBrushProfileFromSession(profile: BrushProfile): PersistedBrushProfile {
-  return {
-    brushSize: profile.brushSize,
-    brushShape: profile.brushShape,
-    brushTexture: profile.brushTexture,
-    brushTextureScale: profile.brushTextureScale,
-    brushPaintMode: profile.brushPaintMode,
-    brushImageId: profile.brushImageTemporary ? null : profile.brushImageId,
-    brushImageSettings: { ...profile.brushImageSettings },
-    proceduralBrushSettings: cloneProceduralSettings(profile.proceduralBrushSettings),
-    proceduralAntialias: profile.proceduralAntialias,
-    proceduralAntialiasStrength: profile.proceduralAntialiasStrength
-  }
-}
-
-function brushProfileFromPersisted(profile: PersistedBrushProfile): BrushProfile {
-  return {
-    ...profile,
-    brushImage: null,
-    brushImageTemporary: false,
-    brushImageSettings: { ...profile.brushImageSettings },
-    proceduralBrushSettings: cloneProceduralSettings(profile.proceduralBrushSettings)
-  }
-}
-
-function persistToolSettings(session: DocumentSession): void {
-  const activeProfile = brushProfileFromSession(session)
-  if (isBrushTool(session.tool)) session.brushProfiles[session.tool] = activeProfile
-  const profiles = Object.fromEntries((['pencil', 'eraser', 'fill'] as BrushTool[]).map((tool) => [
-    tool,
-    persistedBrushProfileFromSession(session.brushProfiles[tool])
-  ])) as Record<BrushTool, PersistedBrushProfile>
-  const active = persistedBrushProfileFromSession(activeProfile)
-  const snapshot: PersistedToolSettings = {
-    ...active,
-    brushPaintModePreferenceVersion: 1,
-    proceduralAntialiasPreferenceVersion: 1,
-    brushProfiles: profiles,
-    shapeKind: session.shapeKind,
-    fillMode: session.fillMode,
-    moveAutoSelect: session.moveAutoSelect,
-    selectionKind: session.selectionKind,
-    selectionMode: session.selectionMode,
-    wandTolerance: session.wandTolerance,
-    wandContiguous: session.wandContiguous,
-    perfectPixels: session.perfectPixels
-  }
-  try {
-    if (toolSettingsPersistTimer !== null) window.clearTimeout(toolSettingsPersistTimer)
-    toolSettingsPersistTimer = window.setTimeout(() => {
-      saveToolSettings(snapshot)
-      toolSettingsPersistTimer = null
-    }, 100)
-  } catch { /* Ignore unavailable renderer storage. */ }
-}
-
-const sessionFromDocument = (document: SpriteDocument): DocumentSession => {
-  const settings = loadToolSettings()
-  const fallbackProfile = normalizePersistedBrushProfile(settings, defaultToolSettings)
-  const persistedProfiles = settings.brushProfiles ?? Object.fromEntries((['pencil', 'eraser', 'fill'] as BrushTool[]).map((tool) => [tool, fallbackProfile])) as Record<BrushTool, PersistedBrushProfile>
-  const brushProfiles = Object.fromEntries((['pencil', 'eraser', 'fill'] as BrushTool[]).map((tool) => [
-    tool,
-    brushProfileFromPersisted(persistedProfiles[tool] ?? fallbackProfile)
-  ])) as Record<BrushTool, BrushProfile>
-  const session = {
-    document,
-    history: new HistoryStack(),
-    tool: 'pencil',
-    primaryColor: document.palette.find((entry) => entry.id !== 0)?.color ?? defaultColor,
-    secondaryColor: defaultSecondary,
-    brushSize: settings.brushSize,
-    brushShape: settings.brushShape,
-    brushTexture: settings.brushTexture,
-    brushTextureScale: settings.brushTextureScale,
-    brushPaintMode: settings.brushPaintMode,
-    brushImageId: settings.brushImageId,
-    brushImage: null,
-    brushImageTemporary: false,
-    brushImageSettings: { ...settings.brushImageSettings },
-    brushProfiles: {} as Record<BrushTool, BrushProfile>,
-    proceduralBrushSettings: Object.fromEntries(PROCEDURAL_BRUSH_IDS.map((id) => [id, { ...settings.proceduralBrushSettings[id] }])) as Record<ProceduralBrushId, ProceduralBrushSettings>,
-    proceduralAntialias: settings.proceduralAntialias,
-    proceduralAntialiasStrength: settings.proceduralAntialiasStrength,
-    shapeKind: settings.shapeKind,
-    fillMode: settings.fillMode,
-    moveAutoSelect: settings.moveAutoSelect,
-    selection: null,
-    selectionKind: settings.selectionKind,
-    selectionMode: settings.selectionMode,
-    wandTolerance: settings.wandTolerance,
-    wandContiguous: settings.wandContiguous,
-    perfectPixels: settings.perfectPixels,
-    lastPencilPoint: null,
-    lastEraserPoint: null,
-    canvasResizePreview: null,
-    outlinePreview: null,
-    pendingPaste: null,
-    view: { zoom: 16, panX: 0, panY: 0, rotation: 0, mirrored: false, mirroredVertical: false, showGrid: false, relativeLuminance: false },
-    paletteSelectionId: document.palette.find((entry) => entry.id !== 0)?.id ?? document.palette[0]?.id ?? null,
-    selectedPaletteIds: document.palette.find((entry) => entry.id !== 0)?.id !== undefined
-      ? [document.palette.find((entry) => entry.id !== 0)!.id]
-      : document.palette[0] ? [document.palette[0].id] : [],
-    selectedGroupId: null,
-    selectedLayerIds: [document.activeLayerId],
-    collapsedGroupIds: [],
-    revision: 0,
-    recoverySuppressed: false
-  } as DocumentSession
-  applyBrushProfile(session, brushProfiles.pencil)
-  session.brushProfiles = brushProfiles
-  return session
-}
-
-function touch(session: DocumentSession, dirty = true): void {
-  if (dirty) {
-    session.document.dirty = true
-    session.document.updatedAt = new Date().toISOString()
-    session.revision += 1
-    session.recoverySuppressed = false
-  }
-}
-
 function activeSession(state: WorkspaceState): DocumentSession | null {
   return state.sessions.find((session) => session.document.id === state.activeId) ?? null
 }
 
-function captureAdjustmentSnapshot(session: DocumentSession): AdjustmentSnapshot {
-  const layer = getActiveLayer(session.document)
-  return {
-    layerId: layer.id,
-    pixels: layer.format === 'rgba' ? new Uint8ClampedArray(layer.pixels) : new Uint32Array(layer.pixels),
-    palette: session.document.palette.map((entry) => ({ ...entry, color: { ...entry.color } })),
-    nextColorId: session.document.nextColorId
-  }
-}
-
-function restoreAdjustmentSnapshot(session: DocumentSession, snapshot: AdjustmentSnapshot): void {
-  const layer = getLayer(session.document, snapshot.layerId)
-  if (layer.format === 'rgba' && snapshot.pixels instanceof Uint8ClampedArray) layer.pixels = new Uint8ClampedArray(snapshot.pixels)
-  else if (layer.format === 'indexed' && snapshot.pixels instanceof Uint32Array) layer.pixels = new Uint32Array(snapshot.pixels)
-  else throw new Error('调整预览的图层格式已发生变化。')
-  session.document.palette = snapshot.palette.map((entry) => ({ ...entry, color: { ...entry.color } }))
-  session.document.nextColorId = snapshot.nextColorId
-}
-
-function restoreDocumentSnapshot(target: SpriteDocument, data: Uint8Array): void {
-  const restored = decodeProject(data)
-  restored.id = target.id
-  restored.filePath = target.filePath
-  restored.dirty = true
-  Object.assign(target, restored)
-}
-
-interface LayerUiSnapshot {
-  selectedLayerIds: string[]
-  selectedGroupId: string | null
-  collapsedGroupIds: string[]
-}
-
-const captureLayerUi = (session: DocumentSession): LayerUiSnapshot => ({
-  selectedLayerIds: [...session.selectedLayerIds],
-  selectedGroupId: session.selectedGroupId,
-  collapsedGroupIds: [...session.collapsedGroupIds]
-})
-
-const restoreLayerUi = (session: DocumentSession, snapshot: LayerUiSnapshot): void => {
-  session.selectedLayerIds = [...snapshot.selectedLayerIds]
-  session.selectedGroupId = snapshot.selectedGroupId
-  session.collapsedGroupIds = [...snapshot.collapsedGroupIds]
-}
-
-function commitLayerMerge(session: DocumentSession, beforeDocument: Uint8Array, beforeUi: LayerUiSnapshot, result: LayerMergeSuccess, label: string): void {
-  session.selectedGroupId = null
-  session.selectedLayerIds = [result.layerId]
-  session.collapsedGroupIds = session.collapsedGroupIds.filter((id) => !result.removedGroupIds.includes(id))
-  touch(session)
-  const afterDocument = encodeProject(session.document)
-  const afterUi = captureLayerUi(session)
-  session.history.push({
-    label,
-    bytes: beforeDocument.byteLength + afterDocument.byteLength,
-    undo: () => { restoreDocumentSnapshot(session.document, beforeDocument); restoreLayerUi(session, beforeUi) },
-    redo: () => { restoreDocumentSnapshot(session.document, afterDocument); restoreLayerUi(session, afterUi) }
-  })
-}
-
 const recoveryService = new RecoveryService()
 const clipboardService = new ClipboardService()
-
-const cloneSelectionMask = (selection: SelectionMask | null): SelectionMask | null =>
-  selection ? { ...selection, mask: selection.mask?.slice() } : null
 
 export const useWorkspace = create<WorkspaceState>((set, get) => ({
   sessions: [],
@@ -757,114 +431,25 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
   },
   toggleGrid() { get().mutateActive((session) => { session.view.showGrid = !session.view.showGrid }, false) },
   selectPaletteColor(id, additive = false) {
-    get().mutateActive((session) => {
-      const entry = session.document.palette.find((candidate) => candidate.id === id)
-      if (!entry) return
-      if (!additive) session.selectedPaletteIds = [id]
-      else if (session.selectedPaletteIds.includes(id)) session.selectedPaletteIds = session.selectedPaletteIds.filter((entryId) => entryId !== id)
-      else session.selectedPaletteIds = [...session.selectedPaletteIds, id]
-      session.paletteSelectionId = session.selectedPaletteIds.includes(id) ? id : session.selectedPaletteIds.at(-1) ?? null
-      const active = session.document.palette.find((candidate) => candidate.id === session.paletteSelectionId)
-      if (active) {
-        session.primaryColor = { ...active.color }
-        if (session.brushImage?.intrinsicSize) session.brushImage = remapSelectionBrushColors(session.brushImage, session.primaryColor, session.secondaryColor)
-      }
-    }, false)
+    get().mutateActive((session) => selectPaletteColorCommand(session, id, additive), false)
   },
   addPaletteColor() {
-    get().mutateActive((session) => {
-      const id = findOrAddPaletteColor(session.document, session.primaryColor, true)
-      session.paletteSelectionId = id
-      session.selectedPaletteIds = [id]
-    })
+    get().mutateActive(addPaletteColorCommand)
   },
   applyPalette(colors) {
-    get().mutateActive((session) => {
-      const document = session.document
-      const beforeOrder = [...document.paletteOrder]
-      const beforeSelected = [...session.selectedPaletteIds]
-      const beforePrimary = session.paletteSelectionId
-      const colorIds = colors.map((color) => findOrAddPaletteColor(document, color, false))
-      const afterOrder = [...new Set(document.colorMode === 'indexed' ? [0, ...colorIds] : colorIds)]
-      if (afterOrder.length === beforeOrder.length && afterOrder.every((id, index) => id === beforeOrder[index])) return
-      const matchingCurrent = afterOrder.find((id) => {
-        const entry = document.palette.find((candidate) => candidate.id === id)
-        return Boolean(entry && colorEquals(entry.color, session.primaryColor))
-      })
-      const afterSelected = matchingCurrent === undefined ? [] : [matchingCurrent]
-      const afterPrimary = matchingCurrent ?? null
-      const apply = (order: number[], selected: number[], primary: number | null): void => {
-        document.paletteOrder = [...order]
-        session.selectedPaletteIds = [...selected]
-        session.paletteSelectionId = primary
-      }
-      apply(afterOrder, afterSelected, afterPrimary)
-      session.history.push({
-        label: '切换调色板',
-        bytes: (beforeOrder.length + afterOrder.length + beforeSelected.length + afterSelected.length) * 4 + 32,
-        undo: () => apply(beforeOrder, beforeSelected, beforePrimary),
-        redo: () => apply(afterOrder, afterSelected, afterPrimary)
-      })
-    })
+    get().mutateActive((session) => applyPaletteCommand(session, colors))
   },
   deletePaletteColor(id) {
     get().deletePaletteColors([id])
   },
   deletePaletteColors(ids) {
-    get().mutateActive((session) => {
-      const document = session.document
-      const removed = new Set(ids.filter((id) => document.paletteOrder.includes(id)))
-      if (removed.size === 0) return
-      const beforeOrder = [...document.paletteOrder]
-      const afterOrder = beforeOrder.filter((id) => !removed.has(id))
-      const beforeSelected = [...session.selectedPaletteIds]
-      const beforePrimary = session.paletteSelectionId
-      const afterSelected = beforeSelected.filter((id) => !removed.has(id))
-      const afterPrimary = afterSelected.includes(beforePrimary ?? -1) ? beforePrimary : afterSelected.at(-1) ?? null
-      document.paletteOrder = afterOrder
-      session.selectedPaletteIds = afterSelected
-      session.paletteSelectionId = afterPrimary
-      session.history.push({
-        label: removed.size > 1 ? '批量移除调色板颜色' : '从调色板移除颜色',
-        bytes: (beforeOrder.length + afterOrder.length + beforeSelected.length + afterSelected.length) * 4 + 32,
-        undo: () => { document.paletteOrder = [...beforeOrder]; session.selectedPaletteIds = [...beforeSelected]; session.paletteSelectionId = beforePrimary },
-        redo: () => { document.paletteOrder = [...afterOrder]; session.selectedPaletteIds = [...afterSelected]; session.paletteSelectionId = afterPrimary }
-      })
-    })
+    get().mutateActive((session) => deletePaletteColorsCommand(session, ids))
   },
   movePaletteColor(direction) {
-    get().mutateActive((session) => {
-      const document = session.document
-      const order = session.document.paletteOrder
-      const currentIndex = order.indexOf(session.paletteSelectionId ?? -1)
-      const targetIndex = currentIndex + direction
-      if (currentIndex < 0 || targetIndex < 0 || targetIndex >= order.length) return
-      ;[order[currentIndex], order[targetIndex]] = [order[targetIndex], order[currentIndex]]
-      const swap = (): void => { ;[document.paletteOrder[currentIndex], document.paletteOrder[targetIndex]] = [document.paletteOrder[targetIndex], document.paletteOrder[currentIndex]] }
-      session.history.push({ label: '调整调色板顺序', bytes: 16, undo: swap, redo: swap })
-    })
+    get().mutateActive((session) => movePaletteColorCommand(session, direction))
   },
   reorderPaletteColors(ids, targetId, insertAfter = false) {
-    get().mutateActive((session) => {
-      const document = session.document
-      const selected = new Set(ids.filter((id) => document.paletteOrder.includes(id)))
-      if (selected.size === 0 || selected.has(targetId)) return
-      const before = [...document.paletteOrder]
-      const moving = before.filter((id) => selected.has(id))
-      const remaining = before.filter((id) => !selected.has(id))
-      const targetIndex = remaining.indexOf(targetId)
-      if (targetIndex < 0) return
-      remaining.splice(targetIndex + (insertAfter ? 1 : 0), 0, ...moving)
-      if (remaining.every((id, index) => id === before[index])) return
-      const after = [...remaining]
-      document.paletteOrder = after
-      session.history.push({
-        label: moving.length > 1 ? '批量调整调色板顺序' : '调整调色板顺序',
-        bytes: (before.length + after.length) * 4,
-        undo: () => { document.paletteOrder = [...before] },
-        redo: () => { document.paletteOrder = [...after] }
-      })
-    })
+    get().mutateActive((session) => reorderPaletteColorsCommand(session, ids, targetId, insertAfter))
   },
 
   mutateActive(mutator, dirty = true) {
