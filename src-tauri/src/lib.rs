@@ -14,8 +14,10 @@ use sysinfo::System;
 use tauri::{AppHandle, DragDropEvent, Emitter, Manager, State, WindowEvent};
 
 mod close_coordinator;
+mod platform_paths;
 mod platform_storage;
 use close_coordinator::CloseCoordinator;
+use platform_paths::ensure_executable_subdirectory;
 use platform_storage::atomic_write;
 
 #[derive(Default)]
@@ -227,15 +229,7 @@ fn take_startup_files(state: State<'_, AppState>) -> Vec<String> {
 }
 
 fn gallery_dir() -> Result<PathBuf, String> {
-    let executable = std::env::current_exe()
-        .map_err(|error| format!("无法确定 MoonSprite 程序目录：{error}"))?;
-    let directory = executable
-        .parent()
-        .ok_or_else(|| "无法确定 MoonSprite 程序目录。".to_string())?
-        .join("gallery");
-    fs::create_dir_all(&directory)
-        .map_err(|error| format!("无法创建图库文件夹 {}：{error}", directory.display()))?;
-    Ok(directory)
+    ensure_executable_subdirectory("gallery", "图库")
 }
 
 fn builtin_example_marker(app: &AppHandle) -> Result<PathBuf, String> {
@@ -261,14 +255,7 @@ fn ensure_builtin_example(app: AppHandle) -> Result<Option<String>, String> {
 }
 
 fn palette_dir() -> Result<PathBuf, String> {
-    let executable = std::env::current_exe()
-        .map_err(|error| format!("无法确定 MoonSprite 程序目录：{error}"))?;
-    let directory = executable
-        .parent()
-        .ok_or_else(|| "无法确定 MoonSprite 程序目录。".to_string())?
-        .join("palettes");
-    fs::create_dir_all(&directory)
-        .map_err(|error| format!("无法创建色板文件夹 {}：{error}", directory.display()))?;
+    let directory = ensure_executable_subdirectory("palettes", "色板")?;
     // Built-in palettes are embedded resources. Remove copies created by older builds so
     // the user palette directory contains only user-owned files.
     for (file_name, _) in DEFAULT_PALETTES {
@@ -278,27 +265,11 @@ fn palette_dir() -> Result<PathBuf, String> {
 }
 
 fn brush_dir() -> Result<PathBuf, String> {
-    let executable = std::env::current_exe()
-        .map_err(|error| format!("无法确定 MoonSprite 程序目录：{error}"))?;
-    let directory = executable
-        .parent()
-        .ok_or_else(|| "无法确定 MoonSprite 程序目录。".to_string())?
-        .join("brushes");
-    fs::create_dir_all(&directory)
-        .map_err(|error| format!("无法创建笔刷文件夹 {}：{error}", directory.display()))?;
-    Ok(directory)
+    ensure_executable_subdirectory("brushes", "笔刷")
 }
 
 fn workspace_dir() -> Result<PathBuf, String> {
-    let executable = std::env::current_exe()
-        .map_err(|error| format!("无法确定 MoonSprite 程序目录：{error}"))?;
-    let directory = executable
-        .parent()
-        .ok_or_else(|| "无法确定 MoonSprite 程序目录。".to_string())?
-        .join("workspaces");
-    fs::create_dir_all(&directory)
-        .map_err(|error| format!("无法创建工作区文件夹 {}：{error}", directory.display()))?;
-    Ok(directory)
+    ensure_executable_subdirectory("workspaces", "工作区")
 }
 
 fn session_marker(app: &AppHandle) -> Result<PathBuf, String> {

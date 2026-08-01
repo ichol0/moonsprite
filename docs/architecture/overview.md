@@ -19,6 +19,7 @@ platform/tauri-api ----> Tauri commands ----> Windows/file system
 - `components/` 读取状态、收集输入并渲染，不重复核心算法。
 - `platform/` 封装所有渲染器 IPC，组件不得直接散落调用 Tauri。
 - `src-tauri/` 校验所有来自前端的路径和参数，并返回可展示错误。
+- `src-tauri/src/platform_paths.rs` 统一管理随应用目录保存的图库、色板、笔刷和工作区目录；迁移用户数据位置时只从这里切换。
 
 ## 当前高风险模块
 
