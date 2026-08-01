@@ -48,6 +48,7 @@ platform/tauri-api ----> Tauri commands ----> Windows/file system
 - `core/storage.ts` 是渲染器本地存储的统一安全边界；`core/workspace-layout-preferences.ts` 负责窗口与工作区布局的校验、旧配置兼容和尺寸限制，`App.tsx` 不直接解析持久化数据。
 - `core/document-files.ts` 统一文件名、扩展名、保存路径和工程编解码规则；`store/document-file-service.ts` 编排系统对话框与文件读写，`store/recovery-service.ts` 串行化恢复写入和删除。
 - `core/history.ts` 保证撤销栈的内存计数与栈内容同步。撤销或重做失败时，原条目必须保留；视图状态不得进入该历史栈。
+- `store/clipboard-service.ts` 封装选区与图层剪贴板的快照、系统图片转换和内部回退。剪贴板是应用级临时状态，不属于任一文档的撤销历史；服务边界必须复制像素数组，避免粘贴或调用方意外改写复制来源。
 - `core/project-format.ts` 通过 `PROJECT_SCHEMA_VERSION` 和 `migrateProjectManifest()` 作为工程格式入口。未知版本拒绝打开，不猜测字段；未来版本迁移只增加独立迁移分支。
 
 后续拆分大模块时，优先把纯规则提取到 `core/` 并补测试，再让 `store/` 编排状态，最后由 React 组件接入。禁止把新的持久化 key、格式版本判断或坐标算法直接散落到 `App.tsx`、`CanvasStage.tsx` 或面板组件中。

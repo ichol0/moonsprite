@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { BlendMode, BrushPaintMode, BrushShape, BrushTexture, CanvasAnchor, ClipboardImage, ColorMode, FillMode, ImageBrush, ImageBrushSettings, ImageResizeInterpolation, OutlineDirections, OutlineKernel, OutlinePosition, ProceduralBrushId, ProceduralBrushSettings, RasterLayer, RecoveryRecord, RgbaColor, SelectionKind, SelectionMask, SelectionMode, SelectionRect, ShapeKind, SpriteDocument, ToolId, ViewState } from '@shared/types'
+import type { BlendMode, BrushPaintMode, BrushShape, BrushTexture, CanvasAnchor, ColorMode, FillMode, ImageBrush, ImageBrushSettings, ImageResizeInterpolation, OutlineDirections, OutlineKernel, OutlinePosition, ProceduralBrushId, ProceduralBrushSettings, RasterLayer, RecoveryRecord, RgbaColor, SelectionKind, SelectionMask, SelectionMode, SelectionRect, ShapeKind, SpriteDocument, ToolId, ViewState } from '@shared/types'
 import { checkResourceLimit } from '@/core/resource-policy'
 import { beginPixelEdit, commitPixelEdit, HistoryStack, recordPixel, revertPixelEdit, type HistoryEntry, type PixelEdit } from '@/core/history'
 import { convertDocumentColorMode, createDocument, createId, createLayer, duplicateLayer, findOrAddPaletteColor, getDescendantGroupIds, getGroup, getLayerIdsInGroup, getLayer, getActiveLayer, isLayerEffectivelyLocked, isLayerEffectivelyVisible, layerContentBounds, readLayerColor, readLayerColorAt, resizeDocumentAt, resizeDocumentImage, writeLayerColor } from '@/core/document'
@@ -18,6 +18,7 @@ import { cloneProceduralSettings, defaultToolSettings, loadToolSettings, normali
 import { readStoredString } from '@/core/storage'
 import { exportDocumentFile, openDocumentFile, saveDocumentFile, type ExportOptions, type SaveAsOptions } from './document-file-service'
 import { RecoveryService } from './recovery-service'
+import { ClipboardService, selectionClipboardImage } from './clipboard-service'
 
 export type { ExportOptions, SaveAsOptions } from './document-file-service'
 
@@ -477,42 +478,7 @@ function commitLayerMerge(session: DocumentSession, beforeDocument: Uint8Array, 
 }
 
 const recoveryService = new RecoveryService()
-interface SelectionClipboard { width: number; height: number; pixels: Uint32Array; mask: Uint8Array }
-interface LayerClipboard { name: string; width: number; height: number; offsetX: number; offsetY: number; visible: boolean; locked: boolean; opacity: number; blendMode: RasterLayer['blendMode']; pixels: Uint8ClampedArray }
-
-let selectionClipboard: SelectionClipboard | null = null
-let layerClipboard: LayerClipboard | null = null
-
-const selectionClipboardFromImage = (image: ClipboardImage): SelectionClipboard | null => {
-  const pixels = image.width * image.height
-  if (!Number.isSafeInteger(pixels) || pixels < 1 || pixels > 16 * 1024 * 1024 || image.data.length !== pixels * 4) return null
-  const packed = new Uint32Array(pixels)
-  const mask = new Uint8Array(pixels)
-  let opaque = 0
-  for (let index = 0; index < pixels; index += 1) {
-    const offset = index * 4
-    const alpha = image.data[offset + 3]
-    if (alpha === 0) continue
-    packed[index] = packColor({ r: image.data[offset], g: image.data[offset + 1], b: image.data[offset + 2], a: alpha })
-    mask[index] = 1
-    opaque += 1
-  }
-  return opaque > 0 ? { width: image.width, height: image.height, pixels: packed, mask } : null
-}
-
-const selectionClipboardImage = (clipboard: SelectionClipboard): ClipboardImage => {
-  const data = new Uint8Array(clipboard.width * clipboard.height * 4)
-  for (let index = 0; index < clipboard.pixels.length; index += 1) {
-    if (clipboard.mask[index] !== 1) continue
-    const color = unpackColor(clipboard.pixels[index])
-    const offset = index * 4
-    data[offset] = color.r
-    data[offset + 1] = color.g
-    data[offset + 2] = color.b
-    data[offset + 3] = color.a
-  }
-  return { width: clipboard.width, height: clipboard.height, data }
-}
+const clipboardService = new ClipboardService()
 
 const cloneSelectionMask = (selection: SelectionMask | null): SelectionMask | null =>
   selection ? { ...selection, mask: selection.mask?.slice() } : null
@@ -1609,7 +1575,6 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     }
     const layer = session.document.layers.find((candidate) => candidate.id === session.selectedLayerIds[0])
     if (!layer) return
-    selectionClipboard = null
     const pixels = new Uint8ClampedArray(layer.width * layer.height * 4)
     for (let y = 0; y < layer.height; y += 1) for (let x = 0; x < layer.width; x += 1) {
       const color = readLayerColorAt(session.document, layer, layer.offsetX + x, layer.offsetY + y)
@@ -1619,12 +1584,12 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       pixels[offset + 2] = color.b
       pixels[offset + 3] = color.a
     }
-    layerClipboard = { name: layer.name, width: layer.width, height: layer.height, offsetX: layer.offsetX, offsetY: layer.offsetY, visible: layer.visible, locked: layer.locked, opacity: layer.opacity, blendMode: layer.blendMode, pixels }
+    clipboardService.setLayer({ name: layer.name, width: layer.width, height: layer.height, offsetX: layer.offsetX, offsetY: layer.offsetY, visible: layer.visible, locked: layer.locked, opacity: layer.opacity, blendMode: layer.blendMode, pixels })
     set({ message: `已复制图层“${layer.name}”。` })
   },
 
   pasteLayerFromClipboard() {
-    const clipboard = layerClipboard
+    const clipboard = clipboardService.getLayer()
     const current = activeSession(get())
     if (!clipboard || !current) return false
     get().mutateActive((session) => {
@@ -1679,10 +1644,11 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       mask[clipboardIndex] = 1
       copied += 1
     }
-    if (copied === 0) { selectionClipboard = null; set({ message: '选区内没有可复制的非透明像素。' }); return }
-    layerClipboard = null
-    selectionClipboard = { width: selection.width, height: selection.height, pixels, mask }
-    void window.moonSprite.writeClipboardImage(selectionClipboardImage(selectionClipboard)).catch(() => {
+    if (copied === 0) { clipboardService.clearSelection(); set({ message: '选区内没有可复制的非透明像素。' }); return }
+    clipboardService.setSelection({ width: selection.width, height: selection.height, pixels, mask })
+    const clipboard = clipboardService.getSelection()
+    if (!clipboard) return
+    void window.moonSprite.writeClipboardImage(selectionClipboardImage(clipboard)).catch(() => {
       set({ message: '已复制到软件内部剪贴板，但无法写入系统剪贴板。' })
     })
     set({ message: `已复制 ${copied} 个非透明像素。` })
@@ -1696,14 +1662,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
 
   async pasteSelection() {
     get().commitFloatingPaste()
-    let clipboard = selectionClipboard
-    try {
-      const systemImage = await window.moonSprite.readClipboardImage()
-      if (systemImage) clipboard = selectionClipboardFromImage(systemImage)
-    } catch {
-      // Keep the last MoonSprite copy usable when another application exposes
-      // no readable image representation through the system clipboard.
-    }
+    const clipboard = await clipboardService.readSelection(() => window.moonSprite.readClipboardImage())
     get().mutateActive((session) => {
       if (!clipboard) { set({ message: '剪贴板中没有像素内容。' }); return }
       const document = session.document
