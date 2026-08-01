@@ -17,6 +17,7 @@ const requiredFiles = [
   'docs/interactions/workspace-docking.md',
   'docs/testing/regression-matrix.md',
   'docs/testing/performance-baseline.md',
+  'docs/testing/performance-history.md',
   'docs/release/release-checklist.md',
   'docs/adr/README.md',
   'docs/templates/feature-spec.md',

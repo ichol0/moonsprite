@@ -21,6 +21,7 @@
 
 - [回归矩阵](testing/regression-matrix.md)
 - [性能基线](testing/performance-baseline.md)
+- [性能更新记录](testing/performance-history.md)
 - [发布检查表](release/release-checklist.md)
 - [架构决策记录](adr/README.md)
 
@@ -29,6 +30,7 @@
 - 行为变化：更新产品或交互契约。
 - 状态、历史、坐标或文件格式变化：更新架构文档并新增 ADR。
 - Bug 修复：在回归矩阵中增加自动化场景。
+- 运行时代码更新：运行适用性能基准并追加性能更新记录；纯文档、注释或格式修改登记为“免测”。
 - 用户可见变化：更新根目录 `CHANGELOG.md`。
 - 发布：逐项执行发布检查表。
 
