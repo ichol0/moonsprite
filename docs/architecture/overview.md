@@ -48,3 +48,6 @@ platform/tauri-api ----> Tauri commands ----> Windows/file system
 - `core/project-format.ts` 通过 `PROJECT_SCHEMA_VERSION` 和 `migrateProjectManifest()` 作为工程格式入口。未知版本拒绝打开，不猜测字段；未来版本迁移只增加独立迁移分支。
 
 后续拆分大模块时，优先把纯规则提取到 `core/` 并补测试，再让 `store/` 编排状态，最后由 React 组件接入。禁止把新的持久化 key、格式版本判断或坐标算法直接散落到 `App.tsx`、`CanvasStage.tsx` 或面板组件中。
+## 工具设置边界
+
+`core/tool-preferences.ts` 统一管理画笔、油漆桶、程序纹理、魔棒和选区工具设置，包括默认值、旧版本兼容、范围限制和 `localStorage` 存取。`workspace.ts` 只负责把这些设置应用到当前会话，不再负责解释持久化数据。

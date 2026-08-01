@@ -15,6 +15,7 @@ import { createProceduralBrush, isProceduralBrushId, normalizeProceduralBrushSet
 import { mergeLayerDown, mergeLayerGroup, mergeRasterLayers, mergeVisibleLayers as mergeVisibleDocumentLayers, type LayerMergeSuccess } from '@/core/layer-merge'
 import { applyColorAdjustment, type ColorAdjustment } from '@/core/adjustments'
 import { SAVE_FORMAT_PREFERENCE_KEY, saveImageKindForPreference } from '@/core/file-preferences'
+import { cloneProceduralSettings, defaultToolSettings, loadToolSettings, normalizePersistedBrushProfile, saveToolSettings, type BrushTool, type PersistedBrushProfile, type PersistedToolSettings } from '@/core/tool-preferences'
 
 export interface ExportOptions {
   name: string
@@ -229,37 +230,6 @@ interface WorkspaceState {
 
 const defaultColor: RgbaColor = { r: 41, g: 121, b: 255, a: 255 }
 const defaultSecondary: RgbaColor = { r: 241, g: 244, b: 248, a: 255 }
-const TOOL_SETTINGS_KEY = 'moonsprite.tool-settings.v1'
-
-type BrushTool = 'pencil' | 'eraser' | 'fill'
-
-interface PersistedBrushProfile {
-  brushSize: number
-  brushShape: BrushShape
-  brushTexture: BrushTexture
-  brushTextureScale: number
-  brushPaintMode: BrushPaintMode
-  brushImageId: string | null
-  brushImageSettings: ImageBrushSettings
-  proceduralBrushSettings: Record<ProceduralBrushId, ProceduralBrushSettings>
-  proceduralAntialias: boolean
-  proceduralAntialiasStrength: number
-}
-
-interface PersistedToolSettings extends PersistedBrushProfile {
-  brushPaintModePreferenceVersion: number
-  proceduralAntialiasPreferenceVersion: number
-  brushProfiles?: Partial<Record<BrushTool, PersistedBrushProfile>>
-  shapeKind: ShapeKind
-  fillMode: FillMode
-  moveAutoSelect: boolean
-  selectionKind: SelectionKind
-  selectionMode: SelectionMode
-  wandTolerance: number
-  wandContiguous: boolean
-  perfectPixels: boolean
-}
-
 interface BrushProfile {
   brushSize: number
   brushShape: BrushShape
@@ -318,10 +288,6 @@ const normalizeSaveDialogPath = (filePath: string, format: SaveImageKind, extens
     : `${filePath}.${extension}`
 }
 
-const cloneProceduralSettings = (settings: Record<ProceduralBrushId, ProceduralBrushSettings>): Record<ProceduralBrushId, ProceduralBrushSettings> => Object.fromEntries(
-  PROCEDURAL_BRUSH_IDS.map((id) => [id, { ...settings[id] }])
-) as Record<ProceduralBrushId, ProceduralBrushSettings>
-
 const brushProfileFromSession = (session: DocumentSession): BrushProfile => ({
   brushSize: session.brushSize,
   brushShape: session.brushShape,
@@ -371,59 +337,7 @@ const rememberBrushProfile = (session: DocumentSession): void => {
   if (isBrushTool(session.tool)) session.brushProfiles[session.tool] = brushProfileFromSession(session)
 }
 
-const createDefaultProceduralBrushSettings = (): Record<ProceduralBrushId, ProceduralBrushSettings> => Object.fromEntries(
-  PROCEDURAL_BRUSH_IDS.map((id) => [id, normalizeProceduralBrushSettings(id)])
-) as Record<ProceduralBrushId, ProceduralBrushSettings>
-
-const defaultToolSettings: PersistedToolSettings = {
-  brushSize: 1,
-  brushShape: 'round',
-  brushTexture: 'solid',
-  brushTextureScale: 1,
-  brushPaintMode: 'pattern-source',
-  brushPaintModePreferenceVersion: 1,
-  brushImageId: null,
-  brushImageSettings: { mode: 'dither', threshold: 128, blackPoint: 0, whitePoint: 255, invert: false },
-  proceduralBrushSettings: createDefaultProceduralBrushSettings(),
-  proceduralAntialias: false,
-  proceduralAntialiasPreferenceVersion: 1,
-  proceduralAntialiasStrength: 20,
-  brushProfiles: undefined,
-  shapeKind: 'rectangle',
-  fillMode: 'contiguous',
-  moveAutoSelect: true,
-  selectionKind: 'rectangle',
-  selectionMode: 'replace',
-  wandTolerance: 0,
-  wandContiguous: true,
-  perfectPixels: false
-}
 let toolSettingsPersistTimer: number | null = null
-
-function normalizePersistedBrushProfile(stored: Partial<PersistedBrushProfile> | undefined, fallback: PersistedBrushProfile): PersistedBrushProfile {
-  const proceduralBrushSettings = Object.fromEntries(PROCEDURAL_BRUSH_IDS.map((id) => [
-    id,
-    normalizeProceduralBrushSettings(id, stored?.proceduralBrushSettings?.[id] ?? fallback.proceduralBrushSettings[id])
-  ])) as Record<ProceduralBrushId, ProceduralBrushSettings>
-  return {
-    brushSize: Number.isFinite(stored?.brushSize) ? Math.max(1, Math.min(128, Math.round(stored!.brushSize!))) : fallback.brushSize,
-    brushShape: stored?.brushShape === 'square' || stored?.brushShape === 'round' || stored?.brushShape === 'line' ? stored.brushShape : fallback.brushShape,
-    brushTexture: stored?.brushTexture === 'cracks' || stored?.brushTexture === 'wood' || stored?.brushTexture === 'grain' || stored?.brushTexture === 'solid' ? stored.brushTexture : fallback.brushTexture,
-    brushTextureScale: Number.isFinite(stored?.brushTextureScale) ? Math.max(1, Math.min(16, Math.round(stored!.brushTextureScale!))) : fallback.brushTextureScale,
-    brushPaintMode: stored?.brushPaintMode === 'paint' || stored?.brushPaintMode === 'pattern-source' || stored?.brushPaintMode === 'pattern-target' ? stored.brushPaintMode : fallback.brushPaintMode,
-    brushImageId: typeof stored?.brushImageId === 'string' && stored.brushImageId.length > 0 ? stored.brushImageId : null,
-    brushImageSettings: {
-      mode: stored?.brushImageSettings?.mode === 'threshold' ? 'threshold' : stored?.brushImageSettings?.mode === 'dither' ? 'dither' : fallback.brushImageSettings.mode,
-      threshold: Number.isFinite(stored?.brushImageSettings?.threshold) ? Math.max(0, Math.min(255, Math.round(stored!.brushImageSettings!.threshold))) : fallback.brushImageSettings.threshold,
-      blackPoint: Number.isFinite(stored?.brushImageSettings?.blackPoint) ? Math.max(0, Math.min(254, Math.round(stored!.brushImageSettings!.blackPoint))) : fallback.brushImageSettings.blackPoint,
-      whitePoint: Number.isFinite(stored?.brushImageSettings?.whitePoint) ? Math.max(1, Math.min(255, Math.round(stored!.brushImageSettings!.whitePoint))) : fallback.brushImageSettings.whitePoint,
-      invert: stored?.brushImageSettings?.invert === true
-    },
-    proceduralBrushSettings,
-    proceduralAntialias: stored?.proceduralAntialias === true,
-    proceduralAntialiasStrength: Number.isFinite(stored?.proceduralAntialiasStrength) ? Math.max(1, Math.min(100, Math.round(stored!.proceduralAntialiasStrength!))) : fallback.proceduralAntialiasStrength
-  }
-}
 
 function persistedBrushProfileFromSession(profile: BrushProfile): PersistedBrushProfile {
   return {
@@ -447,37 +361,6 @@ function brushProfileFromPersisted(profile: PersistedBrushProfile): BrushProfile
     brushImageTemporary: false,
     brushImageSettings: { ...profile.brushImageSettings },
     proceduralBrushSettings: cloneProceduralSettings(profile.proceduralBrushSettings)
-  }
-}
-
-function loadToolSettings(): PersistedToolSettings {
-  try {
-    const stored = JSON.parse(localStorage.getItem(TOOL_SETTINGS_KEY) ?? 'null') as Partial<PersistedToolSettings> | null
-    if (!stored) return { ...defaultToolSettings, proceduralBrushSettings: createDefaultProceduralBrushSettings() }
-    const legacyProfile = normalizePersistedBrushProfile(stored, defaultToolSettings)
-    if (stored.brushPaintModePreferenceVersion !== 1) legacyProfile.brushPaintMode = defaultToolSettings.brushPaintMode
-    if (stored.proceduralAntialiasPreferenceVersion !== 1) legacyProfile.proceduralAntialias = defaultToolSettings.proceduralAntialias
-    const storedProfiles = stored.brushProfiles
-    const brushProfiles = Object.fromEntries((['pencil', 'eraser', 'fill'] as BrushTool[]).map((tool) => [
-      tool,
-      normalizePersistedBrushProfile(storedProfiles?.[tool], legacyProfile)
-    ])) as Record<BrushTool, PersistedBrushProfile>
-    return {
-      ...legacyProfile,
-      brushPaintModePreferenceVersion: 1,
-      proceduralAntialiasPreferenceVersion: 1,
-      brushProfiles,
-      shapeKind: stored.shapeKind === 'ellipse' || stored.shapeKind === 'rectangle' ? stored.shapeKind : defaultToolSettings.shapeKind,
-      fillMode: stored.fillMode === 'global' || stored.fillMode === 'contiguous' ? stored.fillMode : defaultToolSettings.fillMode,
-      moveAutoSelect: typeof stored.moveAutoSelect === 'boolean' ? stored.moveAutoSelect : defaultToolSettings.moveAutoSelect,
-      selectionKind: stored.selectionKind === 'magic' || stored.selectionKind === 'lasso' || stored.selectionKind === 'ellipse' || stored.selectionKind === 'rectangle' ? stored.selectionKind : defaultToolSettings.selectionKind,
-      selectionMode: stored.selectionMode === 'add' || stored.selectionMode === 'subtract' || stored.selectionMode === 'intersect' || stored.selectionMode === 'replace' ? stored.selectionMode : defaultToolSettings.selectionMode,
-      wandTolerance: Number.isFinite(stored.wandTolerance) ? Math.max(0, Math.min(255, Math.round(stored.wandTolerance!))) : defaultToolSettings.wandTolerance,
-      wandContiguous: typeof stored.wandContiguous === 'boolean' ? stored.wandContiguous : defaultToolSettings.wandContiguous,
-      perfectPixels: typeof stored.perfectPixels === 'boolean' ? stored.perfectPixels : defaultToolSettings.perfectPixels
-    }
-  } catch {
-    return { ...defaultToolSettings, proceduralBrushSettings: createDefaultProceduralBrushSettings() }
   }
 }
 
@@ -506,7 +389,7 @@ function persistToolSettings(session: DocumentSession): void {
   try {
     if (toolSettingsPersistTimer !== null) window.clearTimeout(toolSettingsPersistTimer)
     toolSettingsPersistTimer = window.setTimeout(() => {
-      try { localStorage.setItem(TOOL_SETTINGS_KEY, JSON.stringify(snapshot)) } catch { /* Ignore unavailable renderer storage. */ }
+      saveToolSettings(snapshot)
       toolSettingsPersistTimer = null
     }, 100)
   } catch { /* Ignore unavailable renderer storage. */ }
