@@ -56,6 +56,7 @@ platform/tauri-api ----> Tauri commands ----> Windows/file system
 - `core/history.ts` 保证撤销栈的内存计数与栈内容同步。撤销或重做失败时，原条目必须保留；视图状态不得进入该历史栈。
 - `store/clipboard-service.ts` 封装选区与图层剪贴板的快照、系统图片转换和内部回退。剪贴板是应用级临时状态，不属于任一文档的撤销历史；服务边界必须复制像素数组，避免粘贴或调用方意外改写复制来源。
 - `core/canvas-input.ts` 统一画布临时输入状态和可复用手势规则，包括当前拖拽、指针状态、修饰键、缩放级别、轴约束、选区缩放和旋转手柄。`CanvasStage.tsx` 仅编排事件与渲染，后续手势拆分必须复用此处规则。
+- `core/canvas-visuals.ts` 统一画布指针、透明棋盘、选区边界预览和预览层的对比色规则；`CanvasStage.tsx` 不再自行决定这些视觉语义。
 - `core/panel-layout.ts` 是栏目顺序、默认尺寸、最小尺寸、旧布局兼容和移动排序的唯一入口；`WorkspacePanels.tsx` 只负责将布局状态连接到栏目渲染和停靠交互。
 - `core/palette-layout.ts` 统一调色板色块尺寸、颜色比较、标记对比色和多选色块排序规则；`PalettePanel` 只负责 DOM 命中、文件操作与 store 编排。
 - `core/layer-operations.ts` 统一图层移动、跨组、组排序、建组与解组的结构变更和可撤销历史；`workspace.ts` 只负责调用命令、维护会话和展示被阻止操作的提示。

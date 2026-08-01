@@ -10,6 +10,7 @@ import { documentPointFromViewportPoint, rotationIndicatorFitsCanvas, unrotateVi
 import { cloneSelection, combineSelection, ellipseSelection, lassoSelection, magicWandSelection, rectSelection, selectionBoundarySegments, selectionContains, transformSelectionMask } from '@/core/selection'
 import { CANVAS_RESIZE_PREVIEW_EVENT } from '@/core/canvas-resize-preview'
 import { CanvasInputState, clampCanvasZoom as clampZoom, constrainedTranslation, resizeSelectionBounds, rotationHandles, shapeBounds, steppedCanvasZoom as steppedZoom, type CanvasDragState as DragState, type CanvasPoint as Point, type SelectionHandle, type SelectionHit, type SelectionRotationHandle } from '@/core/canvas-input'
+import { canvasCursors, canvasToolCursor, colorLuminance, previewCursorTools, resizeCursors, rotationCursors, selectionPreviewPixels, transparencyColorAt } from '@/core/canvas-visuals'
 import rotationBackground1 from '@/assets/rotation-indicator/background-1.png'
 import rotationBackground2 from '@/assets/rotation-indicator/background-2.png'
 import rotationBackground3 from '@/assets/rotation-indicator/background-3.png'
@@ -26,51 +27,6 @@ const MAX_COMPOSITE_TILES = 192
 const MAX_COMPOSITE_SURFACE_PIXELS = 2048 * 2048
 const COMPOSITE_TILE_CACHE_VERSION = 2
 const insideSelection = (selection: SelectionMask, point: Point): boolean => selectionContains(selection, point.x, point.y)
-const canvasCursors = {
-  default: 'var(--cursor-default)', unavailable: 'var(--cursor-unavailable)', crosshair: 'var(--cursor-crosshair)', pencilWhite: 'var(--cursor-pencil-white)', pencilBlack: 'var(--cursor-pencil-black)', grab: 'var(--cursor-grab)', grabbing: 'var(--cursor-grabbing)',
-  selectionWhite: 'var(--cursor-selection-white)', selectionBlack: 'var(--cursor-selection-black)', eyedropper: 'var(--cursor-eyedropper)', zoom: 'var(--cursor-zoom)', rotate: 'var(--cursor-rotate)', move: 'var(--cursor-move)', ewResize: 'var(--cursor-ew-resize)', nsResize: 'var(--cursor-ns-resize)',
-  nwseResize: 'var(--cursor-nwse-resize)', neswResize: 'var(--cursor-nesw-resize)', selectionMove: 'var(--cursor-selection-move)', copy: 'var(--cursor-copy)',
-  rotateNe: 'var(--cursor-selection-rotate-ne)', rotateSe: 'var(--cursor-selection-rotate-se)', rotateSw: 'var(--cursor-selection-rotate-sw)', rotateNw: 'var(--cursor-selection-rotate-nw)'
-} as const
-const resizeCursors: Record<SelectionHandle, string> = { nw: canvasCursors.nwseResize, n: canvasCursors.nsResize, ne: canvasCursors.neswResize, w: canvasCursors.ewResize, e: canvasCursors.ewResize, sw: canvasCursors.neswResize, s: canvasCursors.nsResize, se: canvasCursors.nwseResize }
-const rotationCursors: Record<SelectionRotationHandle, string> = { 'rotate-ne': canvasCursors.rotateNe, 'rotate-se': canvasCursors.rotateSe, 'rotate-sw': canvasCursors.rotateSw, 'rotate-nw': canvasCursors.rotateNw }
-const colorLuminance = (color: RgbaColor): number => color.r * 0.2126 + color.g * 0.7152 + color.b * 0.0722
-const transparencyColorAt = (pixelX: number, pixelY: number): RgbaColor =>
-  (Math.floor(pixelX / 16) + Math.floor(pixelY / 16)) % 2 === 0
-    ? { r: 215, g: 215, b: 217, a: 255 }
-    : { r: 155, g: 155, b: 159, a: 255 }
-const colorCursorTools = new Set<DocumentSession['tool']>(['pencil', 'eraser', 'fill', 'selection'])
-const previewCursorTools = new Set<DocumentSession['tool']>(['pencil', 'eraser', 'fill', 'shape'])
-const toolCursor = (tool: DocumentSession['tool'], color: RgbaColor, available = true): string => {
-  if (tool === 'rotate') return canvasCursors.rotate
-  if (!available) return canvasCursors.unavailable
-  if (tool === 'hand') return canvasCursors.grab
-  if (tool === 'move') return canvasCursors.move
-  if (tool === 'zoom') return canvasCursors.zoom
-  if (tool === 'selection') return colorLuminance(color) < 145 ? canvasCursors.selectionWhite : canvasCursors.selectionBlack
-  if (colorCursorTools.has(tool)) return colorLuminance(color) < 145 ? canvasCursors.pencilWhite : canvasCursors.pencilBlack
-  return canvasCursors.crosshair
-}
-const selectionPreviewPixels = (selection: SelectionMask): Set<string> => {
-  const pixels = new Set<string>()
-  if (!selection.mask) {
-    for (let x = selection.x; x < selection.x + selection.width; x += 1) {
-      pixels.add(`${x}:${selection.y}`)
-      pixels.add(`${x}:${selection.y + selection.height - 1}`)
-    }
-    for (let y = selection.y + 1; y < selection.y + selection.height - 1; y += 1) {
-      pixels.add(`${selection.x}:${y}`)
-      pixels.add(`${selection.x + selection.width - 1}:${y}`)
-    }
-    return pixels
-  }
-  const selectedAt = (x: number, y: number): boolean => x >= 0 && y >= 0 && x < selection.width && y < selection.height && selection.mask![y * selection.width + x] === 1
-  for (let y = 0; y < selection.height; y += 1) for (let x = 0; x < selection.width; x += 1) {
-    if (!selectedAt(x, y)) continue
-    if (!selectedAt(x - 1, y) || !selectedAt(x + 1, y) || !selectedAt(x, y - 1) || !selectedAt(x, y + 1)) pixels.add(`${selection.x + x}:${selection.y + y}`)
-  }
-  return pixels
-}
 
 export function CanvasStage({ session }: { session: DocumentSession }) {
   const stageRef = useRef<HTMLDivElement>(null)
@@ -1033,7 +989,7 @@ export function CanvasStage({ session }: { session: DocumentSession }) {
       if (event.code === 'Space') {
         event.preventDefault()
         inputRef.current.spaceHeld = false
-        if (canvasRef.current) canvasRef.current.style.cursor = toolCursor(session.tool, session.primaryColor)
+        if (canvasRef.current) canvasRef.current.style.cursor = canvasToolCursor(session.tool, session.primaryColor)
         scheduleDraw()
         return
       }
@@ -1044,7 +1000,7 @@ export function CanvasStage({ session }: { session: DocumentSession }) {
         inputRef.current.sampling = session.tool === 'eyedropper'
         inputRef.current.modifierBrushSize = null
         if (inputRef.current.pointer.visible) updateCursorAt(inputRef.current.pointer.clientX, inputRef.current.pointer.clientY, inputRef.current.ctrlHeld, inputRef.current.altHeld)
-        else if (canvasRef.current) canvasRef.current.style.cursor = inputRef.current.sampling ? canvasCursors.eyedropper : toolCursor(session.tool, session.primaryColor)
+        else if (canvasRef.current) canvasRef.current.style.cursor = inputRef.current.sampling ? canvasCursors.eyedropper : canvasToolCursor(session.tool, session.primaryColor)
         scheduleDraw()
       }
     }
@@ -1055,7 +1011,7 @@ export function CanvasStage({ session }: { session: DocumentSession }) {
       inputRef.current.altHeld = false
       inputRef.current.ctrlHeld = false
       inputRef.current.modifierBrushSize = null
-      if (canvasRef.current) canvasRef.current.style.cursor = toolCursor(session.tool, session.primaryColor)
+      if (canvasRef.current) canvasRef.current.style.cursor = canvasToolCursor(session.tool, session.primaryColor)
     }
     const visibilityChange = (): void => { if (document.hidden) blur() }
     window.addEventListener('keydown', keyDown)
@@ -1250,7 +1206,7 @@ export function CanvasStage({ session }: { session: DocumentSession }) {
     }
     if (inputRef.current.drag?.kind === 'marquee' || inputRef.current.drag?.kind === 'lasso' || inputRef.current.drag?.kind === 'magic-preview') {
       inputRef.current.sampling = false
-      canvas.style.cursor = toolCursor('selection', contrastColor)
+      canvas.style.cursor = canvasToolCursor('selection', contrastColor)
       return
     }
     const altActive = inputRef.current.altHeld || altKey
@@ -1278,8 +1234,8 @@ export function CanvasStage({ session }: { session: DocumentSession }) {
             ? canvasCursors.move
             : hit === 'edge'
               ? canvasCursors.selectionMove
-            : toolCursor(session.tool, contrastColor, available)
-    } else canvas.style.cursor = toolCursor(session.tool, contrastColor, available)
+            : canvasToolCursor(session.tool, contrastColor, available)
+    } else canvas.style.cursor = canvasToolCursor(session.tool, contrastColor, available)
   }
 
   const updateCursor = (event: React.PointerEvent<HTMLCanvasElement>): void => {
@@ -1737,7 +1693,7 @@ export function CanvasStage({ session }: { session: DocumentSession }) {
       inputRef.current.sampling = false
       if (!drag.temporarySampling) {
         state.setTool('pencil')
-        event.currentTarget.style.cursor = toolCursor('pencil', session.primaryColor)
+        event.currentTarget.style.cursor = canvasToolCursor('pencil', session.primaryColor)
       } else updateCursor(event)
       draw()
       return
@@ -1823,5 +1779,5 @@ export function CanvasStage({ session }: { session: DocumentSession }) {
   }
 
   const rotationStyle = { transform: 'none', transformOrigin: '50% 50%' }
-  return <div ref={stageRef} className="stage-surface"><canvas ref={canvasRef} style={rotationStyle} className="stage-canvas" aria-label="像素画布" onPointerDown={pointerDown} onPointerMove={pointerMove} onPointerUp={pointerUp} onPointerCancel={pointerUp} onPointerLeave={(event) => { inputRef.current.pointer.visible = false; inputRef.current.shiftLinePreview = false; inputRef.current.sampling = false; if (!inputRef.current.drag) event.currentTarget.style.cursor = canvasResizePreviewRef.current ? canvasCursors.unavailable : inputRef.current.spaceHeld ? canvasCursors.grab : toolCursor(session.tool, session.primaryColor); draw() }} onPointerEnter={(event) => { updateCursor(event); inputRef.current.shiftLinePreview = !canvasResizePreviewRef.current && !inputRef.current.sampling && event.shiftKey && (session.tool === 'pencil' || session.tool === 'eraser') && Boolean(lineAnchor); draw() }} onContextMenu={(event) => event.preventDefault()} onWheel={onWheel} /><canvas ref={selectionCanvasRef} style={rotationStyle} className="stage-selection-overlay" aria-hidden="true" /><div ref={rotationIndicatorRef} className="rotation-indicator" hidden aria-hidden="true"><span className="rotation-indicator-background">{[rotationBackground1, rotationBackground2, rotationBackground3, rotationBackground4, rotationBackground5, rotationBackground6].map((source) => <img key={source} src={source} alt="" />)}</span><span ref={rotationPointerRef} className="rotation-indicator-pointer"><img src={rotationPointer} alt="" /></span></div></div>
+  return <div ref={stageRef} className="stage-surface"><canvas ref={canvasRef} style={rotationStyle} className="stage-canvas" aria-label="像素画布" onPointerDown={pointerDown} onPointerMove={pointerMove} onPointerUp={pointerUp} onPointerCancel={pointerUp} onPointerLeave={(event) => { inputRef.current.pointer.visible = false; inputRef.current.shiftLinePreview = false; inputRef.current.sampling = false; if (!inputRef.current.drag) event.currentTarget.style.cursor = canvasResizePreviewRef.current ? canvasCursors.unavailable : inputRef.current.spaceHeld ? canvasCursors.grab : canvasToolCursor(session.tool, session.primaryColor); draw() }} onPointerEnter={(event) => { updateCursor(event); inputRef.current.shiftLinePreview = !canvasResizePreviewRef.current && !inputRef.current.sampling && event.shiftKey && (session.tool === 'pencil' || session.tool === 'eraser') && Boolean(lineAnchor); draw() }} onContextMenu={(event) => event.preventDefault()} onWheel={onWheel} /><canvas ref={selectionCanvasRef} style={rotationStyle} className="stage-selection-overlay" aria-hidden="true" /><div ref={rotationIndicatorRef} className="rotation-indicator" hidden aria-hidden="true"><span className="rotation-indicator-background">{[rotationBackground1, rotationBackground2, rotationBackground3, rotationBackground4, rotationBackground5, rotationBackground6].map((source) => <img key={source} src={source} alt="" />)}</span><span ref={rotationPointerRef} className="rotation-indicator-pointer"><img src={rotationPointer} alt="" /></span></div></div>
 }
