@@ -16,6 +16,9 @@ use std::{
 use sysinfo::System;
 use tauri::{AppHandle, DragDropEvent, Emitter, Manager, State, WindowEvent};
 
+mod platform_storage;
+use platform_storage::atomic_write;
+
 #[derive(Default)]
 struct AppState {
     previous_session_crashed: Mutex<bool>,
@@ -301,21 +304,6 @@ fn workspace_dir() -> Result<PathBuf, String> {
 
 fn session_marker(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(app_data_dir(app)?.join("session-state.json"))
-}
-
-fn atomic_write(path: &Path, data: &[u8]) -> Result<(), String> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
-    }
-    let temporary = path.with_extension(format!("{}.tmp", uuid_suffix()));
-    fs::write(&temporary, data).map_err(|error| error.to_string())?;
-    if path.exists() {
-        fs::remove_file(path).map_err(|error| error.to_string())?;
-    }
-    fs::rename(&temporary, path).map_err(|error| {
-        let _ = fs::remove_file(&temporary);
-        error.to_string()
-    })
 }
 
 fn uuid_suffix() -> String {
