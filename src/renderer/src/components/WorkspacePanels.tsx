@@ -9,14 +9,13 @@ import { useWorkspace, type DocumentSession } from '@/store/workspace'
 import { ColorPicker, colorCss, rgbaHex, type ColorPickerConfig, type ColorPickerScheme } from '@/components/ColorPicker'
 import { NumberInput } from '@/components/NumberInput'
 import { ThemedSelect, type ThemedSelectGroup } from '@/components/ThemedSelect'
+import { loadFloatingPosition, parseColorPickerConfig, readStoredString, removeStoredValue, saveColorPickerConfig, saveFloatingPosition, writeStoredString, type FloatingPosition } from '@/core/panel-preferences'
 
 let floatingZIndex = 40
 const notifyWorkspaceLayoutChanged = (): void => { window.dispatchEvent(new Event('moonsprite-workspace-layout-change')) }
 export type WorkspacePanelId = 'color' | 'palette' | 'layers' | 'preview'
 export type PanelDock = 'right' | 'left' | 'bottom' | 'floating'
 type FixedPanelDock = Exclude<PanelDock, 'floating'>
-interface FloatingPosition { x: number; y: number; width?: number; height?: number }
-interface PersistedFloatingPosition extends FloatingPosition { viewportWidth?: number; viewportHeight?: number }
 type ResizeDirection = 'n' | 'e' | 's' | 'w' | 'ne' | 'nw' | 'se' | 'sw'
 
 interface PanelDockZone { dock: FixedPanelDock; bounds: DOMRect; preview: React.CSSProperties }
@@ -57,28 +56,7 @@ function panelDockZoneAt(clientX: number, clientY: number): PanelDockZone | null
 function useFloatingPanel(initialPosition: FloatingPosition | null = null, followViewportRight = false, canDock = true, storageKey?: string, responsiveToViewport = false, onDock?: (dock: FixedPanelDock) => void, forceDocked = false) {
   const ref = useRef<HTMLElement>(null)
   const [position, setPosition] = useState<FloatingPosition | null>(() => {
-    if (forceDocked) return null
-    if (!storageKey) return initialPosition
-    try {
-      const stored = JSON.parse(localStorage.getItem(storageKey) ?? 'null') as PersistedFloatingPosition | null
-      if (stored && Number.isFinite(stored.x) && Number.isFinite(stored.y)) {
-        const scaleX = responsiveToViewport && stored.viewportWidth ? window.innerWidth / stored.viewportWidth : 1
-        const scaleY = responsiveToViewport && stored.viewportHeight ? window.innerHeight / stored.viewportHeight : 1
-        const scaledWidth = typeof stored.width === 'number' && Number.isFinite(stored.width) ? stored.width * scaleX : undefined
-        const scaledHeight = typeof stored.height === 'number' && Number.isFinite(stored.height) ? stored.height * scaleY : undefined
-        const width = scaledWidth === undefined ? undefined : scaledWidth > window.innerWidth * 1.25 ? initialPosition?.width ?? 280 : Math.max(180, Math.min(window.innerWidth - 12, scaledWidth))
-        const height = scaledHeight === undefined ? undefined : scaledHeight > window.innerHeight * 1.25 ? initialPosition?.height ?? 240 : Math.max(120, Math.min(window.innerHeight - 12, scaledHeight))
-        const measuredWidth = width ?? 220
-        const measuredHeight = height ?? 130
-        return {
-          x: Math.max(0, Math.min(Math.max(0, window.innerWidth - measuredWidth), stored.x * scaleX)),
-          y: Math.max(0, Math.min(Math.max(0, window.innerHeight - measuredHeight), stored.y * scaleY)),
-          width,
-          height
-        }
-      }
-    } catch { /* Ignore stale panel layout data. */ }
-    return initialPosition
+    return loadFloatingPosition(storageKey, initialPosition, { width: window.innerWidth, height: window.innerHeight }, responsiveToViewport, forceDocked)
   })
   const [zIndex, setZIndex] = useState(() => ++floatingZIndex)
   const [dockPreview, setDockPreview] = useState<React.CSSProperties | null>(null)
@@ -92,11 +70,11 @@ function useFloatingPanel(initialPosition: FloatingPosition | null = null, follo
   const persistPosition = (value: FloatingPosition | null): void => {
     if (!storageKey) return
     if (!value) {
-      localStorage.removeItem(storageKey)
+      saveFloatingPosition(storageKey, null, { width: window.innerWidth, height: window.innerHeight })
       notifyWorkspaceLayoutChanged()
       return
     }
-    localStorage.setItem(storageKey, JSON.stringify({ ...value, viewportWidth: window.innerWidth, viewportHeight: window.innerHeight }))
+    saveFloatingPosition(storageKey, value, { width: window.innerWidth, height: window.innerHeight })
     notifyWorkspaceLayoutChanged()
   }
   const updatePosition = (updater: (current: FloatingPosition | null) => FloatingPosition | null): void => {
@@ -295,18 +273,10 @@ export function ColorPanel({ session, docked = false, onDockDragStart, onFloatin
     { value: 9, label: '9 级' },
     { value: 15, label: '15 级' }
   ]
+  const hueStepValues = hueStepPresets.map((preset) => preset.value)
+  const colorStepValues = colorStepPresets.map((preset) => preset.value)
   const [pickerConfig, setPickerConfig] = useState<ColorPickerConfig>(() => {
-    const fallbackScheme = localStorage.getItem('moonsprite.color-picker-scheme')
-    const defaults: ColorPickerConfig = { scheme: fallbackScheme === 'hs-square' || fallbackScheme === 'wheel' || fallbackScheme === 'moon-ring' ? fallbackScheme : 'sv-square', hueSteps: 0, colorSteps: 0, moonField: 'hsv-square' }
-    try {
-      const stored = JSON.parse(localStorage.getItem('moonsprite.color-picker-config') ?? 'null') as Partial<ColorPickerConfig> | null
-      if (!stored) return defaults
-      const schemes: ColorPickerScheme[] = ['moon-ring', 'sv-square', 'hs-square', 'wheel']
-      const nearestPreset = (value: number, presets: Array<{ value: number }>): number => presets.reduce((nearest, preset) => Math.abs(preset.value - value) < Math.abs(nearest - value) ? preset.value : nearest, presets[0].value)
-      const hueSteps = nearestPreset(Number(stored.hueSteps) || 0, hueStepPresets)
-      const colorSteps = nearestPreset(Number(stored.colorSteps) || 0, colorStepPresets)
-      return { scheme: schemes.includes(stored.scheme as ColorPickerScheme) ? stored.scheme as ColorPickerScheme : defaults.scheme, hueSteps, colorSteps, moonField: stored.moonField === 'hsl-triangle' ? 'hsl-triangle' : 'hsv-square' }
-    } catch { return defaults }
+    return parseColorPickerConfig(readStoredString('moonsprite.color-picker-config'), readStoredString('moonsprite.color-picker-scheme'), hueStepValues, colorStepValues)
   })
   const schemeOptions: Array<{ value: ColorPickerScheme; label: string }> = [
     { value: 'moon-ring', label: '月环调色盘' },
@@ -347,8 +317,7 @@ export function ColorPanel({ session, docked = false, onDockDragStart, onFloatin
   const updatePickerConfig = (changes: Partial<ColorPickerConfig>): void => {
     setPickerConfig((current) => {
       const next = { ...current, ...changes }
-      localStorage.setItem('moonsprite.color-picker-config', JSON.stringify(next))
-      localStorage.setItem('moonsprite.color-picker-scheme', next.scheme)
+      saveColorPickerConfig(next)
       return next
     })
   }
@@ -424,7 +393,7 @@ export function PalettePanel({ session, docked = false, onDockDragStart, onFloat
   const [paletteFiles, setPaletteFiles] = useState<StoredPalette[]>([])
   const [paletteDirectory, setPaletteDirectory] = useState('palettes')
   const [paletteLoading, setPaletteLoading] = useState(true)
-  const [activePaletteId, setActivePaletteId] = useState<string | null>(() => localStorage.getItem('moonsprite.active-palette-id'))
+  const [activePaletteId, setActivePaletteId] = useState<string | null>(() => readStoredString('moonsprite.active-palette-id'))
   const [extractMode, setExtractMode] = useState<'create' | 'replace' | 'append'>('create')
   const [extractLimit, setExtractLimit] = useState(32)
   const [extractName, setExtractName] = useState(`${session.document.name} 色板`)
@@ -445,7 +414,7 @@ export function PalettePanel({ session, docked = false, onDockDragStart, onFloat
   const [draggingIds, setDraggingIds] = useState<number[]>([])
   const [palettePreviewOrder, setPalettePreviewOrder] = useState<number[] | null>(null)
   const [swatchSize, setSwatchSize] = useState<PaletteSwatchSize>(() => {
-    const stored = localStorage.getItem('moonsprite.palette-swatch-size')
+    const stored = readStoredString('moonsprite.palette-swatch-size')
     return stored === 'small' || stored === 'large' ? stored : 'medium'
   })
   const ordered = session.document.paletteOrder.map((id) => session.document.palette.find((entry) => entry.id === id)).filter((entry): entry is PaletteEntry => Boolean(entry))
@@ -475,8 +444,8 @@ export function PalettePanel({ session, docked = false, onDockDragStart, onFloat
       setActivePaletteId(nextId)
       const nextPalette = listing.palettes.find((palette) => palette.id === nextId)
       if (nextPalette) setSaveName(nextPalette.name)
-      if (nextId) localStorage.setItem('moonsprite.active-palette-id', nextId)
-      else localStorage.removeItem('moonsprite.active-palette-id')
+      if (nextId) writeStoredString('moonsprite.active-palette-id', nextId)
+      else removeStoredValue('moonsprite.active-palette-id')
     } catch (error) {
       store.setMessage(error instanceof Error ? error.message : '无法读取本地色板。')
     } finally {
@@ -522,7 +491,7 @@ export function PalettePanel({ session, docked = false, onDockDragStart, onFloat
 
   const chooseSwatchSize = (value: PaletteSwatchSize): void => {
     setSwatchSize(value)
-    localStorage.setItem('moonsprite.palette-swatch-size', value)
+    writeStoredString('moonsprite.palette-swatch-size', value)
     setPaletteActionsOpen(false)
   }
   const resolvePaletteSlot = (clientX: number, clientY: number): number | null => {
@@ -616,14 +585,14 @@ export function PalettePanel({ session, docked = false, onDockDragStart, onFloat
       return next
     })
     setActivePaletteId(palette.id)
-    localStorage.setItem('moonsprite.active-palette-id', palette.id)
+    writeStoredString('moonsprite.active-palette-id', palette.id)
   }
 
   const applyStoredPalette = (palette: StoredPalette): void => {
     store.applyPalette(palette.colors)
     setActivePaletteId(palette.id)
     setSaveName(palette.name)
-    localStorage.setItem('moonsprite.active-palette-id', palette.id)
+    writeStoredString('moonsprite.active-palette-id', palette.id)
     setLibraryOpen(false)
   }
 
@@ -635,7 +604,7 @@ export function PalettePanel({ session, docked = false, onDockDragStart, onFloat
       setPaletteFiles((current) => current.filter((item) => item.id !== id))
       if (activePaletteId === id) {
         setActivePaletteId(null)
-        localStorage.removeItem('moonsprite.active-palette-id')
+        removeStoredValue('moonsprite.active-palette-id')
       }
       setPaletteContext(null)
       store.setMessage(`已删除色板“${palette.name}”。`)
@@ -660,7 +629,7 @@ export function PalettePanel({ session, docked = false, onDockDragStart, onFloat
       if (extractMode === 'create') {
         store.applyPalette(colors)
         setActivePaletteId(null)
-        localStorage.removeItem('moonsprite.active-palette-id')
+        removeStoredValue('moonsprite.active-palette-id')
         const name = extractName.trim() || `${session.document.name} 色板`
         setSaveName(name)
         store.setMessage(`已从图像创建临时色板“${name}”，共 ${colors.length} 色。`)
@@ -1201,7 +1170,7 @@ const minimumBottomWidths: Record<WorkspacePanelId, number> = { color: 96, palet
 
 function loadInspectorLayout(): { order: WorkspacePanelId[]; sizes: Record<WorkspacePanelId, number>; bottomWidths: Record<WorkspacePanelId, number> } {
   try {
-    const value = JSON.parse(localStorage.getItem(inspectorLayoutKey) ?? 'null') as { order?: WorkspacePanelId[]; sizes?: Partial<Record<WorkspacePanelId, number>>; bottomWidths?: Partial<Record<WorkspacePanelId, number>> } | null
+    const value = JSON.parse(readStoredString(inspectorLayoutKey) ?? 'null') as { order?: WorkspacePanelId[]; sizes?: Partial<Record<WorkspacePanelId, number>>; bottomWidths?: Partial<Record<WorkspacePanelId, number>> } | null
     const storedOrder = (value?.order ?? []).filter((id, index, values): id is WorkspacePanelId => defaultInspectorOrder.includes(id) && values.indexOf(id) === index)
     const order = [...storedOrder, ...defaultInspectorOrder.filter((id) => !storedOrder.includes(id))]
     return {
@@ -1250,10 +1219,10 @@ export function InspectorPanels({ session, previewOpen, onClosePreview, panelDoc
   const [sizes, setSizes] = useState<Record<WorkspacePanelId, number>>(initialLayout.sizes)
   const [bottomWidths, setBottomWidths] = useState<Record<WorkspacePanelId, number>>(initialLayout.bottomWidths)
   const [colorSquareDock, setColorSquareDock] = useState<FixedPanelDock | null>(() => {
-    const stored = localStorage.getItem(colorSquareDockKey)
+    const stored = readStoredString(colorSquareDockKey)
     return stored === 'left' || stored === 'right' || stored === 'bottom' ? stored : null
   })
-  const [colorSquareAnchor, setColorSquareAnchor] = useState<SquareAnchor>(() => localStorage.getItem(colorSquareAnchorKey) === 'start' ? 'start' : 'end')
+  const [colorSquareAnchor, setColorSquareAnchor] = useState<SquareAnchor>(() => readStoredString(colorSquareAnchorKey) === 'start' ? 'start' : 'end')
   const [draggingPanel, setDraggingPanel] = useState<WorkspacePanelId | null>(null)
   const [detachPreview, setDetachPreview] = useState<React.CSSProperties | null>(null)
   const [dockDropTarget, setDockDropTarget] = useState<InspectorDockTarget | null>(null)
@@ -1274,7 +1243,7 @@ export function InspectorPanels({ session, previewOpen, onClosePreview, panelDoc
 
   const persistLayout = (nextOrder = order, nextSizes = sizesRef.current, nextBottomWidths = bottomWidthsRef.current): void => {
     try {
-      localStorage.setItem(inspectorLayoutKey, JSON.stringify({ order: nextOrder, sizes: nextSizes, bottomWidths: nextBottomWidths }))
+      writeStoredString(inspectorLayoutKey, JSON.stringify({ order: nextOrder, sizes: nextSizes, bottomWidths: nextBottomWidths }))
       notifyWorkspaceLayoutChanged()
     } catch { /* Ignore unavailable renderer storage. */ }
   }
@@ -1282,11 +1251,11 @@ export function InspectorPanels({ session, previewOpen, onClosePreview, panelDoc
     setColorSquareDock(dock)
     if (dock) {
       setColorSquareAnchor(anchor)
-      localStorage.setItem(colorSquareDockKey, dock)
-      localStorage.setItem(colorSquareAnchorKey, anchor)
+      writeStoredString(colorSquareDockKey, dock)
+      writeStoredString(colorSquareAnchorKey, anchor)
     } else {
-      localStorage.removeItem(colorSquareDockKey)
-      localStorage.removeItem(colorSquareAnchorKey)
+      removeStoredValue(colorSquareDockKey)
+      removeStoredValue(colorSquareAnchorKey)
     }
     notifyWorkspaceLayoutChanged()
   }
