@@ -2,7 +2,7 @@ import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from 
 import { createPortal } from 'react-dom'
 import { BookOpen, Check, Combine, Copy, Eye, EyeOff, FileImage, Folder, FolderMinus, FolderOpen, FolderPlus, Grid2X2, Layers2, Lock, LockKeyhole, LockOpen, Minus, Palette, Plus, Save, ScanSearch, Settings2, Square, Trash2, X } from 'lucide-react'
 import type { BlendMode, LayerGroup, PaletteEntry, RasterLayer, RgbaColor, StoredPalette } from '@shared/types'
-import { createCompositeSampler, getDescendantGroupIds, getLayerIdsInGroup } from '@/core/document'
+import { createCompositeSampler, getLayerIdsInGroup } from '@/core/document'
 import { encodePalettePng, extractPaletteColors, mergePaletteColors } from '@/core/palette'
 import { colorEquals, relativeLuminanceColor } from '@/core/raster'
 import { useWorkspace, type DocumentSession } from '@/store/workspace'
@@ -12,6 +12,7 @@ import { ThemedSelect, type ThemedSelectGroup } from '@/components/ThemedSelect'
 import { parseColorPickerConfig, readStoredString, removeStoredValue, saveColorPickerConfig, writeStoredString } from '@/core/panel-preferences'
 import { COLOR_SQUARE_ANCHOR_STORAGE_KEY, COLOR_SQUARE_DOCK_STORAGE_KEY, DEFAULT_BOTTOM_WIDTHS, DEFAULT_INSPECTOR_ORDER, DEFAULT_INSPECTOR_SIZES, INSPECTOR_LAYOUT_STORAGE_KEY, MINIMUM_BOTTOM_WIDTHS, MINIMUM_INSPECTOR_SIZES, loadInspectorLayout, moveInspectorPanel, type WorkspacePanelId } from '@/core/panel-layout'
 import { PALETTE_SWATCH_PIXELS, paletteColorsEqual, paletteMarkerColor, paletteReorderTarget, reorderPalettePreview, type PaletteSwatchSize } from '@/core/palette-layout'
+import { buildLayerPanelTree, resolveLayerPanelDropTarget, type LayerPanelNode } from '@/core/layer-panel-layout'
 import { FloatingDockPreview, PanelResizeHandles, panelDockZoneAt, useFloatingPanel } from './floating-panel'
 import type { FixedPanelDock, PanelDock } from './floating-panel'
 
@@ -555,7 +556,7 @@ interface LayerDragState { ids: string[]; groupId?: string; startX: number; star
 type DropTarget = { kind: 'layer'; id: string; insertAfter?: boolean; depth: number } | { kind: 'group'; id: string; depth: number } | { kind: 'above-group'; id: string; insertAfter?: boolean; depth: number } | { kind: 'root' }
 interface LayerContextMenu { kind: 'layer' | 'group'; id: string; x: number; y: number }
 interface LayerDragGhost { y: number; name: string; count: number }
-type LayerTreeNode = { kind: 'layer'; layer: RasterLayer; depth: number } | { kind: 'group'; group: LayerGroup; depth: number }
+type LayerTreeNode = LayerPanelNode & ({ kind: 'layer'; layer: RasterLayer } | { kind: 'group'; group: LayerGroup })
 const blendOptions: Array<{ value: BlendMode; label: string }> = [
   { value: 'normal', label: '正常' },
   { value: 'darken', label: '变暗' },
@@ -622,46 +623,20 @@ export function LayersPanel({ session, docked = false, onDockDragStart, onFloati
     window.addEventListener('blur', blur)
     return () => { window.removeEventListener('keydown', keyDown); window.removeEventListener('keyup', keyUp); window.removeEventListener('blur', blur) }
   }, [])
-  const nodes: LayerTreeNode[] = []
+  const layerById = new Map(session.document.layers.map((layer) => [layer.id, layer]))
   const groupById = new Map(session.document.groups.map((group) => [group.id, group]))
-  const layerOrder = new Map(session.document.layers.map((layer, index) => [layer.id, index]))
-  const groupOrder = new Map(session.document.groups.map((group, index) => [group.id, index]))
-  const groupAnchorCache = new Map<string, number>()
-  const groupAnchor = (groupId: string, visiting = new Set<string>()): number => {
-    const cached = groupAnchorCache.get(groupId)
-    if (cached !== undefined) return cached
-    if (visiting.has(groupId)) return Number.NEGATIVE_INFINITY
-    const nextVisiting = new Set(visiting).add(groupId)
-    let anchor = Number.NEGATIVE_INFINITY
-    for (const layer of session.document.layers) if (layer.groupId === groupId) anchor = Math.max(anchor, layerOrder.get(layer.id) ?? anchor)
-    for (const child of session.document.groups) if (child.parentGroupId === groupId) anchor = Math.max(anchor, groupAnchor(child.id, nextVisiting))
-    groupAnchorCache.set(groupId, anchor)
-    return anchor
-  }
-  const renderedGroups = new Set<string>()
-  const appendContainer = (parentGroupId: string | null, depth: number, visiting = new Set<string>()): void => {
-    const items: Array<{ kind: 'layer'; layer: RasterLayer; order: number; tie: number } | { kind: 'group'; group: LayerGroup; order: number; tie: number }> = []
-    for (const layer of session.document.layers) {
-      const directParent = layer.groupId && groupById.has(layer.groupId) ? layer.groupId : null
-      if (directParent === parentGroupId) items.push({ kind: 'layer', layer, order: layerOrder.get(layer.id) ?? 0, tie: 0 })
+  const nodes = buildLayerPanelTree({
+    layers: session.document.layers,
+    groups: session.document.groups,
+    collapsedGroupIds: session.collapsedGroupIds
+  }).map((node): LayerTreeNode | null => {
+    if (node.kind === 'layer') {
+      const layer = layerById.get(node.id)
+      return layer ? { ...node, layer } : null
     }
-    for (const group of session.document.groups) {
-      const directParent = group.parentGroupId && groupById.has(group.parentGroupId) && group.parentGroupId !== group.id ? group.parentGroupId : null
-      if (directParent === parentGroupId) items.push({ kind: 'group', group, order: groupAnchor(group.id), tie: groupOrder.get(group.id) ?? 0 })
-    }
-    items.sort((left, right) => right.order - left.order || right.tie - left.tie)
-    for (const item of items) {
-      if (item.kind === 'layer') {
-        nodes.push({ kind: 'layer', layer: item.layer, depth })
-        continue
-      }
-      if (renderedGroups.has(item.group.id) || visiting.has(item.group.id)) continue
-      renderedGroups.add(item.group.id)
-      nodes.push({ kind: 'group', group: item.group, depth })
-      if (!session.collapsedGroupIds.includes(item.group.id)) appendContainer(item.group.id, depth + 1, new Set(visiting).add(item.group.id))
-    }
-  }
-  appendContainer(null, 0)
+    const group = groupById.get(node.id)
+    return group ? { ...node, group } : null
+  }).filter((node): node is LayerTreeNode => node !== null)
   const beginProperties = (next: LayerFormState): void => {
     formOriginalRef.current = { ...next }
     formWasDirtyRef.current = session.document.dirty
@@ -739,33 +714,16 @@ export function LayersPanel({ session, docked = false, onDockDragStart, onFloati
       })
     const layerId = element?.dataset.layerId
     const groupId = element?.dataset.groupId
-    if (layerId && draggedGroupId) {
-      const targetLayer = session.document.layers.find((layer) => layer.id === layerId)
-      if (targetLayer?.groupId && targetLayer.groupId !== draggedGroupId && !getDescendantGroupIds(session.document, draggedGroupId).includes(targetLayer.groupId)) {
-        const targetGroupNode = nodes.find((node): node is Extract<LayerTreeNode, { kind: 'group' }> => node.kind === 'group' && node.group.id === targetLayer.groupId)
-        return { kind: 'group', id: targetLayer.groupId, depth: (targetGroupNode?.depth ?? 0) + 1 }
+    if (element && (layerId || groupId)) {
+      const hit = {
+        kind: layerId ? 'layer' as const : 'group' as const,
+        id: (layerId ?? groupId)!,
+        top: element.getBoundingClientRect().top,
+        bottom: element.getBoundingClientRect().bottom,
+        pointerY: clientY
       }
-      if (targetLayer && !targetLayer.groupId) {
-        const bounds = element.getBoundingClientRect()
-        return { kind: 'layer', id: targetLayer.id, insertAfter: clientY < bounds.top + bounds.height / 2, depth: 0 }
-      }
-    }
-    if (layerId && !draggedGroupId && !draggedIds.includes(layerId)) {
-      const bounds = element.getBoundingClientRect()
-      const targetNode = nodes.find((node): node is Extract<LayerTreeNode, { kind: 'layer' }> => node.kind === 'layer' && node.layer.id === layerId)
-      return { kind: 'layer', id: layerId, insertAfter: clientY < bounds.top + bounds.height / 2, depth: targetNode?.depth ?? 0 }
-    }
-    if (groupId && groupId !== draggedGroupId && (!draggedGroupId || !getDescendantGroupIds(session.document, draggedGroupId).includes(groupId))) {
-      const targetNode = nodes.find((node): node is Extract<LayerTreeNode, { kind: 'group' }> => node.kind === 'group' && node.group.id === groupId)
-      const bounds = element!.getBoundingClientRect()
-      if (draggedGroupId) {
-        const edge = Math.min(5, bounds.height * .15)
-        if (clientY <= bounds.top + edge) return { kind: 'above-group', id: groupId, insertAfter: true, depth: targetNode?.depth ?? 0 }
-        if (clientY >= bounds.bottom - edge) return { kind: 'above-group', id: groupId, insertAfter: false, depth: targetNode?.depth ?? 0 }
-      } else if (clientY <= bounds.top + Math.min(11, bounds.height * .3)) {
-        return { kind: 'above-group', id: groupId, insertAfter: true, depth: targetNode?.depth ?? 0 }
-      }
-      return { kind: 'group', id: groupId, depth: (targetNode?.depth ?? 0) + 1 }
+      const target = resolveLayerPanelDropTarget({ layers: session.document.layers, groups: session.document.groups, nodes, hit, draggedLayerIds: draggedIds, draggedGroupId })
+      if (target) return target
     }
     if (draggedGroupId) return { kind: 'root' }
     const rows = [...list.querySelectorAll<HTMLElement>('[data-layer-id]')].filter((row) => !draggedIds.includes(row.dataset.layerId ?? ''))
@@ -774,7 +732,7 @@ export function LayersPanel({ session, docked = false, onDockDragStart, onFloati
     const last = rows.at(-1)!.getBoundingClientRect()
     if (clientY <= first.top) {
       const targetId = rows[0].dataset.layerId!
-      const targetNode = nodes.find((node): node is Extract<LayerTreeNode, { kind: 'layer' }> => node.kind === 'layer' && node.layer.id === targetId)
+      const targetNode = nodes.find((node) => node.kind === 'layer' && node.layer.id === targetId)
       return { kind: 'layer', id: targetId, insertAfter: true, depth: targetNode?.depth ?? 0 }
     }
     if (clientY >= last.bottom) return { kind: 'root' }
