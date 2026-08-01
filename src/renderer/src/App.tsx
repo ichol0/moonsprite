@@ -23,6 +23,8 @@ import { formatBytes } from '@/core/resource-policy'
 import { APP_CHANNEL_LABEL } from '@/core/app-meta'
 import { DRAWING_BRUSH_PREVIEW_ENABLED_KEY, EXPORT_FORMAT_PREFERENCE_KEY, EXPORT_SCALE_PRESETS_KEY, NEW_DOCUMENT_SIZE_PRESETS_KEY, RELATIVE_LUMINANCE_SCOPE_KEY, ROTATION_INDICATOR_POSITION_KEY, SAVE_FORMAT_PREFERENCE_KEY, imageExportKindForPreference, loadEditorPreferences, parseDocumentSizePresets, parseDrawingBrushPreviewEnabled, parseExportScalePresets, parseRelativeLuminanceScope, parseRotationIndicatorPosition, saveEditorPreferences, type DocumentSizePreset, type RelativeLuminanceScope, type RotationIndicatorPosition } from '@/core/file-preferences'
 import { DEFAULT_SHORTCUTS, keyboardEventKey, loadShortcuts, saveShortcuts as persistShortcuts, shortcutText } from '@/core/shortcuts'
+import { clearStoredValues, readStoredJson, readStoredString, writeStoredJson, writeStoredString } from '@/core/storage'
+import { ACTIVE_WORKSPACE_STORAGE_KEY, BOTTOM_DOCK_HEIGHT_STORAGE_KEY, COLOR_SQUARE_ANCHOR_STORAGE_KEY, COLOR_SQUARE_DOCK_STORAGE_KEY, DEFAULT_PANEL_DOCKS, FLOATING_PANEL_STORAGE_KEYS, INSPECTOR_LAYOUT_STORAGE_KEY, INSPECTOR_WIDTH_STORAGE_KEY, LEFT_DOCK_WIDTH_STORAGE_KEY, PANEL_DOCKS_STORAGE_KEY, TOOL_RAIL_SIDE_STORAGE_KEY, loadBottomDockHeight, loadInspectorWidth, loadLeftDockWidth, loadMainWindowState, loadPanelDocks, loadToolRailSide, normalizeWorkspaceLayout, readLayoutStorage, saveMainWindowState, savePanelDocks, writeLayoutStorage } from '@/core/workspace-layout-preferences'
 import { type ExportOptions, type SaveAsOptions, useWorkspace } from '@/store/workspace'
 import toolSelectionIcon from '@/assets/tool-icons/tool-selection.png'
 import toolPencilIcon from '@/assets/tool-icons/tool-pencil.png'
@@ -76,38 +78,12 @@ const selectionModes = [
 
 interface ExportPreset extends ExportOptions { presetName: string }
 interface DocumentPanePosition { x: number; y: number; width: number; height: number }
-interface MainWindowState { x: number; y: number; width: number; height: number; maximized: boolean }
 interface LoadedBrush { stored: StoredBrush | null; brush: ImageBrush; procedural?: boolean; project?: boolean }
 const presetStorageKey = 'moonsprite.export-presets.v1'
-const mainWindowStorageKey = 'moonsprite.main-window-state.v2'
-const inspectorWidthStorageKey = 'moonsprite.inspector-width.v1'
-const panelDocksStorageKey = 'moonsprite.panel-docks.v1'
-const legacyLayersDockStorageKey = 'moonsprite.layers-dock.v1'
-const bottomLayersHeightStorageKey = 'moonsprite.bottom-layers-height.v1'
-const leftDockWidthStorageKey = 'moonsprite.left-dock-width.v1'
-const toolRailSideStorageKey = 'moonsprite.tool-rail-side.v1'
-const inspectorLayoutStorageKey = 'moonsprite.inspector-layout.v2'
-const colorSquareDockStorageKey = 'moonsprite.color-picker-square-dock'
-const colorSquareAnchorStorageKey = 'moonsprite.color-picker-square-anchor'
-const activeWorkspaceStorageKey = 'moonsprite.active-workspace.v1'
-const floatingPanelStorageKeys: Record<WorkspacePanelId, string> = {
-  color: 'moonsprite.color-panel.v1',
-  palette: 'moonsprite.palette-panel.v1',
-  layers: 'moonsprite.layers-panel.v1',
-  preview: 'moonsprite.preview-panel.v1'
-}
 type ToolRailSide = 'left' | 'right'
 type AdvancedMode = 'tool-options' | 'canvas-only'
 
-const loadToolRailSide = (): ToolRailSide => localStorage.getItem(toolRailSideStorageKey) === 'right' ? 'right' : 'left'
-
-const loadInspectorWidth = (): number => {
-  const stored = Number(localStorage.getItem(inspectorWidthStorageKey))
-  const fallback = 310
-  return Math.max(180, Math.min(window.innerWidth - 220, Number.isFinite(stored) && stored > 0 ? stored : fallback))
-}
-
-const defaultPanelDocks: Record<WorkspacePanelId, PanelDock> = { color: 'left', palette: 'left', layers: 'right', preview: 'right' }
+const defaultPanelDocks: Record<WorkspacePanelId, PanelDock> = { ...DEFAULT_PANEL_DOCKS }
 const defaultInspectorLayout = JSON.stringify({
   order: ['palette', 'color', 'layers', 'preview'],
   sizes: { color: 330, palette: 620, layers: 560, preview: 220 },
@@ -147,44 +123,6 @@ const builtInDefaultWorkspace: StoredWorkspace = {
   }
 }
 
-const loadPanelDocks = (): Record<WorkspacePanelId, PanelDock> => {
-  try {
-    const stored = JSON.parse(localStorage.getItem(panelDocksStorageKey) ?? 'null') as Partial<Record<WorkspacePanelId, PanelDock>> | null
-    const next = { ...defaultPanelDocks }
-    for (const id of Object.keys(next) as WorkspacePanelId[]) {
-      const dock = stored?.[id]
-      if (dock === 'right' || dock === 'left' || dock === 'bottom' || dock === 'floating') next[id] = dock
-    }
-    if (!stored && localStorage.getItem(legacyLayersDockStorageKey) === 'bottom') next.layers = 'bottom'
-    return next
-  } catch { return { ...defaultPanelDocks } }
-}
-
-const loadBottomLayersHeight = (): number => {
-  const stored = Number(localStorage.getItem(bottomLayersHeightStorageKey))
-  return Number.isFinite(stored) ? Math.max(120, Math.min(520, stored)) : 190
-}
-
-const loadLeftDockWidth = (): number => {
-  const stored = Number(localStorage.getItem(leftDockWidthStorageKey))
-  return Number.isFinite(stored) ? Math.max(180, Math.min(520, stored)) : 250
-}
-
-const loadMainWindowState = (): MainWindowState | null => {
-  try {
-    const value = JSON.parse(localStorage.getItem(mainWindowStorageKey) ?? 'null') as Partial<MainWindowState> | null
-    if (!value) return null
-    const numbers = [value.x, value.y, value.width, value.height]
-    if (!numbers.every((item) => typeof item === 'number' && Number.isFinite(item))) return null
-    if (value.width! < 640 || value.height! < 400 || value.width! > 32_768 || value.height! > 32_768) return null
-    return { x: value.x!, y: value.y!, width: value.width!, height: value.height!, maximized: value.maximized === true }
-  } catch { return null }
-}
-
-const saveMainWindowState = (state: MainWindowState): void => {
-  try { localStorage.setItem(mainWindowStorageKey, JSON.stringify(state)) } catch { /* Ignore unavailable renderer storage. */ }
-}
-
 const persistMainWindowState = async (notifyWorkspaceLayout = true): Promise<void> => {
   if (!('__TAURI_INTERNALS__' in window)) return
   const appWindow = getCurrentWindow()
@@ -205,7 +143,7 @@ const persistMainWindowState = async (notifyWorkspaceLayout = true): Promise<voi
 }
 const loadPresets = (): ExportPreset[] => {
   try {
-    const value = JSON.parse(localStorage.getItem(presetStorageKey) ?? '[]')
+    const value = readStoredJson<unknown>(presetStorageKey, [])
     if (!Array.isArray(value)) return []
     return value.flatMap((item): ExportPreset[] => {
       if (typeof item?.presetName !== 'string' || typeof item?.name !== 'string') return []
@@ -380,7 +318,7 @@ function PreferencesDialog({ onClose, onPresetChange }: { onClose: () => void; o
       {section === 'general' && <><label className="preference-field">语言<ThemedSelect value={language} groups={[{ label: '语言', options: [{ value: 'zh-CN', label: '简体中文' }, { value: 'en-US', label: 'English' }] }]} label="语言" onChange={setLanguage} /></label><label className="preference-field">旋转指向标位置<ThemedSelect value={rotationIndicatorPosition} groups={[{ label: '位置', options: [{ value: 'view', label: '视图中心' }, { value: 'canvas', label: '画布中心' }] }]} label="旋转指向标位置" onChange={(value) => setRotationIndicatorPosition(value as RotationIndicatorPosition)} /></label><label className="preference-field">查看相对明暗作用区域<ThemedSelect value={relativeLuminanceScope} groups={[{ label: '作用区域', options: [{ value: 'canvas', label: '画布视图内' }, { value: 'app', label: '整体（整个软件）' }] }]} label="查看相对明暗作用区域" onChange={(value) => setRelativeLuminanceScope(value as RelativeLuminanceScope)} /></label><label className="preference-toggle outline-preview-toggle"><span className="outline-preview-label"><Eye size={15} />绘制时显示画笔预览</span><input type="checkbox" checked={drawingBrushPreviewEnabled} onChange={(event) => setDrawingBrushPreviewEnabled(event.target.checked)} /><span className="toggle-track" aria-hidden="true"><i /></span></label></>}
       {section === 'files' && <><label className="preference-field">默认保存格式<ThemedSelect value={saveFormat} groups={[{ label: '保存格式', options: [{ value: 'moonsprite', label: '.moonsprite' }, { value: 'png', label: '.png' }, { value: 'jpeg', label: '.jpg / .jpeg' }, { value: 'webp', label: '.webp' }, { value: 'ase', label: '.ase' }, { value: 'aseprite', label: '.aseprite' }] }]} label="默认保存格式" onChange={setSaveFormat} /></label><label className="preference-field">默认导出格式<ThemedSelect value={exportFormat} groups={[{ label: '导出格式', options: [{ value: 'png', label: 'PNG' }, { value: 'jpeg', label: 'JPEG' }, { value: 'webp', label: 'WebP' }, { value: 'svg', label: 'SVG' }] }]} label="默认导出格式" onChange={setExportFormat} /></label><label className="preference-toggle outline-preview-toggle"><span>启用异常恢复</span><input type="checkbox" checked={recovery} onChange={(event) => setRecovery(event.target.checked)} /><span className="toggle-track" aria-hidden="true"><i /></span></label><label className="preference-field">恢复间隔<NumberInput min={1} max={60} suffix="分钟" value={recoveryMinutes} onValueChange={setRecoveryMinutes} /></label></>}
       {section === 'presets' && <div className="preference-presets"><section><header><strong>新建工程尺寸</strong><button type="button" onClick={() => setDocumentSizePresets((current) => [...current, { width: 64, height: 64 }])}><Plus size={13} />新增尺寸</button></header><div className="preference-preset-grid">{documentSizePresets.map((preset, index) => <div className="document-size-preset-row" key={index}><NumberInput aria-label={`预设 ${index + 1} 宽度`} min={1} max={16384} suffix="px" value={preset.width} onValueChange={(value) => updateDocumentSize(index, 'width', value)} /><span>x</span><NumberInput aria-label={`预设 ${index + 1} 高度`} min={1} max={16384} suffix="px" value={preset.height} onValueChange={(value) => updateDocumentSize(index, 'height', value)} /><button type="button" className="icon-button" aria-label={`删除尺寸 ${preset.width}x${preset.height}`} disabled={documentSizePresets.length === 1} onClick={() => setDocumentSizePresets((current) => current.filter((_, presetIndex) => presetIndex !== index))}><Trash2 size={13} /></button></div>)}</div></section><section><header><strong>导出图片放大倍数</strong><button type="button" onClick={() => setExportScalePresets((current) => [...current, 100])}><Plus size={13} />新增倍数</button></header><div className="preference-preset-grid export-scale-preset-grid">{exportScalePresets.map((scale, index) => <div className="export-scale-preset-row" key={index}><NumberInput aria-label={`导出倍数 ${index + 1}`} min={1} max={6400} suffix="%" value={scale} onValueChange={(value) => setExportScalePresets((current) => current.map((currentScale, scaleIndex) => scaleIndex === index ? value : currentScale))} /><button type="button" className="icon-button" aria-label={`删除 ${scale}%`} disabled={exportScalePresets.length === 1} onClick={() => setExportScalePresets((current) => current.filter((_, scaleIndex) => scaleIndex !== index))}><Trash2 size={13} /></button></div>)}</div></section></div>}
-      {section === 'reset' && <><p>重置会清空本地工作区、工具、调色盘和快捷键设置，当前打开的工程文件不会删除。</p><button className="danger-button" onClick={() => { localStorage.clear(); window.location.reload() }}>恢复所有初始设置</button></>}
+      {section === 'reset' && <><p>重置会清空本地工作区、工具、调色盘和快捷键设置，当前打开的工程文件不会删除。</p><button className="danger-button" onClick={() => { clearStoredValues(); window.location.reload() }}>恢复所有初始设置</button></>}
     </main></div>
     <footer><button className="quiet-button" onClick={onClose}>取消</button><button className="primary-button" onClick={() => { persist(); onClose() }}>确定</button></footer>
   </section></div>
@@ -569,13 +507,13 @@ export default function App() {
   const [exportForm, setExportForm] = useState<ExportOptions>({ name: 'MoonSprite-export', format: 'png-auto', scalePercent: 100 })
   const [presetName, setPresetName] = useState('')
   const [presets, setPresets] = useState<ExportPreset[]>(loadPresets)
-  const [documentSizePresets, setDocumentSizePresets] = useState(() => parseDocumentSizePresets(localStorage.getItem(NEW_DOCUMENT_SIZE_PRESETS_KEY)))
-  const [exportScalePresets, setExportScalePresets] = useState(() => parseExportScalePresets(localStorage.getItem(EXPORT_SCALE_PRESETS_KEY)))
+  const [documentSizePresets, setDocumentSizePresets] = useState(() => parseDocumentSizePresets(readStoredString(NEW_DOCUMENT_SIZE_PRESETS_KEY)))
+  const [exportScalePresets, setExportScalePresets] = useState(() => parseExportScalePresets(readStoredString(EXPORT_SCALE_PRESETS_KEY)))
   const [resourceLabel, setResourceLabel] = useState('')
   const [openMenu, setOpenMenu] = useState<string | null>(null)
   const [previewOpen, setPreviewOpen] = useState(true)
   const [homeOpen, setHomeOpen] = useState(false)
-  const [relativeLuminanceScope, setRelativeLuminanceScope] = useState<RelativeLuminanceScope>(() => parseRelativeLuminanceScope(localStorage.getItem(RELATIVE_LUMINANCE_SCOPE_KEY)))
+  const [relativeLuminanceScope, setRelativeLuminanceScope] = useState<RelativeLuminanceScope>(() => parseRelativeLuminanceScope(readStoredString(RELATIVE_LUMINANCE_SCOPE_KEY)))
   const [advancedMode, setAdvancedMode] = useState<AdvancedMode | null>(null)
   const [advancedModeNotice, setAdvancedModeNotice] = useState<string | null>(null)
   const [shapeFlyoutOpen, setShapeFlyoutOpen] = useState(false)
@@ -586,9 +524,9 @@ export default function App() {
   const [brushSaveName, setBrushSaveName] = useState('选区笔刷')
   const [localBrushes, setLocalBrushes] = useState<LoadedBrush[]>([])
   const [brushLibraryLoaded, setBrushLibraryLoaded] = useState(false)
-  const [inspectorWidth, setInspectorWidth] = useState(loadInspectorWidth)
+  const [inspectorWidth, setInspectorWidth] = useState(() => loadInspectorWidth(window.innerWidth))
   const [panelDocks, setPanelDocks] = useState<Record<WorkspacePanelId, PanelDock>>(loadPanelDocks)
-  const [bottomLayersHeight, setBottomLayersHeight] = useState(loadBottomLayersHeight)
+  const [bottomLayersHeight, setBottomLayersHeight] = useState(loadBottomDockHeight)
   const [bottomDockHost, setBottomDockHost] = useState<HTMLElement | null>(null)
   const [leftDockWidth, setLeftDockWidth] = useState(loadLeftDockWidth)
   const [leftDockHost, setLeftDockHost] = useState<HTMLElement | null>(null)
@@ -618,7 +556,7 @@ export default function App() {
   const session = useMemo(() => workspace.sessions.find((item) => item.document.id === workspace.activeId) ?? null, [workspace.sessions, workspace.activeId])
   const saveShortcuts = (next: Record<string, string>): void => { setShortcuts(next); persistShortcuts(next) }
   useEffect(() => {
-    const syncPreferences = (): void => setRelativeLuminanceScope(parseRelativeLuminanceScope(localStorage.getItem(RELATIVE_LUMINANCE_SCOPE_KEY)))
+    const syncPreferences = (): void => setRelativeLuminanceScope(parseRelativeLuminanceScope(readStoredString(RELATIVE_LUMINANCE_SCOPE_KEY)))
     window.addEventListener('moonsprite:preferences-changed', syncPreferences)
     return () => window.removeEventListener('moonsprite:preferences-changed', syncPreferences)
   }, [])
@@ -742,7 +680,7 @@ export default function App() {
   const updatePanelDock = useCallback((id: WorkspacePanelId, dock: PanelDock): void => {
     setPanelDocks((current) => {
       const next = { ...current, [id]: dock }
-      try { localStorage.setItem(panelDocksStorageKey, JSON.stringify(next)) } catch { /* Keep the current layout when browser storage is unavailable. */ }
+      savePanelDocks(next)
       return next
     })
   }, [])
@@ -752,19 +690,6 @@ export default function App() {
   const hasBottomDock = visiblePanelIds.some((id) => panelDockFor(id) === 'bottom')
   const hasRightDock = visiblePanelIds.some((id) => panelDockFor(id) === 'right')
 
-  const readLayoutStorage = (key: string): string | null => {
-    try { return localStorage.getItem(key) } catch { return null }
-  }
-  const writeLayoutStorage = (key: string, value: string | null): void => {
-    try {
-      if (value === null) localStorage.removeItem(key)
-      else localStorage.setItem(key, value)
-    } catch { /* Retain the in-memory workspace when browser storage is unavailable. */ }
-  }
-  const clampLayoutValue = (value: unknown, fallback: number, minimum: number, maximum: number): number => {
-    const number = Number(value)
-    return Number.isFinite(number) ? Math.max(minimum, Math.min(maximum, number)) : fallback
-  }
   const captureWorkspaceLayout = useCallback((): WorkspaceLayout => ({
     panelDocks: { ...panelDocks },
     inspectorWidth,
@@ -772,10 +697,10 @@ export default function App() {
     bottomDockHeight: bottomLayersHeight,
     toolRailSide,
     previewOpen,
-    inspectorLayout: readLayoutStorage(inspectorLayoutStorageKey),
-    colorSquareDock: readLayoutStorage(colorSquareDockStorageKey),
-    colorSquareAnchor: readLayoutStorage(colorSquareAnchorStorageKey),
-    floatingPanels: Object.fromEntries((Object.keys(floatingPanelStorageKeys) as WorkspacePanelId[]).map((id) => [id, readLayoutStorage(floatingPanelStorageKeys[id])])) as Record<WorkspacePanelId, string | null>,
+    inspectorLayout: readLayoutStorage(INSPECTOR_LAYOUT_STORAGE_KEY),
+    colorSquareDock: readLayoutStorage(COLOR_SQUARE_DOCK_STORAGE_KEY),
+    colorSquareAnchor: readLayoutStorage(COLOR_SQUARE_ANCHOR_STORAGE_KEY),
+    floatingPanels: Object.fromEntries((Object.keys(FLOATING_PANEL_STORAGE_KEYS) as WorkspacePanelId[]).map((id) => [id, readLayoutStorage(FLOATING_PANEL_STORAGE_KEYS[id])])) as Record<WorkspacePanelId, string | null>,
     mainWindow: loadMainWindowState()
   }), [bottomLayersHeight, inspectorWidth, leftDockWidth, panelDocks, previewOpen, toolRailSide])
   const loadSavedWorkspaces = useCallback(async (): Promise<StoredWorkspace[]> => {
@@ -821,24 +746,21 @@ export default function App() {
   const applyWorkspaceLayout = async (saved: StoredWorkspace, announce = true): Promise<void> => {
     workspaceApplyInProgress.current = true
     const layout = saved.layout
-    const nextPanelDocks: Record<WorkspacePanelId, PanelDock> = { ...defaultPanelDocks }
-    for (const id of Object.keys(nextPanelDocks) as WorkspacePanelId[]) {
-      const dock = layout.panelDocks?.[id]
-      if (dock === 'left' || dock === 'right' || dock === 'bottom' || dock === 'floating') nextPanelDocks[id] = dock
-    }
-    const nextInspectorWidth = clampLayoutValue(layout.inspectorWidth, 310, 180, Math.max(180, window.innerWidth - 220))
-    const nextLeftDockWidth = clampLayoutValue(layout.leftDockWidth, 250, 180, Math.min(520, Math.max(180, window.innerWidth - 520)))
-    const nextBottomHeight = clampLayoutValue(layout.bottomDockHeight, 190, 120, 520)
-    const nextToolRailSide: ToolRailSide = layout.toolRailSide === 'right' ? 'right' : 'left'
-    writeLayoutStorage(panelDocksStorageKey, JSON.stringify(nextPanelDocks))
-    writeLayoutStorage(inspectorWidthStorageKey, String(Math.round(nextInspectorWidth)))
-    writeLayoutStorage(leftDockWidthStorageKey, String(Math.round(nextLeftDockWidth)))
-    writeLayoutStorage(bottomLayersHeightStorageKey, String(Math.round(nextBottomHeight)))
-    writeLayoutStorage(toolRailSideStorageKey, nextToolRailSide)
-    writeLayoutStorage(inspectorLayoutStorageKey, layout.inspectorLayout)
-    writeLayoutStorage(colorSquareDockStorageKey, layout.colorSquareDock)
-    writeLayoutStorage(colorSquareAnchorStorageKey, layout.colorSquareAnchor)
-    for (const id of Object.keys(floatingPanelStorageKeys) as WorkspacePanelId[]) writeLayoutStorage(floatingPanelStorageKeys[id], layout.floatingPanels?.[id] ?? null)
+    const normalized = normalizeWorkspaceLayout(layout, window.innerWidth)
+    const nextPanelDocks: Record<WorkspacePanelId, PanelDock> = normalized.panelDocks
+    const nextInspectorWidth = normalized.inspectorWidth
+    const nextLeftDockWidth = normalized.leftDockWidth
+    const nextBottomHeight = normalized.bottomDockHeight
+    const nextToolRailSide: ToolRailSide = normalized.toolRailSide
+    savePanelDocks(nextPanelDocks)
+    writeStoredString(INSPECTOR_WIDTH_STORAGE_KEY, String(Math.round(nextInspectorWidth)))
+    writeStoredString(LEFT_DOCK_WIDTH_STORAGE_KEY, String(Math.round(nextLeftDockWidth)))
+    writeStoredString(BOTTOM_DOCK_HEIGHT_STORAGE_KEY, String(Math.round(nextBottomHeight)))
+    writeStoredString(TOOL_RAIL_SIDE_STORAGE_KEY, nextToolRailSide)
+    writeLayoutStorage(INSPECTOR_LAYOUT_STORAGE_KEY, layout.inspectorLayout)
+    writeLayoutStorage(COLOR_SQUARE_DOCK_STORAGE_KEY, layout.colorSquareDock)
+    writeLayoutStorage(COLOR_SQUARE_ANCHOR_STORAGE_KEY, layout.colorSquareAnchor)
+    for (const id of Object.keys(FLOATING_PANEL_STORAGE_KEYS) as WorkspacePanelId[]) writeLayoutStorage(FLOATING_PANEL_STORAGE_KEYS[id], layout.floatingPanels?.[id] ?? null)
     inspectorWidthRef.current = nextInspectorWidth
     leftDockWidthRef.current = nextLeftDockWidth
     bottomLayersHeightRef.current = nextBottomHeight
@@ -851,7 +773,7 @@ export default function App() {
     setWorkspaceLayoutRevision((revision) => revision + 1)
     setActiveWorkspaceId(saved.id)
     activeWorkspaceRef.current = saved
-    localStorage.setItem(activeWorkspaceStorageKey, saved.id)
+    writeStoredString(ACTIVE_WORKSPACE_STORAGE_KEY, saved.id)
     try {
       await applySavedMainWindow(layout.mainWindow)
       if (announce) workspace.setMessage(`已载入工作区“${saved.name}”。`)
@@ -868,7 +790,7 @@ export default function App() {
       const saved = await window.moonSprite.saveWorkspace(id, trimmedName, captureWorkspaceLayout())
       setActiveWorkspaceId(saved.id)
       activeWorkspaceRef.current = saved
-      localStorage.setItem(activeWorkspaceStorageKey, saved.id)
+      writeStoredString(ACTIVE_WORKSPACE_STORAGE_KEY, saved.id)
       setWorkspaceSaveName(saved.name)
       await loadSavedWorkspaces()
       workspace.setMessage(`已保存工作区“${saved.name}”。`)
@@ -930,7 +852,7 @@ export default function App() {
     void (async () => {
       const workspaces = await loadSavedWorkspaces()
       if (disposed) return
-      const rememberedId = localStorage.getItem(activeWorkspaceStorageKey)
+      const rememberedId = readStoredString(ACTIVE_WORKSPACE_STORAGE_KEY)
       const initial = workspaces.find((item) => item.id === rememberedId)
         ?? workspaces.find((item) => item.builtIn)
         ?? builtInDefaultWorkspace
@@ -971,7 +893,7 @@ export default function App() {
 
   const openExport = (): void => {
     if (!session) return
-    const format = imageExportKindForPreference(localStorage.getItem(EXPORT_FORMAT_PREFERENCE_KEY))
+    const format = imageExportKindForPreference(readStoredString(EXPORT_FORMAT_PREFERENCE_KEY))
     const defaultScale = format === 'svg' ? 100 : exportScalePresets.includes(100) ? 100 : exportScalePresets[0] ?? 100
     setExportForm({ name: session.document.name.replace(/\.(moonsprite|aseprite|ase|png|jpe?g|webp|svg)$/i, '') || 'MoonSprite-export', format, scalePercent: defaultScale })
     setPresetName('')
@@ -1257,7 +1179,7 @@ export default function App() {
       const drag = toolRailDrag.current
       if (drag?.moved) {
         setToolRailSide(drag.target)
-        try { localStorage.setItem(toolRailSideStorageKey, drag.target) } catch { /* Keep the selected side when browser storage is unavailable. */ }
+        writeStoredString(TOOL_RAIL_SIDE_STORAGE_KEY, drag.target)
       }
       toolRailDrag.current = null
       setToolRailDockPreview(null)
@@ -1275,7 +1197,7 @@ export default function App() {
       setInspectorWidth(next)
     }
     const up = (): void => {
-      if (resizeStart.current) localStorage.setItem(inspectorWidthStorageKey, String(Math.round(inspectorWidthRef.current)))
+      if (resizeStart.current) writeStoredString(INSPECTOR_WIDTH_STORAGE_KEY, String(Math.round(inspectorWidthRef.current)))
       resizeStart.current = null
     }
     window.addEventListener('pointermove', move)
@@ -1294,7 +1216,7 @@ export default function App() {
     const up = (): void => {
       if (!leftDockResizeStart.current) return
       leftDockResizeStart.current = null
-      try { localStorage.setItem(leftDockWidthStorageKey, String(Math.round(leftDockWidthRef.current))) } catch { /* Keep the resized panel when browser storage is unavailable. */ }
+      writeStoredString(LEFT_DOCK_WIDTH_STORAGE_KEY, String(Math.round(leftDockWidthRef.current)))
     }
     window.addEventListener('pointermove', move)
     window.addEventListener('pointerup', up)
@@ -1314,7 +1236,7 @@ export default function App() {
     const up = (): void => {
       if (!bottomLayersResizeStart.current) return
       bottomLayersResizeStart.current = null
-      try { localStorage.setItem(bottomLayersHeightStorageKey, String(Math.round(bottomLayersHeightRef.current))) } catch { /* Keep the resized panel when browser storage is unavailable. */ }
+      writeStoredString(BOTTOM_DOCK_HEIGHT_STORAGE_KEY, String(Math.round(bottomLayersHeightRef.current)))
     }
     window.addEventListener('pointermove', move)
     window.addEventListener('pointerup', up)
@@ -1558,14 +1480,14 @@ export default function App() {
     if (!name) return
     const next = [...presets.filter((preset) => preset.presetName !== name), { ...exportForm, presetName: name }]
     setPresets(next)
-    localStorage.setItem(presetStorageKey, JSON.stringify(next))
+    writeStoredJson(presetStorageKey, next)
   }
   const deletePreset = (): void => {
     const name = presetName.trim()
     if (!name) return
     const next = presets.filter((preset) => preset.presetName !== name)
     setPresets(next)
-    localStorage.setItem(presetStorageKey, JSON.stringify(next))
+    writeStoredJson(presetStorageKey, next)
     setPresetName('')
   }
 

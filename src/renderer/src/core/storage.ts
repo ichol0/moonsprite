@@ -29,6 +29,17 @@ export function removeStoredValue(key: string, storage?: Storage): boolean {
   }
 }
 
+export function clearStoredValues(storage?: Storage): boolean {
+  try {
+    const target = getStorage(storage)
+    if (!target) return false
+    target.clear()
+    return true
+  } catch {
+    return false
+  }
+}
+
 export function readStoredJson<T>(key: string, fallback: T, storage?: Storage): T {
   const value = readStoredString(key, storage)
   if (!value) return fallback

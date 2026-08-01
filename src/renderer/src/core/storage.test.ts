@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { readStoredJson, readStoredString, removeStoredValue, writeStoredJson, writeStoredString } from './storage'
+import { clearStoredValues, readStoredJson, readStoredString, removeStoredValue, writeStoredJson, writeStoredString } from './storage'
 
 function createStorage(): Storage {
   const values = new Map<string, string>()
@@ -28,5 +28,8 @@ describe('safe renderer storage', () => {
     expect(readStoredJson('broken', ['fallback'], storage)).toEqual(['fallback'])
     expect(removeStoredValue('broken', storage)).toBe(true)
     expect(readStoredString('broken', storage)).toBeNull()
+    writeStoredString('remaining', 'value', storage)
+    expect(clearStoredValues(storage)).toBe(true)
+    expect(storage.length).toBe(0)
   })
 })
