@@ -22,7 +22,7 @@ const child = spawn(executable, [startupProject], {
   stdio: 'ignore',
   env: {
     ...process.env,
-    WEBVIEW2_USER_DATA_FOLDER: userDataDirectory,
+    ...(process.env.GITHUB_ACTIONS ? {} : { WEBVIEW2_USER_DATA_FOLDER: userDataDirectory }),
     WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${debugPort}`
   }
 })
