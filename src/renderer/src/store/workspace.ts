@@ -13,6 +13,7 @@ import { recordRecentProject } from '@/core/home-history'
 import { createProceduralBrush, isProceduralBrushId, normalizeProceduralBrushSettings, PROCEDURAL_BRUSH_IDS } from '@/core/brushes'
 import { mergeLayerDown, mergeLayerGroup, mergeRasterLayers, mergeVisibleLayers as mergeVisibleDocumentLayers, type LayerMergeSuccess } from '@/core/layer-merge'
 import { applyColorAdjustment, type ColorAdjustment } from '@/core/adjustments'
+import { assignGroupToGroup as assignGroupToGroupOperation, assignGroupToRoot as assignGroupToRootOperation, assignLayersAboveGroup as assignLayersAboveGroupOperation, assignLayersToGroup as assignLayersToGroupOperation, assignLayersToRoot as assignLayersToRootOperation, canMoveGroupInto, createLayerGroup as createLayerGroupOperation, reorderGroup as reorderGroupOperation, reorderLayers as reorderLayersOperation, ungroupSelected as ungroupSelectedOperation } from '@/core/layer-operations'
 import { SAVE_FORMAT_PREFERENCE_KEY, saveImageKindForPreference } from '@/core/file-preferences'
 import { cloneProceduralSettings, defaultToolSettings, loadToolSettings, normalizePersistedBrushProfile, saveToolSettings, type BrushTool, type PersistedBrushProfile, type PersistedToolSettings } from '@/core/tool-preferences'
 import { readStoredString } from '@/core/storage'
@@ -1095,26 +1096,9 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
   },
 
   reorderLayers(layerIds, targetLayerId, insertAfterTarget = true) {
-    const uniqueIds = [...new Set(layerIds)]
-    if (uniqueIds.length === 0 || uniqueIds.includes(targetLayerId)) return
     get().mutateActive((session) => {
-      const document = session.document
-      const dragged = document.layers.filter((layer) => uniqueIds.includes(layer.id))
-      if (dragged.length === 0) return
-      const beforeOrder = document.layers.map((layer) => layer.id)
-      const layerById = new Map(document.layers.map((layer) => [layer.id, layer]))
-      document.layers = document.layers.filter((layer) => !uniqueIds.includes(layer.id))
-      const targetIndex = document.layers.findIndex((layer) => layer.id === targetLayerId)
-      document.layers.splice(targetIndex + (insertAfterTarget ? 1 : 0), 0, ...dragged)
-      document.activeLayerId = dragged.at(-1)!.id
-      session.selectedGroupId = null
-      session.selectedLayerIds = dragged.map((layer) => layer.id)
-      const afterOrder = document.layers.map((layer) => layer.id)
-      const applyOrder = (order: string[]): void => {
-        document.layers = order.map((id) => layerById.get(id)!).filter(Boolean)
-        document.activeLayerId = dragged.at(-1)!.id
-      }
-      session.history.push({ label: '拖动图层', bytes: (beforeOrder.length + afterOrder.length) * 8, undo: () => applyOrder(beforeOrder), redo: () => applyOrder(afterOrder) })
+      const history = reorderLayersOperation(session, layerIds, targetLayerId, insertAfterTarget)
+      if (history) session.history.push(history)
     })
   },
 
@@ -1123,244 +1107,65 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
   },
 
   assignLayersToGroup(layerIds, groupId, targetLayerId, insertAfterTarget = true) {
-    const uniqueIds = [...new Set(layerIds)]
     get().mutateActive((session) => {
-      const document = session.document
-      const selected = document.layers.filter((layer) => uniqueIds.includes(layer.id))
-      if (selected.length === 0) return
-      getGroup(document, groupId)
-      const beforeOrder = document.layers.map((item) => item.id)
-      const beforeGroupIds = new Map(selected.map((layer) => [layer.id, layer.groupId ?? null]))
-      const layerById = new Map(document.layers.map((item) => [item.id, item]))
-      document.layers = document.layers.filter((item) => !uniqueIds.includes(item.id))
-      const targetIndex = targetLayerId ? document.layers.findIndex((item) => item.id === targetLayerId && item.groupId === groupId) : -1
-      const lastMember = document.layers.reduce((last, item, index) => item.groupId === groupId ? index : last, -1)
-      const insertionIndex = targetIndex >= 0 ? targetIndex + (insertAfterTarget ? 1 : 0) : lastMember + 1
-      document.layers.splice(insertionIndex, 0, ...selected)
-      for (const layer of selected) layer.groupId = groupId
-      document.activeLayerId = selected.at(-1)!.id
-      session.selectedGroupId = groupId
-      session.selectedLayerIds = selected.map((layer) => layer.id)
-      const afterOrder = document.layers.map((item) => item.id)
-      const apply = (order: string[], assignedGroupIds: Map<string, string | null>): void => {
-        document.layers = order.map((id) => layerById.get(id)!).filter(Boolean)
-        for (const layer of selected) layer.groupId = assignedGroupIds.get(layer.id) ?? null
-        document.activeLayerId = selected.at(-1)!.id
-      }
-      const afterGroupIds = new Map(selected.map((layer) => [layer.id, groupId]))
-      session.history.push({ label: '移动到图层组', bytes: (beforeOrder.length + afterOrder.length) * 8, undo: () => apply(beforeOrder, beforeGroupIds), redo: () => apply(afterOrder, afterGroupIds) })
+      const history = assignLayersToGroupOperation(session, layerIds, groupId, targetLayerId, insertAfterTarget)
+      if (history) session.history.push(history)
     })
   },
 
   assignLayersToRoot(layerIds, targetLayerId, insertAfterTarget = true) {
-    const uniqueIds = [...new Set(layerIds)]
     get().mutateActive((session) => {
-      const document = session.document
-      const selected = document.layers.filter((layer) => uniqueIds.includes(layer.id))
-      if (selected.length === 0) return
-      const beforeOrder = document.layers.map((item) => item.id)
-      const beforeGroupIds = new Map(selected.map((layer) => [layer.id, layer.groupId ?? null]))
-      const layerById = new Map(document.layers.map((item) => [item.id, item]))
-      document.layers = document.layers.filter((item) => !uniqueIds.includes(item.id))
-      const targetIndex = targetLayerId ? document.layers.findIndex((layer) => layer.id === targetLayerId) : -1
-      const insertionIndex = targetIndex >= 0 ? targetIndex + (insertAfterTarget ? 1 : 0) : 0
-      document.layers.splice(insertionIndex, 0, ...selected)
-      for (const layer of selected) layer.groupId = null
-      document.activeLayerId = selected.at(-1)!.id
-      session.selectedGroupId = null
-      session.selectedLayerIds = selected.map((layer) => layer.id)
-      const afterOrder = document.layers.map((item) => item.id)
-      const apply = (order: string[], groupIds: Map<string, string | null>): void => {
-        document.layers = order.map((id) => layerById.get(id)!).filter(Boolean)
-        for (const layer of selected) layer.groupId = groupIds.get(layer.id) ?? null
-        document.activeLayerId = selected.at(-1)!.id
-      }
-      const rootGroupIds = new Map(selected.map((layer) => [layer.id, null]))
-      session.history.push({ label: '移到最外层', bytes: (beforeOrder.length + afterOrder.length) * 8 + selected.length * 16, undo: () => apply(beforeOrder, beforeGroupIds), redo: () => apply(afterOrder, rootGroupIds) })
+      const history = assignLayersToRootOperation(session, layerIds, targetLayerId, insertAfterTarget)
+      if (history) session.history.push(history)
     })
   },
 
   assignLayersAboveGroup(layerIds, groupId) {
-    const uniqueIds = [...new Set(layerIds)]
     get().mutateActive((session) => {
-      const document = session.document
-      const selected = document.layers.filter((layer) => uniqueIds.includes(layer.id))
-      if (selected.length === 0) return
-      const group = getGroup(document, groupId)
-      const containerGroupIds = new Set([groupId, ...getDescendantGroupIds(document, groupId)])
-      const beforeOrder = document.layers.map((item) => item.id)
-      const beforeGroupIds = new Map(selected.map((layer) => [layer.id, layer.groupId ?? null]))
-      const layerById = new Map(document.layers.map((item) => [item.id, item]))
-      const originalIndex = new Map(document.layers.map((item, index) => [item.id, index]))
-      const groupTopIndex = document.layers.reduce((top, item, index) => item.groupId && containerGroupIds.has(item.groupId) ? Math.max(top, index) : top, -1)
-      document.layers = document.layers.filter((item) => !uniqueIds.includes(item.id))
-      const insertionIndex = groupTopIndex < 0
-        ? 0
-        : document.layers.reduce((count, item) => (originalIndex.get(item.id) ?? Number.POSITIVE_INFINITY) <= groupTopIndex ? count + 1 : count, 0)
-      document.layers.splice(insertionIndex, 0, ...selected)
-      const parentGroupId = group.parentGroupId ?? null
-      for (const layer of selected) layer.groupId = parentGroupId
-      document.activeLayerId = selected.at(-1)!.id
-      session.selectedGroupId = null
-      session.selectedLayerIds = selected.map((layer) => layer.id)
-      const afterOrder = document.layers.map((item) => item.id)
-      const afterGroupIds = new Map(selected.map((layer) => [layer.id, parentGroupId]))
-      const apply = (order: string[], groupIds: Map<string, string | null>): void => {
-        document.layers = order.map((id) => layerById.get(id)!).filter(Boolean)
-        for (const layer of selected) layer.groupId = groupIds.get(layer.id) ?? null
-        document.activeLayerId = selected.at(-1)!.id
-      }
-      session.history.push({ label: '移动到图层组上方', bytes: (beforeOrder.length + afterOrder.length) * 8 + selected.length * 16, undo: () => apply(beforeOrder, beforeGroupIds), redo: () => apply(afterOrder, afterGroupIds) })
+      const history = assignLayersAboveGroupOperation(session, layerIds, groupId)
+      if (history) session.history.push(history)
     })
   },
 
   reorderGroup(groupId, targetGroupId, insertAfterTarget = true) {
     if (groupId === targetGroupId) return
     get().mutateActive((session) => {
-      const document = session.document
-      const group = getGroup(document, groupId)
-      const target = getGroup(document, targetGroupId)
-      if (getDescendantGroupIds(document, groupId).includes(targetGroupId)) {
+      if (!canMoveGroupInto(session.document, groupId, targetGroupId)) {
         set({ message: '不能把图层组移动到自己的子组旁。' })
         return
       }
-      const movingGroupIds = new Set([groupId, ...getDescendantGroupIds(document, groupId)])
-      const targetGroupIds = new Set([targetGroupId, ...getDescendantGroupIds(document, targetGroupId)])
-      const movingLayers = document.layers.filter((layer) => layer.groupId && movingGroupIds.has(layer.groupId))
-      const movingLayerIds = new Set(movingLayers.map((layer) => layer.id))
-      const beforeLayerOrder = document.layers.map((layer) => layer.id)
-      const beforeGroupOrder = document.groups.map((item) => item.id)
-      const beforeParent = group.parentGroupId ?? null
-      const layerById = new Map(document.layers.map((layer) => [layer.id, layer]))
-      const groupById = new Map(document.groups.map((item) => [item.id, item]))
-
-      const remainingLayers = document.layers.filter((layer) => !movingLayerIds.has(layer.id))
-      const targetLayerIndexes = remainingLayers.flatMap((layer, index) => layer.groupId && targetGroupIds.has(layer.groupId) ? [index] : [])
-      if (movingLayers.length > 0 && targetLayerIndexes.length > 0) {
-        const insertionIndex = insertAfterTarget ? Math.max(...targetLayerIndexes) + 1 : Math.min(...targetLayerIndexes)
-        remainingLayers.splice(insertionIndex, 0, ...movingLayers)
-        document.layers = remainingLayers
-      }
-
-      const remainingGroups = document.groups.filter((item) => item.id !== groupId)
-      const targetIndex = remainingGroups.findIndex((item) => item.id === targetGroupId)
-      remainingGroups.splice(targetIndex + (insertAfterTarget ? 1 : 0), 0, group)
-      document.groups = remainingGroups
-      group.parentGroupId = target.parentGroupId ?? null
-      session.selectedGroupId = group.id
-      session.selectedLayerIds = getLayerIdsInGroup(document, group.id)
-
-      const afterLayerOrder = document.layers.map((layer) => layer.id)
-      const afterGroupOrder = document.groups.map((item) => item.id)
-      const afterParent = group.parentGroupId ?? null
-      const apply = (layerOrder: string[], groupOrder: string[], parentGroupId: string | null): void => {
-        document.layers = layerOrder.map((id) => layerById.get(id)!).filter(Boolean)
-        document.groups = groupOrder.map((id) => groupById.get(id)!).filter(Boolean)
-        group.parentGroupId = parentGroupId
-        session.selectedGroupId = group.id
-        session.selectedLayerIds = getLayerIdsInGroup(document, group.id)
-      }
-      session.history.push({
-        label: '移动图层组',
-        bytes: (beforeLayerOrder.length + afterLayerOrder.length + beforeGroupOrder.length + afterGroupOrder.length) * 8 + 48,
-        undo: () => apply(beforeLayerOrder, beforeGroupOrder, beforeParent),
-        redo: () => apply(afterLayerOrder, afterGroupOrder, afterParent)
-      })
+      const history = reorderGroupOperation(session, groupId, targetGroupId, insertAfterTarget)
+      if (history) session.history.push(history)
     })
   },
 
   assignGroupToGroup(groupId, parentGroupId) {
     if (groupId === parentGroupId) return
     get().mutateActive((session) => {
-      const document = session.document
-      const group = getGroup(document, groupId)
-      getGroup(document, parentGroupId)
-      if (getDescendantGroupIds(document, groupId).includes(parentGroupId)) { set({ message: '不能把图层组移动到自己的子组中。' }); return }
-      const before = group.parentGroupId ?? null
-      if (before === parentGroupId) return
-      group.parentGroupId = parentGroupId
-      session.selectedGroupId = group.id
-      session.selectedLayerIds = getLayerIdsInGroup(document, group.id)
-      session.history.push({
-        label: '移动图层组', bytes: 48,
-        undo: () => { group.parentGroupId = before },
-        redo: () => { group.parentGroupId = parentGroupId }
-      })
+      if (!canMoveGroupInto(session.document, groupId, parentGroupId)) { set({ message: '不能把图层组移动到自己的子组中。' }); return }
+      const history = assignGroupToGroupOperation(session, groupId, parentGroupId)
+      if (history) session.history.push(history)
     })
   },
 
   assignGroupToRoot(groupId) {
     get().mutateActive((session) => {
-      const document = session.document
-      const group = getGroup(document, groupId)
-      const before = group.parentGroupId ?? null
-      if (!before) return
-      group.parentGroupId = null
-      session.selectedGroupId = group.id
-      session.selectedLayerIds = getLayerIdsInGroup(document, group.id)
-      session.history.push({ label: '移到最外层', bytes: 48, undo: () => { group.parentGroupId = before }, redo: () => { group.parentGroupId = null } })
+      const history = assignGroupToRootOperation(session, groupId)
+      if (history) session.history.push(history)
     })
   },
 
   createLayerGroup() {
     get().mutateActive((session) => {
-      const document = session.document
-      const selected = session.selectedGroupId ? [] : document.layers.filter((layer) => session.selectedLayerIds.includes(layer.id))
-      const layers = selected.length > 0 ? selected : session.selectedGroupId ? [] : [getLayer(document, document.activeLayerId)]
-      const commonParent = session.selectedGroupId ?? (layers.length > 0 && layers.every((layer) => (layer.groupId ?? null) === (layers[0].groupId ?? null)) ? layers[0].groupId ?? null : null)
-      const group = { id: createId('group'), name: `组 ${document.groups.length + 1}`, parentGroupId: commonParent, visible: true, locked: false, opacity: 1, blendMode: 'normal' as const }
-      document.groups.push(group)
-      const beforeGroupIds = new Map(layers.map((layer) => [layer.id, layer.groupId ?? null]))
-      for (const layer of layers) layer.groupId = group.id
-      session.selectedGroupId = group.id
-      session.selectedLayerIds = layers.map((layer) => layer.id)
-      session.history.push({
-        label: '新建图层组', bytes: 96 + layers.length * 16,
-        undo: () => { document.groups = document.groups.filter((item) => item.id !== group.id); for (const layer of layers) layer.groupId = beforeGroupIds.get(layer.id) ?? null; session.selectedGroupId = commonParent },
-        redo: () => { document.groups.push(group); for (const layer of layers) layer.groupId = group.id; session.selectedGroupId = group.id }
-      })
+      const history = createLayerGroupOperation(session, createId('group'), `组 ${session.document.groups.length + 1}`)
+      if (history) session.history.push(history)
     })
   },
 
   ungroupSelected() {
     get().mutateActive((session) => {
-      const document = session.document
-      const groupIds = new Set<string>()
-      if (session.selectedGroupId) groupIds.add(session.selectedGroupId)
-      else for (const layer of document.layers) if (session.selectedLayerIds.includes(layer.id) && layer.groupId) groupIds.add(layer.groupId)
-      if (groupIds.size === 0) return
-      const removedGroups = document.groups.filter((group) => groupIds.has(group.id))
-      const removedById = new Map(removedGroups.map((group) => [group.id, group]))
-      const beforeGroups = [...document.groups]
-      const beforeLayerGroupIds = new Map(document.layers.map((layer) => [layer.id, layer.groupId ?? null]))
-      const beforeParentGroupIds = new Map(document.groups.map((group) => [group.id, group.parentGroupId ?? null]))
-      const survivingParent = (groupId: string): string | null => {
-        let parentId = removedById.get(groupId)?.parentGroupId ?? null
-        const visited = new Set<string>()
-        while (parentId && groupIds.has(parentId) && !visited.has(parentId)) {
-          visited.add(parentId)
-          parentId = removedById.get(parentId)?.parentGroupId ?? null
-        }
-        return parentId
-      }
-      const applyUngroup = (): void => {
-        for (const layer of document.layers) if (layer.groupId && groupIds.has(layer.groupId)) layer.groupId = survivingParent(layer.groupId)
-        for (const group of document.groups) if (group.parentGroupId && groupIds.has(group.parentGroupId)) group.parentGroupId = survivingParent(group.parentGroupId)
-        document.groups = document.groups.filter((group) => !groupIds.has(group.id))
-      }
-      applyUngroup()
-      session.selectedGroupId = null
-      session.selectedLayerIds = document.layers.filter((layer) => beforeLayerGroupIds.get(layer.id) && groupIds.has(beforeLayerGroupIds.get(layer.id)!)).map((layer) => layer.id)
-      session.collapsedGroupIds = session.collapsedGroupIds.filter((id) => !groupIds.has(id))
-      session.history.push({
-        label: '解组图层', bytes: 96 + document.layers.length * 20 + document.groups.length * 16,
-        undo: () => {
-          document.groups = [...beforeGroups]
-          for (const layer of document.layers) layer.groupId = beforeLayerGroupIds.get(layer.id) ?? null
-          for (const group of document.groups) group.parentGroupId = beforeParentGroupIds.get(group.id) ?? null
-        },
-        redo: applyUngroup
-      })
+      const history = ungroupSelectedOperation(session)
+      if (history) session.history.push(history)
     })
   },
 
