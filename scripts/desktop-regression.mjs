@@ -8,12 +8,25 @@ const executable = join(process.cwd(), 'src-tauri', 'target', 'release', 'moonsp
 const startupProject = join(process.cwd(), 'src-tauri', 'resources', '示例.moonsprite')
 const debugPort = process.env.MOONSPRITE_DESKTOP_DEBUG_PORT ?? '9226'
 const userDataDirectory = await mkdtemp(join(tmpdir(), 'moonsprite-desktop-regression-'))
+const appDataDirectory = join(userDataDirectory, 'app-data')
 
 const assert = (condition, message) => {
   if (!condition) throw new Error(message)
 }
 
 const delay = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds))
+
+const rendererPage = async (browser) => {
+  for (let attempt = 0; attempt < 240; attempt += 1) {
+    for (const context of browser.contexts()) for (const page of context.pages()) {
+      if (!page.url().includes('tauri.localhost')) continue
+      if (await page.evaluate(() => Boolean(document.getElementById('root'))).catch(() => false)) return page
+    }
+    await delay(250)
+  }
+  const urls = browser.contexts().flatMap((context) => context.pages()).map((page) => page.url()).join(', ')
+  throw new Error(`MoonSprite renderer page was not found. Open pages: ${urls}`)
+}
 
 await Promise.all([access(executable), access(startupProject)])
 
@@ -22,6 +35,8 @@ const child = spawn(executable, [startupProject], {
   stdio: 'ignore',
   env: {
     ...process.env,
+    APPDATA: appDataDirectory,
+    LOCALAPPDATA: appDataDirectory,
     WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${debugPort} --user-data-dir=${userDataDirectory}`
   }
 })
@@ -40,11 +55,10 @@ try {
   }
   if (!browser) throw new Error('MoonSprite did not expose a WebView2 debugging endpoint.')
 
-  page = browser.contexts()[0]?.pages()[0]
-  if (!page) throw new Error('MoonSprite did not create a renderer page.')
+  page = await rendererPage(browser)
   await page.bringToFront()
 
-  await page.waitForFunction(() => Boolean(window.moonSprite))
+  await page.waitForFunction(() => Boolean(window.moonSprite), undefined, { timeout: 60_000 })
   await page.locator('.document-tab.active').waitFor({ state: 'visible' })
   const canvas = page.locator('canvas.stage-canvas[aria-label="像素画布"]')
   await canvas.waitFor({ state: 'visible' })
