@@ -14,9 +14,11 @@ use sysinfo::System;
 use tauri::{AppHandle, DragDropEvent, Emitter, Manager, State, WindowEvent};
 
 mod close_coordinator;
+mod platform_dialogs;
 mod platform_paths;
 mod platform_storage;
 use close_coordinator::CloseCoordinator;
+use platform_dialogs::{image_export_filter, project_save_filter};
 use platform_paths::ensure_executable_subdirectory;
 use platform_storage::atomic_write;
 
@@ -393,17 +395,6 @@ fn open_files() -> OpenDialogResult {
     }
 }
 
-fn save_dialog_filter(format: Option<&str>) -> (&'static str, Vec<&'static str>) {
-    match format {
-        Some("png") => ("PNG 图片", vec!["png"]),
-        Some("jpeg") => ("JPEG 图片", vec!["jpg", "jpeg"]),
-        Some("webp") => ("WebP 图片", vec!["webp"]),
-        Some("ase") => ("Aseprite 工程 (.ase)", vec!["ase"]),
-        Some("aseprite") => ("Aseprite 工程 (.aseprite)", vec!["aseprite"]),
-        _ => ("MoonSprite 工程", vec!["moonsprite"]),
-    }
-}
-
 #[tauri::command]
 fn save_project(default_path: Option<String>, format: Option<String>) -> SaveDialogResult {
     let has_explicit_directory = default_path
@@ -416,7 +407,7 @@ fn save_project(default_path: Option<String>, format: Option<String>) -> SaveDia
             dialog = dialog.set_directory(directory);
         }
     }
-    let (label, extensions) = save_dialog_filter(format.as_deref());
+    let (label, extensions) = project_save_filter(format.as_deref());
     let path = dialog.add_filter(label, &extensions).save_file();
     SaveDialogResult {
         canceled: path.is_none(),
@@ -426,13 +417,7 @@ fn save_project(default_path: Option<String>, format: Option<String>) -> SaveDia
 
 #[tauri::command]
 fn export_image(default_path: Option<String>, format: String) -> SaveDialogResult {
-    let (label, extensions): (&str, Vec<&str>) = match format.as_str() {
-        "jpeg" => ("JPEG 图片", vec!["jpg", "jpeg"]),
-        "webp" => ("WebP 图片", vec!["webp"]),
-        "svg" => ("SVG 图片", vec!["svg"]),
-        "aseprite" => ("Aseprite 工程", vec!["ase", "aseprite"]),
-        _ => ("PNG 图片", vec!["png"]),
-    };
+    let (label, extensions) = image_export_filter(&format);
     let path = file_dialog(default_path.as_deref())
         .add_filter(label, &extensions)
         .save_file();
