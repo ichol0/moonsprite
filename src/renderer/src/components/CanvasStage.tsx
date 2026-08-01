@@ -1,13 +1,14 @@
 import { useEffect, useRef, useState } from 'react'
 import type { RasterLayer, RgbaColor, SelectionMask, SelectionMode, SelectionRect } from '@shared/types'
 import { compositePixelWithLayerColor, compositeRegion, getActiveLayer, isLayerEffectivelyLocked, isLayerEffectivelyVisible, layerIndexAt, readLayerColor, readLayerColorAt } from '@/core/document'
-import { beginPixelEdit, revertPixelEdit, type PixelEdit } from '@/core/history'
+import { beginPixelEdit, revertPixelEdit } from '@/core/history'
 import { applyRelativeLuminance, blendOver, relativeLuminanceColor, TRANSPARENT } from '@/core/raster'
-import { appendPerfectPixelSegment, applySelectionTransform, applySelectionTranslationPreview, brushMaskOffsets, brushStampAnchor, brushStampDimensions, captureSelectionTransform, floodFill, normalizeSelection, outlinePixelIndices, paintBrush, paintLine, paintShape, sampleCompositeColor, selectionTranslationPreviewEdit, shapePixelPoints, type SelectionTransformSource, type SelectionTranslationPreview } from '@/core/tools'
+import { appendPerfectPixelSegment, applySelectionTransform, applySelectionTranslationPreview, brushMaskOffsets, brushStampAnchor, brushStampDimensions, captureSelectionTransform, floodFill, outlinePixelIndices, paintBrush, paintLine, paintShape, sampleCompositeColor, selectionTranslationPreviewEdit, shapePixelPoints } from '@/core/tools'
 import { useWorkspace, type DocumentSession } from '@/store/workspace'
 import { DRAWING_BRUSH_PREVIEW_ENABLED_KEY, ROTATION_INDICATOR_POSITION_KEY, parseDrawingBrushPreviewEnabled, parseRotationIndicatorPosition, type RotationIndicatorPosition } from '@/core/file-preferences'
 import { documentPointFromViewportPoint, rotationIndicatorFitsCanvas, unrotateViewportPoint, unrotatedViewportBounds, viewCanvasOrigin, viewPanDeltaFromScreen, viewRotationPivot, zoomViewAroundViewportPoint } from '@/core/view-geometry'
 import { cloneSelection, combineSelection, ellipseSelection, lassoSelection, magicWandSelection, rectSelection, selectionBoundarySegments, selectionContains, transformSelectionMask } from '@/core/selection'
+import { CanvasInputState, clampCanvasZoom as clampZoom, constrainedTranslation, resizeSelectionBounds, rotationHandles, shapeBounds, steppedCanvasZoom as steppedZoom, type CanvasDragState as DragState, type CanvasPoint as Point, type SelectionHandle, type SelectionHit, type SelectionRotationHandle } from '@/core/canvas-input'
 import rotationBackground1 from '@/assets/rotation-indicator/background-1.png'
 import rotationBackground2 from '@/assets/rotation-indicator/background-2.png'
 import rotationBackground3 from '@/assets/rotation-indicator/background-3.png'
@@ -16,64 +17,9 @@ import rotationBackground5 from '@/assets/rotation-indicator/background-5.png'
 import rotationBackground6 from '@/assets/rotation-indicator/background-6.png'
 import rotationPointer from '@/assets/rotation-indicator/pointer.png'
 
-interface Point { x: number; y: number }
 type RasterContext2D = CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D
 interface CompositeTile { canvas: OffscreenCanvas; x: number; y: number; width: number; height: number }
 interface CompositeSurface { canvas: OffscreenCanvas; revision: string }
-type SelectionHandle = 'nw' | 'n' | 'ne' | 'w' | 'e' | 'sw' | 's' | 'se'
-type SelectionRotationHandle = 'rotate-ne' | 'rotate-se' | 'rotate-sw' | 'rotate-nw'
-type SelectionHit = 'inside' | 'edge' | 'outside' | SelectionRotationHandle | SelectionHandle
-interface DragState {
-  kind: 'draw' | 'shape' | 'marquee' | 'lasso' | 'magic-preview' | 'sample-color' | 'move-content' | 'move-selection' | 'transform-content' | 'rotate-content' | 'move-layer' | 'brush-size' | 'canvas-resize' | 'canvas-move' | 'zoom-drag' | 'rotate-view' | 'pan'
-  start: Point
-  last: Point
-  edit?: PixelEdit
-  selectionStart?: SelectionMask | null
-  selectionMode?: SelectionMode
-  startPan?: Point
-  handle?: SelectionHandle
-  angle?: number
-  selectionSource?: SelectionTransformSource
-  previewEdit?: PixelEdit | null
-  copy?: boolean
-  startClient?: Point
-  startBrushSize?: number
-  startZoom?: number
-  startRotation?: number
-  startAngle?: number
-  patternOrigin?: Point
-  constrain?: boolean
-  path?: Point[]
-  canvasEdge?: 'n' | 'e' | 's' | 'w' | 'ne' | 'nw' | 'se' | 'sw'
-  canvasPreview?: { width: number; height: number; offsetX: number; offsetY: number }
-  floatingPaste?: boolean
-  previewSelection?: SelectionMask | null
-  appliedSelection?: SelectionMask | null
-  previewTarget?: SelectionRect
-  previewAngle?: number
-  previewPending?: boolean
-  translationPreview?: SelectionTranslationPreview | null
-  layerId?: string
-  layerOffset?: Point
-  duplicateOnDrag?: boolean
-  duplicatedLayerId?: string
-  duplicatedLayer?: RasterLayer
-  duplicatedLayerIndex?: number
-  originalSelectedLayerIds?: string[]
-  color?: RgbaColor
-  axisLock?: 'x' | 'y'
-  sampleSecondary?: boolean
-  temporarySampling?: boolean
-}
-
-const clampZoom = (zoom: number): number => Math.max(0.0625, Math.min(64, zoom))
-const ZOOM_LEVELS = [0.0625, 0.083333, 0.125, 0.166667, 0.25, 0.333333, 0.5, 0.666667, 1, 1.25, 1.5, 2, 3, 4, 5, 6, 8, 10, 12, 16, 20, 24, 32, 48, 64] as const
-const steppedZoom = (zoom: number, zoomIn: boolean): number => {
-  const epsilon = 0.000001
-  if (zoomIn) return ZOOM_LEVELS.find((level) => level > zoom + epsilon) ?? 64
-  for (let index = ZOOM_LEVELS.length - 1; index >= 0; index -= 1) if (ZOOM_LEVELS[index] < zoom - epsilon) return ZOOM_LEVELS[index]
-  return 0.0625
-}
 const COMPOSITE_TILE_SIZE = 128
 const MAX_COMPOSITE_TILES = 192
 const MAX_COMPOSITE_SURFACE_PIXELS = 2048 * 2048
@@ -87,15 +33,6 @@ const canvasCursors = {
 } as const
 const resizeCursors: Record<SelectionHandle, string> = { nw: canvasCursors.nwseResize, n: canvasCursors.nsResize, ne: canvasCursors.neswResize, w: canvasCursors.ewResize, e: canvasCursors.ewResize, sw: canvasCursors.neswResize, s: canvasCursors.nsResize, se: canvasCursors.nwseResize }
 const rotationCursors: Record<SelectionRotationHandle, string> = { 'rotate-ne': canvasCursors.rotateNe, 'rotate-se': canvasCursors.rotateSe, 'rotate-sw': canvasCursors.rotateSw, 'rotate-nw': canvasCursors.rotateNw }
-const rotationHandles = (box: { x: number; y: number; width: number; height: number }): Array<[SelectionRotationHandle, number, number]> => {
-  const offset = 15
-  return [
-    ['rotate-ne', box.x + box.width + offset, box.y - offset],
-    ['rotate-se', box.x + box.width + offset, box.y + box.height + offset],
-    ['rotate-sw', box.x - offset, box.y + box.height + offset],
-    ['rotate-nw', box.x - offset, box.y - offset]
-  ]
-}
 const colorLuminance = (color: RgbaColor): number => color.r * 0.2126 + color.g * 0.7152 + color.b * 0.0722
 const transparencyColorAt = (pixelX: number, pixelY: number): RgbaColor =>
   (Math.floor(pixelX / 16) + Math.floor(pixelY / 16)) % 2 === 0
@@ -117,33 +54,6 @@ const CANVAS_RESIZE_PREVIEW_EVENT = 'moonsprite:canvas-resize-preview'
 
 export function publishCanvasResizePreview(documentId: string, preview: DocumentSession['canvasResizePreview']): void {
   window.dispatchEvent(new CustomEvent(CANVAS_RESIZE_PREVIEW_EVENT, { detail: { documentId, preview } }))
-}
-
-const shapeBounds = (start: Point, end: Point, constrain = false): SelectionRect => {
-  if (!constrain) return normalizeSelection(start.x, start.y, end.x, end.y)
-  const deltaX = end.x - start.x
-  const deltaY = end.y - start.y
-  const distance = Math.max(Math.abs(deltaX), Math.abs(deltaY))
-  const constrainedEnd = {
-    x: start.x + (deltaX < 0 ? -distance : distance),
-    y: start.y + (deltaY < 0 ? -distance : distance)
-  }
-  return normalizeSelection(start.x, start.y, constrainedEnd.x, constrainedEnd.y)
-}
-
-const constrainedTranslation = (drag: DragState, deltaX: number, deltaY: number, shift: boolean): Point => {
-  if (!shift) {
-    drag.axisLock = undefined
-    return { x: deltaX, y: deltaY }
-  }
-  const absoluteX = Math.abs(deltaX)
-  const absoluteY = Math.abs(deltaY)
-  // Keep a small hysteresis band so a diagonal drag can intentionally change
-  // axis without flickering when both components are nearly equal.
-  if (!drag.axisLock && (absoluteX !== 0 || absoluteY !== 0)) drag.axisLock = absoluteX >= absoluteY ? 'x' : 'y'
-  if (drag.axisLock === 'x' && absoluteY > absoluteX * 1.2) drag.axisLock = 'y'
-  if (drag.axisLock === 'y' && absoluteX > absoluteY * 1.2) drag.axisLock = 'x'
-  return drag.axisLock === 'x' ? { x: deltaX, y: 0 } : { x: 0, y: deltaY }
 }
 
 const selectionPreviewPixels = (selection: SelectionMask): Set<string> => {
@@ -177,7 +87,7 @@ export function CanvasStage({ session }: { session: DocumentSession }) {
   const rotationPointerRef = useRef<HTMLDivElement>(null)
   const [rotationIndicatorPosition, setRotationIndicatorPosition] = useState<RotationIndicatorPosition>(() => parseRotationIndicatorPosition(localStorage.getItem(ROTATION_INDICATOR_POSITION_KEY)))
   const [drawingBrushPreviewEnabled, setDrawingBrushPreviewEnabled] = useState(() => parseDrawingBrushPreviewEnabled(localStorage.getItem(DRAWING_BRUSH_PREVIEW_ENABLED_KEY)))
-  const dragRef = useRef<DragState | null>(null)
+  const inputRef = useRef(new CanvasInputState())
   const rafRef = useRef<number | null>(null)
   const drawRequestRef = useRef<number | null>(null)
   // Keyboard listeners intentionally live across brush changes. Deferred draws
@@ -198,19 +108,12 @@ export function CanvasStage({ session }: { session: DocumentSession }) {
   const panPreviewFrameRef = useRef<number | null>(null)
   const selectionPreviewFrameRef = useRef<number | null>(null)
   const pendingPanPreviewOffsetRef = useRef<Point | null>(null)
-  const pointerRef = useRef<{ point: Point; clientX: number; clientY: number; ctrlKey: boolean; altKey: boolean; visible: boolean }>({ point: { x: 0, y: 0 }, clientX: 0, clientY: 0, ctrlKey: false, altKey: false, visible: false })
   const appliedRotationStyleRef = useRef('')
-  const samplingRef = useRef(false)
-  const altHeldRef = useRef(false)
-  const ctrlHeldRef = useRef(false)
-  const spaceHeldRef = useRef(false)
-  const shiftLinePreviewRef = useRef(false)
-  const modifierBrushSizeRef = useRef<{ x: number; y: number; size: number } | null>(null)
   const canvasResizePreviewRef = useRef(session.canvasResizePreview)
   const pendingCanvasResizeRef = useRef<DocumentSession['canvasResizePreview']>(null)
   const canvasResizeFrameRef = useRef<number | null>(null)
   canvasResizePreviewRef.current = session.canvasResizePreview
-  const activeViewDrag = dragRef.current?.kind === 'pan' || dragRef.current?.kind === 'zoom-drag' || dragRef.current?.kind === 'rotate-view'
+  const activeViewDrag = inputRef.current.drag?.kind === 'pan' || inputRef.current.drag?.kind === 'zoom-drag' || inputRef.current.drag?.kind === 'rotate-view'
   if (!activeViewDrag) liveViewRef.current = { ...session.view, ...pendingViewRef.current }
   const lineAnchor = session.tool === 'eraser' ? session.lastEraserPoint : session.lastPencilPoint
   const hasSelectedRasterLayer = !session.selectedGroupId && session.selectedLayerIds.some((id) => session.document.layers.some((layer) => layer.id === id))
@@ -282,7 +185,7 @@ export function CanvasStage({ session }: { session: DocumentSession }) {
   }, [session.document.id])
 
   useEffect(() => {
-    const releaseModifierSizing = (): void => { modifierBrushSizeRef.current = null }
+    const releaseModifierSizing = (): void => { inputRef.current.modifierBrushSize = null }
     window.addEventListener('keyup', releaseModifierSizing)
     window.addEventListener('blur', releaseModifierSizing)
     return () => {
@@ -426,7 +329,7 @@ export function CanvasStage({ session }: { session: DocumentSession }) {
     if (selectionPreviewFrameRef.current !== null) return
     selectionPreviewFrameRef.current = window.requestAnimationFrame(() => {
       selectionPreviewFrameRef.current = null
-      if (dragRef.current === drag) flushSelectionPreview(drag, true)
+      if (inputRef.current.drag === drag) flushSelectionPreview(drag, true)
     })
   }
 
@@ -546,7 +449,7 @@ export function CanvasStage({ session }: { session: DocumentSession }) {
     const overlay = selectionCanvasRef.current
     if (!canvas || !overlay) return
     const currentSession = useWorkspace.getState().sessions.find((item) => item.document.id === session.document.id) ?? session
-    const selectionDrag = dragRef.current
+    const selectionDrag = inputRef.current.drag
     const creatingSelection = selectionDrag?.kind === 'marquee' || selectionDrag?.kind === 'lasso'
     const previewingSelection = selectionDrag?.kind === 'magic-preview' || selectionDrag?.kind === 'move-selection' || selectionDrag?.kind === 'move-content' || selectionDrag?.kind === 'transform-content' || selectionDrag?.kind === 'rotate-content'
     const visibleSelection = previewingSelection ? selectionDrag.previewSelection ?? currentSession.selection : currentSession.selection
@@ -675,7 +578,7 @@ export function CanvasStage({ session }: { session: DocumentSession }) {
         compositeTilesRef.current.clear()
         compositeSurfaceRef.current = null
       }
-      const activeDrag = dragRef.current?.kind
+      const activeDrag = inputRef.current.drag?.kind
       context.save()
       context.beginPath()
       context.rect(originX, originY, canvasWidth, canvasHeight)
@@ -862,7 +765,7 @@ export function CanvasStage({ session }: { session: DocumentSession }) {
       }
     }
 
-    const drag = dragRef.current
+    const drag = inputRef.current.drag
     if (canRenderToolPreview && drag?.kind === 'shape') {
       const shape = shapeBounds(drag.start, drag.last, drag.constrain)
       for (const point of shapePixelPoints(shape, session.shapeKind)) {
@@ -871,8 +774,8 @@ export function CanvasStage({ session }: { session: DocumentSession }) {
         drawPreviewPixel(point.x, point.y, color)
       }
     }
-    if (canRenderToolPreview && !spaceHeldRef.current && !samplingRef.current && (session.tool === 'pencil' || session.tool === 'eraser') && shiftLinePreviewRef.current && pointerRef.current.visible && lineAnchor) {
-      drawStrokePreview(lineAnchor, pointerRef.current.point, session.tool === 'eraser')
+    if (canRenderToolPreview && !inputRef.current.spaceHeld && !inputRef.current.sampling && (session.tool === 'pencil' || session.tool === 'eraser') && inputRef.current.shiftLinePreview && inputRef.current.pointer.visible && lineAnchor) {
+      drawStrokePreview(lineAnchor, inputRef.current.pointer.point, session.tool === 'eraser')
     }
 
     context.strokeStyle = '#303641'
@@ -941,7 +844,7 @@ export function CanvasStage({ session }: { session: DocumentSession }) {
       context.stroke()
       context.restore()
     }
-    const selectionDrag = dragRef.current
+    const selectionDrag = inputRef.current.drag
     if (selectionDrag?.kind === 'marquee') {
       const drag = selectionDrag
       const bounds = shapeBounds(drag.start, drag.last, drag.constrain)
@@ -950,7 +853,7 @@ export function CanvasStage({ session }: { session: DocumentSession }) {
         : rectSelection(bounds.x, bounds.y, bounds.width, bounds.height)
       drawSelectionPathPreview(selectionPreviewPixels(previewSelection))
     }
-    if (dragRef.current?.kind === 'lasso' && (dragRef.current.path?.length ?? 0) > 1) {
+    if (inputRef.current.drag?.kind === 'lasso' && (inputRef.current.drag.path?.length ?? 0) > 1) {
       const previewPixels = new Set<string>()
       const addAxisLine = (from: Point, to: Point): void => {
         const stepX = Math.sign(to.x - from.x)
@@ -964,7 +867,7 @@ export function CanvasStage({ session }: { session: DocumentSession }) {
           previewPixels.add(`${x}:${y}`)
         }
       }
-      const path = dragRef.current.path ?? []
+      const path = inputRef.current.drag.path ?? []
       for (let index = 1; index < path.length; index += 1) {
         const previous = path[index - 1]
         const point = path[index]
@@ -978,13 +881,13 @@ export function CanvasStage({ session }: { session: DocumentSession }) {
       }
       drawSelectionPathPreview(previewPixels)
     }
-    if (dragRef.current?.kind === 'magic-preview' && dragRef.current.previewSelection) {
-      drawSelectionFillPreview(dragRef.current.previewSelection)
-      drawSelectionPathPreview(selectionPreviewPixels(dragRef.current.previewSelection))
+    if (inputRef.current.drag?.kind === 'magic-preview' && inputRef.current.drag.previewSelection) {
+      drawSelectionFillPreview(inputRef.current.drag.previewSelection)
+      drawSelectionPathPreview(selectionPreviewPixels(inputRef.current.drag.previewSelection))
     }
 
-    if (canRenderToolPreview && !dragRef.current && !spaceHeldRef.current && !samplingRef.current && pointerRef.current.visible && session.tool === 'selection') {
-      const point = pointerRef.current.point
+    if (canRenderToolPreview && !inputRef.current.drag && !inputRef.current.spaceHeld && !inputRef.current.sampling && inputRef.current.pointer.visible && session.tool === 'selection') {
+      const point = inputRef.current.pointer.point
       if (point.x >= 0 && point.y >= 0 && point.x < document.width && point.y < document.height && (!session.selection || !selectionContains(session.selection, point.x, point.y))) {
         const sampled = sampleCompositeColor(document, point.x, point.y)
         const background = sampled.a > 0 ? sampled : transparencyColorAt(point.x, point.y)
@@ -997,23 +900,23 @@ export function CanvasStage({ session }: { session: DocumentSession }) {
       }
     }
 
-    if (canRenderToolPreview && !spaceHeldRef.current && pointerRef.current.visible && !samplingRef.current && session.tool === 'fill') {
-      const point = pointerRef.current.point
+    if (canRenderToolPreview && !inputRef.current.spaceHeld && inputRef.current.pointer.visible && !inputRef.current.sampling && session.tool === 'fill') {
+      const point = inputRef.current.pointer.point
       if (point.x >= 0 && point.y >= 0 && point.x < document.width && point.y < document.height && (!session.selection || selectionContains(session.selection, point.x, point.y))) {
         drawPreviewPixel(point.x, point.y, previewColorAt(point.x, point.y))
       }
     }
 
-    if (canRenderToolPreview && !spaceHeldRef.current && pointerRef.current.visible && !samplingRef.current && session.tool === 'shape' && drag?.kind !== 'shape') {
-      const point = pointerRef.current.point
+    if (canRenderToolPreview && !inputRef.current.spaceHeld && inputRef.current.pointer.visible && !inputRef.current.sampling && session.tool === 'shape' && drag?.kind !== 'shape') {
+      const point = inputRef.current.pointer.point
       const layer = getActiveLayer(document)
       if (point.x >= 0 && point.y >= 0 && point.x < document.width && point.y < document.height && !isLayerEffectivelyLocked(document, layer) && (!session.selection || selectionContains(session.selection, point.x, point.y))) {
         drawPreviewPixel(point.x, point.y, previewColorAt(point.x, point.y))
       }
     }
 
-    if (canRenderToolPreview && !spaceHeldRef.current && pointerRef.current.visible && !samplingRef.current && (!drag || (drag.kind === 'draw' && drawingBrushPreviewEnabled)) && (session.tool === 'pencil' || session.tool === 'eraser')) {
-      const point = pointerRef.current.point
+    if (canRenderToolPreview && !inputRef.current.spaceHeld && inputRef.current.pointer.visible && !inputRef.current.sampling && (!drag || (drag.kind === 'draw' && drawingBrushPreviewEnabled)) && (session.tool === 'pencil' || session.tool === 'eraser')) {
+      const point = inputRef.current.pointer.point
       const drawing = drag?.kind === 'draw'
       const stamp = brushStampDimensions(session.brushSize, session.tool === 'pencil' || session.tool === 'eraser' ? activeBrushImage : null)
       const { x: beforeX, y: beforeY } = brushStampAnchor(session.brushSize, session.tool === 'pencil' || session.tool === 'eraser' ? activeBrushImage : null)
@@ -1085,16 +988,16 @@ export function CanvasStage({ session }: { session: DocumentSession }) {
 
   useEffect(() => {
     const updateShiftPreview = (active: boolean): void => {
-      if (shiftLinePreviewRef.current === active) return
-      shiftLinePreviewRef.current = active
+      if (inputRef.current.shiftLinePreview === active) return
+      inputRef.current.shiftLinePreview = active
       scheduleDraw()
     }
     const keyDown = (event: KeyboardEvent): void => {
-      if (event.key === 'Alt') altHeldRef.current = true
+      if (event.key === 'Alt') inputRef.current.altHeld = true
       if (event.key === 'Control') {
-        ctrlHeldRef.current = true
+        inputRef.current.ctrlHeld = true
         if (session.tool === 'rotate') {
-          const drag = dragRef.current
+          const drag = inputRef.current.drag
           if (drag?.kind === 'rotate-view') {
             liveViewRef.current = { ...liveViewRef.current, rotation: 0 }
             applyRotationStyle(liveViewRef.current)
@@ -1108,55 +1011,55 @@ export function CanvasStage({ session }: { session: DocumentSession }) {
         const target = event.target as HTMLElement | null
         if (target?.tagName === 'INPUT' || target?.tagName === 'TEXTAREA' || target?.tagName === 'SELECT' || target?.isContentEditable) return
         event.preventDefault()
-        if (!spaceHeldRef.current) {
-          spaceHeldRef.current = true
-          samplingRef.current = false
-          if (canvasRef.current && pointerRef.current.visible) canvasRef.current.style.cursor = dragRef.current?.kind === 'pan' ? canvasCursors.grabbing : canvasCursors.grab
+        if (!inputRef.current.spaceHeld) {
+          inputRef.current.spaceHeld = true
+          inputRef.current.sampling = false
+          if (canvasRef.current && inputRef.current.pointer.visible) canvasRef.current.style.cursor = inputRef.current.drag?.kind === 'pan' ? canvasCursors.grabbing : canvasCursors.grab
           scheduleDraw()
         }
         return
       }
-      if (spaceHeldRef.current) return
-      if (event.key === 'Shift' && (session.tool === 'pencil' || session.tool === 'eraser') && lineAnchor && pointerRef.current.visible) updateShiftPreview(true)
+      if (inputRef.current.spaceHeld) return
+      if (event.key === 'Shift' && (session.tool === 'pencil' || session.tool === 'eraser') && lineAnchor && inputRef.current.pointer.visible) updateShiftPreview(true)
       const modifierSizing = event.ctrlKey && event.altKey && (session.tool === 'pencil' || session.tool === 'eraser')
       if (modifierSizing) {
-        samplingRef.current = false
+        inputRef.current.sampling = false
         scheduleDraw()
-      } else if (event.key === 'Alt' && pointerRef.current.visible) {
+      } else if (event.key === 'Alt' && inputRef.current.pointer.visible) {
         event.preventDefault()
-        updateCursorAt(pointerRef.current.clientX, pointerRef.current.clientY, ctrlHeldRef.current, true)
+        updateCursorAt(inputRef.current.pointer.clientX, inputRef.current.pointer.clientY, inputRef.current.ctrlHeld, true)
         scheduleDraw()
-      } else if (event.key === 'Control' && pointerRef.current.visible) {
-        updateCursorAt(pointerRef.current.clientX, pointerRef.current.clientY, true, altHeldRef.current)
+      } else if (event.key === 'Control' && inputRef.current.pointer.visible) {
+        updateCursorAt(inputRef.current.pointer.clientX, inputRef.current.pointer.clientY, true, inputRef.current.altHeld)
         scheduleDraw()
       }
     }
     const keyUp = (event: KeyboardEvent): void => {
       if (event.code === 'Space') {
         event.preventDefault()
-        spaceHeldRef.current = false
+        inputRef.current.spaceHeld = false
         if (canvasRef.current) canvasRef.current.style.cursor = toolCursor(session.tool, session.primaryColor)
         scheduleDraw()
         return
       }
       if (event.key === 'Shift') updateShiftPreview(false)
       if (event.key === 'Alt' || event.key === 'Control') {
-        if (event.key === 'Alt') { event.preventDefault(); altHeldRef.current = false }
-        if (event.key === 'Control') ctrlHeldRef.current = false
-        samplingRef.current = session.tool === 'eyedropper'
-        modifierBrushSizeRef.current = null
-        if (pointerRef.current.visible) updateCursorAt(pointerRef.current.clientX, pointerRef.current.clientY, ctrlHeldRef.current, altHeldRef.current)
-        else if (canvasRef.current) canvasRef.current.style.cursor = samplingRef.current ? canvasCursors.eyedropper : toolCursor(session.tool, session.primaryColor)
+        if (event.key === 'Alt') { event.preventDefault(); inputRef.current.altHeld = false }
+        if (event.key === 'Control') inputRef.current.ctrlHeld = false
+        inputRef.current.sampling = session.tool === 'eyedropper'
+        inputRef.current.modifierBrushSize = null
+        if (inputRef.current.pointer.visible) updateCursorAt(inputRef.current.pointer.clientX, inputRef.current.pointer.clientY, inputRef.current.ctrlHeld, inputRef.current.altHeld)
+        else if (canvasRef.current) canvasRef.current.style.cursor = inputRef.current.sampling ? canvasCursors.eyedropper : toolCursor(session.tool, session.primaryColor)
         scheduleDraw()
       }
     }
     const blur = (): void => {
       updateShiftPreview(false)
-      spaceHeldRef.current = false
-      samplingRef.current = false
-      altHeldRef.current = false
-      ctrlHeldRef.current = false
-      modifierBrushSizeRef.current = null
+      inputRef.current.spaceHeld = false
+      inputRef.current.sampling = false
+      inputRef.current.altHeld = false
+      inputRef.current.ctrlHeld = false
+      inputRef.current.modifierBrushSize = null
       if (canvasRef.current) canvasRef.current.style.cursor = toolCursor(session.tool, session.primaryColor)
     }
     const visibilityChange = (): void => { if (document.hidden) blur() }
@@ -1309,16 +1212,16 @@ export function CanvasStage({ session }: { session: DocumentSession }) {
   const updateCursorAt = (clientX: number, clientY: number, ctrlKey: boolean, altKey: boolean): void => {
     const canvas = canvasRef.current
     if (!canvas) return
-    if (spaceHeldRef.current) {
-      samplingRef.current = false
-      canvas.style.cursor = dragRef.current?.kind === 'pan' ? canvasCursors.grabbing : canvasCursors.grab
+    if (inputRef.current.spaceHeld) {
+      inputRef.current.sampling = false
+      canvas.style.cursor = inputRef.current.drag?.kind === 'pan' ? canvasCursors.grabbing : canvasCursors.grab
       return
     }
     const activeResizePreview = canvasResizePreviewRef.current
     if (activeResizePreview) {
-      samplingRef.current = false
-      shiftLinePreviewRef.current = false
-      const drag = dragRef.current
+      inputRef.current.sampling = false
+      inputRef.current.shiftLinePreview = false
+      const drag = inputRef.current.drag
       const resizeEdge = drag?.kind === 'canvas-resize' ? drag.canvasEdge : canvasResizeHitAt(clientX, clientY)
       if (resizeEdge) canvas.style.cursor = resizeEdge === 'n' || resizeEdge === 's' ? canvasCursors.nsResize : resizeEdge === 'e' || resizeEdge === 'w' ? canvasCursors.ewResize : resizeEdge === 'nw' || resizeEdge === 'se' ? canvasCursors.nwseResize : canvasCursors.neswResize
       else if (drag?.kind === 'canvas-move') canvas.style.cursor = canvasCursors.move
@@ -1338,32 +1241,32 @@ export function CanvasStage({ session }: { session: DocumentSession }) {
       }
     }
     if (insideDocument && point && contrastColor.a < 255) contrastColor = blendOver(transparencyColorAt(point.x, point.y), contrastColor)
-    if (dragRef.current?.kind === 'move-content' || dragRef.current?.kind === 'move-selection') {
-      samplingRef.current = false
-      canvas.style.cursor = dragRef.current.kind === 'move-content'
-        ? dragRef.current.copy ? canvasCursors.copy : canvasCursors.move
+    if (inputRef.current.drag?.kind === 'move-content' || inputRef.current.drag?.kind === 'move-selection') {
+      inputRef.current.sampling = false
+      canvas.style.cursor = inputRef.current.drag.kind === 'move-content'
+        ? inputRef.current.drag.copy ? canvasCursors.copy : canvasCursors.move
         : canvasCursors.selectionMove
       return
     }
-    if (dragRef.current?.kind === 'move-layer') {
-      samplingRef.current = false
-      canvas.style.cursor = dragRef.current.duplicateOnDrag ? canvasCursors.copy : canvasCursors.move
+    if (inputRef.current.drag?.kind === 'move-layer') {
+      inputRef.current.sampling = false
+      canvas.style.cursor = inputRef.current.drag.duplicateOnDrag ? canvasCursors.copy : canvasCursors.move
       return
     }
-    if (dragRef.current?.kind === 'marquee' || dragRef.current?.kind === 'lasso' || dragRef.current?.kind === 'magic-preview') {
-      samplingRef.current = false
+    if (inputRef.current.drag?.kind === 'marquee' || inputRef.current.drag?.kind === 'lasso' || inputRef.current.drag?.kind === 'magic-preview') {
+      inputRef.current.sampling = false
       canvas.style.cursor = toolCursor('selection', contrastColor)
       return
     }
-    const altActive = altHeldRef.current || altKey
-    const ctrlActive = ctrlHeldRef.current || ctrlKey
+    const altActive = inputRef.current.altHeld || altKey
+    const ctrlActive = inputRef.current.ctrlHeld || ctrlKey
     const modifierSizing = ctrlKey && altActive && (session.tool === 'pencil' || session.tool === 'eraser')
     const selectionHit = session.tool === 'selection' ? selectionHitAt(clientX, clientY) : 'outside'
     const moveCopyAvailable = session.tool === 'move' && insideDocument && Boolean(session.moveAutoSelect ? (point && topEditableLayerAt(point)) : activeLayerEditable)
     const selectionCopyAvailable = session.tool === 'selection' && !altActive && ctrlActive && selectionHit === 'inside' && activeLayerEditable && !session.pendingPaste
     const copyAvailable = (altActive && moveCopyAvailable) || selectionCopyAvailable
     const sampling = session.tool === 'eyedropper' || (altActive && !(session.tool === 'move' && moveCopyAvailable) && !modifierSizing)
-    samplingRef.current = sampling
+    inputRef.current.sampling = sampling
     const available = insideDocument && activeLayerEditable
     const resizeEdge = canvasResizeHitAt(clientX, clientY)
     if (resizeEdge) { canvas.style.cursor = resizeEdge === 'n' || resizeEdge === 's' ? canvasCursors.nsResize : resizeEdge === 'e' || resizeEdge === 'w' ? canvasCursors.ewResize : resizeEdge === 'nw' || resizeEdge === 'se' ? canvasCursors.nwseResize : canvasCursors.neswResize }
@@ -1386,14 +1289,14 @@ export function CanvasStage({ session }: { session: DocumentSession }) {
 
   const updateCursor = (event: React.PointerEvent<HTMLCanvasElement>): void => {
     const point = localPointAt(event.clientX, event.clientY)
-    if (point) pointerRef.current = { point, clientX: event.clientX, clientY: event.clientY, ctrlKey: event.ctrlKey, altKey: event.altKey, visible: true }
+    if (point) inputRef.current.updatePointer({ point, clientX: event.clientX, clientY: event.clientY, ctrlKey: event.ctrlKey, altKey: event.altKey })
     updateCursorAt(event.clientX, event.clientY, event.ctrlKey, event.altKey)
   }
 
   useEffect(() => {
-    const pointer = pointerRef.current
+    const pointer = inputRef.current.pointer
     if (!pointer.visible) return
-    updateCursorAt(pointer.clientX, pointer.clientY, ctrlHeldRef.current, altHeldRef.current)
+    updateCursorAt(pointer.clientX, pointer.clientY, inputRef.current.ctrlHeld, inputRef.current.altHeld)
     scheduleDraw()
   // Cursor assets and the preview under a stationary pointer must change with the selected tool.
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1402,72 +1305,16 @@ export function CanvasStage({ session }: { session: DocumentSession }) {
   const markChanged = (dirty = true): void => useWorkspace.getState().mutateActive(() => {}, dirty)
   const activeColor = (button = 0): RgbaColor => session.tool === 'eraser' ? TRANSPARENT : button === 2 ? session.secondaryColor : session.primaryColor
 
-  const resizeSelection = (start: SelectionRect, point: Point, handle: SelectionHandle, proportional = false, integerScale = false): SelectionRect => {
-    let left = start.x
-    let top = start.y
-    let right = start.x + start.width - 1
-    let bottom = start.y + start.height - 1
-    if (handle.includes('w')) left = Math.min(right, Math.max(0, point.x))
-    if (handle.includes('e')) right = Math.max(left, Math.min(session.document.width - 1, point.x))
-    if (handle.includes('n')) top = Math.min(bottom, Math.max(0, point.y))
-    if (handle.includes('s')) bottom = Math.max(top, Math.min(session.document.height - 1, point.y))
-
-    if (proportional) {
-      const rawWidth = right - left + 1
-      const rawHeight = bottom - top + 1
-      const aspect = start.width / start.height
-      const horizontalHandle = handle.includes('w') || handle.includes('e')
-      const verticalHandle = handle.includes('n') || handle.includes('s')
-      const widthDriven = horizontalHandle && !verticalHandle
-        ? true
-        : verticalHandle && !horizontalHandle
-          ? false
-          : rawWidth / start.width >= rawHeight / start.height
-      let width = widthDriven ? rawWidth : Math.max(1, Math.round(rawHeight * aspect))
-      let height = widthDriven ? Math.max(1, Math.round(rawWidth / aspect)) : rawHeight
-      if (integerScale) {
-        const scale = Math.max(1, Math.round(widthDriven ? rawWidth / start.width : rawHeight / start.height))
-        width = start.width * scale
-        height = start.height * scale
-      }
-
-      if (handle.includes('w')) left = right - width + 1
-      else if (handle.includes('e')) right = left + width - 1
-      else {
-        const center = (left + right) / 2
-        left = Math.round(center - (width - 1) / 2)
-        right = left + width - 1
-      }
-      if (handle.includes('n')) top = bottom - height + 1
-      else if (handle.includes('s')) bottom = top + height - 1
-      else {
-        const center = (top + bottom) / 2
-        top = Math.round(center - (height - 1) / 2)
-        bottom = top + height - 1
-      }
-
-      if (left < 0) { right -= left; left = 0 }
-      if (top < 0) { bottom -= top; top = 0 }
-      if (right >= session.document.width) { left -= right - session.document.width + 1; right = session.document.width - 1 }
-      if (bottom >= session.document.height) { top -= bottom - session.document.height + 1; bottom = session.document.height - 1 }
-      left = Math.max(0, left)
-      top = Math.max(0, top)
-      right = Math.max(left, right)
-      bottom = Math.max(top, bottom)
-    }
-    return { x: left, y: top, width: right - left + 1, height: bottom - top + 1 }
-  }
-
   const pointerDown = (event: React.PointerEvent<HTMLCanvasElement>): void => {
     event.currentTarget.tabIndex = -1
     event.currentTarget.focus({ preventScroll: true })
     const state = useWorkspace.getState()
     if (zoomPreviewStartRef.current) finishZoomPreview()
     if (state.activeId !== session.document.id) { state.setActive(session.document.id); return }
-    if (event.button === 1 || (event.button === 0 && spaceHeldRef.current)) {
+    if (event.button === 1 || (event.button === 0 && inputRef.current.spaceHeld)) {
       const origin = { x: 0, y: 0 }
       const view = liveViewRef.current
-      dragRef.current = { kind: 'pan', start: origin, last: origin, startPan: { x: view.panX, y: view.panY }, startClient: { x: event.clientX, y: event.clientY } }
+      inputRef.current.drag = { kind: 'pan', start: origin, last: origin, startPan: { x: view.panX, y: view.panY }, startClient: { x: event.clientX, y: event.clientY } }
       beginPanPreview()
       event.currentTarget.setPointerCapture(event.pointerId)
       event.currentTarget.style.cursor = canvasCursors.grabbing
@@ -1477,17 +1324,17 @@ export function CanvasStage({ session }: { session: DocumentSession }) {
     const point = localPoint(event)
     if (!point) return
     const selectionPoint = clampSelectionPoint(point)
-    pointerRef.current = { point, clientX: event.clientX, clientY: event.clientY, ctrlKey: event.ctrlKey, altKey: event.altKey, visible: true }
+    inputRef.current.updatePointer({ point, clientX: event.clientX, clientY: event.clientY, ctrlKey: event.ctrlKey, altKey: event.altKey })
     event.currentTarget.setPointerCapture(event.pointerId)
     const resizeEdge = canvasResizeHit(event)
     const activeResizePreview = canvasResizePreviewRef.current
     if (activeResizePreview) {
-      samplingRef.current = false
-      shiftLinePreviewRef.current = false
+      inputRef.current.sampling = false
+      inputRef.current.shiftLinePreview = false
       if (event.button === 0 && resizeEdge) {
-        dragRef.current = { kind: 'canvas-resize', start: point, last: point, canvasEdge: resizeEdge, canvasPreview: { ...activeResizePreview } }
+        inputRef.current.drag = { kind: 'canvas-resize', start: point, last: point, canvasEdge: resizeEdge, canvasPreview: { ...activeResizePreview } }
       } else if (event.button === 0 && canvasResizeContains(event)) {
-        dragRef.current = { kind: 'canvas-move', start: point, last: point, canvasPreview: { ...activeResizePreview } }
+        inputRef.current.drag = { kind: 'canvas-move', start: point, last: point, canvasPreview: { ...activeResizePreview } }
         event.currentTarget.style.cursor = canvasCursors.move
       }
       return
@@ -1499,8 +1346,8 @@ export function CanvasStage({ session }: { session: DocumentSession }) {
     if (focusesRasterLayer) state.selectLayer(session.document.activeLayerId)
     const hasRasterFocus = hasSelectedRasterLayer || focusesRasterLayer
     if (event.ctrlKey && event.altKey && (session.tool === 'pencil' || session.tool === 'eraser') && !activeBrushImage?.intrinsicSize && event.button === 0) {
-      samplingRef.current = false
-      dragRef.current = { kind: 'brush-size', start: point, last: point, startClient: { x: event.clientX, y: event.clientY }, startBrushSize: session.brushSize }
+      inputRef.current.sampling = false
+      inputRef.current.drag = { kind: 'brush-size', start: point, last: point, startClient: { x: event.clientX, y: event.clientY }, startBrushSize: session.brushSize }
       event.currentTarget.style.cursor = canvasCursors.ewResize
       return
     }
@@ -1509,8 +1356,8 @@ export function CanvasStage({ session }: { session: DocumentSession }) {
       const secondary = event.button === 2
       const setSampledColor = secondary ? state.setSecondaryColor : state.setPrimaryColor
       setSampledColor(sampleCompositeColor(session.document, point.x, point.y))
-      samplingRef.current = true
-      dragRef.current = { kind: 'sample-color', start: point, last: point, sampleSecondary: secondary, temporarySampling }
+      inputRef.current.sampling = true
+      inputRef.current.drag = { kind: 'sample-color', start: point, last: point, sampleSecondary: secondary, temporarySampling }
       event.currentTarget.style.cursor = canvasCursors.eyedropper
       draw()
     }
@@ -1523,7 +1370,7 @@ export function CanvasStage({ session }: { session: DocumentSession }) {
       const target = session.moveAutoSelect ? topEditableLayerAt(point) : (canEditLayer ? editableLayer : null)
       if (!target) { if (event.altKey) sampleAtPoint(); return }
       if (session.moveAutoSelect) state.selectLayer(target.id)
-      dragRef.current = {
+      inputRef.current.drag = {
         kind: 'move-layer', start: point, last: point, layerId: target.id,
         layerOffset: { x: target.offsetX, y: target.offsetY }, duplicateOnDrag: event.altKey,
         originalSelectedLayerIds: [...session.selectedLayerIds]
@@ -1539,7 +1386,7 @@ export function CanvasStage({ session }: { session: DocumentSession }) {
       const bounds = stageBounds()
       const pivot = viewRotationPivot(bounds.width, bounds.height, liveViewRef.current.panX, liveViewRef.current.panY, rotationIndicatorPosition)
       const angle = Math.atan2(event.clientY - bounds.top - pivot.y, event.clientX - bounds.left - pivot.x) * 180 / Math.PI
-      dragRef.current = { kind: 'rotate-view', start: point, last: point, startAngle: angle, startRotation: liveViewRef.current.rotation, startPan: { x: liveViewRef.current.panX, y: liveViewRef.current.panY } }
+      inputRef.current.drag = { kind: 'rotate-view', start: point, last: point, startAngle: angle, startRotation: liveViewRef.current.rotation, startPan: { x: liveViewRef.current.panX, y: liveViewRef.current.panY } }
       updateRotationIndicator(liveViewRef.current.rotation, true)
       return
     }
@@ -1562,7 +1409,7 @@ export function CanvasStage({ session }: { session: DocumentSession }) {
         const source = floating?.source ?? captureSelectionTransform(session.document, session.selection)
         if (source) {
           const selectionStart = cloneSelection(session.selection)
-          dragRef.current = { kind: 'move-content', start: point, last: point, selectionStart, selectionSource: source, previewEdit: floating?.previewEdit, copy: floating ? true : event.ctrlKey, floatingPaste: Boolean(floating), previewSelection: selectionStart, appliedSelection: selectionStart }
+          inputRef.current.drag = { kind: 'move-content', start: point, last: point, selectionStart, selectionSource: source, previewEdit: floating?.previewEdit, copy: floating ? true : event.ctrlKey, floatingPaste: Boolean(floating), previewSelection: selectionStart, appliedSelection: selectionStart }
           event.currentTarget.style.cursor = !floating && event.ctrlKey ? canvasCursors.copy : canvasCursors.move
           return
         }
@@ -1571,12 +1418,12 @@ export function CanvasStage({ session }: { session: DocumentSession }) {
       if (hit === 'edge' && session.selection) {
         if (session.pendingPaste) {
           const selectionStart = cloneSelection(session.selection)
-          dragRef.current = { kind: 'move-content', start: point, last: point, selectionStart, selectionSource: session.pendingPaste.source, previewEdit: session.pendingPaste.previewEdit, copy: true, floatingPaste: true, previewSelection: selectionStart, appliedSelection: selectionStart }
+          inputRef.current.drag = { kind: 'move-content', start: point, last: point, selectionStart, selectionSource: session.pendingPaste.source, previewEdit: session.pendingPaste.previewEdit, copy: true, floatingPaste: true, previewSelection: selectionStart, appliedSelection: selectionStart }
           event.currentTarget.style.cursor = canvasCursors.selectionMove
           return
         }
         const selectionStart = cloneSelection(session.selection)
-        dragRef.current = { kind: 'move-selection', start: point, last: point, selectionStart, previewSelection: selectionStart }
+        inputRef.current.drag = { kind: 'move-selection', start: point, last: point, selectionStart, previewSelection: selectionStart }
         event.currentTarget.style.cursor = canvasCursors.selectionMove
         return
       }
@@ -1585,7 +1432,7 @@ export function CanvasStage({ session }: { session: DocumentSession }) {
         const source = floating?.source ?? captureSelectionTransform(session.document, session.selection)
         if (source) {
           const selectionStart = cloneSelection(session.selection)
-          dragRef.current = { kind: 'rotate-content', start: point, last: point, selectionStart, selectionSource: source, previewEdit: floating?.previewEdit, angle: 0, copy: floating ? true : event.ctrlKey, floatingPaste: Boolean(floating), previewSelection: selectionStart, appliedSelection: selectionStart }
+          inputRef.current.drag = { kind: 'rotate-content', start: point, last: point, selectionStart, selectionSource: source, previewEdit: floating?.previewEdit, angle: 0, copy: floating ? true : event.ctrlKey, floatingPaste: Boolean(floating), previewSelection: selectionStart, appliedSelection: selectionStart }
         }
         event.currentTarget.style.cursor = rotationCursors[hit as SelectionRotationHandle]
         return
@@ -1595,7 +1442,7 @@ export function CanvasStage({ session }: { session: DocumentSession }) {
         const source = floating?.source ?? captureSelectionTransform(session.document, session.selection)
         if (source) {
           const selectionStart = cloneSelection(session.selection)
-          dragRef.current = { kind: 'transform-content', start: point, last: point, selectionStart, selectionSource: source, previewEdit: floating?.previewEdit, handle: hit as SelectionHandle, copy: floating ? true : event.ctrlKey, floatingPaste: Boolean(floating), previewSelection: selectionStart, appliedSelection: selectionStart }
+          inputRef.current.drag = { kind: 'transform-content', start: point, last: point, selectionStart, selectionSource: source, previewEdit: floating?.previewEdit, handle: hit as SelectionHandle, copy: floating ? true : event.ctrlKey, floatingPaste: Boolean(floating), previewSelection: selectionStart, appliedSelection: selectionStart }
         }
         return
       }
@@ -1604,16 +1451,16 @@ export function CanvasStage({ session }: { session: DocumentSession }) {
         const before = cloneSelection(session.selection)
         const incoming = magicWandSelection(session.document, getActiveLayer(session.document), point.x, point.y, session.wandTolerance, session.wandContiguous)
         const next = combineSelection(before, incoming, mode)
-        dragRef.current = { kind: 'magic-preview', start: point, last: point, selectionStart: before, selectionMode: mode, previewSelection: next }
+        inputRef.current.drag = { kind: 'magic-preview', start: point, last: point, selectionStart: before, selectionMode: mode, previewSelection: next }
         draw()
         return
       }
-      if (session.selectionKind === 'lasso') { dragRef.current = { kind: 'lasso', start: point, last: point, selectionStart: cloneSelection(session.selection), selectionMode: mode, path: [point] }; return }
+      if (session.selectionKind === 'lasso') { inputRef.current.drag = { kind: 'lasso', start: point, last: point, selectionStart: cloneSelection(session.selection), selectionMode: mode, path: [point] }; return }
     }
     if (event.altKey && (event.button === 0 || event.button === 2)) { sampleAtPoint(); return }
     if (session.tool === 'hand' || (event.shiftKey && !selectionTool && session.tool !== 'shape' && session.tool !== 'pencil' && session.tool !== 'eraser')) {
       const view = liveViewRef.current
-      dragRef.current = { kind: 'pan', start: point, last: point, startPan: { x: view.panX, y: view.panY }, startClient: { x: event.clientX, y: event.clientY } }
+      inputRef.current.drag = { kind: 'pan', start: point, last: point, startPan: { x: view.panX, y: view.panY }, startClient: { x: event.clientX, y: event.clientY } }
       beginPanPreview()
       event.currentTarget.setPointerCapture(event.pointerId)
       event.currentTarget.style.cursor = canvasCursors.grabbing
@@ -1621,19 +1468,19 @@ export function CanvasStage({ session }: { session: DocumentSession }) {
     }
     if (session.tool === 'zoom') {
       const view = liveViewRef.current
-      dragRef.current = { kind: 'zoom-drag', start: point, last: point, startClient: { x: event.clientX, y: event.clientY }, startZoom: view.zoom }
+      inputRef.current.drag = { kind: 'zoom-drag', start: point, last: point, startClient: { x: event.clientX, y: event.clientY }, startZoom: view.zoom }
       return
     }
     if (session.tool === 'fill') { if (!canEditLayer) return; const edit = floodFill(session.document, editableLayer, point.x, point.y, activeColor(event.button), session.selection, session.fillMode === 'contiguous', activeBrushImage, session.brushSize, session.brushImageSettings, activeBrushTexture, Math.max(1, Math.round(session.brushSize / 8)), proceduralAntialiasStrength, activeBrushPaintMode); if (edit) state.commitPixelEdit(edit, activeBrushImage || activeBrushTexture !== 'solid' ? '笔刷填充' : session.fillMode === 'contiguous' ? '连续填充' : '不连续填充'); return }
     if (session.tool === 'eyedropper') { sampleAtPoint(false); return }
     if (session.tool === 'selection' && (session.selectionKind === 'rectangle' || session.selectionKind === 'ellipse')) {
       const mode = selectionMode()
-      dragRef.current = { kind: 'marquee', start: point, last: point, selectionStart: cloneSelection(session.selection), selectionMode: mode, constrain: event.shiftKey }
+      inputRef.current.drag = { kind: 'marquee', start: point, last: point, selectionStart: cloneSelection(session.selection), selectionMode: mode, constrain: event.shiftKey }
       const initial = session.selectionKind === 'ellipse' ? ellipseSelection(selectionPoint.x, selectionPoint.y, 1, 1) : rectSelection(selectionPoint.x, selectionPoint.y, 1, 1)
       state.setSelection(combineSelection(session.selection, initial, mode))
       return
     }
-    if (session.tool === 'shape') { if (!canEditLayer) return; dragRef.current = { kind: 'shape', start: point, last: point, constrain: event.shiftKey }; draw(); return }
+    if (session.tool === 'shape') { if (!canEditLayer) return; inputRef.current.drag = { kind: 'shape', start: point, last: point, constrain: event.shiftKey }; draw(); return }
     if (session.tool !== 'pencil' && session.tool !== 'eraser') return
     if (!hasRasterFocus) return
     if (!canEditLayer) return
@@ -1641,12 +1488,12 @@ export function CanvasStage({ session }: { session: DocumentSession }) {
     const patternOrigin = brushPatternOrigin(point)
     paintBrush(session.document, editableLayer, edit, point.x, point.y, session.brushSize, activeColor(event.button), session.brushShape, session.selection, session.tool === 'pencil' || session.tool === 'eraser' ? activeBrushTexture : 'solid', session.brushTextureScale, session.tool === 'pencil' || session.tool === 'eraser' ? activeBrushImage : null, session.brushImageSettings, proceduralAntialiasStrength, activeBrushPaintMode, patternOrigin)
     invalidateStrokeSegment(point, point)
-    dragRef.current = { kind: 'draw', start: point, last: point, edit, path: [point], patternOrigin, color: activeColor(event.button) }
+    inputRef.current.drag = { kind: 'draw', start: point, last: point, edit, path: [point], patternOrigin, color: activeColor(event.button) }
     markChanged()
   }
 
   const pointerMove = (event: React.PointerEvent<HTMLCanvasElement>): void => {
-    const activeDrag = dragRef.current
+    const activeDrag = inputRef.current.drag
     if (activeDrag?.kind === 'pan' && activeDrag.startPan && activeDrag.startClient) {
       const delta = viewPanDeltaFromScreen(event.clientX - activeDrag.startClient.x, event.clientY - activeDrag.startClient.y, liveViewRef.current.rotation, rotationIndicatorPosition)
       schedulePanPreview(
@@ -1658,22 +1505,22 @@ export function CanvasStage({ session }: { session: DocumentSession }) {
       return
     }
     updateCursor(event)
-    shiftLinePreviewRef.current = Boolean(!canvasResizePreviewRef.current && !spaceHeldRef.current && event.shiftKey && (session.tool === 'pencil' || session.tool === 'eraser') && lineAnchor)
+    inputRef.current.shiftLinePreview = Boolean(!canvasResizePreviewRef.current && !inputRef.current.spaceHeld && event.shiftKey && (session.tool === 'pencil' || session.tool === 'eraser') && lineAnchor)
     const point = localPoint(event)
-    if (point) pointerRef.current = { point, clientX: event.clientX, clientY: event.clientY, ctrlKey: event.ctrlKey, altKey: event.altKey, visible: true }
+    if (point) inputRef.current.updatePointer({ point, clientX: event.clientX, clientY: event.clientY, ctrlKey: event.ctrlKey, altKey: event.altKey })
     const modifierSizing = event.ctrlKey && event.altKey && (session.tool === 'pencil' || session.tool === 'eraser')
-    if (modifierSizing && !dragRef.current) {
-      if (!modifierBrushSizeRef.current) modifierBrushSizeRef.current = { x: event.clientX, y: event.clientY, size: session.brushSize }
+    if (modifierSizing && !inputRef.current.drag) {
+      if (!inputRef.current.modifierBrushSize) inputRef.current.modifierBrushSize = { x: event.clientX, y: event.clientY, size: session.brushSize }
       else {
-        const delta = event.clientX - modifierBrushSizeRef.current.x
-        useWorkspace.getState().setBrushSize(modifierBrushSizeRef.current.size + Math.round(delta / 4))
+        const delta = event.clientX - inputRef.current.modifierBrushSize.x
+        useWorkspace.getState().setBrushSize(inputRef.current.modifierBrushSize.size + Math.round(delta / 4))
       }
       event.currentTarget.style.cursor = canvasCursors.ewResize
       return
     }
-    if (!modifierSizing) modifierBrushSizeRef.current = null
+    if (!modifierSizing) inputRef.current.modifierBrushSize = null
     if (!point) return
-    const drag = dragRef.current
+    const drag = inputRef.current.drag
     if (!drag) { scheduleDraw(); return }
     const state = useWorkspace.getState()
     const previousPoint = drag.last
@@ -1689,7 +1536,7 @@ export function CanvasStage({ session }: { session: DocumentSession }) {
         const sampled = sampleCompositeColor(session.document, point.x, point.y)
         if (drag.sampleSecondary) state.setSecondaryColor(sampled)
         else state.setPrimaryColor(sampled)
-        samplingRef.current = true
+        inputRef.current.sampling = true
       }
       event.currentTarget.style.cursor = canvasCursors.eyedropper
       scheduleDraw()
@@ -1834,7 +1681,7 @@ export function CanvasStage({ session }: { session: DocumentSession }) {
       return
     }
     if (drag.kind === 'transform-content' && drag.selectionStart && drag.selectionSource && drag.handle) {
-      const target = resizeSelection(drag.selectionStart, point, drag.handle, event.shiftKey, event.shiftKey && event.ctrlKey)
+      const target = resizeSelectionBounds(drag.selectionStart, point, drag.handle, session.document, event.shiftKey, event.shiftKey && event.ctrlKey)
       if (drag.previewTarget?.x === target.x && drag.previewTarget.y === target.y && drag.previewTarget.width === target.width && drag.previewTarget.height === target.height) return
       drag.previewTarget = target
       drag.previewAngle = 0
@@ -1855,7 +1702,7 @@ export function CanvasStage({ session }: { session: DocumentSession }) {
   }
 
   const pointerUp = (event: React.PointerEvent<HTMLCanvasElement>): void => {
-    const drag = dragRef.current
+    const drag = inputRef.current.finish()
     if (!drag) return
     if (drag.kind === 'canvas-resize' || drag.kind === 'canvas-move') flushCanvasResizePreview()
     if (selectionPreviewFrameRef.current !== null) {
@@ -1865,7 +1712,6 @@ export function CanvasStage({ session }: { session: DocumentSession }) {
     flushSelectionPreview(drag)
     if (drag.translationPreview) drag.previewEdit = selectionTranslationPreviewEdit(session.document, drag.translationPreview)
     if (drag.kind === 'draw' || drag.kind === 'shape' || drag.kind === 'move-content' || drag.kind === 'transform-content' || drag.kind === 'rotate-content' || drag.kind === 'move-layer') compositeSurfaceRef.current = null
-    dragRef.current = null
     if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId)
     const state = useWorkspace.getState()
     if (drag.kind === 'pan') {
@@ -1893,7 +1739,7 @@ export function CanvasStage({ session }: { session: DocumentSession }) {
       return
     }
     if (drag.kind === 'sample-color') {
-      samplingRef.current = false
+      inputRef.current.sampling = false
       if (!drag.temporarySampling) {
         state.setTool('pencil')
         event.currentTarget.style.cursor = toolCursor('pencil', session.primaryColor)
@@ -1971,7 +1817,7 @@ export function CanvasStage({ session }: { session: DocumentSession }) {
       useWorkspace.getState().setBrushSize(session.brushSize + (event.deltaY < 0 ? 1 : -1))
       return
     }
-    if (dragRef.current?.kind === 'pan') return
+    if (inputRef.current.drag?.kind === 'pan') return
     const rect = stageBounds()
     event.preventDefault()
     const liveView = liveViewRef.current
@@ -1982,5 +1828,5 @@ export function CanvasStage({ session }: { session: DocumentSession }) {
   }
 
   const rotationStyle = { transform: 'none', transformOrigin: '50% 50%' }
-  return <div ref={stageRef} className="stage-surface"><canvas ref={canvasRef} style={rotationStyle} className="stage-canvas" aria-label="像素画布" onPointerDown={pointerDown} onPointerMove={pointerMove} onPointerUp={pointerUp} onPointerCancel={pointerUp} onPointerLeave={(event) => { pointerRef.current.visible = false; shiftLinePreviewRef.current = false; samplingRef.current = false; if (!dragRef.current) event.currentTarget.style.cursor = canvasResizePreviewRef.current ? canvasCursors.unavailable : spaceHeldRef.current ? canvasCursors.grab : toolCursor(session.tool, session.primaryColor); draw() }} onPointerEnter={(event) => { updateCursor(event); shiftLinePreviewRef.current = !canvasResizePreviewRef.current && !samplingRef.current && event.shiftKey && (session.tool === 'pencil' || session.tool === 'eraser') && Boolean(lineAnchor); draw() }} onContextMenu={(event) => event.preventDefault()} onWheel={onWheel} /><canvas ref={selectionCanvasRef} style={rotationStyle} className="stage-selection-overlay" aria-hidden="true" /><div ref={rotationIndicatorRef} className="rotation-indicator" hidden aria-hidden="true"><span className="rotation-indicator-background">{[rotationBackground1, rotationBackground2, rotationBackground3, rotationBackground4, rotationBackground5, rotationBackground6].map((source) => <img key={source} src={source} alt="" />)}</span><span ref={rotationPointerRef} className="rotation-indicator-pointer"><img src={rotationPointer} alt="" /></span></div></div>
+  return <div ref={stageRef} className="stage-surface"><canvas ref={canvasRef} style={rotationStyle} className="stage-canvas" aria-label="像素画布" onPointerDown={pointerDown} onPointerMove={pointerMove} onPointerUp={pointerUp} onPointerCancel={pointerUp} onPointerLeave={(event) => { inputRef.current.pointer.visible = false; inputRef.current.shiftLinePreview = false; inputRef.current.sampling = false; if (!inputRef.current.drag) event.currentTarget.style.cursor = canvasResizePreviewRef.current ? canvasCursors.unavailable : inputRef.current.spaceHeld ? canvasCursors.grab : toolCursor(session.tool, session.primaryColor); draw() }} onPointerEnter={(event) => { updateCursor(event); inputRef.current.shiftLinePreview = !canvasResizePreviewRef.current && !inputRef.current.sampling && event.shiftKey && (session.tool === 'pencil' || session.tool === 'eraser') && Boolean(lineAnchor); draw() }} onContextMenu={(event) => event.preventDefault()} onWheel={onWheel} /><canvas ref={selectionCanvasRef} style={rotationStyle} className="stage-selection-overlay" aria-hidden="true" /><div ref={rotationIndicatorRef} className="rotation-indicator" hidden aria-hidden="true"><span className="rotation-indicator-background">{[rotationBackground1, rotationBackground2, rotationBackground3, rotationBackground4, rotationBackground5, rotationBackground6].map((source) => <img key={source} src={source} alt="" />)}</span><span ref={rotationPointerRef} className="rotation-indicator-pointer"><img src={rotationPointer} alt="" /></span></div></div>
 }
