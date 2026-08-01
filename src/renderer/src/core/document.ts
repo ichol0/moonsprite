@@ -1,4 +1,5 @@
 import type { CanvasAnchor, ColorMode, ImageResizeInterpolation, IndexedLayer, LayerGroup, PaletteEntry, RasterLayer, RgbaColor, RgbaLayer, SelectionRect, SpriteDocument } from '@shared/types'
+import { createDefaultAnimationTimeline } from './animation'
 import { blendWithMode, colorEquals, packColor, pixelIndex, readRgbaPixel, TRANSPARENT, unpackColor, writeRgbaPixel } from './raster'
 
 let sequence = 0
@@ -19,7 +20,7 @@ export function createDocument(name: string, width: number, height: number, colo
     ? [transparentEntry(), { id: 1, name: '墨黑', color: { r: 24, g: 27, b: 33, a: 255 } }, { id: 2, name: '月蓝', color: { r: 41, g: 121, b: 255, a: 255 } }]
     : [{ id: 1, name: '墨黑', color: { r: 24, g: 27, b: 33, a: 255 } }, { id: 2, name: '月蓝', color: { r: 41, g: 121, b: 255, a: 255 } }]
   const now = new Date().toISOString()
-  return { schemaVersion: 1, id: createId('doc'), name, width, height, colorMode, layers: [layer], groups: [], activeLayerId: layer.id, palette, paletteOrder: palette.map((entry) => entry.id), nextColorId: 3, customBrushes: [], filePath: null, dirty: false, createdAt: now, updatedAt: now }
+  return { schemaVersion: 2, id: createId('doc'), name, width, height, colorMode, layers: [layer], groups: [], activeLayerId: layer.id, palette, paletteOrder: palette.map((entry) => entry.id), nextColorId: 3, customBrushes: [], animation: createDefaultAnimationTimeline(), filePath: null, dirty: false, createdAt: now, updatedAt: now }
 }
 
 export function resizeDocumentAt(document: SpriteDocument, width: number, height: number, offsetX: number, offsetY: number, trimOutside = false): { offsetX: number; offsetY: number } {

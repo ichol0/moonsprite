@@ -164,8 +164,29 @@ export interface LayerGroup {
   blendMode: BlendMode
 }
 
+/** 动画时间轴中的一帧。持续时间以毫秒保存，便于后续导入 Aseprite 帧时保持原始节奏。 */
+export interface AnimationFrame {
+  id: string
+  duration: number
+}
+
+/** cel 与图层、帧的稳定关联。像素存储会在实际动画编辑器落地时加入独立数据文件。 */
+export interface AnimationCel {
+  id: string
+  layerId: string
+  frameId: string
+  linkedCelId?: string | null
+}
+
+export interface AnimationTimeline {
+  frames: AnimationFrame[]
+  cels: AnimationCel[]
+  activeFrameId: string
+  loop: boolean
+}
+
 export interface SpriteDocument {
-  schemaVersion: 1
+  schemaVersion: 1 | 2
   id: string
   name: string
   width: number
@@ -179,6 +200,8 @@ export interface SpriteDocument {
   nextColorId: number
   /** Project-owned brushes are stored in the .moonsprite container. */
   customBrushes?: ProjectBrush[]
+  /** Animation metadata is independent from layer ordering and optional for v1 compatibility. */
+  animation?: AnimationTimeline
   filePath: string | null
   /** Original path used to open imported images or Aseprite projects. */
   sourceFilePath?: string

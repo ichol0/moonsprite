@@ -1,6 +1,7 @@
 import { strFromU8, strToU8, unzipSync, zipSync } from 'fflate'
 import { BLEND_MODES, type BlendMode, type ColorMode, type LayerGroup, type PaletteEntry, type ProjectBrush, type RasterLayer, type SpriteDocument } from '@shared/types'
 import { compositeDocument, createId } from './document'
+import { createDefaultAnimationTimeline, normalizeAnimationTimeline } from './animation'
 import { encodePng } from './png'
 
 interface ManifestLayer {
@@ -29,12 +30,12 @@ interface ManifestProjectBrush {
   sourceY?: number
 }
 
-export const PROJECT_SCHEMA_VERSION = 1
+export const PROJECT_SCHEMA_VERSION = 2
 
 interface ProjectManifest {
   schemaVersion: typeof PROJECT_SCHEMA_VERSION
   app: 'MoonSprite'
-  document: Omit<SpriteDocument, 'layers' | 'palette' | 'customBrushes' | 'filePath' | 'sourceFilePath' | 'dirty'> & { layers: ManifestLayer[]; palette: PaletteEntry[]; customBrushes: ManifestProjectBrush[] }
+  document: Omit<SpriteDocument, 'layers' | 'palette' | 'customBrushes' | 'filePath' | 'sourceFilePath' | 'dirty'> & { schemaVersion: typeof PROJECT_SCHEMA_VERSION; layers: ManifestLayer[]; palette: PaletteEntry[]; customBrushes: ManifestProjectBrush[] }
 }
 
 export interface ProjectGalleryMetadata {
@@ -120,12 +121,13 @@ export function encodeProject(document: SpriteDocument): Uint8Array {
     if (colorsFile) files[colorsFile] = toU8(brush.colors!)
     return { id: brush.id, name: brush.name, width: brush.width, height: brush.height, dataFile, colorsFile, sourceX: brush.sourceX, sourceY: brush.sourceY }
   })
-  const { layers: _layers, palette: _palette, customBrushes: _customBrushes, filePath: _filePath, sourceFilePath: _sourceFilePath, dirty: _dirty, ...serializable } = document
+  const { schemaVersion: _schemaVersion, layers: _layers, palette: _palette, customBrushes: _customBrushes, filePath: _filePath, sourceFilePath: _sourceFilePath, dirty: _dirty, ...serializable } = document
   const manifest: ProjectManifest = {
-    schemaVersion: 1,
+    schemaVersion: PROJECT_SCHEMA_VERSION,
     app: 'MoonSprite',
     document: {
       ...serializable,
+      schemaVersion: PROJECT_SCHEMA_VERSION,
       layers,
       palette: document.palette.map((entry) => ({ ...entry, color: { ...entry.color } })),
       customBrushes
@@ -138,11 +140,23 @@ export function encodeProject(document: SpriteDocument): Uint8Array {
 
 export function migrateProjectManifest(input: unknown): ProjectManifest {
   if (!input || typeof input !== 'object') throw new Error('manifest.json format is invalid')
-  const candidate = input as Partial<ProjectManifest>
-  if (candidate.app !== 'MoonSprite' || candidate.schemaVersion !== PROJECT_SCHEMA_VERSION || candidate.document?.schemaVersion !== PROJECT_SCHEMA_VERSION) {
-    throw new Error('Unsupported MoonSprite project version')
+  const candidate = input as { app?: unknown; schemaVersion?: unknown; document?: Record<string, unknown> }
+  if (candidate.app !== 'MoonSprite' || !candidate.document) throw new Error('Unsupported MoonSprite project version')
+  if (candidate.schemaVersion === PROJECT_SCHEMA_VERSION && candidate.document.schemaVersion === PROJECT_SCHEMA_VERSION) {
+    return {
+      ...(candidate as ProjectManifest),
+      schemaVersion: PROJECT_SCHEMA_VERSION,
+      document: { ...(candidate.document as ProjectManifest['document']), schemaVersion: PROJECT_SCHEMA_VERSION, animation: normalizeAnimationTimeline(candidate.document.animation) }
+    }
   }
-  return candidate as ProjectManifest
+  if (candidate.schemaVersion === 1 && candidate.document.schemaVersion === 1) {
+    return {
+      ...(candidate as Omit<ProjectManifest, 'schemaVersion' | 'document'>),
+      schemaVersion: PROJECT_SCHEMA_VERSION,
+      document: { ...(candidate.document as ProjectManifest['document']), schemaVersion: PROJECT_SCHEMA_VERSION, animation: createDefaultAnimationTimeline() }
+    }
+  }
+  throw new Error('Unsupported MoonSprite project version')
 }
 
 function readManifest(files: Record<string, Uint8Array>): ProjectManifest {
@@ -154,7 +168,7 @@ function readManifest(files: Record<string, Uint8Array>): ProjectManifest {
   } catch {
     throw new Error('工程文件的 manifest.json 无法读取。')
   }
-  if (manifest.app !== 'MoonSprite' || manifest.schemaVersion !== 1 || manifest.document?.schemaVersion !== 1) {
+  if (manifest.app !== 'MoonSprite' || manifest.schemaVersion !== PROJECT_SCHEMA_VERSION || manifest.document?.schemaVersion !== PROJECT_SCHEMA_VERSION) {
     throw new Error('该工程版本不受当前 MoonSprite 支持。')
   }
   return manifest
@@ -230,7 +244,7 @@ export function decodeProject(input: Uint8Array): SpriteDocument {
     customBrushes.push({ id: metadata.id, name: metadata.name, width: metadata.width, height: metadata.height, coverage: bytes.slice(), colors, sourceX: metadata.sourceX, sourceY: metadata.sourceY })
   }
   return {
-    schemaVersion: 1,
+    schemaVersion: PROJECT_SCHEMA_VERSION,
     id: createId('doc'),
     name: source.name || '未命名作品',
     width: source.width,
@@ -243,6 +257,7 @@ export function decodeProject(input: Uint8Array): SpriteDocument {
     paletteOrder: Array.isArray(source.paletteOrder) ? source.paletteOrder : [],
     nextColorId: Math.max(1, source.nextColorId ?? 1),
     customBrushes,
+    animation: normalizeAnimationTimeline(source.animation),
     filePath: null,
     dirty: false,
     createdAt: source.createdAt || new Date().toISOString(),
