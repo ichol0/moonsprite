@@ -31,7 +31,7 @@ let browser
 let page
 try {
   const endpoint = `http://127.0.0.1:${debugPort}`
-  for (let attempt = 0; attempt < 60; attempt += 1) {
+  for (let attempt = 0; attempt < 240; attempt += 1) {
     try {
       browser = await chromium.connectOverCDP(endpoint)
       break
