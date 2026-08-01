@@ -330,5 +330,3 @@ export function LayersPanel({ session, docked = false, onDockDragStart, onFloati
   <FloatingDockPreview style={floating.dockPreview} />
   </>
 }
-
-

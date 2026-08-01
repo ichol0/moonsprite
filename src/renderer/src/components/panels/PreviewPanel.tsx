@@ -107,5 +107,3 @@ export function PreviewPanel({ session, onClose, docked = false, onDockDragStart
     <FloatingDockPreview style={floating.dockPreview} />
   </section>
 }
-
-
