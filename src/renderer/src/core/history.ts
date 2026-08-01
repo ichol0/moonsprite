@@ -18,6 +18,14 @@ export class HistoryStack {
 
   get canUndo(): boolean { return this.undoEntries.length > 0 }
   get canRedo(): boolean { return this.redoEntries.length > 0 }
+  get memoryBytes(): number { return this.bytes }
+
+  clear(): void {
+    this.undoEntries = []
+    this.redoEntries = []
+    this.bytes = 0
+    this.compoundEntries = null
+  }
 
   push(entry: HistoryEntry): void {
     if (this.compoundEntries) {
@@ -53,17 +61,21 @@ export class HistoryStack {
   }
 
   undo(): void {
-    const entry = this.undoEntries.pop()
+    const entry = this.undoEntries[this.undoEntries.length - 1]
     if (!entry) return
     entry.undo()
+    this.undoEntries.pop()
+    this.bytes -= entry.bytes
     this.redoEntries.push(entry)
   }
 
   redo(): void {
-    const entry = this.redoEntries.pop()
+    const entry = this.redoEntries[this.redoEntries.length - 1]
     if (!entry) return
     entry.redo()
+    this.redoEntries.pop()
     this.undoEntries.push(entry)
+    this.bytes += entry.bytes
   }
 }
 

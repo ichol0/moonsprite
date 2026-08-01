@@ -40,3 +40,11 @@ platform/tauri-api ----> Tauri commands ----> Windows/file system
 - 工作区 UI：栏目、停靠、悬浮、尺寸和布局持久化。
 
 新增功能必须归入其中一个边界；无法归类时先写 ADR，再决定位置。
+## 本轮架构落地
+
+- `core/shortcuts.ts` 统一管理快捷键默认值、解析、持久化和键盘事件格式化。界面只负责展示与触发，不再复制快捷键规则。
+- `core/file-preferences.ts` 统一管理编辑器首选项的默认值、校验、范围限制和持久化。新增设置必须先进入 `EditorPreferences`，再由界面消费。
+- `core/history.ts` 保证撤销栈的内存计数与栈内容同步。撤销或重做失败时，原条目必须保留；视图状态不得进入该历史栈。
+- `core/project-format.ts` 通过 `PROJECT_SCHEMA_VERSION` 和 `migrateProjectManifest()` 作为工程格式入口。未知版本拒绝打开，不猜测字段；未来版本迁移只增加独立迁移分支。
+
+后续拆分大模块时，优先把纯规则提取到 `core/` 并补测试，再让 `store/` 编排状态，最后由 React 组件接入。禁止把新的持久化 key、格式版本判断或坐标算法直接散落到 `App.tsx`、`CanvasStage.tsx` 或面板组件中。

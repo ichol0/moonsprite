@@ -29,8 +29,10 @@ interface ManifestProjectBrush {
   sourceY?: number
 }
 
+export const PROJECT_SCHEMA_VERSION = 1
+
 interface ProjectManifest {
-  schemaVersion: 1
+  schemaVersion: typeof PROJECT_SCHEMA_VERSION
   app: 'MoonSprite'
   document: Omit<SpriteDocument, 'layers' | 'palette' | 'customBrushes' | 'filePath' | 'sourceFilePath' | 'dirty'> & { layers: ManifestLayer[]; palette: PaletteEntry[]; customBrushes: ManifestProjectBrush[] }
 }
@@ -134,12 +136,21 @@ export function encodeProject(document: SpriteDocument): Uint8Array {
   return zipSync(files, { level: 6 })
 }
 
+export function migrateProjectManifest(input: unknown): ProjectManifest {
+  if (!input || typeof input !== 'object') throw new Error('manifest.json format is invalid')
+  const candidate = input as Partial<ProjectManifest>
+  if (candidate.app !== 'MoonSprite' || candidate.schemaVersion !== PROJECT_SCHEMA_VERSION || candidate.document?.schemaVersion !== PROJECT_SCHEMA_VERSION) {
+    throw new Error('Unsupported MoonSprite project version')
+  }
+  return candidate as ProjectManifest
+}
+
 function readManifest(files: Record<string, Uint8Array>): ProjectManifest {
   const manifestFile = files['manifest.json']
   if (!manifestFile) throw new Error('工程文件缺少 manifest.json。')
   let manifest: ProjectManifest
   try {
-    manifest = JSON.parse(strFromU8(manifestFile)) as ProjectManifest
+    manifest = migrateProjectManifest(JSON.parse(strFromU8(manifestFile)))
   } catch {
     throw new Error('工程文件的 manifest.json 无法读取。')
   }

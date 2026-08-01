@@ -7,6 +7,9 @@ export const EXPORT_SCALE_PRESETS_KEY = 'moonsprite.preference.export-scale-pres
 export const ROTATION_INDICATOR_POSITION_KEY = 'moonsprite.preference.rotation-indicator-position'
 export const DRAWING_BRUSH_PREVIEW_ENABLED_KEY = 'moonsprite.preference.drawing-brush-preview-enabled'
 export const RELATIVE_LUMINANCE_SCOPE_KEY = 'moonsprite.preference.relative-luminance-scope'
+export const LANGUAGE_PREFERENCE_KEY = 'moonsprite.preference.language'
+export const RECOVERY_PREFERENCE_KEY = 'moonsprite.preference.recovery'
+export const RECOVERY_MINUTES_PREFERENCE_KEY = 'moonsprite.preference.recovery-minutes'
 
 export type RotationIndicatorPosition = 'view' | 'canvas'
 export type RelativeLuminanceScope = 'canvas' | 'app'
@@ -30,6 +33,35 @@ export const DEFAULT_DOCUMENT_SIZE_PRESETS: DocumentSizePreset[] = [
   { width: 128, height: 128 }, { width: 256, height: 256 }, { width: 320, height: 180 }
 ]
 export const DEFAULT_EXPORT_SCALE_PRESETS = [100, 200, 400, 1000, 2000]
+
+export type SaveFormatPreference = 'moonsprite' | 'png' | 'jpeg' | 'webp' | 'ase' | 'aseprite'
+export type ExportFormatPreference = 'png' | 'jpeg' | 'webp' | 'svg'
+
+export interface EditorPreferences {
+  language: 'zh-CN' | 'en-US'
+  saveFormat: SaveFormatPreference
+  exportFormat: ExportFormatPreference
+  recovery: boolean
+  recoveryMinutes: number
+  documentSizePresets: DocumentSizePreset[]
+  exportScalePresets: number[]
+  rotationIndicatorPosition: RotationIndicatorPosition
+  drawingBrushPreviewEnabled: boolean
+  relativeLuminanceScope: RelativeLuminanceScope
+}
+
+export const DEFAULT_EDITOR_PREFERENCES: EditorPreferences = {
+  language: 'zh-CN',
+  saveFormat: 'moonsprite',
+  exportFormat: 'png',
+  recovery: true,
+  recoveryMinutes: 5,
+  documentSizePresets: DEFAULT_DOCUMENT_SIZE_PRESETS,
+  exportScalePresets: DEFAULT_EXPORT_SCALE_PRESETS,
+  rotationIndicatorPosition: 'view',
+  drawingBrushPreviewEnabled: true,
+  relativeLuminanceScope: 'canvas'
+}
 
 const boundedInteger = (value: unknown, max: number): number | null => {
   const parsed = typeof value === 'number' ? value : Number.NaN
@@ -81,4 +113,67 @@ export function saveImageKindForPreference(value: string | null): SaveImageKind 
   if (value === 'webp') return 'webp'
   if (value === 'png') return 'png-auto'
   return null
+}
+
+function readStorage(storage?: Storage): Storage | null {
+  try { return storage ?? window.localStorage } catch { return null }
+}
+
+function parseSaveFormat(value: string | null): SaveFormatPreference {
+  return value === 'png' || value === 'jpeg' || value === 'webp' || value === 'ase' || value === 'aseprite' ? value : 'moonsprite'
+}
+
+function parseExportFormat(value: string | null): ExportFormatPreference {
+  return value === 'jpeg' || value === 'webp' || value === 'svg' ? value : 'png'
+}
+
+function parseLanguage(value: string | null): EditorPreferences['language'] {
+  return value === 'en-US' ? 'en-US' : 'zh-CN'
+}
+
+function parseRecoveryMinutes(value: string | null): number {
+  if (!value?.trim()) return DEFAULT_EDITOR_PREFERENCES.recoveryMinutes
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? Math.max(1, Math.min(60, Math.round(parsed))) : DEFAULT_EDITOR_PREFERENCES.recoveryMinutes
+}
+
+export function loadEditorPreferences(storage?: Storage): EditorPreferences {
+  const source = readStorage(storage)
+  const get = (key: string): string | null => {
+    try { return source?.getItem(key) ?? null } catch { return null }
+  }
+  return {
+    language: parseLanguage(get(LANGUAGE_PREFERENCE_KEY)),
+    saveFormat: parseSaveFormat(get(SAVE_FORMAT_PREFERENCE_KEY)),
+    exportFormat: parseExportFormat(get(EXPORT_FORMAT_PREFERENCE_KEY)),
+    recovery: get(RECOVERY_PREFERENCE_KEY) !== 'false',
+    recoveryMinutes: parseRecoveryMinutes(get(RECOVERY_MINUTES_PREFERENCE_KEY)),
+    documentSizePresets: parseDocumentSizePresets(get(NEW_DOCUMENT_SIZE_PRESETS_KEY)),
+    exportScalePresets: parseExportScalePresets(get(EXPORT_SCALE_PRESETS_KEY)),
+    rotationIndicatorPosition: parseRotationIndicatorPosition(get(ROTATION_INDICATOR_POSITION_KEY)),
+    drawingBrushPreviewEnabled: parseDrawingBrushPreviewEnabled(get(DRAWING_BRUSH_PREVIEW_ENABLED_KEY)),
+    relativeLuminanceScope: parseRelativeLuminanceScope(get(RELATIVE_LUMINANCE_SCOPE_KEY))
+  }
+}
+
+export function saveEditorPreferences(preferences: EditorPreferences, storage?: Storage): void {
+  const target = readStorage(storage)
+  if (!target) return
+  const values: Record<string, string> = {
+    [LANGUAGE_PREFERENCE_KEY]: preferences.language,
+    [SAVE_FORMAT_PREFERENCE_KEY]: preferences.saveFormat,
+    [EXPORT_FORMAT_PREFERENCE_KEY]: preferences.exportFormat,
+    [RECOVERY_PREFERENCE_KEY]: String(preferences.recovery),
+    [RECOVERY_MINUTES_PREFERENCE_KEY]: String(parseRecoveryMinutes(String(preferences.recoveryMinutes))),
+    [NEW_DOCUMENT_SIZE_PRESETS_KEY]: JSON.stringify(parseDocumentSizePresets(JSON.stringify(preferences.documentSizePresets))),
+    [EXPORT_SCALE_PRESETS_KEY]: JSON.stringify(parseExportScalePresets(JSON.stringify(preferences.exportScalePresets))),
+    [ROTATION_INDICATOR_POSITION_KEY]: preferences.rotationIndicatorPosition,
+    [DRAWING_BRUSH_PREVIEW_ENABLED_KEY]: String(preferences.drawingBrushPreviewEnabled),
+    [RELATIVE_LUMINANCE_SCOPE_KEY]: preferences.relativeLuminanceScope
+  }
+  try {
+    for (const [key, value] of Object.entries(values)) target.setItem(key, value)
+  } catch {
+    return
+  }
 }

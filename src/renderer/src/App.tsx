@@ -21,7 +21,8 @@ import { createProceduralBrushes, decodeImageBrush, encodeBrushPng, isProcedural
 import { brushMaskOffsets, brushStampDimensions } from '@/core/tools'
 import { formatBytes } from '@/core/resource-policy'
 import { APP_CHANNEL_LABEL } from '@/core/app-meta'
-import { DRAWING_BRUSH_PREVIEW_ENABLED_KEY, EXPORT_FORMAT_PREFERENCE_KEY, EXPORT_SCALE_PRESETS_KEY, NEW_DOCUMENT_SIZE_PRESETS_KEY, RELATIVE_LUMINANCE_SCOPE_KEY, ROTATION_INDICATOR_POSITION_KEY, SAVE_FORMAT_PREFERENCE_KEY, imageExportKindForPreference, parseDocumentSizePresets, parseDrawingBrushPreviewEnabled, parseExportScalePresets, parseRelativeLuminanceScope, parseRotationIndicatorPosition, type DocumentSizePreset, type RelativeLuminanceScope, type RotationIndicatorPosition } from '@/core/file-preferences'
+import { DRAWING_BRUSH_PREVIEW_ENABLED_KEY, EXPORT_FORMAT_PREFERENCE_KEY, EXPORT_SCALE_PRESETS_KEY, NEW_DOCUMENT_SIZE_PRESETS_KEY, RELATIVE_LUMINANCE_SCOPE_KEY, ROTATION_INDICATOR_POSITION_KEY, SAVE_FORMAT_PREFERENCE_KEY, imageExportKindForPreference, loadEditorPreferences, parseDocumentSizePresets, parseDrawingBrushPreviewEnabled, parseExportScalePresets, parseRelativeLuminanceScope, parseRotationIndicatorPosition, saveEditorPreferences, type DocumentSizePreset, type RelativeLuminanceScope, type RotationIndicatorPosition } from '@/core/file-preferences'
+import { DEFAULT_SHORTCUTS, keyboardEventKey, loadShortcuts, saveShortcuts as persistShortcuts, shortcutText } from '@/core/shortcuts'
 import { type ExportOptions, type SaveAsOptions, useWorkspace } from '@/store/workspace'
 import toolSelectionIcon from '@/assets/tool-icons/tool-selection.png'
 import toolPencilIcon from '@/assets/tool-icons/tool-pencil.png'
@@ -57,22 +58,7 @@ const tools: Array<{ id: ToolId; label: string; icon: string; key: string }> = [
   { id: 'rotate', label: '旋转视图', icon: toolRotateIcon, key: 'R' }
 ]
 
-const SHORTCUTS_KEY = 'moonsprite.shortcuts.v1'
-const defaultShortcuts: Record<string, string> = {
-  'tool.pencil': 'B', 'tool.eraser': 'E', 'tool.selection': 'M', 'tool.move': 'V', 'tool.shape': 'U', 'tool.fill': 'G', 'tool.eyedropper': 'I', 'tool.hand': 'H', 'tool.zoom': 'Z', 'tool.rotate': 'R',
-  lasso: 'Q', magic: 'W', canvasResize: 'C', transform: 'Ctrl+T', outline: 'Shift+O', flipVertical: 'Shift+V', flipHorizontal: 'Shift+H', selectAll: 'Ctrl+A', deselect: 'Ctrl+D', copy: 'Ctrl+C', cut: 'Ctrl+X', paste: 'Ctrl+V', save: 'Ctrl+S', saveAs: 'Ctrl+Shift+S', undo: 'Ctrl+Z', redo: 'Ctrl+Shift+Z', relativeLuminance: 'Ctrl+Y', advancedMode: 'Ctrl+F', fillForeground: 'F'
-}
-const loadShortcuts = (): Record<string, string> => {
-  try { return { ...defaultShortcuts, ...(JSON.parse(localStorage.getItem(SHORTCUTS_KEY) ?? '{}') as Record<string, string>) } } catch { return { ...defaultShortcuts } }
-}
-const keyboardEventKey = (event: KeyboardEvent): string => {
-  if (['Process', 'Unidentified', 'Dead'].includes(event.key) && /^Key[A-Z]$/.test(event.code)) return event.code.slice(3)
-  return event.key
-}
-const shortcutText = (event: KeyboardEvent): string => {
-  const key = keyboardEventKey(event)
-  return `${event.ctrlKey || event.metaKey ? 'Ctrl+' : ''}${event.altKey ? 'Alt+' : ''}${event.shiftKey ? 'Shift+' : ''}${key.length === 1 ? key.toUpperCase() : key}`
-}
+const defaultShortcuts: Record<string, string> = { ...DEFAULT_SHORTCUTS }
 
 const selectionKindIcons = {
   rectangle: selectionRectangleIcon,
@@ -369,30 +355,22 @@ function BrushOutputControls({ settings, onChange }: { settings: ImageBrushSetti
 
 function PreferencesDialog({ onClose, onPresetChange }: { onClose: () => void; onPresetChange: (documentSizes: DocumentSizePreset[], exportScales: number[]) => void }) {
   const [section, setSection] = useState<'general' | 'files' | 'presets' | 'reset'>('general')
-  const [language, setLanguage] = useState(() => localStorage.getItem('moonsprite.preference.language') ?? 'zh-CN')
-  const [saveFormat, setSaveFormat] = useState(() => localStorage.getItem(SAVE_FORMAT_PREFERENCE_KEY) ?? 'moonsprite')
-  const [exportFormat, setExportFormat] = useState(() => { const value = localStorage.getItem(EXPORT_FORMAT_PREFERENCE_KEY); return value === 'jpeg' || value === 'webp' || value === 'svg' ? value : 'png' })
-  const [recovery, setRecovery] = useState(() => localStorage.getItem('moonsprite.preference.recovery') !== 'false')
-  const [recoveryMinutes, setRecoveryMinutes] = useState(() => Number(localStorage.getItem('moonsprite.preference.recovery-minutes') ?? '5'))
-  const [documentSizePresets, setDocumentSizePresets] = useState(() => parseDocumentSizePresets(localStorage.getItem(NEW_DOCUMENT_SIZE_PRESETS_KEY)))
-  const [exportScalePresets, setExportScalePresets] = useState(() => parseExportScalePresets(localStorage.getItem(EXPORT_SCALE_PRESETS_KEY)))
-  const [rotationIndicatorPosition, setRotationIndicatorPosition] = useState<RotationIndicatorPosition>(() => parseRotationIndicatorPosition(localStorage.getItem(ROTATION_INDICATOR_POSITION_KEY)))
-  const [drawingBrushPreviewEnabled, setDrawingBrushPreviewEnabled] = useState(() => parseDrawingBrushPreviewEnabled(localStorage.getItem(DRAWING_BRUSH_PREVIEW_ENABLED_KEY)))
-  const [relativeLuminanceScope, setRelativeLuminanceScope] = useState<RelativeLuminanceScope>(() => parseRelativeLuminanceScope(localStorage.getItem(RELATIVE_LUMINANCE_SCOPE_KEY)))
+  const [initialPreferences] = useState(loadEditorPreferences)
+  const [language, setLanguage] = useState(initialPreferences.language)
+  const [saveFormat, setSaveFormat] = useState(initialPreferences.saveFormat)
+  const [exportFormat, setExportFormat] = useState(initialPreferences.exportFormat)
+  const [recovery, setRecovery] = useState(initialPreferences.recovery)
+  const [recoveryMinutes, setRecoveryMinutes] = useState(initialPreferences.recoveryMinutes)
+  const [documentSizePresets, setDocumentSizePresets] = useState(initialPreferences.documentSizePresets)
+  const [exportScalePresets, setExportScalePresets] = useState(initialPreferences.exportScalePresets)
+  const [rotationIndicatorPosition, setRotationIndicatorPosition] = useState<RotationIndicatorPosition>(initialPreferences.rotationIndicatorPosition)
+  const [drawingBrushPreviewEnabled, setDrawingBrushPreviewEnabled] = useState(initialPreferences.drawingBrushPreviewEnabled)
+  const [relativeLuminanceScope, setRelativeLuminanceScope] = useState<RelativeLuminanceScope>(initialPreferences.relativeLuminanceScope)
   const updateDocumentSize = (index: number, key: keyof DocumentSizePreset, value: number): void => setDocumentSizePresets((current) => current.map((preset, presetIndex) => presetIndex === index ? { ...preset, [key]: value } : preset))
   const persist = (): void => {
     const normalizedSizes = parseDocumentSizePresets(JSON.stringify(documentSizePresets))
     const normalizedScales = parseExportScalePresets(JSON.stringify(exportScalePresets))
-    localStorage.setItem('moonsprite.preference.language', language)
-    localStorage.setItem(SAVE_FORMAT_PREFERENCE_KEY, saveFormat)
-    localStorage.setItem(EXPORT_FORMAT_PREFERENCE_KEY, exportFormat)
-    localStorage.setItem('moonsprite.preference.recovery', String(recovery))
-    localStorage.setItem('moonsprite.preference.recovery-minutes', String(recoveryMinutes))
-    localStorage.setItem(NEW_DOCUMENT_SIZE_PRESETS_KEY, JSON.stringify(normalizedSizes))
-    localStorage.setItem(EXPORT_SCALE_PRESETS_KEY, JSON.stringify(normalizedScales))
-    localStorage.setItem(ROTATION_INDICATOR_POSITION_KEY, rotationIndicatorPosition)
-    localStorage.setItem(DRAWING_BRUSH_PREVIEW_ENABLED_KEY, String(drawingBrushPreviewEnabled))
-    localStorage.setItem(RELATIVE_LUMINANCE_SCOPE_KEY, relativeLuminanceScope)
+    saveEditorPreferences({ language, saveFormat, exportFormat, recovery, recoveryMinutes, documentSizePresets: normalizedSizes, exportScalePresets: normalizedScales, rotationIndicatorPosition, drawingBrushPreviewEnabled, relativeLuminanceScope })
     window.dispatchEvent(new Event('moonsprite:preferences-changed'))
     onPresetChange(normalizedSizes, normalizedScales)
   }
@@ -638,7 +616,7 @@ export default function App() {
   const closeInProgress = useRef(false)
   const splitPaneDrag = useRef<{ id: string; startX: number; startY: number; originX: number; originY: number } | null>(null)
   const session = useMemo(() => workspace.sessions.find((item) => item.document.id === workspace.activeId) ?? null, [workspace.sessions, workspace.activeId])
-  const saveShortcuts = (next: Record<string, string>): void => { setShortcuts(next); localStorage.setItem(SHORTCUTS_KEY, JSON.stringify(next)) }
+  const saveShortcuts = (next: Record<string, string>): void => { setShortcuts(next); persistShortcuts(next) }
   useEffect(() => {
     const syncPreferences = (): void => setRelativeLuminanceScope(parseRelativeLuminanceScope(localStorage.getItem(RELATIVE_LUMINANCE_SCOPE_KEY)))
     window.addEventListener('moonsprite:preferences-changed', syncPreferences)
