@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { DEFAULT_SHORTCUTS, parseShortcutJson } from './shortcuts'
+import { DEFAULT_SHORTCUTS, SHORTCUT_GROUPS, SHORTCUT_LABELS, deriveShortcutConflicts, normalizeShortcut, parseShortcutJson, shortcutText } from './shortcuts'
 
 describe('shortcut persistence boundary', () => {
   it('only accepts known shortcut ids and string values', () => {
@@ -8,5 +8,41 @@ describe('shortcut persistence boundary', () => {
 
   it('keeps defaults available to callers after a malformed payload', () => {
     expect({ ...DEFAULT_SHORTCUTS, ...parseShortcutJson('{bad') }).toMatchObject({ save: 'Ctrl+S', fillForeground: 'F' })
+  })
+
+  it('registers every configurable command in one labeled group', () => {
+    const grouped = new Set(Object.values(SHORTCUT_GROUPS).flat())
+    expect(grouped).toEqual(new Set(Object.keys(DEFAULT_SHORTCUTS)))
+    expect(SHORTCUT_LABELS['tool.selection.ellipse']).toBe('椭圆选区')
+    expect(DEFAULT_SHORTCUTS.mirrorView).toBe('Ctrl+Shift+M')
+    expect(DEFAULT_SHORTCUTS.mirrorViewVertical).toBe('Ctrl+Shift+Alt+M')
+    expect(DEFAULT_SHORTCUTS.lineConnectionMode).toBe('Shift')
+    expect(normalizeShortcut('Ctrl+Shift+Alt+M')).toBe('Ctrl+Alt+Shift+M')
+  })
+
+  it('records a modifier key without duplicating its own modifier prefix', () => {
+    expect(shortcutText({ key: 'Control', code: 'ControlLeft', ctrlKey: true, metaKey: false, altKey: false, shiftKey: false } as KeyboardEvent)).toBe('Ctrl')
+    expect(shortcutText({ key: 'Alt', code: 'AltLeft', ctrlKey: false, metaKey: false, altKey: true, shiftKey: false } as KeyboardEvent)).toBe('Alt')
+    expect(shortcutText({ key: 'Shift', code: 'ShiftLeft', ctrlKey: false, metaKey: false, altKey: false, shiftKey: true } as KeyboardEvent)).toBe('Shift')
+  })
+
+  it('rebuilds blocked shortcut conflicts from persisted settings', () => {
+    const shortcuts = { ...DEFAULT_SHORTCUTS, save: 'Ctrl+S', exportDocument: 'Ctrl+S' }
+    const result = deriveShortcutConflicts(shortcuts)
+    expect(result.blocked.exportDocument).toBe('save')
+    expect(result.conflicts).toContainEqual({ shortcut: 'Ctrl+S', winner: 'save', conflicting: ['exportDocument'] })
+  })
+
+  it('ignores cleared shortcuts when deriving conflicts', () => {
+    const result = deriveShortcutConflicts({ ...DEFAULT_SHORTCUTS, save: '', exportDocument: '' })
+    expect(result.blocked.save).toBeUndefined()
+    expect(result.blocked.exportDocument).toBeUndefined()
+  })
+
+  it('allows contextual modifier commands to share the same key', () => {
+    const result = deriveShortcutConflicts(DEFAULT_SHORTCUTS)
+    expect(result.blocked.lineConnectionMode).toBeUndefined()
+    expect(result.blocked.constrainAxis).toBeUndefined()
+    expect(result.conflicts.some((conflict) => conflict.shortcut === 'Shift')).toBe(false)
   })
 })

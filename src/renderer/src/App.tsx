@@ -1,12 +1,14 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { Check, ChevronDown, ChevronRight, Copy, Eye, ExternalLink, FileImage, FileOutput, FileUp, FolderOpen, GitFork, GripVertical, Info, LayoutTemplate, Plus, Redo2, RefreshCw, Save, Trash2, Undo2, X } from 'lucide-react'
+import { Check, ChevronDown, ChevronRight, Copy, Eye, ExternalLink, FileImage, FileOutput, FileUp, FolderOpen, GitFork, GripVertical, Info, LayoutTemplate, Plus, Redo2, RefreshCw, Save, Trash2, TriangleAlert, Undo2, X } from 'lucide-react'
 import { listen } from '@tauri-apps/api/event'
 import { PhysicalPosition, PhysicalSize } from '@tauri-apps/api/dpi'
 import { getCurrentWebview } from '@tauri-apps/api/webview'
 import { availableMonitors, getCurrentWindow } from '@tauri-apps/api/window'
 import type { ColorMode, ImageBrush, ImageBrushSettings, ImageResizeInterpolation, ProceduralBrushId, ProceduralBrushSettings, ProjectBrush, RgbaColor, StoredBrush, StoredWorkspace, ToolId, WorkspaceLayout } from '@shared/types'
-import type { AdjustmentKind, ColorAdjustment, CurvePoint } from '@/core/adjustments'
+import { buildCurveHistogram, buildCurvePath, buildHistogramPath, type AdjustmentKind, type ColorAdjustment, type CurveChannel, type CurvePoint } from '@/core/adjustments'
+import { compositePixelWithLayerColor, getActiveLayer, isLayerEffectivelyVisible, readLayerColorAt } from '@/core/document'
+import { blendOver, packColor, unpackColor } from '@/core/raster'
 import { InspectorPanels, type PanelDock, type WorkspacePanelId } from '@/components/WorkspacePanels'
 import { publishCanvasResizePreview } from '@/core/canvas-resize-preview'
 import { NewDocumentDialog } from '@/components/NewDocumentDialog'
@@ -19,8 +21,8 @@ import { createProceduralBrushes, decodeImageBrush, encodeBrushPng, isProcedural
 import { brushMaskOffsets, brushStampDimensions } from '@/core/tools'
 import { formatBytes } from '@/core/resource-policy'
 import { APP_CHANNEL_LABEL } from '@/core/app-meta'
-import { DRAWING_BRUSH_PREVIEW_ENABLED_KEY, EXPORT_FORMAT_PREFERENCE_KEY, EXPORT_SCALE_PRESETS_KEY, NEW_DOCUMENT_SIZE_PRESETS_KEY, RELATIVE_LUMINANCE_SCOPE_KEY, ROTATION_INDICATOR_POSITION_KEY, SAVE_FORMAT_PREFERENCE_KEY, imageExportKindForPreference, loadEditorPreferences, parseDocumentSizePresets, parseDrawingBrushPreviewEnabled, parseExportScalePresets, parseRelativeLuminanceScope, parseRotationIndicatorPosition, saveEditorPreferences, type DocumentSizePreset, type RelativeLuminanceScope, type RotationIndicatorPosition } from '@/core/file-preferences'
-import { DEFAULT_SHORTCUTS, keyboardEventKey, loadShortcuts, saveShortcuts as persistShortcuts, shortcutText } from '@/core/shortcuts'
+import { DRAWING_BRUSH_PREVIEW_ENABLED_KEY, EXPORT_FORMAT_PREFERENCE_KEY, EXPORT_SCALE_PRESETS_KEY, NEW_DOCUMENT_SIZE_PRESETS_KEY, RELATIVE_LUMINANCE_SCOPE_KEY, ROTATION_INDICATOR_POSITION_KEY, SAVE_FORMAT_PREFERENCE_KEY, imageExportKindForPreference, loadEditorPreferences, parseDocumentSizePresets, parseDrawingBrushPreviewEnabled, parseExportScalePresets, parseRelativeLuminanceScope, parseRotationIndicatorPosition, saveEditorPreferences, type DocumentSizePreset, type RelativeLuminanceScope, type RotationIndicatorPosition, type ZoomToolDragMode } from '@/core/file-preferences'
+import { DEFAULT_SHORTCUTS, SHORTCUT_GROUP_LABELS, SHORTCUT_GROUPS, SHORTCUT_LABELS, deriveShortcutConflicts, keyboardEventKey, loadShortcuts, normalizeShortcut, saveShortcuts as persistShortcuts, shortcutText } from '@/core/shortcuts'
 import { clearStoredValues, readStoredJson, readStoredString, writeStoredJson, writeStoredString } from '@/core/storage'
 import { ACTIVE_WORKSPACE_STORAGE_KEY, BOTTOM_DOCK_HEIGHT_STORAGE_KEY, COLOR_SQUARE_ANCHOR_STORAGE_KEY, COLOR_SQUARE_DOCK_STORAGE_KEY, DEFAULT_PANEL_DOCKS, FLOATING_PANEL_STORAGE_KEYS, INSPECTOR_LAYOUT_STORAGE_KEY, INSPECTOR_WIDTH_STORAGE_KEY, LEFT_DOCK_WIDTH_STORAGE_KEY, PANEL_DOCKS_STORAGE_KEY, TOOL_RAIL_SIDE_STORAGE_KEY, loadBottomDockHeight, loadInspectorWidth, loadLeftDockWidth, loadMainWindowState, loadPanelDocks, loadToolRailSide, normalizeWorkspaceLayout, readLayoutStorage, saveMainWindowState, savePanelDocks, writeLayoutStorage } from '@/core/workspace-layout-preferences'
 import { type ExportOptions, type SaveAsOptions, useWorkspace } from '@/store/workspace'
@@ -306,18 +308,19 @@ function PreferencesDialog({ onClose, onPresetChange }: { onClose: () => void; o
   const [rotationIndicatorPosition, setRotationIndicatorPosition] = useState<RotationIndicatorPosition>(initialPreferences.rotationIndicatorPosition)
   const [drawingBrushPreviewEnabled, setDrawingBrushPreviewEnabled] = useState(initialPreferences.drawingBrushPreviewEnabled)
   const [relativeLuminanceScope, setRelativeLuminanceScope] = useState<RelativeLuminanceScope>(initialPreferences.relativeLuminanceScope)
+  const [zoomToolDragMode, setZoomToolDragMode] = useState<ZoomToolDragMode>(initialPreferences.zoomToolDragMode)
   const updateDocumentSize = (index: number, key: keyof DocumentSizePreset, value: number): void => setDocumentSizePresets((current) => current.map((preset, presetIndex) => presetIndex === index ? { ...preset, [key]: value } : preset))
   const persist = (): void => {
     const normalizedSizes = parseDocumentSizePresets(JSON.stringify(documentSizePresets))
     const normalizedScales = parseExportScalePresets(JSON.stringify(exportScalePresets))
-    saveEditorPreferences({ language, saveFormat, exportFormat, recovery, recoveryMinutes, documentSizePresets: normalizedSizes, exportScalePresets: normalizedScales, rotationIndicatorPosition, drawingBrushPreviewEnabled, relativeLuminanceScope })
+    saveEditorPreferences({ language, saveFormat, exportFormat, recovery, recoveryMinutes, documentSizePresets: normalizedSizes, exportScalePresets: normalizedScales, rotationIndicatorPosition, drawingBrushPreviewEnabled, relativeLuminanceScope, zoomToolDragMode, brushShiftLineEnabled: initialPreferences.brushShiftLineEnabled })
     window.dispatchEvent(new Event('moonsprite:preferences-changed'))
     onPresetChange(normalizedSizes, normalizedScales)
   }
   return <div className="modal-backdrop" role="presentation"><section className="modal settings-modal" role="dialog" aria-label="首选项">
     <header><div><span className="eyebrow">PREFERENCES</span><h2>首选项</h2></div><button className="icon-button" aria-label="关闭" onClick={onClose}><X size={16} /></button></header>
     <div className="settings-layout"><nav>{[['general', '常规'], ['files', '文件'], ['presets', '预设'], ['reset', '重置']].map(([id, label]) => <button key={id} className={section === id ? 'selected' : ''} onClick={() => setSection(id as typeof section)}>{label}</button>)}</nav><main>
-      {section === 'general' && <><label className="preference-field">语言<ThemedSelect value={language} groups={[{ label: '语言', options: [{ value: 'zh-CN', label: '简体中文' }, { value: 'en-US', label: 'English' }] }]} label="语言" onChange={setLanguage} /></label><label className="preference-field">旋转指向标位置<ThemedSelect value={rotationIndicatorPosition} groups={[{ label: '位置', options: [{ value: 'view', label: '视图中心' }, { value: 'canvas', label: '画布中心' }] }]} label="旋转指向标位置" onChange={(value) => setRotationIndicatorPosition(value as RotationIndicatorPosition)} /></label><label className="preference-field">查看相对明暗作用区域<ThemedSelect value={relativeLuminanceScope} groups={[{ label: '作用区域', options: [{ value: 'canvas', label: '画布视图内' }, { value: 'app', label: '整体（整个软件）' }] }]} label="查看相对明暗作用区域" onChange={(value) => setRelativeLuminanceScope(value as RelativeLuminanceScope)} /></label><label className="preference-toggle outline-preview-toggle"><span className="outline-preview-label"><Eye size={15} />绘制时显示画笔预览</span><input type="checkbox" checked={drawingBrushPreviewEnabled} onChange={(event) => setDrawingBrushPreviewEnabled(event.target.checked)} /><span className="toggle-track" aria-hidden="true"><i /></span></label></>}
+      {section === 'general' && <><label className="preference-field">语言<ThemedSelect value={language} groups={[{ label: '语言', options: [{ value: 'zh-CN', label: '简体中文' }, { value: 'en-US', label: 'English' }] }]} label="语言" onChange={setLanguage} /></label><label className="preference-field">旋转指向标位置<ThemedSelect value={rotationIndicatorPosition} groups={[{ label: '位置', options: [{ value: 'view', label: '视图中心' }, { value: 'canvas', label: '画布中心' }] }]} label="旋转指向标位置" onChange={(value) => setRotationIndicatorPosition(value as RotationIndicatorPosition)} /></label><label className="preference-field">缩放工具按住拖动<ThemedSelect value={zoomToolDragMode} groups={[{ label: '缩放方式', options: [{ value: 'smooth', label: '平滑缩放' }, { value: 'stepped', label: '百分比缩放' }] }]} label="缩放工具按住拖动" onChange={(value) => setZoomToolDragMode(value as ZoomToolDragMode)} /></label><label className="preference-field">查看相对明暗作用区域<ThemedSelect value={relativeLuminanceScope} groups={[{ label: '作用区域', options: [{ value: 'canvas', label: '画布视图内' }, { value: 'app', label: '整体（整个软件）' }] }]} label="查看相对明暗作用区域" onChange={(value) => setRelativeLuminanceScope(value as RelativeLuminanceScope)} /></label><label className="preference-toggle outline-preview-toggle"><span className="outline-preview-label"><Eye size={15} />绘制时显示画笔预览</span><input type="checkbox" checked={drawingBrushPreviewEnabled} onChange={(event) => setDrawingBrushPreviewEnabled(event.target.checked)} /><span className="toggle-track" aria-hidden="true"><i /></span></label></>}
       {section === 'files' && <><label className="preference-field">默认保存格式<ThemedSelect value={saveFormat} groups={[{ label: '保存格式', options: [{ value: 'moonsprite', label: '.moonsprite' }, { value: 'png', label: '.png' }, { value: 'jpeg', label: '.jpg / .jpeg' }, { value: 'webp', label: '.webp' }, { value: 'ase', label: '.ase' }, { value: 'aseprite', label: '.aseprite' }] }]} label="默认保存格式" onChange={setSaveFormat} /></label><label className="preference-field">默认导出格式<ThemedSelect value={exportFormat} groups={[{ label: '导出格式', options: [{ value: 'png', label: 'PNG' }, { value: 'jpeg', label: 'JPEG' }, { value: 'webp', label: 'WebP' }, { value: 'svg', label: 'SVG' }] }]} label="默认导出格式" onChange={setExportFormat} /></label><label className="preference-toggle outline-preview-toggle"><span>启用异常恢复</span><input type="checkbox" checked={recovery} onChange={(event) => setRecovery(event.target.checked)} /><span className="toggle-track" aria-hidden="true"><i /></span></label><label className="preference-field">恢复间隔<NumberInput min={1} max={60} suffix="分钟" value={recoveryMinutes} onValueChange={setRecoveryMinutes} /></label></>}
       {section === 'presets' && <div className="preference-presets"><section><header><strong>新建工程尺寸</strong><button type="button" onClick={() => setDocumentSizePresets((current) => [...current, { width: 64, height: 64 }])}><Plus size={13} />新增尺寸</button></header><div className="preference-preset-grid">{documentSizePresets.map((preset, index) => <div className="document-size-preset-row" key={index}><NumberInput aria-label={`预设 ${index + 1} 宽度`} min={1} max={16384} suffix="px" value={preset.width} onValueChange={(value) => updateDocumentSize(index, 'width', value)} /><span>x</span><NumberInput aria-label={`预设 ${index + 1} 高度`} min={1} max={16384} suffix="px" value={preset.height} onValueChange={(value) => updateDocumentSize(index, 'height', value)} /><button type="button" className="icon-button" aria-label={`删除尺寸 ${preset.width}x${preset.height}`} disabled={documentSizePresets.length === 1} onClick={() => setDocumentSizePresets((current) => current.filter((_, presetIndex) => presetIndex !== index))}><Trash2 size={13} /></button></div>)}</div></section><section><header><strong>导出图片放大倍数</strong><button type="button" onClick={() => setExportScalePresets((current) => [...current, 100])}><Plus size={13} />新增倍数</button></header><div className="preference-preset-grid export-scale-preset-grid">{exportScalePresets.map((scale, index) => <div className="export-scale-preset-row" key={index}><NumberInput aria-label={`导出倍数 ${index + 1}`} min={1} max={6400} suffix="%" value={scale} onValueChange={(value) => setExportScalePresets((current) => current.map((currentScale, scaleIndex) => scaleIndex === index ? value : currentScale))} /><button type="button" className="icon-button" aria-label={`删除 ${scale}%`} disabled={exportScalePresets.length === 1} onClick={() => setExportScalePresets((current) => current.filter((_, scaleIndex) => scaleIndex !== index))}><Trash2 size={13} /></button></div>)}</div></section></div>}
       {section === 'reset' && <><p>重置会清空本地工作区、工具、调色盘和快捷键设置，当前打开的工程文件不会删除。</p><button className="danger-button" onClick={() => { clearStoredValues(); window.location.reload() }}>恢复所有初始设置</button></>}
@@ -352,34 +355,40 @@ function SaveAsDialog({ initialName, onSave, onClose }: { initialName: string; o
 }
 
 function ShortcutDialog({ shortcuts, onSave, onClose }: { shortcuts: Record<string, string>; onSave: (next: Record<string, string>) => void; onClose: () => void }) {
-  const [section, setSection] = useState<'tools' | 'selection' | 'commands'>('tools'); const [query, setQuery] = useState(''); const [conflict, setConflict] = useState<string | null>(null)
+  const [section, setSection] = useState<keyof typeof SHORTCUT_GROUPS>('tools'); const [query, setQuery] = useState(''); const [importError, setImportError] = useState<string | null>(null)
   const importInputRef = useRef<HTMLInputElement>(null)
-  const groups = { tools: ['tool.pencil', 'tool.eraser', 'tool.selection', 'tool.move', 'tool.shape', 'tool.fill', 'tool.eyedropper', 'tool.hand', 'tool.zoom', 'tool.rotate'], selection: ['lasso', 'magic', 'canvasResize', 'transform', 'outline', 'flipVertical', 'flipHorizontal', 'selectAll', 'deselect'], commands: ['copy', 'cut', 'paste', 'fillForeground', 'save', 'saveAs', 'undo', 'redo', 'relativeLuminance', 'advancedMode'] }
-  const labels: Record<string, string> = { 'tool.pencil': '画笔', 'tool.eraser': '橡皮擦', 'tool.selection': '选区', 'tool.move': '移动', 'tool.shape': '形状', 'tool.fill': '油漆桶', 'tool.eyedropper': '吸管', 'tool.hand': '抓手', 'tool.zoom': '放大镜', 'tool.rotate': '旋转视图', lasso: '套索', magic: '魔棒', canvasResize: '调整画布', transform: '变换', outline: '描边', flipVertical: '垂直翻转选区', flipHorizontal: '水平翻转选区', selectAll: '全选', deselect: '取消选择', copy: '复制', cut: '剪切', paste: '粘贴', fillForeground: '填充前景色', save: '保存', undo: '撤销', redo: '重做', relativeLuminance: '相对明暗', advancedMode: '高级模式' }
-  const labelsWithSaveAs: Record<string, string> = { ...labels, saveAs: '另存为' }
-  labels.saveAs = '另存为'
-  const active = groups[section].filter((id) => labelsWithSaveAs[id].toLowerCase().includes(query.toLowerCase()) || (shortcuts[id] ?? defaultShortcuts[id]).toLowerCase().includes(query.toLowerCase()))
-  const assign = (id: string, value: string): void => { const others = Object.entries(shortcuts).filter(([key, assigned]) => key !== id && assigned.toLowerCase() === value.toLowerCase()); setConflict(others.length > 0 ? `“${value}”同时用于：${others.map(([key]) => labels[key]).join('、')}。重复快捷键会按当前界面中最先匹配的命令执行。` : null); onSave({ ...shortcuts, [id]: value }) }
+  const conflictState = useMemo(() => deriveShortcutConflicts(shortcuts), [shortcuts])
+  const active = SHORTCUT_GROUPS[section].filter((id) => SHORTCUT_LABELS[id].toLowerCase().includes(query.toLowerCase()) || (shortcuts[id] ?? defaultShortcuts[id]).toLowerCase().includes(query.toLowerCase()))
+  const assign = (id: string, value: string): void => {
+    const normalized = value.trim()
+    setImportError(null)
+    onSave({ ...shortcuts, [id]: normalized })
+  }
   const importShortcuts = async (file: File | undefined): Promise<void> => {
     if (!file) return
     try {
       const parsed = JSON.parse(await file.text()) as Record<string, unknown>
       const imported = Object.fromEntries(Object.entries(parsed).filter(([key, value]) => key in defaultShortcuts && typeof value === 'string')) as Record<string, string>
       onSave({ ...defaultShortcuts, ...imported })
-      setConflict(null)
-    } catch { setConflict('快捷键文件无法读取，请选择 MoonSprite 导出的 JSON 文件。') }
+      setImportError(null)
+    } catch { setImportError('快捷键文件无法读取，请选择 MoonSprite 导出的 JSON 文件。') }
   }
-  return <div className="modal-backdrop" role="presentation"><section className="modal settings-modal" role="dialog" aria-label="快捷键设置"><header><div><span className="eyebrow">SHORTCUTS</span><h2>快捷键设置</h2></div><button className="icon-button" aria-label="关闭" onClick={onClose}><X size={16} /></button></header><div className="settings-layout"><nav>{[['tools', '工具'], ['selection', '选区'], ['commands', '命令']].map(([id, label]) => <button key={id} className={section === id ? 'selected' : ''} onClick={() => setSection(id as typeof section)}>{label}</button>)}</nav><main><input className="shortcut-search" placeholder="搜索快捷键" value={query} onChange={(event) => setQuery(event.target.value)} />{conflict && <p className="shortcut-conflict">{conflict}</p>}<div className="shortcut-list">{active.map((id) => <label key={id}><span>{labels[id]}</span><input value={shortcuts[id] ?? defaultShortcuts[id]} readOnly onKeyDown={(event) => { event.preventDefault(); if (event.key !== 'Escape') assign(id, shortcutText(event.nativeEvent)) }} /></label>)}</div></main></div><footer><input ref={importInputRef} hidden type="file" accept="application/json,.json" onChange={(event) => { void importShortcuts(event.target.files?.[0]); event.currentTarget.value = '' }} /><button className="quiet-button" onClick={() => importInputRef.current?.click()}><FileUp size={14} />导入</button><button className="quiet-button" onClick={() => { const blob = new Blob([JSON.stringify(shortcuts, null, 2)], { type: 'application/json' }); const anchor = document.createElement('a'); anchor.href = URL.createObjectURL(blob); anchor.download = 'moonsprite-shortcuts.json'; anchor.click(); URL.revokeObjectURL(anchor.href) }}>导出</button><button className="quiet-button" onClick={() => onSave({ ...defaultShortcuts })}>重置</button><button className="primary-button" onClick={onClose}>完成</button></footer></section></div>
+  const conflictSummary = conflictState.conflicts.map((item) => `“${item.shortcut}”：${SHORTCUT_LABELS[item.winner]} 优先，${item.conflicting.map((id) => SHORTCUT_LABELS[id]).join('、')}无法触发`).join('；')
+  return <div className="modal-backdrop" role="presentation"><section className="modal settings-modal" role="dialog" aria-label="快捷键设置"><header><div><span className="eyebrow">SHORTCUTS</span><h2>快捷键设置</h2></div><button className="icon-button" aria-label="关闭" onClick={onClose}><X size={16} /></button></header><div className="settings-layout"><nav>{Object.keys(SHORTCUT_GROUPS).map((id) => <button key={id} className={section === id ? 'selected' : ''} onClick={() => setSection(id as keyof typeof SHORTCUT_GROUPS)}>{SHORTCUT_GROUP_LABELS[id as keyof typeof SHORTCUT_GROUPS]}</button>)}</nav><main><input className="shortcut-search" placeholder="搜索快捷键" value={query} onChange={(event) => setQuery(event.target.value)} />{importError && <p className="shortcut-conflict">{importError}</p>}{conflictSummary && <p className="shortcut-conflict">{conflictSummary}</p>}<div className="shortcut-list">{active.map((id) => { const winner = conflictState.blocked[id]; return <label key={id} className={winner ? 'shortcut-blocked' : ''}><span>{SHORTCUT_LABELS[id]}</span>{winner && <span className="shortcut-warning" title={`与“${SHORTCUT_LABELS[winner]}”冲突，当前无法触发`}><TriangleAlert size={15} /></span>}<input value={shortcuts[id] ?? defaultShortcuts[id]} placeholder="未设置" readOnly onKeyDown={(event) => { event.preventDefault(); if (event.key === 'Backspace' || event.key === 'Delete') assign(id, ''); else if (event.key !== 'Escape') assign(id, shortcutText(event.nativeEvent)) }} /><button type="button" className="shortcut-clear" title="清除快捷键" aria-label={`清除 ${SHORTCUT_LABELS[id]} 快捷键`} onClick={() => assign(id, '')}><X size={13} /></button></label> })}</div></main></div><footer><input ref={importInputRef} hidden type="file" accept="application/json,.json" onChange={(event) => { void importShortcuts(event.target.files?.[0]); event.currentTarget.value = '' }} /><button className="quiet-button" onClick={() => importInputRef.current?.click()}><FileUp size={14} />导入</button><button className="quiet-button" onClick={() => { const blob = new Blob([JSON.stringify(shortcuts, null, 2)], { type: 'application/json' }); const anchor = document.createElement('a'); anchor.href = URL.createObjectURL(blob); anchor.download = 'moonsprite-shortcuts.json'; anchor.click(); URL.revokeObjectURL(anchor.href) }}>导出</button><button className="quiet-button" onClick={() => onSave({ ...defaultShortcuts })}>重置</button><button className="primary-button" onClick={onClose}>完成</button></footer></section></div>
 }
 
 function AdjustmentSlider({ label, value, min, max, onChange }: { label: string; value: number; min: number; max: number; onChange: (value: number) => void }) {
   return <label className="adjustment-slider-row"><span>{label}</span><input type="range" min={min} max={max} value={value} onChange={(event) => onChange(Number(event.target.value))} /><NumberInput min={min} max={max} value={value} onValueChange={onChange} /></label>
 }
 
-function CurveEditor({ points, onChange }: { points: CurvePoint[]; onChange: (points: CurvePoint[]) => void }) {
+function CurveEditor({ points, channel = 'rgb', histogram, onChange }: { points: CurvePoint[]; channel?: CurveChannel; histogram?: Uint32Array; onChange: (points: CurvePoint[]) => void }) {
   const activePointRef = useRef<number | null>(null)
+  const [selectedPoint, setSelectedPoint] = useState<number | null>(null)
   const pointsRef = useRef(points)
   pointsRef.current = points
+  useEffect(() => {
+    if (selectedPoint !== null && selectedPoint >= points.length) setSelectedPoint(null)
+  }, [points.length, selectedPoint])
   const eventPoint = (event: React.PointerEvent<SVGSVGElement>): CurvePoint => {
     const bounds = event.currentTarget.getBoundingClientRect()
     return {
@@ -395,11 +404,15 @@ function CurveEditor({ points, onChange }: { points: CurvePoint[]; onChange: (po
     if (event.button !== 0) return
     event.currentTarget.setPointerCapture(event.pointerId)
     const hit = nearestPoint(event)
-    if (hit >= 0) activePointRef.current = hit
+    if (hit >= 0) {
+      activePointRef.current = hit
+      setSelectedPoint(hit)
+    }
     else {
       const point = eventPoint(event)
       const next = [...pointsRef.current, point].sort((left, right) => left.x - right.x)
       activePointRef.current = next.indexOf(point)
+      setSelectedPoint(activePointRef.current)
       pointsRef.current = next
       onChange(next)
     }
@@ -420,16 +433,32 @@ function CurveEditor({ points, onChange }: { points: CurvePoint[]; onChange: (po
     activePointRef.current = null
     if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId)
   }
-  const remove = (event: React.MouseEvent<SVGSVGElement>): void => {
-    const bounds = event.currentTarget.getBoundingClientRect()
-    const index = pointsRef.current.findIndex((point) => Math.hypot(point.x / 255 * bounds.width - (event.clientX - bounds.left), (255 - point.y) / 255 * bounds.height - (event.clientY - bounds.top)) <= 12)
+  const removeAt = (clientX: number, clientY: number, bounds: DOMRect): void => {
+    const index = pointsRef.current.findIndex((point) => Math.hypot(point.x / 255 * bounds.width - (clientX - bounds.left), (255 - point.y) / 255 * bounds.height - (clientY - bounds.top)) <= 12)
     if (index <= 0 || index >= pointsRef.current.length - 1) return
     const next = pointsRef.current.filter((_, pointIndex) => pointIndex !== index)
     pointsRef.current = next
+    setSelectedPoint(null)
     onChange(next)
   }
-  const path = points.map((point, index) => `${index === 0 ? 'M' : 'L'} ${point.x} ${255 - point.y}`).join(' ')
-  return <div className="curve-editor"><svg viewBox="0 0 255 255" preserveAspectRatio="none" role="application" aria-label="曲线编辑器：点击添加控制点，拖动调整，双击移除中间点" onPointerDown={begin} onPointerMove={move} onPointerUp={end} onPointerCancel={end} onDoubleClick={remove}><path className="curve-line" d={path} />{points.map((point, index) => <rect key={index} className="curve-point" x={point.x - 4} y={251 - point.y} width="8" height="8" />)}</svg><div className="curve-editor-axis"><span>暗部</span><span>亮部</span></div></div>
+  const remove = (event: React.MouseEvent<SVGSVGElement>): void => {
+    const bounds = event.currentTarget.getBoundingClientRect()
+    removeAt(event.clientX, event.clientY, bounds)
+  }
+  const removeContext = (event: React.MouseEvent<SVGSVGElement>): void => {
+    event.preventDefault()
+    removeAt(event.clientX, event.clientY, event.currentTarget.getBoundingClientRect())
+  }
+  const removeSelected = (): void => {
+    if (selectedPoint === null || selectedPoint <= 0 || selectedPoint >= pointsRef.current.length - 1) return
+    const next = pointsRef.current.filter((_, index) => index !== selectedPoint)
+    pointsRef.current = next
+    setSelectedPoint(null)
+    onChange(next)
+  }
+  const path = buildCurvePath(points)
+  const tendency = channel === 'rgb' ? '中性色调' : channel === 'red' ? '青 ↔ 红' : channel === 'green' ? '洋红 ↔ 绿' : '黄 ↔ 蓝'
+  return <div className={`curve-editor curve-editor-${channel}`}><div className="curve-editor-toolbar"><span>{tendency}</span><button type="button" className="icon-button" title="删除选中的控制点" aria-label="删除选中的控制点" disabled={selectedPoint === null || selectedPoint === 0 || selectedPoint === points.length - 1} onClick={removeSelected}><Trash2 size={13} /></button></div><svg viewBox="0 0 255 255" preserveAspectRatio="none" role="application" tabIndex={0} aria-label="曲线编辑器：点击添加控制点，拖动调整，右键或删除按钮移除中间点" onKeyDown={(event) => { if (event.key === 'Delete' || event.key === 'Backspace') { event.preventDefault(); removeSelected() } }} onPointerDown={begin} onPointerMove={move} onPointerUp={end} onPointerCancel={end} onDoubleClick={remove} onContextMenu={removeContext}>{histogram && <path className={`curve-histogram curve-histogram-${channel}`} d={buildHistogramPath(histogram)} />}{points.length > 1 && <path className={`curve-line curve-line-${channel}`} d={path} />}{points.map((point, index) => <rect key={index} className={`curve-point curve-point-${channel} ${selectedPoint === index ? 'selected' : ''}`} x={point.x - 4} y={251 - point.y} width="8" height="8" />)}</svg><div className="curve-editor-axis"><span>暗部</span><span>亮部</span></div></div>
 }
 
 function AdjustmentDialog({ kind, onClose }: { kind: AdjustmentKind; onClose: () => void }) {
@@ -439,9 +468,16 @@ function AdjustmentDialog({ kind, onClose }: { kind: AdjustmentKind; onClose: ()
   const [contrast, setContrast] = useState(0)
   const [hue, setHue] = useState(0)
   const [saturation, setSaturation] = useState(0)
-  const [curvePoints, setCurvePoints] = useState<CurvePoint[]>([{ x: 0, y: 0 }, { x: 255, y: 255 }])
+  const [curveChannel, setCurveChannel] = useState<CurveChannel>('rgb')
+  const [curvePoints, setCurvePoints] = useState<Record<CurveChannel, CurvePoint[]>>({
+    rgb: [{ x: 0, y: 0 }, { x: 255, y: 255 }],
+    red: [{ x: 0, y: 0 }, { x: 255, y: 255 }],
+    green: [{ x: 0, y: 0 }, { x: 255, y: 255 }],
+    blue: [{ x: 0, y: 0 }, { x: 255, y: 255 }]
+  })
   const [balanceTone, setBalanceTone] = useState<'shadows' | 'midtones' | 'highlights'>('midtones')
   const [preserveLuminosity, setPreserveLuminosity] = useState(true)
+  const histogram = useMemo(() => baseline ? buildCurveHistogram(baseline.pixels, baseline.pixels instanceof Uint8ClampedArray ? 'rgba' : 'indexed', baseline.palette) : null, [baseline])
   const [balance, setBalance] = useState({
     shadowsCyanRed: 0, shadowsMagentaGreen: 0, shadowsYellowBlue: 0,
     midtonesCyanRed: 0, midtonesMagentaGreen: 0, midtonesYellowBlue: 0,
@@ -452,7 +488,7 @@ function AdjustmentDialog({ kind, onClose }: { kind: AdjustmentKind; onClose: ()
     : kind === 'hue-saturation'
       ? { kind, hue, saturation }
       : kind === 'curves'
-        ? { kind, curvePoints }
+        ? { kind, curvePoints: curvePoints.rgb, curveRedPoints: curvePoints.red, curveGreenPoints: curvePoints.green, curveBluePoints: curvePoints.blue }
         : { kind, ...balance, preserveLuminosity }, [kind, brightness, contrast, hue, saturation, curvePoints, balance, preserveLuminosity])
 
   useEffect(() => {
@@ -478,7 +514,7 @@ function AdjustmentDialog({ kind, onClose }: { kind: AdjustmentKind; onClose: ()
   return <div className="modal-backdrop" role="presentation"><section className="modal adjustment-modal" role="dialog" aria-label={title}><header><div><span className="eyebrow">ADJUST</span><h2>{title}</h2></div><button className="icon-button" aria-label="关闭" onClick={cancel}><X size={16} /></button></header><div className="modal-body adjustment-modal-body">
     {kind === 'brightness-contrast' && <section className="adjustment-controls"><AdjustmentSlider label="亮度" min={-100} max={100} value={brightness} onChange={setBrightness} /><AdjustmentSlider label="对比度" min={-100} max={100} value={contrast} onChange={setContrast} /></section>}
     {kind === 'hue-saturation' && <section className="adjustment-controls"><AdjustmentSlider label="色相" min={-180} max={180} value={hue} onChange={setHue} /><AdjustmentSlider label="饱和度" min={-100} max={100} value={saturation} onChange={setSaturation} /></section>}
-    {kind === 'curves' && <section className="adjustment-controls curve-controls"><CurveEditor points={curvePoints} onChange={setCurvePoints} /><button type="button" className="quiet-button curve-reset" onClick={() => setCurvePoints([{ x: 0, y: 0 }, { x: 255, y: 255 }])}>重置曲线</button></section>}
+    {kind === 'curves' && <section className="adjustment-controls curve-controls"><div className="curve-channel-tabs" role="tablist" aria-label="曲线通道">{(['rgb', 'red', 'green', 'blue'] as CurveChannel[]).map((channel) => <button type="button" key={channel} className={`curve-channel-${channel} ${curveChannel === channel ? 'selected' : ''}`} onClick={() => setCurveChannel(channel)}><i aria-hidden="true" />{channel === 'rgb' ? 'RGB' : channel === 'red' ? '红' : channel === 'green' ? '绿' : '蓝'}</button>)}</div><CurveEditor channel={curveChannel} histogram={histogram?.[curveChannel]} points={curvePoints[curveChannel]} onChange={(next) => setCurvePoints((current) => ({ ...current, [curveChannel]: next }))} /><button type="button" className="quiet-button curve-reset" onClick={() => setCurvePoints((current) => ({ ...current, [curveChannel]: [{ x: 0, y: 0 }, { x: 255, y: 255 }] }))}>重置当前通道</button></section>}
     {kind === 'color-balance' && <section className="balance-panel"><div className="balance-tone-tabs segmented-control"><button className={balanceTone === 'shadows' ? 'selected' : ''} onClick={() => setBalanceTone('shadows')}>阴影</button><button className={balanceTone === 'midtones' ? 'selected' : ''} onClick={() => setBalanceTone('midtones')}>中间调</button><button className={balanceTone === 'highlights' ? 'selected' : ''} onClick={() => setBalanceTone('highlights')}>高光</button></div><div className="adjustment-controls balance-controls"><AdjustmentSlider label="青色 - 红色" min={-100} max={100} value={balanceValue('CyanRed')} onChange={(value) => updateBalance('CyanRed', value)} /><AdjustmentSlider label="洋红 - 绿色" min={-100} max={100} value={balanceValue('MagentaGreen')} onChange={(value) => updateBalance('MagentaGreen', value)} /><AdjustmentSlider label="黄色 - 蓝色" min={-100} max={100} value={balanceValue('YellowBlue')} onChange={(value) => updateBalance('YellowBlue', value)} /></div><label className="tool-checkbox preserve-luminosity"><input type="checkbox" checked={preserveLuminosity} onChange={(event) => setPreserveLuminosity(event.target.checked)} />保持明度</label></section>}
     <label className="outline-preview-toggle adjustment-preview-toggle"><span className="outline-preview-label"><Eye size={15} />实时预览</span><input type="checkbox" checked={previewEnabled} onChange={(event) => setPreviewEnabled(event.target.checked)} /><span className="toggle-track" aria-hidden="true"><i /></span></label>
   </div><footer><button className="quiet-button" onClick={cancel}>取消</button><button className="primary-button" onClick={apply}>应用</button></footer></section></div>
@@ -518,6 +554,7 @@ export default function App() {
   const [relativeLuminanceScope, setRelativeLuminanceScope] = useState<RelativeLuminanceScope>(() => parseRelativeLuminanceScope(readStoredString(RELATIVE_LUMINANCE_SCOPE_KEY)))
   const [advancedMode, setAdvancedMode] = useState<AdvancedMode | null>(null)
   const [advancedModeNotice, setAdvancedModeNotice] = useState<string | null>(null)
+  const [advancedModeNoticeShortcut, setAdvancedModeNoticeShortcut] = useState('')
   const [shapeFlyoutOpen, setShapeFlyoutOpen] = useState(false)
   const [selectionFlyoutOpen, setSelectionFlyoutOpen] = useState(false)
   const [brushFlyoutOpen, setBrushFlyoutOpen] = useState(false)
@@ -557,8 +594,12 @@ export default function App() {
   const splitPaneDrag = useRef<{ id: string; startX: number; startY: number; originX: number; originY: number } | null>(null)
   const session = useMemo(() => workspace.sessions.find((item) => item.document.id === workspace.activeId) ?? null, [workspace.sessions, workspace.activeId])
   const saveShortcuts = (next: Record<string, string>): void => { setShortcuts(next); persistShortcuts(next) }
+  const blockedShortcuts = useMemo(() => deriveShortcutConflicts(shortcuts).blocked, [shortcuts])
+  const shortcutFor = useCallback((id: string): string => shortcuts[id] ?? defaultShortcuts[id] ?? '', [shortcuts])
   useEffect(() => {
-    const syncPreferences = (): void => setRelativeLuminanceScope(parseRelativeLuminanceScope(readStoredString(RELATIVE_LUMINANCE_SCOPE_KEY)))
+    const syncPreferences = (): void => {
+      setRelativeLuminanceScope(parseRelativeLuminanceScope(readStoredString(RELATIVE_LUMINANCE_SCOPE_KEY)))
+    }
     window.addEventListener('moonsprite:preferences-changed', syncPreferences)
     return () => window.removeEventListener('moonsprite:preferences-changed', syncPreferences)
   }, [])
@@ -579,7 +620,17 @@ export default function App() {
     const next: AdvancedMode | null = advancedMode === null ? 'tool-options' : advancedMode === 'tool-options' ? 'canvas-only' : null
     setAdvancedMode(next)
     setAdvancedModeNotice('高级模式已开启')
-  }, [advancedMode])
+    setAdvancedModeNoticeShortcut(shortcutFor('advancedMode'))
+  }, [advancedMode, shortcutFor])
+  const toggleMirrorView = useCallback((axis: 'horizontal' | 'vertical'): void => {
+    const active = useWorkspace.getState().sessions.find((item) => item.document.id === useWorkspace.getState().activeId)
+    if (!active) return
+    const vertical = axis === 'vertical'
+    const next = vertical ? !active.view.mirroredVertical : !active.view.mirrored
+    workspace.setView(vertical ? { mirroredVertical: next } : { mirrored: next })
+    setAdvancedModeNotice(`${vertical ? '垂直' : '水平'}镜像视图已${next ? '开启' : '关闭'}`)
+    setAdvancedModeNoticeShortcut(shortcutFor(vertical ? 'mirrorViewVertical' : 'mirrorView'))
+  }, [shortcutFor, workspace])
   const splitSessions = useMemo(() => splitDocumentIds
     ? splitDocumentIds.map((id, index) => ({ paneId: `${id}:${index}`, session: workspace.sessions.find((item) => item.document.id === id) })).filter((item): item is { paneId: string; session: NonNullable<typeof item.session> } => Boolean(item.session))
     : [], [splitDocumentIds, workspace.sessions])
@@ -920,6 +971,12 @@ export default function App() {
     const current = useWorkspace.getState()
     if (!keepHomeOpen && current.sessions.some((item) => !beforeIds.has(item.document.id))) setHomeOpen(false)
     return opened
+  }
+
+  const restoreRecoveryAndShowDocument = async (id: string): Promise<boolean> => {
+    const restored = await useWorkspace.getState().restoreRecovery(id)
+    if (restored) setHomeOpen(false)
+    return restored
   }
 
   const openProjectFolder = (documentId: string): void => {
@@ -1274,7 +1331,26 @@ export default function App() {
   useEffect(() => {
     const keydown = (event: KeyboardEvent): void => {
       const key = keyboardEventKey(event).toLowerCase()
-      const matches = (action: string): boolean => shortcutText(event).toLowerCase() === (shortcuts[action]?.trim() || defaultShortcuts[action] || '').toLowerCase()
+      const matches = (action: string): boolean => {
+        if (blockedShortcuts[action as keyof typeof blockedShortcuts]) return false
+        const configured = shortcuts[action]
+        const expected = configured === undefined ? defaultShortcuts[action] : configured.trim()
+        return expected !== '' && normalizeShortcut(shortcutText(event)).toLowerCase() === normalizeShortcut(expected).toLowerCase()
+      }
+      if (key === 'escape') {
+        const hasTransientSurface = Boolean(workspace.dialog || workspace.saveProgress || newOpen || canvasResizeOpen || imageResizeOpen || outlineOpen || preferencesOpen || shortcutOpen || adjustmentOpen || aboutOpen || componentLibraryOpen || exportOpen || saveAsOpen || workspaceSaveOpen || workspaceManagerOpen || openMenu || tabContextMenu || shapeFlyoutOpen || selectionFlyoutOpen || brushFlyoutOpen || brushSizeFlyoutOpen || brushOutputOpen)
+        const dialogChoice = workspace.dialog?.choices.find((choice) => choice.id === 'cancel')?.id ?? workspace.dialog?.choices.find((choice) => choice.tone === 'quiet')?.id
+        if (workspace.dialog && dialogChoice) workspace.resolveDialog(dialogChoice)
+        if (workspace.saveProgress) workspace.dismissSaveProgress()
+        window.dispatchEvent(new Event('moonsprite:close-dialog'))
+        setNewOpen(false); setCanvasResizeOpen(false); setImageResizeOpen(false); setOutlineOpen(false); setPreferencesOpen(false); setShortcutOpen(false); setAdjustmentOpen(false); setAboutOpen(false); setComponentLibraryOpen(false); setExportOpen(false); setSaveAsOpen(false); setWorkspaceSaveOpen(false); setWorkspaceManagerOpen(false)
+        setOpenMenu(null); setTabContextMenu(null); setShapeFlyoutOpen(false); setSelectionFlyoutOpen(false); setBrushFlyoutOpen(false); setBrushSizeFlyoutOpen(false); setBrushOutputOpen(false)
+        if (session?.pendingPaste) workspace.cancelFloatingPaste()
+        else if (!hasTransientSurface) workspace.setSelection(null)
+        event.preventDefault()
+        event.stopPropagation()
+        return
+      }
       if (key === 'tab') {
         event.preventDefault()
         event.stopPropagation()
@@ -1354,15 +1430,15 @@ export default function App() {
           }
           return
         }
-        if (key === 'b') {
+        if (matches('createBrushFromSelection')) {
           event.preventDefault()
           if (session?.tool === 'selection' && session.selection) workspace.createBrushFromSelection()
           else workspace.setMessage('请先使用选区工具选择要作为笔刷的内容。')
           return
         }
         if (matches('deselect')) { event.preventDefault(); if (session?.pendingPaste) workspace.commitFloatingPaste(); if (session?.selection) workspace.commitSelectionChange({ ...session.selection }, null, '取消选区'); return }
-        if (key === 'n') { event.preventDefault(); setNewOpen(true) }
-        if (key === 'o') { event.preventDefault(); void openFilesAndShowDocument() }
+        if (matches('newDocument')) { event.preventDefault(); setNewOpen(true) }
+        if (matches('openDocument')) { event.preventDefault(); void openFilesAndShowDocument() }
         if (matches('save')) {
           event.preventDefault()
           if (!event.repeat) void workspace.saveActive()
@@ -1372,18 +1448,43 @@ export default function App() {
           event.preventDefault()
           if (session) workspace.setView({ relativeLuminance: !session.view.relativeLuminance })
         }
-        if (key === 'e') { event.preventDefault(); openExport() }
+        if (matches('mirrorView') && session) {
+          event.preventDefault()
+          toggleMirrorView('horizontal')
+        }
+        if (matches('mirrorViewVertical') && session) {
+          event.preventDefault()
+          toggleMirrorView('vertical')
+        }
+        if (matches('imageResize') && session) {
+          event.preventDefault()
+          setImageResizeOpen(true)
+        }
+        if (matches('exportDocument')) { event.preventDefault(); openExport() }
         if (matches('copy')) { event.preventDefault(); if (session && !session.selection && !session.selectedGroupId && session.selectedLayerIds.length === 1) workspace.copyActiveLayerToClipboard(); else workspace.copySelection() }
         if (matches('cut')) { event.preventDefault(); workspace.cutSelection() }
         if (matches('paste')) { event.preventDefault(); if (!session?.selection && workspace.pasteLayerFromClipboard()) return; void workspace.pasteSelection() }
-        if (key === 'g') { event.preventDefault(); event.shiftKey ? workspace.ungroupSelected() : workspace.createLayerGroup() }
-        if (key === 'w' && workspace.activeId) { event.preventDefault(); void workspace.closeDocument(workspace.activeId) }
+        if (matches('createLayerGroup')) { event.preventDefault(); workspace.createLayerGroup() }
+        if (matches('ungroupLayers')) { event.preventDefault(); workspace.ungroupSelected() }
+        if (matches('closeDocument') && workspace.activeId) { event.preventDefault(); void workspace.closeDocument(workspace.activeId) }
         return
       }
       if (matches('magic')) { workspace.setTool('selection'); workspace.setSelectionKind('magic'); return }
       if (matches('lasso')) { workspace.setTool('selection'); workspace.setSelectionKind('lasso'); return }
-      if (matches('tool.selection')) { workspace.setTool('selection'); workspace.setSelectionKind(event.shiftKey ? 'ellipse' : 'rectangle'); return }
+      if (matches('tool.selection.ellipse')) { workspace.setTool('selection'); workspace.setSelectionKind('ellipse'); return }
+      if (matches('tool.selection')) { workspace.setTool('selection'); workspace.setSelectionKind('rectangle'); return }
       if (matches('canvasResize') && session) { setCanvasResizeOpen(true); return }
+      if (matches('imageResize') && session) { setImageResizeOpen(true); return }
+      if (matches('mirrorView') && session) {
+        event.preventDefault()
+        toggleMirrorView('horizontal')
+        return
+      }
+      if (matches('mirrorViewVertical') && session) {
+        event.preventDefault()
+        toggleMirrorView('vertical')
+        return
+      }
       if (event.key === 'Enter' && session?.selection) {
         event.preventDefault()
         if (session.pendingPaste) workspace.commitFloatingPaste()
@@ -1393,25 +1494,20 @@ export default function App() {
       }
       const tool = tools.find((item) => matches(`tool.${item.id}`))
       if (tool) workspace.setTool(tool.id)
-      if (event.key === 'Delete') {
+      if (matches('deleteLayer')) {
         event.preventDefault()
         if (session?.selection) workspace.deleteSelection()
         else if (session?.selectedLayerIds.length && !session.selectedGroupId) workspace.deleteActiveLayer()
         return
       }
-      if (event.key === 'Escape') {
-        if (session?.pendingPaste) workspace.cancelFloatingPaste()
-        else workspace.setSelection(null)
-        setOpenMenu(null)
-      }
-      if (event.key === '[') workspace.setBrushSize((session?.brushSize ?? 1) - 1)
-      if (event.key === ']') workspace.setBrushSize((session?.brushSize ?? 1) + 1)
+      if (matches('brushSizeDecrease')) workspace.setBrushSize((session?.brushSize ?? 1) - 1)
+      if (matches('brushSizeIncrease')) workspace.setBrushSize((session?.brushSize ?? 1) + 1)
     }
     const keyup = (event: KeyboardEvent): void => { if (event.key === 'Alt') event.preventDefault() }
     window.addEventListener('keydown', keydown, true)
     window.addEventListener('keyup', keyup, true)
     return () => { window.removeEventListener('keydown', keydown, true); window.removeEventListener('keyup', keyup, true) }
-  }, [cycleAdvancedMode, homeOpen, openSaveAs, workspace, session?.brushSize, session?.document.id, session?.selection, shortcuts])
+  }, [adjustmentOpen, advancedMode, aboutOpen, blockedShortcuts, brushFlyoutOpen, brushOutputOpen, brushSizeFlyoutOpen, canvasResizeOpen, componentLibraryOpen, cycleAdvancedMode, exportOpen, homeOpen, imageResizeOpen, newOpen, openMenu, openSaveAs, outlineOpen, preferencesOpen, saveAsOpen, selectionFlyoutOpen, shapeFlyoutOpen, shortcutOpen, tabContextMenu, toggleMirrorView, workspace, workspaceManagerOpen, workspaceSaveOpen, session?.brushSize, session?.document.id, session?.selection, shortcuts])
 
   useEffect(() => { void window.moonSprite.getResourceInfo().then((info) => setResourceLabel(`可用内存 ${formatBytes(info.freeBytes)}`)) }, [])
   useEffect(() => {
@@ -1514,14 +1610,14 @@ export default function App() {
     <header className="topbar">
       <button className="brand" title="返回首页" aria-label="返回 MoonSprite 首页" onClick={() => { setHomeOpen(true); setOpenMenu(null) }}><img className="brand-logo" src={moonspriteLogo} alt="" aria-hidden="true" /><span>MOONSPRITE</span><small>{APP_CHANNEL_LABEL}</small></button>
       <nav className="menu-strip" aria-label="主菜单">
-        <div className="menu-item"><button aria-expanded={openMenu === 'file'} onClick={() => setOpenMenu(openMenu === 'file' ? null : 'file')}>文件</button>{openMenu === 'file' && <div className="menu-popover"><button onClick={() => { setNewOpen(true); closeMenu() }}>新建 <kbd>Ctrl+N</kbd></button><button onClick={() => { void openFilesAndShowDocument(); closeMenu() }}>打开 <kbd>Ctrl+O</kbd></button><button disabled={!session} onClick={() => { void workspace.saveActive(); closeMenu() }}>保存 <kbd>Ctrl+S</kbd></button><button disabled={!session} onClick={() => { openSaveAs(); closeMenu() }}>另存为 <kbd>Ctrl+Shift+S</kbd></button><button disabled={!session} onClick={() => { openExport(); closeMenu() }}>导出 <kbd>Ctrl+E</kbd></button><button disabled={!session?.document.filePath && !session?.document.sourceFilePath} onClick={() => { if (session) openProjectFolder(session.document.id); closeMenu() }}>在文件夹中打开</button></div>}</div>
-        <div className="menu-item"><button aria-expanded={openMenu === 'edit'} onClick={() => setOpenMenu(openMenu === 'edit' ? null : 'edit')}>编辑</button>{openMenu === 'edit' && <div className="menu-popover"><button disabled={!session?.history.canUndo} onClick={() => { workspace.undo(); closeMenu() }}>撤销 <kbd>Ctrl+Z</kbd></button><button disabled={!session?.history.canRedo} onClick={() => { workspace.redo(); closeMenu() }}>重做 <kbd>Ctrl+Shift+Z</kbd></button><button disabled={!session || Boolean(session.selectedGroupId) || session.selectedLayerIds.length !== 1} onClick={() => { workspace.beginLayerTransform(); closeMenu() }}>变换 <kbd>Ctrl+T</kbd></button><button disabled={!session?.selection} onClick={() => { workspace.deleteSelection(); closeMenu() }}>删除选区 <kbd>Delete</kbd></button><button disabled={!session?.selection} onClick={() => { setOutlineOpen(true); closeMenu() }}>选区描边 <kbd>Shift+O</kbd></button><button disabled={!session?.selection} onClick={() => { if (session?.selection) workspace.commitSelectionChange(session.selection, null, '取消选区'); closeMenu() }}>取消选择 <kbd>Ctrl+D</kbd></button><span className="menu-divider" /><div className="menu-submenu"><button className="menu-submenu-trigger" disabled={!session}>调整 <ChevronRight size={14} /></button><div className="menu-popover menu-submenu-popover"><button onClick={() => { setAdjustmentKind('color-balance'); setAdjustmentOpen(true); closeMenu() }}>色彩平衡</button><button onClick={() => { setAdjustmentKind('brightness-contrast'); setAdjustmentOpen(true); closeMenu() }}>亮度/对比度</button><button onClick={() => { setAdjustmentKind('hue-saturation'); setAdjustmentOpen(true); closeMenu() }}>色相/饱和度</button><button onClick={() => { setAdjustmentKind('curves'); setAdjustmentOpen(true); closeMenu() }}>曲线</button></div></div><span className="menu-divider" /><button onClick={() => { setPreferencesOpen(true); closeMenu() }}>首选项</button><button onClick={() => { setShortcutOpen(true); closeMenu() }}>快捷键设置</button></div>}</div>
-        <div className="menu-item"><button aria-expanded={openMenu === 'layer'} onClick={() => setOpenMenu(openMenu === 'layer' ? null : 'layer')}>图层</button>{openMenu === 'layer' && <div className="menu-popover"><button disabled={!session} onClick={() => { void workspace.addLayer(); closeMenu() }}>新建图层</button><button disabled={!session} onClick={() => { workspace.createLayerGroup(); closeMenu() }}>新建图层组 <kbd>Ctrl+G</kbd></button><button disabled={!session || Boolean(session.selectedGroupId)} onClick={() => { workspace.duplicateActiveLayer(); closeMenu() }}>复制图层</button><button disabled={!session || Boolean(session.selectedGroupId)} onClick={() => { workspace.mergeActiveLayerDown(); closeMenu() }}>向下合并</button><button disabled={!session || Boolean(session.selectedGroupId) || session.selectedLayerIds.length < 2} onClick={() => { workspace.mergeSelectedLayers(); closeMenu() }}>合并所选图层</button><button disabled={!session?.selectedGroupId} onClick={() => { workspace.mergeSelectedGroup(); closeMenu() }}>合并图层组</button><button disabled={!session || session.document.layers.length < 2} onClick={() => { workspace.mergeVisibleLayers(); closeMenu() }}>合并可见图层</button><button disabled={!session?.selectedGroupId} onClick={() => { workspace.ungroupSelected(); closeMenu() }}>解组 <kbd>Ctrl+Shift+G</kbd></button></div>}</div>
-        <div className="menu-item"><button aria-expanded={openMenu === 'canvas'} onClick={() => setOpenMenu(openMenu === 'canvas' ? null : 'canvas')}>画布</button>{openMenu === 'canvas' && <div className="menu-popover"><button disabled={!session} onClick={() => { setCanvasResizeOpen(true); closeMenu() }}>调整画布尺寸</button><button disabled={!session} onClick={() => { setImageResizeOpen(true); closeMenu() }}>调整图像尺寸</button><button disabled={!session} onClick={() => { if (session) void workspace.convertColorMode(session.document.colorMode === 'rgba' ? 'indexed' : 'rgba'); closeMenu() }}>{session?.document.colorMode === 'rgba' ? '转换为索引模式' : '转换为 RGBA 模式'}</button></div>}</div>
-        <div className="menu-item"><button aria-expanded={openMenu === 'view'} onClick={() => setOpenMenu(openMenu === 'view' ? null : 'view')}>视图</button>{openMenu === 'view' && <div className="menu-popover"><button disabled={!session} onClick={() => { workspace.toggleGrid(); closeMenu() }}>显示像素网格<span className="menu-check">{session?.view.showGrid && <Check size={14} />}</span></button><button disabled={!session} onClick={() => { if (session) workspace.setView({ relativeLuminance: !session.view.relativeLuminance }); closeMenu() }}>查看相对明暗 <kbd>Ctrl+Y</kbd><span className="menu-check">{session?.view.relativeLuminance && <Check size={14} />}</span></button><button disabled={!session} onClick={() => { if (session) workspace.setView({ rotation: 0 }); closeMenu() }}>复位视图旋转</button><button disabled={!session} onClick={() => { setPreviewOpen((value) => !value); closeMenu() }}>显示预览窗<span className="menu-check">{previewOpen && <Check size={14} />}</span></button><button disabled={!session} onClick={() => { if (!session || homeOpen) return; cycleAdvancedMode(); closeMenu() }}>高级模式 <kbd>Ctrl+F</kbd><span className="menu-check">{advancedMode !== null && <Check size={14} />}</span></button></div>}</div>
+        <div className="menu-item"><button aria-expanded={openMenu === 'file'} onClick={() => setOpenMenu(openMenu === 'file' ? null : 'file')}>文件</button>{openMenu === 'file' && <div className="menu-popover"><button onClick={() => { setNewOpen(true); closeMenu() }}>新建 <kbd>{shortcutFor('newDocument')}</kbd></button><button onClick={() => { void openFilesAndShowDocument(); closeMenu() }}>打开 <kbd>{shortcutFor('openDocument')}</kbd></button><button disabled={!session} onClick={() => { void workspace.saveActive(); closeMenu() }}>保存 <kbd>{shortcutFor('save')}</kbd></button><button disabled={!session} onClick={() => { openSaveAs(); closeMenu() }}>另存为 <kbd>{shortcutFor('saveAs')}</kbd></button><button disabled={!session} onClick={() => { openExport(); closeMenu() }}>导出 <kbd>{shortcutFor('exportDocument')}</kbd></button><button disabled={!session?.document.filePath && !session?.document.sourceFilePath} onClick={() => { if (session) openProjectFolder(session.document.id); closeMenu() }}>在文件夹中打开</button></div>}</div>
+        <div className="menu-item"><button aria-expanded={openMenu === 'edit'} onClick={() => setOpenMenu(openMenu === 'edit' ? null : 'edit')}>编辑</button>{openMenu === 'edit' && <div className="menu-popover"><button disabled={!session?.history.canUndo} onClick={() => { workspace.undo(); closeMenu() }}>撤销 <kbd>{shortcutFor('undo')}</kbd></button><button disabled={!session?.history.canRedo} onClick={() => { workspace.redo(); closeMenu() }}>重做 <kbd>{shortcutFor('redo')}</kbd></button><button disabled={!session || Boolean(session.selectedGroupId) || session.selectedLayerIds.length !== 1} onClick={() => { workspace.beginLayerTransform(); closeMenu() }}>变换 <kbd>{shortcutFor('transform')}</kbd></button><button disabled={!session?.selection} onClick={() => { workspace.deleteSelection(); closeMenu() }}>删除选区 <kbd>{shortcutFor('deleteLayer')}</kbd></button><button disabled={!session?.selection} onClick={() => { setOutlineOpen(true); closeMenu() }}>选区描边 <kbd>{shortcutFor('outline')}</kbd></button><button disabled={!session?.selection} onClick={() => { if (session?.selection) workspace.commitSelectionChange(session.selection, null, '取消选区'); closeMenu() }}>取消选择 <kbd>{shortcutFor('deselect')}</kbd></button><span className="menu-divider" /><div className="menu-submenu"><button className="menu-submenu-trigger" disabled={!session}>调整 <ChevronRight size={14} /></button><div className="menu-popover menu-submenu-popover"><button onClick={() => { setAdjustmentKind('color-balance'); setAdjustmentOpen(true); closeMenu() }}>色彩平衡</button><button onClick={() => { setAdjustmentKind('brightness-contrast'); setAdjustmentOpen(true); closeMenu() }}>亮度/对比度</button><button onClick={() => { setAdjustmentKind('hue-saturation'); setAdjustmentOpen(true); closeMenu() }}>色相/饱和度</button><button onClick={() => { setAdjustmentKind('curves'); setAdjustmentOpen(true); closeMenu() }}>曲线</button></div></div><span className="menu-divider" /><button onClick={() => { setShortcutOpen(true); closeMenu() }}>快捷键设置</button><button onClick={() => { setPreferencesOpen(true); closeMenu() }}>首选项</button></div>}</div>
+        <div className="menu-item"><button aria-expanded={openMenu === 'canvas'} onClick={() => setOpenMenu(openMenu === 'canvas' ? null : 'canvas')}>图像</button>{openMenu === 'canvas' && <div className="menu-popover"><button disabled={!session} onClick={() => { setCanvasResizeOpen(true); closeMenu() }}>调整画布尺寸 <kbd>{shortcutFor('canvasResize')}</kbd></button><button disabled={!session} onClick={() => { setImageResizeOpen(true); closeMenu() }}>调整图像尺寸 <kbd>{shortcutFor('imageResize')}</kbd></button><button disabled={!session} onClick={() => { if (session) void workspace.convertColorMode(session.document.colorMode === 'rgba' ? 'indexed' : 'rgba'); closeMenu() }}>{session?.document.colorMode === 'rgba' ? '转换为索引模式' : '转换为 RGBA 模式'}</button></div>}</div>
+        <div className="menu-item"><button aria-expanded={openMenu === 'layer'} onClick={() => setOpenMenu(openMenu === 'layer' ? null : 'layer')}>图层</button>{openMenu === 'layer' && <div className="menu-popover"><button disabled={!session} onClick={() => { void workspace.addLayer(); closeMenu() }}>新建图层</button><button disabled={!session} onClick={() => { workspace.createLayerGroup(); closeMenu() }}>新建图层组 <kbd>{shortcutFor('createLayerGroup')}</kbd></button><button disabled={!session || Boolean(session.selectedGroupId)} onClick={() => { workspace.duplicateActiveLayer(); closeMenu() }}>复制图层</button><button disabled={!session || Boolean(session.selectedGroupId)} onClick={() => { workspace.mergeActiveLayerDown(); closeMenu() }}>向下合并</button><button disabled={!session || Boolean(session.selectedGroupId) || session.selectedLayerIds.length < 2} onClick={() => { workspace.mergeSelectedLayers(); closeMenu() }}>合并所选图层</button><button disabled={!session?.selectedGroupId} onClick={() => { workspace.mergeSelectedGroup(); closeMenu() }}>合并图层组</button><button disabled={!session || session.document.layers.length < 2} onClick={() => { workspace.mergeVisibleLayers(); closeMenu() }}>合并可见图层</button><button disabled={!session?.selectedGroupId} onClick={() => { workspace.ungroupSelected(); closeMenu() }}>解组 <kbd>{shortcutFor('ungroupLayers')}</kbd></button></div>}</div>
+        <div className="menu-item"><button aria-expanded={openMenu === 'view'} onClick={() => setOpenMenu(openMenu === 'view' ? null : 'view')}>视图</button>{openMenu === 'view' && <div className="menu-popover"><button disabled={!session} onClick={() => { workspace.toggleGrid(); closeMenu() }}>显示像素网格<span className="menu-check">{session?.view.showGrid && <Check size={14} />}</span></button><button disabled={!session} onClick={() => { if (session) workspace.setView({ relativeLuminance: !session.view.relativeLuminance }); closeMenu() }}>查看相对明暗 <kbd>{shortcutFor('relativeLuminance')}</kbd><span className="menu-check">{session?.view.relativeLuminance && <Check size={14} />}</span></button><span className="menu-divider" /><div className="menu-submenu"><button className="menu-submenu-trigger" disabled={!session}>旋转视图 <ChevronRight size={14} /></button><div className="menu-popover menu-submenu-popover"><button disabled={!session} onClick={() => { workspace.setTool('rotate'); closeMenu() }}>进入旋转工具 <kbd>{shortcutFor('tool.rotate')}</kbd></button><button disabled={!session} onClick={() => { if (session) workspace.setView({ rotation: 0 }); closeMenu() }}>复位旋转</button></div></div><div className="menu-submenu"><button className="menu-submenu-trigger" disabled={!session}>镜像视图 <ChevronRight size={14} /></button><div className="menu-popover menu-submenu-popover"><button disabled={!session} onClick={() => { toggleMirrorView('horizontal'); closeMenu() }}>水平镜像 <kbd>{shortcutFor('mirrorView')}</kbd><span className="menu-check">{session?.view.mirrored && <Check size={14} />}</span></button><button disabled={!session} onClick={() => { toggleMirrorView('vertical'); closeMenu() }}>垂直镜像 <kbd>{shortcutFor('mirrorViewVertical')}</kbd><span className="menu-check">{session?.view.mirroredVertical && <Check size={14} />}</span></button></div></div><button disabled={!session} onClick={() => { if (session) workspace.setView({ zoom: 16, panX: 0, panY: 0, rotation: 0, mirrored: false, mirroredVertical: false }); closeMenu() }}>复位视图</button><button disabled={!session} onClick={() => { setPreviewOpen((value) => !value); closeMenu() }}>显示预览窗<span className="menu-check">{previewOpen && <Check size={14} />}</span></button><button disabled={!session} onClick={() => { if (!session || homeOpen) return; cycleAdvancedMode(); closeMenu() }}>高级模式 <kbd>{shortcutFor('advancedMode')}</kbd><span className="menu-check">{advancedMode !== null && <Check size={14} />}</span></button></div>}</div>
         <div className="menu-item"><button aria-expanded={openMenu === 'help'} onClick={() => setOpenMenu(openMenu === 'help' ? null : 'help')}>帮助</button>{openMenu === 'help' && <div className="menu-popover"><button onClick={() => { setComponentLibraryOpen(true); closeMenu() }}>组件库</button><button onClick={() => { setAboutOpen(true); closeMenu() }}>关于 MoonSprite</button></div>}</div>
       </nav>
-      <div className="top-actions"><button className="icon-button" title="新建 Ctrl+N" aria-label="新建" onClick={() => setNewOpen(true)}><Plus size={17} /></button><button className="icon-button" title="打开 Ctrl+O" aria-label="打开" onClick={() => void openFilesAndShowDocument()}><FolderOpen size={17} /></button><button className="icon-button" title="保存 Ctrl+S" aria-label="保存" disabled={!session} onClick={() => void workspace.saveActive()}><Save size={17} /></button><button className="top-export-button" title="导出 Ctrl+E" disabled={!session} onClick={openExport}><FileOutput size={16} /><span>导出</span></button></div>
+      <div className="top-actions"><button className="icon-button" title={`新建 ${shortcutFor('newDocument')}`} aria-label="新建" onClick={() => setNewOpen(true)}><Plus size={17} /></button><button className="icon-button" title={`打开 ${shortcutFor('openDocument')}`} aria-label="打开" onClick={() => void openFilesAndShowDocument()}><FolderOpen size={17} /></button><button className="icon-button" title={`保存 ${shortcutFor('save')}`} aria-label="保存" disabled={!session} onClick={() => void workspace.saveActive()}><Save size={17} /></button><button className="top-export-button" title={`导出 ${shortcutFor('exportDocument')}`} disabled={!session} onClick={openExport}><FileOutput size={16} /><span>导出</span></button></div>
     </header>
 
     <section className="tab-strip" aria-label="文档标签">{workspace.sessions.map((item) => <button key={item.document.id} className={`document-tab ${item.document.id === workspace.activeId && !homeOpen ? 'active' : ''}`} onPointerDown={(event) => { if (event.button === 1) { event.preventDefault(); return }; beginDocumentTabDrag(event, item.document.id) }} onAuxClick={(event) => { if (event.button !== 1) return; event.preventDefault(); event.stopPropagation(); setTabContextMenu(null); void workspace.closeDocument(item.document.id) }} onContextMenu={(event) => { event.preventDefault(); event.stopPropagation(); setHomeOpen(false); workspace.setActive(item.document.id); setTabContextMenu({ documentId: item.document.id, x: event.clientX, y: event.clientY }) }} onClick={(event) => { if (suppressTabClick.current) { event.preventDefault(); return }; setHomeOpen(false); workspace.setActive(item.document.id); if (splitDocumentIds && !splitDocumentIds.includes(item.document.id)) setSplitDocumentIds(null) }}><FileImage size={14} /><span>{item.document.name}</span>{item.document.dirty && <i />}<span className="tab-close" role="button" tabIndex={0} aria-label={`关闭 ${item.document.name}`} onClick={(event) => { event.stopPropagation(); void workspace.closeDocument(item.document.id) }}><X size={12} /></span></button>)}<button className="new-tab-button" aria-label="新建作品" title="新建作品" onClick={() => setNewOpen(true)}><Plus size={16} /></button><span className="workspace-top-control workspace-tab-control"><button type="button" className={`icon-button ${openMenu === 'workspace' ? 'active' : ''}`} title="工作区" aria-label="工作区" aria-expanded={openMenu === 'workspace'} onPointerDown={(event) => event.stopPropagation()} onClick={() => { setOpenMenu(openMenu === 'workspace' ? null : 'workspace'); if (openMenu !== 'workspace') void loadSavedWorkspaces() }}><LayoutTemplate size={16} /></button>{openMenu === 'workspace' && createPortal(<div className="workspace-popover" role="menu" aria-label="工作区"><button type="button" role="menuitem" onPointerDown={(event) => { event.preventDefault(); event.stopPropagation(); setWorkspaceSaveName(''); setWorkspaceSaveOpen(true); closeMenu() }}>新建工作区...</button><span className="workspace-popover-divider" />{savedWorkspaces.map((saved) => <button key={saved.id} type="button" role="menuitem" className={saved.id === activeWorkspaceId ? 'selected-workspace' : ''} title={`载入工作区：${saved.name}`} onPointerDown={(event) => { event.preventDefault(); event.stopPropagation(); void applyWorkspaceLayout(saved); closeMenu() }}><span className="menu-check">{saved.id === activeWorkspaceId && <Check size={14} />}</span><span>{saved.name}</span></button>)}<span className="workspace-popover-divider" /><button type="button" role="menuitem" disabled={!activeWorkspaceId} onPointerDown={(event) => { event.preventDefault(); event.stopPropagation(); void resetCurrentWorkspace(); closeMenu() }}>复位当前工作区</button><button type="button" role="menuitem" onPointerDown={(event) => { event.preventDefault(); event.stopPropagation(); setWorkspaceManagerOpen(true); closeMenu() }}>管理工作区...</button></div>, document.body)}</span></section>
@@ -1636,10 +1732,11 @@ export default function App() {
       {hasRightDock && <div className="inspector-resizer" role="separator" aria-orientation="vertical" aria-label="调整右侧面板宽度" onPointerDown={(event) => { resizeStart.current = { x: event.clientX, width: inspectorWidth }; event.currentTarget.setPointerCapture(event.pointerId) }} />}
       <aside className={`inspector ${hasRightDock ? '' : 'inspector-empty'}`} {...(hasRightDock ? { 'data-panel-dock-zone': 'right' } : {})}><InspectorPanels key={workspaceLayoutRevision} session={session} previewOpen={previewOpen} onClosePreview={() => setPreviewOpen(false)} panelDocks={panelDocks} leftDockHost={leftDockHost} bottomDockHost={bottomDockHost} onPanelDockChange={updatePanelDock} relativeLuminanceInPreview={relativeLuminanceScope === 'app'} /></aside>
       {toolRailDockPreview && <div className={`tool-rail-dock-preview ${toolRailDockPreview}`} aria-hidden="true" />}
-    </section> : <Suspense fallback={<div aria-hidden="true" />}><LazyHomeWorkspace onNew={() => setNewOpen(true)} onOpen={() => void openFilesAndShowDocument()} onOpenProject={openGalleryProject} /></Suspense>}
+    </section> : <Suspense fallback={<div aria-hidden="true" />}><LazyHomeWorkspace onNew={() => setNewOpen(true)} onOpen={() => void openFilesAndShowDocument()} onOpenProject={openGalleryProject} onRestoreRecovery={restoreRecoveryAndShowDocument} /></Suspense>}
 
     <footer className="statusbar">{session && !homeOpen ? <><span>{session.document.colorMode === 'rgba' ? 'RGBA 真彩色' : '索引模式'}</span><span>{session.document.layers.length} 图层</span><span>{Math.round(session.view.zoom * 100)}%</span><span>{session.selection ? `选区 ${session.selection.width} x ${session.selection.height}` : '无选区'}</span></> : <span>准备就绪</span>}<span className="status-spacer" />{workspace.message && <span className="status-message" onClick={() => workspace.setMessage(null)}>{workspace.message}</span>}<span>{resourceLabel}</span></footer>
-    {advancedModeNotice && <div className="advanced-mode-notice" role="status" aria-live="polite"><strong>{advancedModeNotice}</strong><small>CTRL+F 恢复</small></div>}
+    {advancedModeNotice && <div className="advanced-mode-notice" role="status" aria-live="polite"><strong>{advancedModeNotice}</strong><small>{advancedModeNotice.startsWith('高级模式') ? `${advancedModeNoticeShortcut} 恢复` : advancedModeNoticeShortcut}</small></div>}
+    {workspace.saveProgress && <div className="modal-backdrop save-progress-backdrop" role="presentation"><section className="modal save-progress-modal" role="status" aria-live="polite"><header><div><span className="eyebrow">SAVE PROJECT</span><h2>正在保存</h2></div><button type="button" className="icon-button" aria-label="关闭保存进度" onClick={() => workspace.dismissSaveProgress()}><X size={16} /></button></header><div className="save-progress-body"><strong>{workspace.saveProgress.label}</strong><div className="save-progress-track" aria-label={`保存进度 ${workspace.saveProgress.value}%`}><i style={{ width: `${workspace.saveProgress.value}%` }} /></div><small>{workspace.saveProgress.value}%</small></div></section></div>}
     {workspace.dialog && <div className="modal-backdrop dialog-backdrop" role="presentation"><section className="modal confirm-modal" role="alertdialog" aria-modal="true" aria-labelledby="app-dialog-title"><header><div><span className="eyebrow">MOONSPRITE</span><h2 id="app-dialog-title">{workspace.dialog.title}</h2></div></header><div className="confirm-content"><strong>{workspace.dialog.message}</strong>{workspace.dialog.detail && <p>{workspace.dialog.detail}</p>}</div><footer>{workspace.dialog.choices.map((choice) => <button key={choice.id} className={choice.tone === 'primary' ? 'primary-button' : choice.tone === 'danger' ? 'danger-button' : 'quiet-button'} onClick={() => workspace.resolveDialog(choice.id)}>{choice.label}</button>)}</footer></section></div>}
     {exportOpen && <div className="modal-backdrop" role="presentation" onPointerDown={(event) => { if (event.target === event.currentTarget) setExportOpen(false) }}><form className="modal export-modal" onSubmit={(event) => { event.preventDefault(); void workspace.exportActive(exportForm).then((exported) => { if (exported) setExportOpen(false) }) }}><header><div><span className="eyebrow">EXPORT IMAGE</span><h2>导出设置</h2></div><button type="button" className="icon-button" aria-label="关闭" onClick={() => setExportOpen(false)}><X size={16} /></button></header><div className="modal-body"><label>文件名称<input autoFocus value={exportForm.name} onChange={(event) => setExportForm({ ...exportForm, name: event.target.value })} /></label><label>格式<ThemedSelect<ExportOptions['format']> value={exportForm.format} groups={[{ label: '导出格式', options: [{ value: 'png-auto', label: 'PNG 自动索引' }, { value: 'png-rgba', label: 'PNG RGBA' }, { value: 'jpeg', label: 'JPEG（白色背景）' }, { value: 'webp', label: 'WebP' }, { value: 'svg', label: 'SVG' }] }]} label="导出格式" onChange={(format) => setExportForm({ ...exportForm, format, scalePercent: format === 'svg' ? 100 : exportForm.scalePercent })} /></label><label>{exportForm.format === 'svg' ? '缩放倍数' : '放大比率'}<div className="scale-control"><NumberInput min={1} max={exportForm.format === 'svg' ? 64 : 6400} value={exportForm.format === 'svg' ? exportForm.scalePercent / 100 : exportForm.scalePercent} suffix={exportForm.format === 'svg' ? 'x' : '%'} onValueChange={(value) => setExportForm({ ...exportForm, scalePercent: exportForm.format === 'svg' ? Math.max(100, Math.round(value * 100)) : value })} /><div className="scale-presets" aria-label={exportForm.format === 'svg' ? '缩放倍数预设' : '放大比率预设'}>{exportScalePresets.map((scale) => <button type="button" key={scale} className={exportForm.scalePercent === scale ? 'selected' : ''} onClick={() => setExportForm({ ...exportForm, scalePercent: scale })}>{exportForm.format === 'svg' ? `${scale / 100}x` : `${scale}%`}</button>)}</div></div></label><label>导出预设<ThemedSelect value={presetName} groups={[{ label: '已保存预设', options: [{ value: '', label: '选择预设' }, ...presets.map((preset) => ({ value: preset.presetName, label: `${preset.presetName} · ${preset.scalePercent}%` }))] }]} label="导出预设" onChange={(value) => { const preset = presets.find((item) => item.presetName === value); setPresetName(value); if (preset) setExportForm({ name: preset.name, format: preset.format, scalePercent: preset.scalePercent }) }} /></label><div className="preset-row"><input aria-label="预设名称" placeholder="预设名称" value={presetName} onChange={(event) => setPresetName(event.target.value)} /><button type="button" className="quiet-button" onClick={savePreset}>保存预设</button><button type="button" className="icon-button preset-delete" title="删除当前预设" aria-label="删除当前预设" disabled={!presets.some((preset) => preset.presetName === presetName)} onClick={deletePreset}><Trash2 size={14} /></button></div></div><footer><button type="button" className="quiet-button" onClick={() => setExportOpen(false)}>取消</button><button className="primary-button" type="submit"><FileOutput size={15} />导出</button></footer></form></div>}
     {adjustmentOpen && <AdjustmentDialog kind={adjustmentKind} onClose={() => setAdjustmentOpen(false)} />}

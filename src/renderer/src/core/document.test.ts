@@ -62,6 +62,21 @@ describe('document compositing', () => {
     expect(Array.from(compositeRegion(document, 0, 0, 2, 1))).toEqual([0, 0, 0, 0, 255, 0, 0, 255])
   })
 
+  it('composites grouped layer pixels outside the current canvas bounds', () => {
+    const document = createDocument('outside composite', 2, 1, 'rgba')
+    const layer = document.layers[0]
+    layer.width = 1
+    layer.height = 1
+    layer.offsetX = -1
+    layer.offsetY = 0
+    layer.pixels = new Uint8ClampedArray(4)
+    writeLayerColor(document, layer, 0, { r: 255, g: 0, b: 0, a: 255 })
+    document.groups.push({ id: 'group', name: 'group', visible: true, locked: false, opacity: 1, blendMode: 'normal', parentGroupId: null })
+    layer.groupId = 'group'
+
+    expect(Array.from(compositeRegion(document, -1, 0, 1, 1))).toEqual([255, 0, 0, 255])
+  })
+
   it('finds sparse layer content in canvas coordinates', () => {
     const document = createDocument('content bounds', 6, 5, 'rgba')
     const layer = document.layers[0]

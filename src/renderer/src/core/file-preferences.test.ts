@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { EXPORT_FORMAT_PREFERENCE_KEY, NEW_DOCUMENT_SIZE_PRESETS_KEY, RECOVERY_MINUTES_PREFERENCE_KEY, SAVE_FORMAT_PREFERENCE_KEY, imageExportKindForPreference, loadEditorPreferences, parseDocumentSizePresets, parseDrawingBrushPreviewEnabled, parseExportScalePresets, parseRelativeLuminanceScope, saveEditorPreferences, saveImageKindForPreference } from './file-preferences'
+import { BRUSH_SHIFT_LINE_ENABLED_KEY, EXPORT_FORMAT_PREFERENCE_KEY, NEW_DOCUMENT_SIZE_PRESETS_KEY, RECOVERY_MINUTES_PREFERENCE_KEY, SAVE_FORMAT_PREFERENCE_KEY, ZOOM_TOOL_DRAG_MODE_PREFERENCE_KEY, imageExportKindForPreference, loadEditorPreferences, parseBrushShiftLineEnabled, parseDocumentSizePresets, parseDrawingBrushPreviewEnabled, parseExportScalePresets, parseRelativeLuminanceScope, parseZoomToolDragMode, saveEditorPreferences, saveImageKindForPreference } from './file-preferences'
 
 describe('file format preferences', () => {
   it('maps export formats to encoder kinds', () => {
@@ -41,6 +41,18 @@ describe('canvas preferences', () => {
     expect(parseRelativeLuminanceScope('app')).toBe('app')
     expect(parseRelativeLuminanceScope('unexpected')).toBe('canvas')
   })
+
+  it('defaults zoom-tool dragging to smooth and restores stepped zoom', () => {
+    expect(parseZoomToolDragMode(null)).toBe('smooth')
+    expect(parseZoomToolDragMode('stepped')).toBe('stepped')
+    expect(parseZoomToolDragMode('unexpected')).toBe('smooth')
+  })
+
+  it('keeps Shift line drawing enabled by default and restores an explicit disabled value', () => {
+    expect(parseBrushShiftLineEnabled(null)).toBe(true)
+    expect(parseBrushShiftLineEnabled('true')).toBe(true)
+    expect(parseBrushShiftLineEnabled('false')).toBe(false)
+  })
 })
 
 describe('editor preferences persistence boundary', () => {
@@ -81,5 +93,9 @@ describe('editor preferences persistence boundary', () => {
     expect(loadEditorPreferences(adapter).documentSizePresets).toEqual([{ width: 32, height: 16 }])
     expect(loadEditorPreferences(adapter).exportScalePresets).toEqual([100, 250])
     expect(storage.has(NEW_DOCUMENT_SIZE_PRESETS_KEY)).toBe(true)
+    saveEditorPreferences({ ...loadEditorPreferences(adapter), zoomToolDragMode: 'stepped' }, adapter)
+    expect(storage.get(ZOOM_TOOL_DRAG_MODE_PREFERENCE_KEY)).toBe('stepped')
+    saveEditorPreferences({ ...loadEditorPreferences(adapter), brushShiftLineEnabled: false }, adapter)
+    expect(storage.get(BRUSH_SHIFT_LINE_ENABLED_KEY)).toBe('false')
   })
 })

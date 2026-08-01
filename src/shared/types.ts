@@ -215,6 +215,11 @@ export interface SelectionRect {
   y: number
   width: number
   height: number
+  flipHorizontal?: boolean
+  flipVertical?: boolean
+  /** 在跨越对侧边界时，记录被拖动轴线的连续像素坐标。 */
+  flipOriginX?: number
+  flipOriginY?: number
 }
 
 export type SelectionMode = 'replace' | 'add' | 'subtract' | 'intersect'
@@ -236,6 +241,10 @@ export interface ViewState {
   panY: number
   /** View-only clockwise rotation in degrees. Never changes document pixels. */
   rotation: number
+  /** View-only horizontal mirror. Never changes document pixels. */
+  mirrored: boolean
+  /** View-only vertical mirror. Never changes document pixels. */
+  mirroredVertical: boolean
   showGrid: boolean
   relativeLuminance: boolean
 }

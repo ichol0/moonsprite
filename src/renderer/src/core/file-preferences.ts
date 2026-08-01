@@ -11,9 +11,12 @@ export const RELATIVE_LUMINANCE_SCOPE_KEY = 'moonsprite.preference.relative-lumi
 export const LANGUAGE_PREFERENCE_KEY = 'moonsprite.preference.language'
 export const RECOVERY_PREFERENCE_KEY = 'moonsprite.preference.recovery'
 export const RECOVERY_MINUTES_PREFERENCE_KEY = 'moonsprite.preference.recovery-minutes'
+export const ZOOM_TOOL_DRAG_MODE_PREFERENCE_KEY = 'moonsprite.preference.zoom-tool-drag-mode'
+export const BRUSH_SHIFT_LINE_ENABLED_KEY = 'moonsprite.preference.brush-shift-line-enabled'
 
 export type RotationIndicatorPosition = 'view' | 'canvas'
 export type RelativeLuminanceScope = 'canvas' | 'app'
+export type ZoomToolDragMode = 'smooth' | 'stepped'
 
 export function parseRotationIndicatorPosition(value: string | null): RotationIndicatorPosition {
   return value === 'canvas' ? 'canvas' : 'view'
@@ -25,6 +28,14 @@ export function parseDrawingBrushPreviewEnabled(value: string | null): boolean {
 
 export function parseRelativeLuminanceScope(value: string | null): RelativeLuminanceScope {
   return value === 'app' ? 'app' : 'canvas'
+}
+
+export function parseZoomToolDragMode(value: string | null): ZoomToolDragMode {
+  return value === 'stepped' ? 'stepped' : 'smooth'
+}
+
+export function parseBrushShiftLineEnabled(value: string | null): boolean {
+  return value !== 'false'
 }
 
 export interface DocumentSizePreset { width: number; height: number }
@@ -49,6 +60,8 @@ export interface EditorPreferences {
   rotationIndicatorPosition: RotationIndicatorPosition
   drawingBrushPreviewEnabled: boolean
   relativeLuminanceScope: RelativeLuminanceScope
+  zoomToolDragMode: ZoomToolDragMode
+  brushShiftLineEnabled: boolean
 }
 
 export const DEFAULT_EDITOR_PREFERENCES: EditorPreferences = {
@@ -61,7 +74,9 @@ export const DEFAULT_EDITOR_PREFERENCES: EditorPreferences = {
   exportScalePresets: DEFAULT_EXPORT_SCALE_PRESETS,
   rotationIndicatorPosition: 'view',
   drawingBrushPreviewEnabled: true,
-  relativeLuminanceScope: 'canvas'
+  relativeLuminanceScope: 'canvas',
+  zoomToolDragMode: 'smooth',
+  brushShiftLineEnabled: true
 }
 
 const boundedInteger = (value: unknown, max: number): number | null => {
@@ -146,7 +161,9 @@ export function loadEditorPreferences(storage?: Storage): EditorPreferences {
     exportScalePresets: parseExportScalePresets(get(EXPORT_SCALE_PRESETS_KEY)),
     rotationIndicatorPosition: parseRotationIndicatorPosition(get(ROTATION_INDICATOR_POSITION_KEY)),
     drawingBrushPreviewEnabled: parseDrawingBrushPreviewEnabled(get(DRAWING_BRUSH_PREVIEW_ENABLED_KEY)),
-    relativeLuminanceScope: parseRelativeLuminanceScope(get(RELATIVE_LUMINANCE_SCOPE_KEY))
+    relativeLuminanceScope: parseRelativeLuminanceScope(get(RELATIVE_LUMINANCE_SCOPE_KEY)),
+    zoomToolDragMode: parseZoomToolDragMode(get(ZOOM_TOOL_DRAG_MODE_PREFERENCE_KEY)),
+    brushShiftLineEnabled: parseBrushShiftLineEnabled(get(BRUSH_SHIFT_LINE_ENABLED_KEY))
   }
 }
 
@@ -161,7 +178,9 @@ export function saveEditorPreferences(preferences: EditorPreferences, storage?: 
     [EXPORT_SCALE_PRESETS_KEY]: JSON.stringify(parseExportScalePresets(JSON.stringify(preferences.exportScalePresets))),
     [ROTATION_INDICATOR_POSITION_KEY]: preferences.rotationIndicatorPosition,
     [DRAWING_BRUSH_PREVIEW_ENABLED_KEY]: String(preferences.drawingBrushPreviewEnabled),
-    [RELATIVE_LUMINANCE_SCOPE_KEY]: preferences.relativeLuminanceScope
+    [RELATIVE_LUMINANCE_SCOPE_KEY]: preferences.relativeLuminanceScope,
+    [ZOOM_TOOL_DRAG_MODE_PREFERENCE_KEY]: preferences.zoomToolDragMode,
+    [BRUSH_SHIFT_LINE_ENABLED_KEY]: String(preferences.brushShiftLineEnabled)
   }
   for (const [key, value] of Object.entries(values)) writeStoredString(key, value, storage)
 }

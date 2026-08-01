@@ -49,4 +49,42 @@ describe('view rotation geometry', () => {
     const next = zoomViewAroundViewportPoint(view, 4, { x: 450, y: 300 }, 800, 600, 100, 50, 'view')
     expect(documentPointFromViewportPoint({ x: 450, y: 300 }, 800, 600, 100, 50, next, 'view')).toEqual({ x: 75, y: 25 })
   })
+
+  it('maps input through the inverse horizontal mirror while keeping the visual zoom anchor', () => {
+    const view = { zoom: 2, panX: 0, panY: 0, rotation: 0, mirrored: true }
+    expect(documentPointFromViewportPoint({ x: 450, y: 300 }, 800, 600, 100, 50, view, 'view')).toEqual({ x: 25, y: 25 })
+    const next = zoomViewAroundViewportPoint(view, 4, { x: 450, y: 300 }, 800, 600, 100, 50, 'view')
+    expect(documentPointFromViewportPoint({ x: 450, y: 300 }, 800, 600, 100, 50, next, 'view')).toEqual({ x: 25, y: 25 })
+  })
+
+  it('maps input through horizontal and vertical mirrors after inverse rotation', () => {
+    const view = { zoom: 2, panX: 0, panY: 0, rotation: 0, mirrored: true, mirroredVertical: true }
+    expect(documentPointFromViewportPoint({ x: 450, y: 320 }, 800, 600, 100, 50, view, 'view')).toEqual({ x: 25, y: 15 })
+    expect(viewPanDeltaFromScreen(10, 4, 0, 'view', true, true)).toEqual({ x: -10, y: -4 })
+    const rotated = viewPanDeltaFromScreen(10, 0, 90, 'view', true, true)
+    expect(rotated.x).toBeCloseTo(0)
+    expect(rotated.y).toBeCloseTo(10)
+  })
+
+  it('maps a vertical mirror independently from the horizontal mirror', () => {
+    const view = { zoom: 2, panX: 0, panY: 0, rotation: 0, mirrored: false, mirroredVertical: true }
+    expect(documentPointFromViewportPoint({ x: 450, y: 320 }, 800, 600, 100, 50, view, 'view')).toEqual({ x: 75, y: 15 })
+    expect(viewPanDeltaFromScreen(10, 4, 0, 'view', false, true)).toEqual({ x: 10, y: -4 })
+  })
+
+  it('keeps an off-center document pixel under the pointer while zooming a mirrored view', () => {
+    const view = { zoom: 2, panX: 0, panY: 0, rotation: 0, mirrored: true, mirroredVertical: true }
+    const point = { x: 525, y: 365 }
+    const before = documentPointFromViewportPoint(point, 800, 600, 100, 50, view, 'view')
+    const next = zoomViewAroundViewportPoint(view, 4, point, 800, 600, 100, 50, 'view')
+    expect(documentPointFromViewportPoint(point, 800, 600, 100, 50, next, 'view')).toEqual(before)
+  })
+
+  it('keeps an off-center document pixel under the pointer for canvas-centered mirrored zoom', () => {
+    const view = { zoom: 2, panX: 60, panY: -30, rotation: 25, mirrored: true, mirroredVertical: false }
+    const point = { x: 515, y: 340 }
+    const before = documentPointFromViewportPoint(point, 800, 600, 100, 50, view, 'canvas')
+    const next = zoomViewAroundViewportPoint(view, 4, point, 800, 600, 100, 50, 'canvas')
+    expect(documentPointFromViewportPoint(point, 800, 600, 100, 50, next, 'canvas')).toEqual(before)
+  })
 })

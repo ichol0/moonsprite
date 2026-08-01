@@ -103,6 +103,7 @@ interface WorkspaceState {
   sessions: DocumentSession[]
   activeId: string | null
   message: string | null
+  saveProgress: { value: number; label: string } | null
   dialog: AppDialog | null
   recoveryRecords: RecoveryRecord[]
   newDocument(name: string, width: number, height: number, colorMode: ColorMode): Promise<void>
@@ -214,9 +215,10 @@ interface WorkspaceState {
   openPath(filePath: string, options?: { duplicate?: boolean }): Promise<boolean>
   closeDocument(id: string): Promise<void>
   restoreRecoveries(): Promise<void>
-  restoreRecovery(id: string): Promise<void>
+  restoreRecovery(id: string): Promise<boolean>
   autosaveDirty(): Promise<void>
   discardRecovery(id: string): Promise<void>
+  dismissSaveProgress(): void
   setMessage(message: string | null): void
   requestDialog(options: Omit<AppDialog, 'resolve'>): Promise<string>
   resolveDialog(choice: string): void
@@ -389,7 +391,7 @@ const sessionFromDocument = (document: SpriteDocument): DocumentSession => {
     canvasResizePreview: null,
     outlinePreview: null,
     pendingPaste: null,
-    view: { zoom: 16, panX: 0, panY: 0, rotation: 0, showGrid: false, relativeLuminance: false },
+    view: { zoom: 16, panX: 0, panY: 0, rotation: 0, mirrored: false, mirroredVertical: false, showGrid: false, relativeLuminance: false },
     paletteSelectionId: document.palette.find((entry) => entry.id !== 0)?.id ?? document.palette[0]?.id ?? null,
     selectedPaletteIds: document.palette.find((entry) => entry.id !== 0)?.id !== undefined
       ? [document.palette.find((entry) => entry.id !== 0)!.id]
@@ -488,6 +490,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
   sessions: [],
   activeId: null,
   message: null,
+  saveProgress: null,
   dialog: null,
   recoveryRecords: [],
 
@@ -1589,6 +1592,8 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
         || (beforeSelection?.mask?.length === afterSelection?.mask?.length && beforeSelection?.mask?.every((value, index) => value === afterSelection?.mask?.[index]))
       const selectionChanged = !sameMask
       session.selection = afterSelection
+      session.lastPencilPoint = null
+      session.lastEraserPoint = null
       if (entry) {
         session.history.push({ ...entry, bytes: entry.bytes + (beforeSelection?.mask?.byteLength ?? 0) + (afterSelection?.mask?.byteLength ?? 0), undo: () => { entry.undo(); session.selection = cloneSelectionMask(beforeSelection) }, redo: () => { entry.redo(); session.selection = cloneSelectionMask(afterSelection) } })
       } else if (selectionChanged) {
@@ -1663,6 +1668,8 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     if (!session) return false
     const documentId = session.document.id
     get().commitFloatingPaste()
+    const showProgress = saveAs || Boolean(options)
+    if (showProgress) set({ saveProgress: { value: 0, label: '正在保存…' } })
     try {
       const filePath = await saveDocumentFile({
         api: window.moonSprite,
@@ -1672,9 +1679,9 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
         options,
         preferredImageFormat: saveImageKindForPreference(readStoredString(SAVE_FORMAT_PREFERENCE_KEY))
       })
-      if (!filePath) return false
+      if (!filePath) { if (showProgress) set({ saveProgress: null }); return false }
       const saved = get().sessions.find((item) => item.document.id === documentId)
-      if (!saved) return false
+      if (!saved) { if (showProgress) set({ saveProgress: null }); return false }
       saved.document.filePath = filePath
       saved.document.name = fileNameFromPath(filePath)
       saved.document.dirty = false
@@ -1682,10 +1689,11 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       recordRecentProject(filePath, saved.document.name)
       await get().autosaveDirty()
       await recoveryService.delete(window.moonSprite, documentId)
-      set({ message: '工程已保存。' })
+      set({ message: '工程已保存。', ...(showProgress ? { saveProgress: { value: 100, label: '已保存' } } : {}) })
+      if (showProgress) window.setTimeout(() => { if (get().saveProgress?.value === 100) set({ saveProgress: null }) }, 180)
       return true
     } catch (error) {
-      set({ message: error instanceof Error ? error.message : '保存工程失败。' })
+      set({ message: error instanceof Error ? error.message : '保存工程失败。', ...(showProgress ? { saveProgress: null } : {}) })
       return false
     }
   },
@@ -1754,14 +1762,16 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
 
   async restoreRecovery(id) {
     const record = get().recoveryRecords.find((item) => item.id === id)
-    if (!record) return
+    if (!record) return false
     try {
       const document = await recoveryService.restore(window.moonSprite, record)
       get().addSession(document)
       await recoveryService.delete(window.moonSprite, record.id)
       set((state) => ({ recoveryRecords: state.recoveryRecords.filter((item) => item.id !== record.id), message: `已恢复“${record.name}”。` }))
+      return true
     } catch {
       set({ message: `无法恢复“${record.name}”，草稿仍保留在恢复栏目。` })
+      return false
     }
   },
 
@@ -1781,6 +1791,8 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     await recoveryService.discard(window.moonSprite, id)
     set((state) => ({ recoveryRecords: state.recoveryRecords.filter((item) => item.id !== id) }))
   },
+
+  dismissSaveProgress() { set({ saveProgress: null }) },
 
   requestDialog(options) {
     return new Promise((resolve) => set({ dialog: { ...options, resolve } }))

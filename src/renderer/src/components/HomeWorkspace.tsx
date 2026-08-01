@@ -19,6 +19,7 @@ interface HomeWorkspaceProps {
   onNew(): void
   onOpen(): void
   onOpenProject(filePath: string, keepHomeOpen?: boolean): Promise<boolean>
+  onRestoreRecovery(id: string): Promise<boolean>
 }
 
 type HomeSection = 'recent' | 'gallery' | 'recovery' | 'other'
@@ -88,7 +89,7 @@ function RecoveryFileRow({ record, onRestore, onDiscard }: { record: RecoveryRec
   </article>
 }
 
-export function HomeWorkspace({ onNew, onOpen, onOpenProject }: HomeWorkspaceProps) {
+export function HomeWorkspace({ onNew, onOpen, onOpenProject, onRestoreRecovery }: HomeWorkspaceProps) {
   const [section, setSection] = useState<HomeSection>(loadHomeSection)
   const [projects, setProjects] = useState<ProjectCard[]>([])
   const [galleryDirectory, setGalleryDirectory] = useState('')
@@ -103,7 +104,6 @@ export function HomeWorkspace({ onNew, onOpen, onOpenProject }: HomeWorkspacePro
   const [removePendingProjectPath, setRemovePendingProjectPath] = useState('')
   const setMessage = useWorkspace((state) => state.setMessage)
   const recoveryRecords = useWorkspace((state) => state.recoveryRecords)
-  const restoreRecovery = useWorkspace((state) => state.restoreRecovery)
   const discardRecovery = useWorkspace((state) => state.discardRecovery)
   const requestDialog = useWorkspace((state) => state.requestDialog)
 
@@ -384,7 +384,7 @@ export function HomeWorkspace({ onNew, onOpen, onOpenProject }: HomeWorkspacePro
             {loading && <div className="start-screen-state"><RefreshCw className="spin" size={22} /><span>正在读取工程</span></div>}
             {!loading && loadError && <div className="start-screen-state error"><TriangleAlert size={22} /><strong>无法读取栏目</strong><span>{loadError}</span><button className="quiet-button" type="button" onClick={() => void loadSection(section)}>重试</button></div>}
             {!loading && !loadError && ((section !== 'recovery' && projects.length === 0) || (section === 'recovery' && recoveryRecords.length === 0)) && <div className="start-screen-state">{emptyState.icon}<strong>{emptyState.title}</strong><span>{emptyState.detail}</span></div>}
-            {!loading && !loadError && section === 'recovery' && recoveryRecords.map((record) => <RecoveryFileRow key={record.id} record={record} onRestore={() => void restoreRecovery(record.id)} onDiscard={() => void discardRecovery(record.id)} />)}
+            {!loading && !loadError && section === 'recovery' && recoveryRecords.map((record) => <RecoveryFileRow key={record.id} record={record} onRestore={() => void onRestoreRecovery(record.id)} onDiscard={() => void discardRecovery(record.id)} />)}
             {!loading && !loadError && section !== 'recovery' && projects.map((project) => <ProjectFileRow key={project.filePath} project={project} reorderable={section === 'recent'} dragging={draggingProjectPath === project.filePath} removePending={removePendingProjectPath === project.filePath} onOpen={() => void openProject(project)} onOpenInBackground={() => void openProject(project, true)} onPin={() => pinProject(project.filePath)} onDelete={section === 'gallery' ? () => void deleteGalleryProject(project) : undefined} onReorderStart={startRecentReorder} onReorderMove={moveRecentReorder} onReorderEnd={endRecentReorder} />)}
           </div>
         </section>
