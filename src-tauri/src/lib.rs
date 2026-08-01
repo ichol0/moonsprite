@@ -7,22 +7,21 @@ use std::{
     borrow::Cow,
     fs,
     path::{Path, PathBuf},
-    sync::{
-        atomic::{AtomicU64, Ordering},
-        Arc, Mutex,
-    },
+    sync::{Arc, Mutex},
     time::Duration,
 };
 use sysinfo::System;
 use tauri::{AppHandle, DragDropEvent, Emitter, Manager, State, WindowEvent};
 
+mod close_coordinator;
 mod platform_storage;
+use close_coordinator::CloseCoordinator;
 use platform_storage::atomic_write;
 
 #[derive(Default)]
 struct AppState {
     previous_session_crashed: Mutex<bool>,
-    close_request_generation: Arc<AtomicU64>,
+    close_requests: Arc<CloseCoordinator>,
     startup_files: Mutex<Vec<String>>,
 }
 
@@ -1327,16 +1326,12 @@ fn open_external_url(url: String) -> Result<(), String> {
 
 #[tauri::command]
 fn cancel_close(state: State<'_, AppState>) {
-    state
-        .close_request_generation
-        .fetch_add(1, Ordering::SeqCst);
+    state.close_requests.cancel();
 }
 
 #[tauri::command]
 fn approve_close(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
-    state
-        .close_request_generation
-        .fetch_add(1, Ordering::SeqCst);
+    state.close_requests.cancel();
     mark_session(&app, true)?;
     app.exit(0);
     Ok(())
@@ -1409,25 +1404,15 @@ pub fn run() {
             }
             if let WindowEvent::CloseRequested { api, .. } = event {
                 api.prevent_close();
-                let generation = window
-                    .state::<AppState>()
-                    .close_request_generation
-                    .fetch_add(1, Ordering::SeqCst)
-                    + 1;
+                let pending = window.state::<AppState>().close_requests.clone();
+                let Some(generation) = pending.begin() else {
+                    return;
+                };
                 let _ = window.emit("app:request-close", ());
-                let pending = window.state::<AppState>().close_request_generation.clone();
                 let app = window.app_handle().clone();
                 std::thread::spawn(move || {
                     std::thread::sleep(Duration::from_secs(12));
-                    if pending
-                        .compare_exchange(
-                            generation,
-                            generation + 1,
-                            Ordering::SeqCst,
-                            Ordering::SeqCst,
-                        )
-                        .is_ok()
-                    {
+                    if pending.expire(generation) {
                         app.exit(1);
                     }
                 });
