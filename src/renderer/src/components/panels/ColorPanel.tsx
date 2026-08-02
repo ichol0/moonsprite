@@ -7,7 +7,7 @@ import type { DockDragProps } from '@/components/workspace-panel-types'
 import { parseColorPickerConfig, readStoredString, saveColorPickerConfig } from '@/core/panel-preferences'
 import { useWorkspace, type DocumentSession } from '@/store/workspace'
 
-export function ColorPanel({ session, docked = false, onDockDragStart, onFloatingDock, onRestoreSquare }: { session: DocumentSession } & DockDragProps) {
+export function ColorPanel({ session, docked = false, onDockDragStart, onPanelContextMenu, onFloatingDock, onRestoreSquare }: { session: DocumentSession } & DockDragProps) {
   const setPrimary = useWorkspace((state) => state.setPrimaryColor)
   const setSecondary = useWorkspace((state) => state.setSecondaryColor)
   const floating = useFloatingPanel(null, false, true, 'moonsprite.color-panel.v1', false, onFloatingDock, docked)
@@ -95,7 +95,7 @@ export function ColorPanel({ session, docked = false, onDockDragStart, onFloatin
     onRestoreSquare?.()
   }
 
-  return <><section ref={floating.ref} className={`panel color-panel ${floating.style ? 'floating-panel' : ''}`} style={floating.style} onPointerDown={floating.bringToFront}>
+  return <><section ref={floating.ref} className={`panel color-panel ${floating.style ? 'floating-panel' : ''}`} style={floating.style} onPointerDown={floating.bringToFront} onContextMenu={onPanelContextMenu}>
     <header onPointerDown={(event) => floating.style ? floating.startDrag(event) : onDockDragStart?.(event, floating.startDetachedDrag)}><Palette size={15} /><span>颜色</span><span className="panel-actions color-scheme-control" onPointerDown={(event) => event.stopPropagation()}><button type="button" title="将调色盘恢复为正方形" aria-label="将调色盘恢复为正方形" onClick={restoreSquare}><Square size={14} /></button><button ref={schemeButtonRef} type="button" className={schemeMenuOpen ? 'active' : ''} title="更换调色盘样式" aria-label="更换调色盘样式" aria-expanded={schemeMenuOpen} onClick={() => setSchemeMenuOpen((open) => !open)}><Grid2X2 size={14} /></button></span></header>
     <ColorPicker color={session.primaryColor} secondaryColor={session.secondaryColor} onChange={setPrimary} onSecondaryChange={setSecondary} config={pickerConfig} />
     {floating.style && <PanelResizeHandles onResize={floating.startResize} />}

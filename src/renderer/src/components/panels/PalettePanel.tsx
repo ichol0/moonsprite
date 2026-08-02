@@ -7,13 +7,13 @@ import { FloatingDockPreview, PanelResizeHandles, useFloatingPanel } from '@/com
 import { NumberInput } from '@/components/NumberInput'
 import type { DockDragProps } from '@/components/workspace-panel-types'
 import { encodePalettePng, extractPaletteColors, mergePaletteColors } from '@/core/palette'
-import { PALETTE_SWATCH_PIXELS, paletteColorsEqual, paletteMarkerColor, paletteReorderTarget, reorderPalettePreview, type PaletteSwatchSize } from '@/core/palette-layout'
+import { PALETTE_SWATCH_PIXELS, paletteColorRoles, paletteColorsEqual, paletteMarkerColor, paletteReorderTarget, reorderPalettePreview, type PaletteSwatchSize } from '@/core/palette-layout'
 import { readStoredString, removeStoredValue, writeStoredString } from '@/core/panel-preferences'
 import { colorEquals } from '@/core/raster'
 import { useWorkspace, type DocumentSession } from '@/store/workspace'
 
-export function PalettePanel({ session, docked = false, onDockDragStart, onFloatingDock }: { session: DocumentSession } & DockDragProps) {
-  const store = useWorkspace()
+export function PalettePanel({ session, docked = false, onDockDragStart, onPanelContextMenu, onFloatingDock }: { session: DocumentSession } & DockDragProps) {
+  const store = useWorkspace.getState()
   const floating = useFloatingPanel(null, false, true, 'moonsprite.palette-panel.v1', false, onFloatingDock, docked)
   const extractFloating = useFloatingPanel({ x: Math.max(24, window.innerWidth / 2 - 210), y: Math.max(72, window.innerHeight / 2 - 170), width: 420 }, false, false)
   const saveFloating = useFloatingPanel({ x: Math.max(24, window.innerWidth / 2 - 190), y: Math.max(72, window.innerHeight / 2 - 130), width: 380 }, false, false)
@@ -43,6 +43,7 @@ export function PalettePanel({ session, docked = false, onDockDragStart, onFloat
   const [libraryPopoverPosition, setLibraryPopoverPosition] = useState({ left: 8, top: 8 })
   const dragRef = useRef<{ ids: number[]; baseOrder: number[]; previewOrder: number[]; clickedId: number; anchorOffset: number; pointerId: number; element: HTMLButtonElement; startX: number; startY: number; moved: boolean; collapseOnClick: boolean; target: { id: number; insertAfter: boolean } | null } | null>(null)
   const [draggingIds, setDraggingIds] = useState<number[]>([])
+  const [focusedSwatchId, setFocusedSwatchId] = useState<number | null>(null)
   const [palettePreviewOrder, setPalettePreviewOrder] = useState<number[] | null>(null)
   const [swatchSize, setSwatchSize] = useState<PaletteSwatchSize>(() => {
     const stored = readStoredString('moonsprite.palette-swatch-size')
@@ -51,7 +52,6 @@ export function PalettePanel({ session, docked = false, onDockDragStart, onFloat
   const ordered = session.document.paletteOrder.map((id) => session.document.palette.find((entry) => entry.id === id)).filter((entry): entry is PaletteEntry => Boolean(entry))
   const displayedOrdered = (palettePreviewOrder ?? session.document.paletteOrder).map((id) => session.document.palette.find((entry) => entry.id === id)).filter((entry): entry is PaletteEntry => Boolean(entry))
   const orderedColors = ordered.map((entry) => ({ ...entry.color }))
-  const selectedId = ordered.find((entry) => colorEquals(entry.color, session.primaryColor))?.id ?? null
   const activePalette = paletteFiles.find((palette) => palette.id === activePaletteId) ?? null
 
   useLayoutEffect(() => {
@@ -140,10 +140,16 @@ export function PalettePanel({ session, docked = false, onDockDragStart, onFloat
   const beginPaletteDrag = (event: React.PointerEvent<HTMLButtonElement>, id: number): void => {
     if (event.button === 2) {
       const color = session.document.palette.find((entry) => entry.id === id)?.color
-      if (color) store.setSecondaryColor(color)
+      if (color) {
+        event.currentTarget.focus({ preventScroll: true })
+        setFocusedSwatchId(id)
+        store.setSecondaryColor(color)
+      }
       return
     }
     if (event.button !== 0) return
+    event.currentTarget.focus({ preventScroll: true })
+    setFocusedSwatchId(id)
     const additive = event.shiftKey || event.ctrlKey || event.metaKey
     const alreadySelected = session.selectedPaletteIds.includes(id)
     const collapseOnClick = !additive && alreadySelected && session.selectedPaletteIds.length > 1
@@ -320,13 +326,13 @@ export function PalettePanel({ session, docked = false, onDockDragStart, onFloat
     }
   }
 
-  return <><section ref={floating.ref} className={`panel palette-panel ${floating.style ? 'floating-panel' : ''}`} style={floating.style} onPointerDown={floating.bringToFront}>
+  return <><section ref={floating.ref} className={`panel palette-panel ${floating.style ? 'floating-panel' : ''}`} style={floating.style} onPointerDown={floating.bringToFront} onContextMenu={onPanelContextMenu}>
     <header onPointerDown={(event) => floating.style ? floating.startDrag(event) : onDockDragStart?.(event, floating.startDetachedDrag)}><Palette size={15} /><span>调色板</span><small>{ordered.length} 色</small><span className="panel-actions palette-actions">
       <span ref={libraryControlRef} className="palette-library-control"><button ref={libraryButtonRef} className={libraryOpen ? 'active' : ''} title="选择本地色板" aria-label="选择本地色板" aria-expanded={libraryOpen} onClick={() => { setLibraryOpen((open) => !open); setPaletteActionsOpen(false) }}><BookOpen size={14} /></button></span>
       <span ref={paletteActionsControlRef} className="palette-actions-control"><button ref={paletteActionsButtonRef} className={paletteActionsOpen ? 'active' : ''} title="调色板操作" aria-label="调色板操作" aria-expanded={paletteActionsOpen} onClick={() => { setPaletteActionsOpen((open) => !open); setLibraryOpen(false) }}><Settings2 size={14} /></button></span>
       <button title="手动加入当前颜色" aria-label="手动加入当前颜色" onClick={() => store.addPaletteColor()}><Plus size={14} /></button><button title="移除选中的调色板颜色" aria-label="移除选中的调色板颜色" disabled={session.selectedPaletteIds.length === 0} onClick={() => store.deletePaletteColors(session.selectedPaletteIds)}><Trash2 size={14} /></button>
     </span></header>
-    <div ref={swatchGridRef} className="swatch-grid" style={{ '--swatch-size': `${PALETTE_SWATCH_PIXELS[swatchSize]}px` } as React.CSSProperties}>{displayedOrdered.map((entry) => { const active = session.selectedPaletteIds.includes(entry.id) || entry.id === selectedId; return <button key={entry.id} data-palette-id={entry.id} className={`swatch ${session.selectedPaletteIds.includes(entry.id) ? 'selected' : ''} ${entry.id === selectedId ? 'primary' : ''} ${entry.color.a === 0 ? 'transparent' : ''} ${draggingIds.includes(entry.id) ? 'dragging' : ''}`} title={`${entry.name} ${rgbaHex(entry.color)}`} aria-label={`${entry.name} ${rgbaHex(entry.color)}`} aria-pressed={session.selectedPaletteIds.includes(entry.id)} style={{ '--swatch-color': colorCss(entry.color) } as React.CSSProperties} onContextMenu={(event) => event.preventDefault()} onPointerDown={(event) => beginPaletteDrag(event, entry.id)} onPointerMove={movePaletteDrag} onPointerUp={finishPaletteDrag} onPointerCancel={finishPaletteDrag}>{active && <span className="swatch-drag-edges" aria-hidden="true"><i className="swatch-drag-edge edge-n" /><i className="swatch-drag-edge edge-e" /><i className="swatch-drag-edge edge-s" /><i className="swatch-drag-edge edge-w" /></span>}</button> })}</div>
+    <div ref={swatchGridRef} className="swatch-grid" style={{ '--swatch-size': `${PALETTE_SWATCH_PIXELS[swatchSize]}px` } as React.CSSProperties}>{displayedOrdered.map((entry) => { const roles = paletteColorRoles(entry.color, session.primaryColor, session.secondaryColor); const active = session.selectedPaletteIds.includes(entry.id) || roles.primary || roles.secondary; const roleLabel = [roles.primary ? '前景色' : '', roles.secondary ? '背景色' : ''].filter(Boolean).join('、'); return <button key={entry.id} data-palette-id={entry.id} className={`swatch ${focusedSwatchId === entry.id ? 'focused' : ''} ${roles.primary ? 'primary' : ''} ${roles.secondary ? 'secondary' : ''} ${entry.color.a === 0 ? 'transparent' : ''} ${draggingIds.includes(entry.id) ? 'dragging' : ''}`} title={`${entry.name} ${rgbaHex(entry.color)}${roleLabel ? ` · ${roleLabel}` : ''}`} aria-label={`${entry.name} ${rgbaHex(entry.color)}${roleLabel ? ` ${roleLabel}` : ''}`} aria-pressed={session.selectedPaletteIds.includes(entry.id)} style={{ '--swatch-color': colorCss(entry.color) } as React.CSSProperties} onContextMenu={(event) => event.preventDefault()} onPointerDown={(event) => beginPaletteDrag(event, entry.id)} onBlur={() => setFocusedSwatchId((current) => current === entry.id ? null : current)} onPointerMove={movePaletteDrag} onPointerUp={finishPaletteDrag} onPointerCancel={finishPaletteDrag}>{active && <span className="swatch-drag-edges" aria-hidden="true"><i className="swatch-drag-edge edge-n" /><i className="swatch-drag-edge edge-e" /><i className="swatch-drag-edge edge-s" /><i className="swatch-drag-edge edge-w" /></span>}</button> })}</div>
     {floating.style && <PanelResizeHandles onResize={floating.startResize} />}
   </section>
   <FloatingDockPreview style={floating.dockPreview} />

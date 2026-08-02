@@ -10,6 +10,13 @@ pub struct ClipboardImage {
     data: Vec<u8>,
 }
 
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ClipboardImageSize {
+    width: usize,
+    height: usize,
+}
+
 fn image_bytes(width: usize, height: usize) -> Result<usize, String> {
     let pixels = width
         .checked_mul(height)
@@ -59,14 +66,102 @@ pub fn read_clipboard_image() -> Result<Option<ClipboardImage>, String> {
     }
 }
 
+fn clipboard_image_size_from_dib_header(header: &[u8]) -> Option<ClipboardImageSize> {
+    if header.len() < 12 {
+        return None;
+    }
+    let header_size = u32::from_le_bytes(header[0..4].try_into().ok()?);
+    if header_size < 40 {
+        return None;
+    }
+    let width = i32::from_le_bytes(header[4..8].try_into().ok()?).checked_abs()? as usize;
+    let height = i32::from_le_bytes(header[8..12].try_into().ok()?).checked_abs()? as usize;
+    image_bytes(width, height).ok()?;
+    Some(ClipboardImageSize { width, height })
+}
+
+#[cfg(windows)]
+#[tauri::command]
+pub fn read_clipboard_image_size() -> Result<Option<ClipboardImageSize>, String> {
+    use std::{ptr, slice};
+    use windows_sys::Win32::System::DataExchange::{
+        CloseClipboard, GetClipboardData, IsClipboardFormatAvailable, OpenClipboard,
+    };
+    use windows_sys::Win32::System::Memory::{GlobalLock, GlobalSize, GlobalUnlock};
+
+    const CF_DIB: u32 = 8;
+    const CF_DIBV5: u32 = 17;
+
+    struct ClipboardGuard;
+    impl Drop for ClipboardGuard {
+        fn drop(&mut self) {
+            unsafe { CloseClipboard() };
+        }
+    }
+
+    if unsafe { OpenClipboard(ptr::null_mut()) } == 0 {
+        return Err("无法访问系统剪贴板。".to_string());
+    }
+    let _guard = ClipboardGuard;
+    let format = [CF_DIBV5, CF_DIB]
+        .into_iter()
+        .find(|format| unsafe { IsClipboardFormatAvailable(*format) } != 0);
+    let Some(format) = format else {
+        return Ok(None);
+    };
+    let handle = unsafe { GetClipboardData(format) };
+    if handle.is_null() {
+        return Err("无法读取系统剪贴板图像尺寸。".to_string());
+    }
+    let byte_len = unsafe { GlobalSize(handle) };
+    if byte_len < 12 {
+        return Err("系统剪贴板图像头部无效。".to_string());
+    }
+    let pointer = unsafe { GlobalLock(handle) };
+    if pointer.is_null() {
+        return Err("无法锁定系统剪贴板图像数据。".to_string());
+    }
+    let header = unsafe { slice::from_raw_parts(pointer.cast::<u8>(), 12) };
+    let size = clipboard_image_size_from_dib_header(header);
+    unsafe { GlobalUnlock(handle) };
+    size.map(Some)
+        .ok_or_else(|| "系统剪贴板图像尺寸无效。".to_string())
+}
+
+#[cfg(not(windows))]
+#[tauri::command]
+pub fn read_clipboard_image_size() -> Result<Option<ClipboardImageSize>, String> {
+    read_clipboard_image().map(|image| {
+        image.map(|image| ClipboardImageSize {
+            width: image.width,
+            height: image.height,
+        })
+    })
+}
+
 #[cfg(test)]
 mod tests {
-    use super::image_bytes;
+    use super::{clipboard_image_size_from_dib_header, image_bytes, ClipboardImageSize};
 
     #[test]
     fn validates_rgba_image_size_without_overflow() {
         assert_eq!(image_bytes(2, 3).unwrap(), 24);
         assert!(image_bytes(0, 3).is_err());
         assert!(image_bytes(usize::MAX, 2).is_err());
+    }
+
+    #[test]
+    fn reads_dimensions_from_a_dib_header_without_pixel_data() {
+        let mut header = [0_u8; 12];
+        header[0..4].copy_from_slice(&40_u32.to_le_bytes());
+        header[4..8].copy_from_slice(&320_i32.to_le_bytes());
+        header[8..12].copy_from_slice(&(-180_i32).to_le_bytes());
+        assert_eq!(
+            clipboard_image_size_from_dib_header(&header),
+            Some(ClipboardImageSize {
+                width: 320,
+                height: 180
+            })
+        );
     }
 }

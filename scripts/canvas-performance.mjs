@@ -2,11 +2,16 @@ import { spawn } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { chromium } from 'playwright'
+import { parseCanvasPerformanceOptions } from './canvas-performance-options.mjs'
+
+const options = parseCanvasPerformanceOptions(process.argv.slice(2))
 
 const host = '127.0.0.1'
 const port = Number(process.env.MOONSPRITE_PERF_PORT ?? 4175)
 const externalUrl = process.env.MOONSPRITE_PERF_URL
 const baseUrl = externalUrl ?? `http://${host}:${port}`
+const performanceUrl = new URL(baseUrl)
+performanceUrl.searchParams.set('moonsprite-perf', '1')
 const chromeCandidates = [
   process.env.MOONSPRITE_CHROME_PATH,
   'C:/Program Files/Google/Chrome/Application/chrome.exe',
@@ -43,6 +48,11 @@ function summarize(label, canvasSize, samples) {
   const longTasks = samples.longTasks.filter((duration) => Number.isFinite(duration) && duration > 0)
   const draws = samples.draws.filter((duration) => Number.isFinite(duration) && duration >= 0)
   const inputs = samples.inputs.map((sample) => sample.duration).filter((duration) => Number.isFinite(duration) && duration >= 0)
+  const rootReactCommits = samples.reactCommits.filter((sample) => sample.region === 'MoonSprite').map((sample) => sample.duration).filter((duration) => Number.isFinite(duration) && duration >= 0)
+  const reactByRegion = Object.fromEntries([...new Set(samples.reactCommits.map((sample) => sample.region))].map((region) => {
+    const durations = samples.reactCommits.filter((sample) => sample.region === region).map((sample) => sample.duration)
+    return [region, { count: durations.length, p95: percentile(durations, 0.95), longest: Math.max(0, ...durations) }]
+  }))
   return {
     canvasSize,
     scenario: label,
@@ -61,13 +71,17 @@ function summarize(label, canvasSize, samples) {
     inputCount: inputs.length,
     inputP95: percentile(inputs, 0.95),
     inputP99: percentile(inputs, 0.99),
-    longestInput: Math.max(0, ...inputs)
+    longestInput: Math.max(0, ...inputs),
+    reactCommitCount: rootReactCommits.length,
+    reactCommitP95: percentile(rootReactCommits, 0.95),
+    longestReactCommit: Math.max(0, ...rootReactCommits),
+    reactByRegion
   }
 }
 
 async function startFrameProbe(page) {
   await page.evaluate(() => {
-    const samples = { frames: [], longTasks: [], draws: [], inputs: [] }
+    const samples = { frames: [], longTasks: [], draws: [], inputs: [], reactCommits: [] }
     let lastFrame = 0
     let running = true
     let observer = null
@@ -95,6 +109,9 @@ async function startFrameProbe(page) {
       recordInput(kind, duration) {
         samples.inputs.push({ kind, duration })
       },
+      recordReactCommit(region, duration, phase) {
+        samples.reactCommits.push({ region, duration, phase })
+      },
       stop() {
         running = false
         observer?.disconnect()
@@ -111,12 +128,11 @@ async function stopFrameProbe(page) {
 }
 
 async function createDocument(page, size) {
-  await page.goto(baseUrl, { waitUntil: 'domcontentloaded', timeout: 30_000 })
+  await page.goto(performanceUrl.href, { waitUntil: 'domcontentloaded', timeout: 30_000 })
   await page.waitForSelector('button.start-action.primary-button', { timeout: 30_000 })
   await page.locator('button.start-action.primary-button').click()
-  const numberInputs = page.locator('input[type="number"]')
-  await numberInputs.nth(0).fill(String(size))
-  await numberInputs.nth(1).fill(String(size))
+  await page.getByRole('spinbutton', { name: '画布宽度' }).fill(String(size))
+  await page.getByRole('spinbutton', { name: '画布高度' }).fill(String(size))
   await page.locator('.modal-backdrop button.primary-button').last().click()
   await page.waitForSelector('canvas.stage-canvas', { timeout: 30_000 })
   await page.waitForTimeout(300)
@@ -128,7 +144,7 @@ async function runScenario(page, size, label, action) {
   return summarize(label, size, await stopFrameProbe(page))
 }
 
-async function benchmarkDocument(browser, size) {
+async function benchmarkDocument(browser, size, scenarios) {
   const context = await browser.newContext({ viewport: { width: 1280, height: 800 } })
   const page = await context.newPage()
   await createDocument(page, size)
@@ -138,49 +154,57 @@ async function benchmarkDocument(browser, size) {
   const center = { x: box.x + box.width / 2, y: box.y + box.height / 2 }
   const results = []
 
-  results.push(await runScenario(page, size, 'pan', async () => {
-    await page.mouse.move(center.x - 90, center.y - 45)
-    await page.mouse.down({ button: 'middle' })
-    for (let index = 0; index < 72; index += 1) {
-      const progress = index / 71
-      await page.mouse.move(center.x - 90 + progress * 180, center.y - 45 + Math.sin(progress * Math.PI * 2) * 70)
-      await page.waitForTimeout(12)
-    }
-    await page.mouse.up({ button: 'middle' })
-  }))
+  if (scenarios.has('pan')) {
+    results.push(await runScenario(page, size, 'pan', async () => {
+      await page.mouse.move(center.x - 90, center.y - 45)
+      await page.mouse.down({ button: 'middle' })
+      for (let index = 0; index < 72; index += 1) {
+        const progress = index / 71
+        await page.mouse.move(center.x - 90 + progress * 180, center.y - 45 + Math.sin(progress * Math.PI * 2) * 70)
+        await page.waitForTimeout(12)
+      }
+      await page.mouse.up({ button: 'middle' })
+    }))
+  }
 
-  results.push(await runScenario(page, size, 'zoom', async () => {
-    await page.mouse.move(center.x, center.y)
-    for (let index = 0; index < 54; index += 1) {
-      await page.mouse.wheel(0, index % 18 < 9 ? -80 : 80)
-      await page.waitForTimeout(12)
-    }
-  }))
+  if (scenarios.has('zoom')) {
+    results.push(await runScenario(page, size, 'zoom', async () => {
+      await page.mouse.move(center.x, center.y)
+      for (let index = 0; index < 54; index += 1) {
+        await page.mouse.wheel(0, index % 18 < 9 ? -80 : 80)
+        await page.waitForTimeout(12)
+      }
+    }))
+  }
 
-  await page.keyboard.press('R')
-  const rotationInput = page.locator('.rotate-view-options input')
-  await rotationInput.fill('37')
-  await rotationInput.press('Enter')
-  await page.keyboard.press('Z')
-  results.push(await runScenario(page, size, 'rotated-zoom', async () => {
-    await page.mouse.move(center.x, center.y)
-    for (let index = 0; index < 54; index += 1) {
-      await page.mouse.wheel(0, index % 18 < 9 ? -80 : 80)
-      await page.waitForTimeout(12)
-    }
-  }))
+  if (scenarios.has('rotated-zoom')) {
+    await page.keyboard.press('R')
+    const rotationInput = page.locator('.rotate-view-options input')
+    await rotationInput.fill('37')
+    await rotationInput.press('Enter')
+    await page.keyboard.press('Z')
+    results.push(await runScenario(page, size, 'rotated-zoom', async () => {
+      await page.mouse.move(center.x, center.y)
+      for (let index = 0; index < 54; index += 1) {
+        await page.mouse.wheel(0, index % 18 < 9 ? -80 : 80)
+        await page.waitForTimeout(12)
+      }
+    }))
+  }
 
-  await page.keyboard.press('B')
-  results.push(await runScenario(page, size, 'draw', async () => {
-    await page.mouse.move(center.x - 120, center.y - 70)
-    await page.mouse.down({ button: 'left' })
-    for (let index = 0; index < 72; index += 1) {
-      const progress = index / 71
-      await page.mouse.move(center.x - 120 + progress * 240, center.y - 70 + Math.sin(progress * Math.PI * 4) * 95)
-      await page.waitForTimeout(12)
-    }
-    await page.mouse.up({ button: 'left' })
-  }))
+  if (scenarios.has('draw')) {
+    await page.keyboard.press('B')
+    results.push(await runScenario(page, size, 'draw', async () => {
+      await page.mouse.move(center.x - 120, center.y - 70)
+      await page.mouse.down({ button: 'left' })
+      for (let index = 0; index < 72; index += 1) {
+        const progress = index / 71
+        await page.mouse.move(center.x - 120 + progress * 240, center.y - 70 + Math.sin(progress * Math.PI * 4) * 95)
+        await page.waitForTimeout(12)
+      }
+      await page.mouse.up({ button: 'left' })
+    }))
+  }
 
   await context.close()
   return results
@@ -199,7 +223,9 @@ try {
   await waitForServer(baseUrl)
   browser = await chromium.launch({ headless: true, executablePath })
   const results = []
-  for (const size of [128, 512, 1024]) results.push(...await benchmarkDocument(browser, size))
+  const scenarios = new Set(options.scenarios)
+  console.log(`画布性能范围：尺寸 ${options.sizes.join(', ')}；场景 ${options.scenarios.join(', ')}`)
+  for (const size of options.sizes) results.push(...await benchmarkDocument(browser, size, scenarios))
   console.table(results.map((result) => ({
     canvas: `${result.canvasSize}x${result.canvasSize}`,
     scenario: result.scenario,
@@ -213,7 +239,10 @@ try {
     drawP95: result.drawP95.toFixed(2),
     longestDraw: result.longestDraw.toFixed(2),
     inputP95: result.inputP95.toFixed(2),
-    longestInput: result.longestInput.toFixed(2)
+    longestInput: result.longestInput.toFixed(2),
+    reactCommits: result.reactCommitCount,
+    reactP95: result.reactCommitP95.toFixed(2),
+    longestReact: result.longestReactCommit.toFixed(2)
   })))
   console.log(`MOONSPRITE_CANVAS_PERF=${JSON.stringify(results)}`)
 } finally {

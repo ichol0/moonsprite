@@ -2,6 +2,7 @@ import type { SpriteDocument } from '@shared/types'
 import { decodeAseprite } from './aseprite'
 import { decodePng, exportDocumentImage, type SaveImageKind } from './png'
 import { decodeProject, encodeProject } from './project-format'
+import { browserRasterImageExtensions, decodeBrowserRasterImage } from './raster-image'
 
 export type SaveImageDialogFormat = 'png' | 'jpeg' | 'webp' | 'ase' | 'aseprite'
 
@@ -70,6 +71,18 @@ export function decodeDocumentFile(data: Uint8Array, filePath: string): SpriteDo
       ? decodeAseprite(data, fileName.replace(/\.(aseprite|ase)$/i, ''))
       : decodePng(data, fileName.replace(/\.png$/i, ''))
   document.filePath = suffix === 'moonsprite' ? filePath : null
+  document.sourceFilePath = filePath
+  document.name = fileName
+  return document
+}
+
+export async function decodeDocumentFileAsync(data: Uint8Array, filePath: string): Promise<SpriteDocument> {
+  const suffix = fileExtension(filePath)
+  if (!browserRasterImageExtensions.includes(suffix as (typeof browserRasterImageExtensions)[number])) return decodeDocumentFile(data, filePath)
+  const fileName = fileNameFromPath(filePath)
+  const mimeType = suffix === 'jpg' || suffix === 'jpeg' ? 'image/jpeg' : `image/${suffix}`
+  const document = await decodeBrowserRasterImage(data, fileName.replace(/\.(jpe?g|webp|bmp|gif)$/i, ''), mimeType)
+  document.filePath = null
   document.sourceFilePath = filePath
   document.name = fileName
   return document

@@ -39,7 +39,15 @@ fn startup_file_paths() -> Vec<String> {
                     .is_some_and(|value| {
                         matches!(
                             value.to_ascii_lowercase().as_str(),
-                            "moonsprite" | "ase" | "aseprite" | "png"
+                            "moonsprite"
+                                | "ase"
+                                | "aseprite"
+                                | "png"
+                                | "jpg"
+                                | "jpeg"
+                                | "webp"
+                                | "bmp"
+                                | "gif"
                         )
                     })
         })
@@ -98,6 +106,7 @@ pub fn run() {
             platform_files::write_binary_atomic,
             platform_clipboard::write_clipboard_image,
             platform_clipboard::read_clipboard_image,
+            platform_clipboard::read_clipboard_image_size,
             platform_resources::get_resource_info,
             platform_palette::list_palettes,
             platform_palette::save_palette,

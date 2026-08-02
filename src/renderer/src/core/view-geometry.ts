@@ -64,12 +64,12 @@ export function mirrorViewportPoint(point: ViewportPoint, pivot: ViewportPoint, 
 }
 
 export function unrotatedViewportBounds(width: number, height: number, view: ViewGeometryState, position: RotationIndicatorPosition): ViewportBounds {
-  if (Math.abs(view.rotation) < 0.000001) return { left: 0, top: 0, right: width, bottom: height }
+  if (Math.abs(view.rotation) < 0.000001 && !view.mirrored && !view.mirroredVertical) return { left: 0, top: 0, right: width, bottom: height }
   const pivot = viewRotationPivot(width, height, view.panX, view.panY, position)
-  const topLeft = unrotateViewportPoint({ x: 0, y: 0 }, pivot, view.rotation)
-  const topRight = unrotateViewportPoint({ x: width, y: 0 }, pivot, view.rotation)
-  const bottomLeft = unrotateViewportPoint({ x: 0, y: height }, pivot, view.rotation)
-  const bottomRight = unrotateViewportPoint({ x: width, y: height }, pivot, view.rotation)
+  const topLeft = inverseDisplayPoint({ x: 0, y: 0 }, pivot, view)
+  const topRight = inverseDisplayPoint({ x: width, y: 0 }, pivot, view)
+  const bottomLeft = inverseDisplayPoint({ x: 0, y: height }, pivot, view)
+  const bottomRight = inverseDisplayPoint({ x: width, y: height }, pivot, view)
   return {
     left: Math.min(topLeft.x, topRight.x, bottomLeft.x, bottomRight.x),
     top: Math.min(topLeft.y, topRight.y, bottomLeft.y, bottomRight.y),
@@ -95,11 +95,16 @@ const displayRelative = (point: ViewportPoint, view: Pick<ViewGeometryState, 'ro
   return rotateRelative(mirrored, view.rotation)
 }
 
-export function documentPointFromViewportPoint(point: ViewportPoint, viewportWidth: number, viewportHeight: number, documentWidth: number, documentHeight: number, view: ViewGeometryState, position: RotationIndicatorPosition): ViewportPoint {
+export function documentPointFromViewportPointContinuous(point: ViewportPoint, viewportWidth: number, viewportHeight: number, documentWidth: number, documentHeight: number, view: ViewGeometryState, position: RotationIndicatorPosition): ViewportPoint {
   const pivot = viewRotationPivot(viewportWidth, viewportHeight, view.panX, view.panY, position)
   const unrotated = inverseDisplayPoint(point, pivot, view)
   const origin = viewCanvasOrigin(viewportWidth, viewportHeight, documentWidth, documentHeight, view)
-  return { x: Math.floor((unrotated.x - origin.x) / view.zoom), y: Math.floor((unrotated.y - origin.y) / view.zoom) }
+  return { x: (unrotated.x - origin.x) / view.zoom, y: (unrotated.y - origin.y) / view.zoom }
+}
+
+export function documentPointFromViewportPoint(point: ViewportPoint, viewportWidth: number, viewportHeight: number, documentWidth: number, documentHeight: number, view: ViewGeometryState, position: RotationIndicatorPosition): ViewportPoint {
+  const continuous = documentPointFromViewportPointContinuous(point, viewportWidth, viewportHeight, documentWidth, documentHeight, view, position)
+  return { x: Math.floor(continuous.x), y: Math.floor(continuous.y) }
 }
 
 export function zoomViewAroundViewportPoint(view: ViewGeometryState, nextZoom: number, point: ViewportPoint, viewportWidth: number, viewportHeight: number, documentWidth: number, documentHeight: number, position: RotationIndicatorPosition): ViewGeometryState {

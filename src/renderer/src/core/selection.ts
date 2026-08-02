@@ -299,6 +299,11 @@ export const lassoSelection = (document: SpriteDocument, path: Array<{ x: number
     let inside = false
     for (let i = 0, j = path.length - 1; i < path.length; j = i++) {
       const a = path[i]; const b = path[j]
+      const cross = (x - a.x) * (b.y - a.y) - (y - a.y) * (b.x - a.x)
+      const onBoundary = cross === 0
+        && x >= Math.min(a.x, b.x) && x <= Math.max(a.x, b.x)
+        && y >= Math.min(a.y, b.y) && y <= Math.max(a.y, b.y)
+      if (onBoundary) { inside = true; break }
       if (((a.y > y) !== (b.y > y)) && x < ((b.x - a.x) * (y - a.y)) / ((b.y - a.y) || 1) + a.x) inside = !inside
     }
     if (inside) points.push({ x, y })

@@ -1,5 +1,6 @@
 import { ChevronDown, ChevronUp } from 'lucide-react'
 import { useEffect, useState, type CSSProperties, type InputHTMLAttributes } from 'react'
+import { evaluateNumericExpression } from '@/core/numeric-expression'
 
 interface NumberInputProps extends Omit<InputHTMLAttributes<HTMLInputElement>, 'type' | 'value' | 'onChange' | 'min' | 'max' | 'step'> {
   value: number | ''
@@ -20,14 +21,16 @@ export function NumberInput({ value, onValueChange, min, max, step = 1, suffix, 
   const adjust = (delta: number): void => onValueChange(normalize((typeof value === 'number' ? value : min ?? 0) + delta))
   const commit = (): void => {
     if (!draft.trim()) { setDraft(String(value)); return }
-    const next = normalize(Number(draft))
+    const evaluated = evaluateNumericExpression(draft)
+    if (evaluated === null) { setDraft(String(value)); return }
+    const next = normalize(evaluated)
     setDraft(String(next))
     if (next !== value) onValueChange(next)
   }
 
   const control = <span className={`number-input ${suffix ? 'has-suffix' : ''} ${className}`.trim()}>
     <span className="number-input-editor" style={suffix ? { '--number-input-value-chars': Math.max(1, draft.length) } as CSSProperties : undefined}>
-      <input {...inputProps} type="number" min={min} max={max} step={step} value={draft} style={inputProps.style} onFocus={onFocus} onChange={(event) => setDraft(event.target.value)} onBlur={commit} onKeyDown={(event) => { onKeyDown?.(event); if (event.defaultPrevented || event.key !== 'Enter') return; event.preventDefault(); commit(); if (event.currentTarget.form) event.currentTarget.form.requestSubmit(); else event.currentTarget.blur() }} />
+      <input {...inputProps} type="text" inputMode="decimal" role="spinbutton" aria-valuemin={min} aria-valuemax={max} aria-valuenow={typeof value === 'number' ? value : undefined} value={draft} style={inputProps.style} onFocus={onFocus} onChange={(event) => setDraft(event.target.value)} onBlur={commit} onKeyDown={(event) => { onKeyDown?.(event); if (event.defaultPrevented || event.key !== 'Enter') return; event.preventDefault(); commit(); if (event.currentTarget.form) event.currentTarget.form.requestSubmit(); else event.currentTarget.blur() }} />
       {suffix && <span className="number-input-suffix" aria-hidden="true">{suffix}</span>}
     </span>
     <span className="number-input-stepper">

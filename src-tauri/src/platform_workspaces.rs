@@ -115,6 +115,7 @@ fn workspace_from_file(
 fn built_in_workspace() -> StoredWorkspace {
     let layout = serde_json::json!({
         "panelDocks": { "color": "left", "palette": "left", "layers": "right", "preview": "right" },
+        "panelVisibility": { "color": true, "palette": true, "layers": true, "preview": true },
         "inspectorWidth": 300,
         "leftDockWidth": 280,
         "bottomDockHeight": 180,

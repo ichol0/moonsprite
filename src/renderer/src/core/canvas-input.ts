@@ -1,6 +1,7 @@
 import type { RasterLayer, RgbaColor, SelectionMask, SelectionMode, SelectionRect } from '@shared/types'
 import type { PixelEdit } from './history'
 import type { SelectionTransformSource, SelectionTranslationPreview } from './tools'
+import { selectionContains } from './selection'
 
 export interface CanvasPoint {
   x: number
@@ -10,11 +11,16 @@ export interface CanvasPoint {
 export type SelectionHandle = 'nw' | 'n' | 'ne' | 'w' | 'e' | 'sw' | 's' | 'se'
 export type SelectionRotationHandle = 'rotate-ne' | 'rotate-se' | 'rotate-sw' | 'rotate-nw'
 export type SelectionHit = 'inside' | 'edge' | 'outside' | SelectionRotationHandle | SelectionHandle
+export const SELECTION_RESIZE_HIT_RADIUS = 12
+export const SELECTION_CORNER_RESIZE_HIT_RADIUS = 18
+export const SELECTION_CORNER_OUTWARD_RESIZE_HIT_RADIUS = 5
 
 export const selectionResizeHit = (
   box: { x: number; y: number; width: number; height: number },
   point: CanvasPoint,
-  radius: number
+  radius: number,
+  cornerRadius = radius,
+  outwardCornerRadius = cornerRadius
 ): SelectionHandle | null => {
   const left = box.x
   const right = box.x + box.width
@@ -22,21 +28,25 @@ export const selectionResizeHit = (
   const bottom = box.y + box.height
   const centerX = box.x + box.width / 2
   const centerY = box.y + box.height / 2
-  const near = (x: number, y: number): boolean => Math.abs(point.x - x) <= radius && Math.abs(point.y - y) <= radius
+  const nearCorner = (handle: SelectionHandle, x: number, y: number): boolean => {
+    const inOuterQuadrant = handle === 'nw'
+      ? point.x <= x && point.y <= y
+      : handle === 'ne'
+        ? point.x >= x && point.y <= y
+        : handle === 'se'
+          ? point.x >= x && point.y >= y
+          : point.x <= x && point.y >= y
+    const hitRadius = inOuterQuadrant ? outwardCornerRadius : cornerRadius
+    return Math.abs(point.x - x) <= hitRadius && Math.abs(point.y - y) <= hitRadius
+  }
 
   // 角点优先。边中段会明确避开两个角点，避免缩放与旋转命中区重叠。
   const corners: Array<[SelectionHandle, number, number]> = [
     ['nw', left, top], ['ne', right, top], ['sw', left, bottom], ['se', right, bottom]
   ]
-  for (const [handle, x, y] of corners) if (near(x, y)) return handle
+  for (const [handle, x, y] of corners) if (nearCorner(handle, x, y)) return handle
 
-  const awayFromCorners = (value: number, start: number, end: number): boolean => value > start + radius && value < end - radius
-  if (Math.abs(point.y - top) <= radius && awayFromCorners(point.x, left, right)) return 'n'
-  if (Math.abs(point.y - bottom) <= radius && awayFromCorners(point.x, left, right)) return 's'
-  if (Math.abs(point.x - left) <= radius && awayFromCorners(point.y, top, bottom)) return 'w'
-  if (Math.abs(point.x - right) <= radius && awayFromCorners(point.y, top, bottom)) return 'e'
-
-  // 对极小选区保留边中点命中，避免边界被角点规则完全吞掉。
+  // 边缩放只命中四个可见中点，不得让整条边都变成缩放区。
   const candidates: Array<[SelectionHandle, number, number]> = [
     ['n', centerX, top], ['s', centerX, bottom], ['w', left, centerY], ['e', right, centerY]
   ]
@@ -150,6 +160,11 @@ export class CanvasInputState {
     this.shiftLinePreview = false
     this.modifierBrushSize = null
   }
+
+  syncModifierKeys(event: Pick<PointerEvent, 'altKey' | 'ctrlKey'>): void {
+    this.altHeld = event.altKey
+    this.ctrlHeld = event.ctrlKey
+  }
 }
 
 export const clampCanvasZoom = (zoom: number): number => Math.max(0.0625, Math.min(64, zoom))
@@ -171,6 +186,17 @@ export const zoomDragTarget = (startZoom: number, horizontalDistance: number, mo
   return zoom
 }
 
+export const zoomDragModeForModifiers = (defaultMode: 'smooth' | 'stepped', shiftKey: boolean): 'smooth' | 'stepped' => shiftKey ? 'stepped' : defaultMode
+
+export const shouldStartCanvasPan = (tool: string, shiftKey: boolean, selectionTool: boolean): boolean => tool === 'hand' || (
+  shiftKey
+  && !selectionTool
+  && tool !== 'shape'
+  && tool !== 'pencil'
+  && tool !== 'eraser'
+  && tool !== 'zoom'
+)
+
 export const rotationHandles = (box: { x: number; y: number; width: number; height: number }): Array<[SelectionRotationHandle, number, number]> => {
   const offset = 22
   return [
@@ -181,42 +207,90 @@ export const rotationHandles = (box: { x: number; y: number; width: number; heig
   ]
 }
 
-export const ROTATION_HANDLE_HIT_RADIUS = 96
+// 旋转只占用角点附近的紧凑区域，避免阻挡套索继续选择周边像素。
+export const ROTATION_HANDLE_HIT_RADIUS = 28
 
 export const selectionRotationHit = (
   box: { x: number; y: number; width: number; height: number },
   point: CanvasPoint,
   scale = 1
 ): SelectionRotationHandle | null => {
+  const safeScale = Math.max(0.0001, scale)
   const within = point.x >= box.x && point.x <= box.x + box.width && point.y >= box.y && point.y <= box.y + box.height
   if (within) return null
-  if (selectionResizeHit(box, point, Math.max(1, 7 * scale))) return null
+  if (selectionResizeHit(
+    box,
+    point,
+    SELECTION_RESIZE_HIT_RADIUS * safeScale,
+    SELECTION_CORNER_RESIZE_HIT_RADIUS * safeScale,
+    SELECTION_CORNER_OUTWARD_RESIZE_HIT_RADIUS * safeScale
+  )) return null
+
+  const left = box.x
+  const right = box.x + box.width
+  const top = box.y
+  const bottom = box.y + box.height
   let nearest: SelectionRotationHandle | null = null
   let nearestDistance = Number.POSITIVE_INFINITY
-  const offset = 22 * scale
-  const centerX = box.x + box.width / 2
-  const centerY = box.y + box.height / 2
   const handles: Array<[SelectionRotationHandle, number, number]> = [
-    ['rotate-ne', box.x + box.width + offset, box.y - offset],
-    ['rotate-se', box.x + box.width + offset, box.y + box.height + offset],
-    ['rotate-sw', box.x - offset, box.y + box.height + offset],
-    ['rotate-nw', box.x - offset, box.y - offset]
+    ['rotate-ne', right, top],
+    ['rotate-se', right, bottom],
+    ['rotate-sw', left, bottom],
+    ['rotate-nw', left, top]
   ]
   for (const [handle, handleX, handleY] of handles) {
-    const outsideCorner = handle === 'rotate-ne'
-      ? point.x >= box.x + box.width && point.y <= box.y
-      : handle === 'rotate-se'
-        ? point.x >= box.x + box.width && point.y >= box.y + box.height
-        : handle === 'rotate-sw'
-          ? point.x <= box.x && point.y >= box.y + box.height
-          : point.x <= box.x && point.y <= box.y
-    if (!outsideCorner) continue
-    if (Math.abs(point.x - handleX) > ROTATION_HANDLE_HIT_RADIUS * scale || Math.abs(point.y - handleY) > ROTATION_HANDLE_HIT_RADIUS * scale) continue
+    if (Math.abs(point.x - handleX) > ROTATION_HANDLE_HIT_RADIUS * safeScale || Math.abs(point.y - handleY) > ROTATION_HANDLE_HIT_RADIUS * safeScale) continue
     const distance = (point.x - handleX) ** 2 + (point.y - handleY) ** 2
     if (distance < nearestDistance) { nearest = handle; nearestDistance = distance }
   }
   return nearest
 }
+
+export const selectionInteractionHit = (
+  selection: SelectionMask,
+  point: CanvasPoint,
+  zoom: number
+): SelectionHit => {
+  const safeZoom = Math.max(0.0001, zoom)
+  const resizeHit = selectionResizeHit(
+    selection,
+    point,
+    SELECTION_RESIZE_HIT_RADIUS / safeZoom,
+    SELECTION_CORNER_RESIZE_HIT_RADIUS / safeZoom,
+    SELECTION_CORNER_OUTWARD_RESIZE_HIT_RADIUS / safeZoom
+  )
+  if (resizeHit) return resizeHit
+
+  const left = selection.x
+  const top = selection.y
+  const right = selection.x + selection.width
+  const bottom = selection.y + selection.height
+  const rotationHit = selectionRotationHit(selection, point, 1 / safeZoom)
+  if (rotationHit) return rotationHit
+
+  const edgeOuterRadius = 9 / safeZoom
+  const edgeInnerRadius = 7 / safeZoom
+  const spansHorizontalEdge = point.x >= left - edgeOuterRadius && point.x <= right + edgeOuterRadius
+  const spansVerticalEdge = point.y >= top - edgeOuterRadius && point.y <= bottom + edgeOuterRadius
+  const nearHorizontalEdge = spansHorizontalEdge && ((point.y >= top - edgeOuterRadius && point.y <= top + edgeInnerRadius) || (point.y >= bottom - edgeInnerRadius && point.y <= bottom + edgeOuterRadius))
+  const nearVerticalEdge = spansVerticalEdge && ((point.x >= left - edgeOuterRadius && point.x <= left + edgeInnerRadius) || (point.x >= right - edgeInnerRadius && point.x <= right + edgeOuterRadius))
+  if (nearHorizontalEdge || nearVerticalEdge) return 'edge'
+  if (point.x < left || point.x > right || point.y < top || point.y > bottom) return 'outside'
+  return selectionContains(selection, Math.floor(point.x), Math.floor(point.y)) ? 'inside' : 'outside'
+}
+
+export const selectionTransformModifiers = (
+  modifiers: { ctrlKey: boolean; metaKey?: boolean; shiftKey: boolean }
+): { proportional: boolean; integerScale: boolean; copy: false } => {
+  return {
+    proportional: modifiers.shiftKey,
+    integerScale: Boolean(modifiers.ctrlKey || modifiers.metaKey),
+    copy: false
+  }
+}
+
+export const snapSelectionRotation = (angle: number, enabled: boolean): number =>
+  enabled ? Math.round(angle / 45) * 45 : angle
 
 export const shapeBounds = (start: CanvasPoint, end: CanvasPoint, constrain = false): SelectionRect => {
   if (!constrain) {
@@ -299,7 +373,7 @@ export const resizeSelectionBounds = (
     flipOriginY = crossedVertical ? clampedY : (flipVertical ? start.flipOriginY : undefined)
   }
 
-  if (proportional) {
+  if (proportional || integerScale) {
     const rawWidth = right - left
     const rawHeight = bottom - top
     const aspect = start.width / start.height
@@ -310,15 +384,21 @@ export const resizeSelectionBounds = (
       : verticalHandle && !horizontalHandle
         ? false
         : rawWidth / start.width >= rawHeight / start.height
-    let width = widthDriven ? rawWidth : Math.max(1, Math.round(rawHeight * aspect))
-    let height = widthDriven ? Math.max(1, Math.round(rawWidth / aspect)) : rawHeight
+    let width = proportional
+      ? (widthDriven ? rawWidth : Math.max(1, Math.round(rawHeight * aspect)))
+      : rawWidth
+    let height = proportional
+      ? (widthDriven ? Math.max(1, Math.round(rawWidth / aspect)) : rawHeight)
+      : rawHeight
     if (integerScale) {
-      // Pointer coordinates land on a pixel for integer scaling. Include that
-      // pixel when determining the nearest whole-number scale, while keeping
-      // the resulting rectangle on the continuous boundary grid.
-      const scale = Math.max(1, Math.round(widthDriven ? (rawWidth + 1) / start.width : (rawHeight + 1) / start.height))
-      width = start.width * scale
-      height = start.height * scale
+      if (proportional) {
+        const scale = Math.max(1, Math.round(widthDriven ? (rawWidth + 1) / start.width : (rawHeight + 1) / start.height))
+        width = start.width * scale
+        height = start.height * scale
+      } else {
+        if (horizontalHandle) width = start.width * Math.max(1, Math.round((rawWidth + 1) / start.width))
+        if (verticalHandle) height = start.height * Math.max(1, Math.round((rawHeight + 1) / start.height))
+      }
     }
 
     if (handle.includes('w')) {

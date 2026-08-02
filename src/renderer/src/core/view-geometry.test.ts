@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { documentPointFromViewportPoint, rotationIndicatorFitsCanvas, unrotatedViewportBounds, viewCanvasOrigin, viewPanDeltaFromScreen, viewRotationPivot, zoomViewAroundViewportPoint } from './view-geometry'
+import { documentPointFromViewportPoint, documentPointFromViewportPointContinuous, rotationIndicatorFitsCanvas, unrotatedViewportBounds, viewCanvasOrigin, viewPanDeltaFromScreen, viewRotationPivot, zoomViewAroundViewportPoint } from './view-geometry'
 
 describe('view rotation geometry', () => {
   it('uses the viewport center for a view-centered rotation indicator', () => {
@@ -42,6 +42,16 @@ describe('view rotation geometry', () => {
     expect(bounds.right).toBeCloseTo(700)
     expect(bounds.bottom).toBeCloseTo(700)
     expect(origin).toEqual({ x: 310, y: 246 })
+  })
+
+  it('preserves subpixel document coordinates for symmetric interaction hit testing', () => {
+    const view = { zoom: 8, panX: 0, panY: 0, rotation: 0 }
+    expect(documentPointFromViewportPointContinuous({ x: 403, y: 297 }, 800, 600, 100, 50, view, 'view')).toEqual({ x: 50.375, y: 24.625 })
+  })
+
+  it('includes mirrored viewport bounds around an off-center canvas pivot', () => {
+    const view = { zoom: 4, panX: 80, panY: -30, rotation: 0, mirrored: true, mirroredVertical: true }
+    expect(unrotatedViewportBounds(320, 240, view, 'canvas')).toEqual({ left: 160, top: -60, right: 480, bottom: 180 })
   })
 
   it('keeps the document pixel under the pointer when zooming', () => {

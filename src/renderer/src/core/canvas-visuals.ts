@@ -1,5 +1,6 @@
 import type { RgbaColor, SelectionMask, ToolId } from '@shared/types'
 import type { SelectionHandle, SelectionRotationHandle } from './canvas-input'
+import { DEFAULT_CHECKERBOARD_PREFERENCES, type CheckerboardPreferences } from './file-preferences'
 
 export const canvasCursors = {
   default: 'var(--cursor-default)', unavailable: 'var(--cursor-unavailable)', crosshair: 'var(--cursor-crosshair)', pencilWhite: 'var(--cursor-pencil-white)', pencilBlack: 'var(--cursor-pencil-black)', grab: 'var(--cursor-grab)', grabbing: 'var(--cursor-grabbing)',
@@ -11,12 +12,22 @@ export const canvasCursors = {
 export const resizeCursors: Record<SelectionHandle, string> = { nw: canvasCursors.nwseResize, n: canvasCursors.nsResize, ne: canvasCursors.neswResize, w: canvasCursors.ewResize, e: canvasCursors.ewResize, sw: canvasCursors.neswResize, s: canvasCursors.nsResize, se: canvasCursors.nwseResize }
 export const rotationCursors: Record<SelectionRotationHandle, string> = { 'rotate-ne': canvasCursors.rotateNe, 'rotate-se': canvasCursors.rotateSe, 'rotate-sw': canvasCursors.rotateSw, 'rotate-nw': canvasCursors.rotateNw }
 
+export const selectionTransformDragCursor = (kind: string): string | null =>
+  kind === 'transform-content' || kind === 'rotate-content' ? canvasCursors.move : null
+
 export const colorLuminance = (color: RgbaColor): number => color.r * 0.2126 + color.g * 0.7152 + color.b * 0.0722
 
-export const transparencyColorAt = (pixelX: number, pixelY: number): RgbaColor =>
-  (Math.floor(pixelX / 16) + Math.floor(pixelY / 16)) % 2 === 0
-    ? { r: 215, g: 215, b: 217, a: 255 }
-    : { r: 155, g: 155, b: 159, a: 255 }
+export const canvasStatusTextColor = (backgrounds: RgbaColor[]): '#111318' | '#f1f4f8' => {
+  const luminance = backgrounds.length > 0
+    ? backgrounds.reduce((total, color) => total + colorLuminance(color), 0) / backgrounds.length
+    : 0
+  return luminance > 145 ? '#111318' : '#f1f4f8'
+}
+
+export const transparencyColorAt = (pixelX: number, pixelY: number, checkerboard: CheckerboardPreferences = DEFAULT_CHECKERBOARD_PREFERENCES): RgbaColor =>
+  (Math.floor(pixelX / checkerboard.size) + Math.floor(pixelY / checkerboard.size)) % 2 === 0
+    ? checkerboard.lightColor
+    : checkerboard.darkColor
 
 const colorCursorTools = new Set<ToolId>(['pencil', 'eraser', 'fill', 'selection'])
 export const previewCursorTools = new Set<ToolId>(['pencil', 'eraser', 'fill', 'shape'])

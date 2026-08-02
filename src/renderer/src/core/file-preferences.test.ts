@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { BRUSH_SHIFT_LINE_ENABLED_KEY, EXPORT_FORMAT_PREFERENCE_KEY, NEW_DOCUMENT_SIZE_PRESETS_KEY, RECOVERY_MINUTES_PREFERENCE_KEY, SAVE_FORMAT_PREFERENCE_KEY, ZOOM_TOOL_DRAG_MODE_PREFERENCE_KEY, imageExportKindForPreference, loadEditorPreferences, parseBrushShiftLineEnabled, parseDocumentSizePresets, parseDrawingBrushPreviewEnabled, parseExportScalePresets, parseRelativeLuminanceScope, parseZoomToolDragMode, saveEditorPreferences, saveImageKindForPreference } from './file-preferences'
+import { BRUSH_SHIFT_LINE_ENABLED_KEY, EXPORT_FORMAT_PREFERENCE_KEY, NEW_DOCUMENT_SIZE_PRESETS_KEY, RECOVERY_MINUTES_PREFERENCE_KEY, SAVE_FORMAT_PREFERENCE_KEY, ZOOM_TOOL_DRAG_MODE_PREFERENCE_KEY, imageExportKindForPreference, loadEditorPreferences, parseBrushPreviewMode, parseBrushShiftLineEnabled, parseCheckerSize, parseCursorScale, parseDocumentSizePresets, parseDrawingBrushPreviewEnabled, parseExportScalePresets, parseRelativeLuminanceScope, parseZoomToolDragMode, saveEditorPreferences, saveImageKindForPreference } from './file-preferences'
 
 describe('file format preferences', () => {
   it('maps export formats to encoder kinds', () => {
@@ -53,6 +53,15 @@ describe('canvas preferences', () => {
     expect(parseBrushShiftLineEnabled('true')).toBe(true)
     expect(parseBrushShiftLineEnabled('false')).toBe(false)
   })
+
+  it('validates cursor and checkerboard presets', () => {
+    expect(parseCursorScale('1.5')).toBe(1.5)
+    expect(parseCursorScale('9')).toBe(1)
+    expect(parseBrushPreviewMode('edge')).toBe('edge')
+    expect(parseBrushPreviewMode('unknown')).toBe('full-edge')
+    expect(parseCheckerSize('32')).toBe(32)
+    expect(parseCheckerSize('12')).toBe(16)
+  })
 })
 
 describe('editor preferences persistence boundary', () => {
@@ -70,6 +79,10 @@ describe('editor preferences persistence boundary', () => {
     expect(defaults.saveFormat).toBe('moonsprite')
     expect(defaults.exportFormat).toBe('png')
     expect(defaults.recoveryMinutes).toBe(5)
+    expect(defaults.useLocalCursors).toBe(true)
+    expect(defaults.brushPreviewMode).toBe('full-edge')
+    expect(defaults.checkerboard.size).toBe(16)
+    expect(defaults.wheelZoomEnabled).toBe(true)
 
     storage.set(RECOVERY_MINUTES_PREFERENCE_KEY, '999')
     expect(loadEditorPreferences(adapter).recoveryMinutes).toBe(60)
@@ -97,5 +110,13 @@ describe('editor preferences persistence boundary', () => {
     expect(storage.get(ZOOM_TOOL_DRAG_MODE_PREFERENCE_KEY)).toBe('stepped')
     saveEditorPreferences({ ...loadEditorPreferences(adapter), brushShiftLineEnabled: false }, adapter)
     expect(storage.get(BRUSH_SHIFT_LINE_ENABLED_KEY)).toBe('false')
+    saveEditorPreferences({ ...loadEditorPreferences(adapter), useLocalCursors: false, cursorScale: 1.5, brushPreviewMode: 'edge', checkerboard: { size: 8, lightColor: { r: 1, g: 2, b: 3, a: 255 }, darkColor: { r: 4, g: 5, b: 6, a: 255 } }, wheelZoomEnabled: false, shiftLinePreviewEnabled: false }, adapter)
+    const customized = loadEditorPreferences(adapter)
+    expect(customized.useLocalCursors).toBe(false)
+    expect(customized.cursorScale).toBe(1.5)
+    expect(customized.brushPreviewMode).toBe('edge')
+    expect(customized.checkerboard).toEqual({ size: 8, lightColor: { r: 1, g: 2, b: 3, a: 255 }, darkColor: { r: 4, g: 5, b: 6, a: 255 } })
+    expect(customized.wheelZoomEnabled).toBe(false)
+    expect(customized.shiftLinePreviewEnabled).toBe(false)
   })
 })

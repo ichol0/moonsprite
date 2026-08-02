@@ -8,7 +8,7 @@ export const createId = (prefix: string): string => `${prefix}-${Date.now().toSt
 const transparentEntry = (): PaletteEntry => ({ id: 0, name: '透明', color: TRANSPARENT })
 
 export function createLayer(name: string, width: number, height: number, mode: ColorMode): RasterLayer {
-  const common = { id: createId('layer'), name, visible: true, locked: false, opacity: 1, blendMode: 'normal' as const, width, height, offsetX: 0, offsetY: 0 }
+  const common = { id: createId('layer'), name, description: '', visible: true, locked: false, opacity: 1, blendMode: 'normal' as const, width, height, offsetX: 0, offsetY: 0 }
   return mode === 'rgba'
     ? { ...common, format: 'rgba', pixels: new Uint8ClampedArray(width * height * 4) }
     : { ...common, format: 'indexed', pixels: new Uint32Array(width * height) }

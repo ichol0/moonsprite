@@ -1,20 +1,37 @@
 import { useEffect, useRef, useState } from 'react'
 import { Combine, Copy, Eye, EyeOff, Folder, FolderMinus, FolderOpen, FolderPlus, Layers2, Lock, LockOpen, Plus, Settings2, Trash2, X } from 'lucide-react'
-import type { BlendMode, LayerGroup, RasterLayer } from '@shared/types'
+import type { BlendMode, LayerGroup, RasterLayer, RgbaColor } from '@shared/types'
 import { FloatingDockPreview, PanelResizeHandles, useFloatingPanel } from '@/components/floating-panel'
+import { ColorValueControl } from '@/components/ColorValueControl'
 import { NumberInput } from '@/components/NumberInput'
+import { TextAreaInput } from '@/components/TextAreaInput'
 import { ThemedSelect, type ThemedSelectGroup } from '@/components/ThemedSelect'
+import { Tooltip } from '@/components/Tooltip'
 import type { DockDragProps } from '@/components/workspace-panel-types'
 import { getLayerIdsInGroup } from '@/core/document'
 import { buildLayerPanelTree, resolveLayerPanelDropTarget, type LayerPanelNode } from '@/core/layer-panel-layout'
 import { useWorkspace, type DocumentSession } from '@/store/workspace'
 
-interface LayerFormState { id: string; kind: 'layer' | 'group'; name: string; opacity: number; blendMode: BlendMode; locked: boolean }
+interface LayerFormState { id: string; kind: 'layer' | 'group'; name: string; opacity: number; blendMode: BlendMode; locked: boolean; displayColor: RgbaColor | null; description: string }
 interface LayerDragState { ids: string[]; groupId?: string; startX: number; startY: number; moved: boolean; copy: boolean }
 type DropTarget = { kind: 'layer'; id: string; insertAfter?: boolean; depth: number } | { kind: 'group'; id: string; depth: number } | { kind: 'above-group'; id: string; insertAfter?: boolean; depth: number } | { kind: 'root' }
 interface LayerContextMenu { kind: 'layer' | 'group'; id: string; x: number; y: number }
 interface LayerDragGhost { y: number; name: string; count: number }
 type LayerTreeNode = LayerPanelNode & ({ kind: 'layer'; layer: RasterLayer } | { kind: 'group'; group: LayerGroup })
+const defaultLayerDisplayColor: RgbaColor = { r: 41, g: 121, b: 255, a: 255 }
+const layerDisplayColorPresets: RgbaColor[] = [
+  { r: 239, g: 83, b: 80, a: 255 },
+  { r: 255, g: 167, b: 38, a: 255 },
+  { r: 253, g: 216, b: 53, a: 255 },
+  { r: 102, g: 187, b: 106, a: 255 },
+  { r: 38, g: 198, b: 218, a: 255 },
+  { r: 41, g: 121, b: 255, a: 255 },
+  { r: 171, g: 71, b: 188, a: 255 }
+]
+const sameColor = (left: RgbaColor | null, right: RgbaColor | null): boolean => left === null || right === null
+  ? left === right
+  : left.r === right.r && left.g === right.g && left.b === right.b && left.a === right.a
+const cloneFormState = (value: LayerFormState): LayerFormState => ({ ...value, displayColor: value.displayColor ? { ...value.displayColor } : null })
 const blendOptions: Array<{ value: BlendMode; label: string }> = [
   { value: 'normal', label: '正常' },
   { value: 'darken', label: '变暗' },
@@ -50,8 +67,8 @@ const blendOptionGroups: Array<ThemedSelectGroup<BlendMode>> = [
   { label: '颜色分量', options: blendOptions.filter((option) => ['hue', 'saturation', 'color', 'luminosity'].includes(option.value)) }
 ]
 
-export function LayersPanel({ session, docked = false, onDockDragStart, onFloatingDock }: { session: DocumentSession } & DockDragProps) {
-  const store = useWorkspace()
+export function LayersPanel({ session, docked = false, onDockDragStart, onPanelContextMenu, onFloatingDock }: { session: DocumentSession } & DockDragProps) {
+  const store = useWorkspace.getState()
   const floating = useFloatingPanel(null, false, true, 'moonsprite.layers-panel.v1', false, onFloatingDock, docked)
   const [form, setForm] = useState<LayerFormState | null>(null)
   const formOriginalRef = useRef<LayerFormState | null>(null)
@@ -62,10 +79,20 @@ export function LayersPanel({ session, docked = false, onDockDragStart, onFloati
   const [draggingGroupId, setDraggingGroupId] = useState<string | null>(null)
   const [draggingCopy, setDraggingCopy] = useState(false)
   const [altCopyReady, setAltCopyReady] = useState(false)
+  const altCopyReadyRef = useRef(false)
   const [dropTarget, setDropTarget] = useState<DropTarget | null>(null)
   const dropTargetRef = useRef<DropTarget | null>(null)
   const [dragGhost, setDragGhost] = useState<LayerDragGhost | null>(null)
   const [contextMenu, setContextMenu] = useState<LayerContextMenu | null>(null)
+  const clearTransientLayerDrag = (): void => {
+    dragRef.current = null
+    setDraggingIds([])
+    setDraggingGroupId(null)
+    setDraggingCopy(false)
+    dropTargetRef.current = null
+    setDropTarget(null)
+    setDragGhost(null)
+  }
   useEffect(() => {
     const close = (): void => setContextMenu(null)
     window.addEventListener('pointerdown', close)
@@ -73,13 +100,26 @@ export function LayersPanel({ session, docked = false, onDockDragStart, onFloati
     return () => { window.removeEventListener('pointerdown', close); window.removeEventListener('resize', close) }
   }, [])
   useEffect(() => {
-    const keyDown = (event: KeyboardEvent): void => { if (event.key === 'Alt') setAltCopyReady(true) }
-    const keyUp = (event: KeyboardEvent): void => { if (event.key === 'Alt') setAltCopyReady(false) }
-    const blur = (): void => setAltCopyReady(false)
+    const syncAltCopy = (active: boolean): void => {
+      if (altCopyReadyRef.current === active) return
+      altCopyReadyRef.current = active
+      setAltCopyReady(active)
+    }
+    const keyDown = (event: KeyboardEvent): void => { if (event.key === 'Alt') syncAltCopy(true) }
+    const keyUp = (event: KeyboardEvent): void => { if (event.key === 'Alt') syncAltCopy(false) }
+    const pointerMove = (event: PointerEvent): void => { syncAltCopy(event.altKey) }
+    const blur = (): void => {
+      syncAltCopy(false)
+      clearTransientLayerDrag()
+    }
+    altCopyReadyRef.current = false
+    setAltCopyReady(false)
+    clearTransientLayerDrag()
     window.addEventListener('keydown', keyDown)
     window.addEventListener('keyup', keyUp)
+    window.addEventListener('pointermove', pointerMove)
     window.addEventListener('blur', blur)
-    return () => { window.removeEventListener('keydown', keyDown); window.removeEventListener('keyup', keyUp); window.removeEventListener('blur', blur) }
+    return () => { window.removeEventListener('keydown', keyDown); window.removeEventListener('keyup', keyUp); window.removeEventListener('pointermove', pointerMove); window.removeEventListener('blur', blur) }
   }, [])
   useEffect(() => {
     const close = (): void => closeProperties()
@@ -101,12 +141,12 @@ export function LayersPanel({ session, docked = false, onDockDragStart, onFloati
     return group ? { ...node, group } : null
   }).filter((node): node is LayerTreeNode => node !== null)
   const beginProperties = (next: LayerFormState): void => {
-    formOriginalRef.current = { ...next }
+    formOriginalRef.current = cloneFormState(next)
     formWasDirtyRef.current = session.document.dirty
     setForm(next)
   }
-  const editLayer = (layer: RasterLayer): void => beginProperties({ id: layer.id, kind: 'layer', name: layer.name, opacity: Math.round(layer.opacity * 100), blendMode: layer.blendMode, locked: layer.locked })
-  const editGroup = (group: LayerGroup): void => beginProperties({ id: group.id, kind: 'group', name: group.name, opacity: Math.round(group.opacity * 100), blendMode: group.blendMode, locked: group.locked })
+  const editLayer = (layer: RasterLayer): void => beginProperties({ id: layer.id, kind: 'layer', name: layer.name, opacity: Math.round(layer.opacity * 100), blendMode: layer.blendMode, locked: layer.locked, displayColor: layer.displayColor ? { ...layer.displayColor } : null, description: layer.description ?? '' })
+  const editGroup = (group: LayerGroup): void => beginProperties({ id: group.id, kind: 'group', name: group.name, opacity: Math.round(group.opacity * 100), blendMode: group.blendMode, locked: group.locked, displayColor: group.displayColor ? { ...group.displayColor } : null, description: group.description ?? '' })
   const previewProperties = (next: LayerFormState): void => {
     setForm(next)
     store.mutateActive((active) => {
@@ -118,6 +158,9 @@ export function LayersPanel({ session, docked = false, onDockDragStart, onFloati
       target.opacity = Math.max(0, Math.min(1, next.opacity / 100))
       target.blendMode = next.blendMode
       target.locked = next.locked
+      if (next.displayColor) target.displayColor = { ...next.displayColor }
+      else delete target.displayColor
+      target.description = next.description
       active.document.dirty = true
       active.document.updatedAt = new Date().toISOString()
       active.revision += 1
@@ -127,8 +170,8 @@ export function LayersPanel({ session, docked = false, onDockDragStart, onFloati
   const closeProperties = (): void => {
     if (!form) return
     const original = formOriginalRef.current
-    const committed = { ...form, name: form.name.trim() || original?.name || form.name }
-    const changed = Boolean(original) && (original!.name !== committed.name || original!.opacity !== committed.opacity || original!.blendMode !== committed.blendMode || original!.locked !== committed.locked)
+    const committed = { ...form, name: form.name.trim() || original?.name || form.name, description: form.description.trim() }
+    const changed = Boolean(original) && (original!.name !== committed.name || original!.opacity !== committed.opacity || original!.blendMode !== committed.blendMode || original!.locked !== committed.locked || original!.description !== committed.description || !sameColor(original!.displayColor, committed.displayColor))
     if (original) {
       store.mutateActive((active) => {
         const target = original.kind === 'group'
@@ -139,13 +182,16 @@ export function LayersPanel({ session, docked = false, onDockDragStart, onFloati
           target.opacity = original.opacity / 100
           target.blendMode = original.blendMode
           target.locked = original.locked
+          if (original.displayColor) target.displayColor = { ...original.displayColor }
+          else delete target.displayColor
+          target.description = original.description
         }
         active.document.dirty = formWasDirtyRef.current
         active.revision += 1
       }, false)
       if (changed) {
-        if (committed.kind === 'group') store.setGroupProperties(committed.id, committed.name, committed.opacity / 100, committed.blendMode, committed.locked)
-        else store.setLayerPropertiesWithBlend(committed.id, committed.name, committed.opacity / 100, committed.blendMode, committed.locked)
+        if (committed.kind === 'group') store.setGroupProperties(committed.id, committed.name, committed.opacity / 100, committed.blendMode, committed.locked, committed.displayColor, committed.description)
+        else store.setLayerPropertiesWithBlend(committed.id, committed.name, committed.opacity / 100, committed.blendMode, committed.locked, committed.displayColor, committed.description)
       }
     }
     formOriginalRef.current = null
@@ -307,7 +353,7 @@ export function LayersPanel({ session, docked = false, onDockDragStart, onFloati
   }
   const mergeCurrentLabel = session.selectedGroupId ? '合并图层组' : session.selectedLayerIds.length > 1 ? '合并所选图层' : '向下合并'
 
-  return <><section ref={floating.ref} className={`panel layers-panel ${floating.style ? 'floating-panel' : ''} ${altCopyReady ? 'layer-alt-copy-ready' : ''} ${draggingCopy ? 'layer-copy-drag' : ''}`} style={floating.style} onPointerDown={floating.bringToFront}>
+  return <><section ref={floating.ref} className={`panel layers-panel ${floating.style ? 'floating-panel' : ''} ${altCopyReady ? 'layer-alt-copy-ready' : ''} ${draggingCopy ? 'layer-copy-drag' : ''}`} style={floating.style} onPointerDown={floating.bringToFront} onContextMenu={onPanelContextMenu}>
     <header onPointerDown={(event) => floating.style ? floating.startDrag(event) : onDockDragStart?.(event, floating.startDetachedDrag)}><Layers2 size={15} /><span>图层</span><span className="panel-actions"><button title="新建图层" aria-label="新建图层" onClick={() => void store.addLayer()}><Plus size={14} /></button><button title="新建图层组 Ctrl+G" aria-label="新建图层组" onClick={() => store.createLayerGroup()}><FolderPlus size={14} /></button><button title={mergeCurrentLabel} aria-label={mergeCurrentLabel} onClick={mergeCurrent}><Combine size={14} /></button><button title="解组 Ctrl+Shift+G" aria-label="解组" onClick={() => store.ungroupSelected()}><FolderMinus size={14} /></button><button title="删除图层" aria-label="删除图层" onClick={() => store.deleteActiveLayer()}><Trash2 size={14} /></button></span></header>
     <div ref={layerListRef} className="layer-list" onContextMenu={(event) => { const target = (event.target as HTMLElement).closest<HTMLElement>('[data-layer-id], [data-group-id]'); if (target?.dataset.layerId) openLayerContextMenu(event, 'layer', target.dataset.layerId); else if (target?.dataset.groupId) openLayerContextMenu(event, 'group', target.dataset.groupId) }}>{nodes.map((node) => {
       if (node.kind === 'group') {
@@ -315,16 +361,16 @@ export function LayersPanel({ session, docked = false, onDockDragStart, onFloati
         const groupIndicator = (dropTarget?.kind === 'group' || dropTarget?.kind === 'above-group') && dropTarget.id === node.group.id
           ? <span className={`layer-drop-indicator ${dropTarget.kind === 'above-group' ? (dropTarget.insertAfter === false ? 'below' : 'above') : 'below inside-group'}`} style={{ left: `${8 + dropTarget.depth * 14}px` }} aria-hidden="true"><i /><b /><i /></span>
           : null
-        return <button key={node.group.id} data-group-id={node.group.id} className={`layer-row group-row ${node.group.id === session.selectedGroupId ? 'selected' : ''} ${draggingGroupId === node.group.id ? 'dragging' : ''} ${groupIndicator ? 'group-drop-target' : ''}`} style={{ '--layer-depth': node.depth } as React.CSSProperties} onPointerDown={(event) => beginGroupDrag(event, node.group.id)} onDoubleClick={() => editGroup(node.group)}>{groupIndicator}<span className="layer-visibility" role="button" tabIndex={-1} aria-label={node.group.visible ? '隐藏图层组' : '显示图层组'} onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); store.toggleGroupVisibility(node.group.id) }}>{node.group.visible ? <Eye size={14} /> : <EyeOff size={14} />}</span><span className={`layer-lock-toggle ${node.group.locked ? 'locked' : ''}`} role="button" tabIndex={-1} aria-label={node.group.locked ? '解除图层组锁定' : '锁定图层组'} aria-pressed={node.group.locked} onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); store.setGroupProperties(node.group.id, node.group.name, node.group.opacity, node.group.blendMode, !node.group.locked) }}>{node.group.locked ? <Lock size={14} /> : <LockOpen size={14} />}</span><span className="group-folder" role="button" tabIndex={-1} aria-label={collapsed ? '展开图层组' : '收起图层组'} title={collapsed ? '展开图层组' : '收起图层组'} onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); store.toggleGroupCollapsed(node.group.id) }}>{collapsed ? <Folder size={16} /> : <FolderOpen size={16} />}</span><span className="layer-name"><span>{node.group.name}</span><small>{blendOptions.find((option) => option.value === node.group.blendMode)?.label} · {Math.round(node.group.opacity * 100)}%</small></span></button>
+        return <button key={node.group.id} data-group-id={node.group.id} className={`layer-row group-row ${node.group.id === session.selectedGroupId ? 'selected' : ''} ${draggingGroupId === node.group.id ? 'dragging' : ''} ${groupIndicator ? 'group-drop-target' : ''}`} style={{ '--layer-depth': node.depth } as React.CSSProperties} onPointerDown={(event) => beginGroupDrag(event, node.group.id)} onDoubleClick={() => editGroup(node.group)}>{groupIndicator}{node.group.displayColor && <span className="layer-color-stripe" style={{ backgroundColor: `rgba(${node.group.displayColor.r}, ${node.group.displayColor.g}, ${node.group.displayColor.b}, ${node.group.displayColor.a / 255})` }} aria-hidden="true" />}<span className="layer-visibility" role="button" tabIndex={-1} aria-label={node.group.visible ? '隐藏图层组' : '显示图层组'} onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); store.toggleGroupVisibility(node.group.id) }}>{node.group.visible ? <Eye size={14} /> : <EyeOff size={14} />}</span><span className={`layer-lock-toggle ${node.group.locked ? 'locked' : ''}`} role="button" tabIndex={-1} aria-label={node.group.locked ? '解除图层组锁定' : '锁定图层组'} aria-pressed={node.group.locked} onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); store.setGroupProperties(node.group.id, node.group.name, node.group.opacity, node.group.blendMode, !node.group.locked, node.group.displayColor, node.group.description) }}>{node.group.locked ? <Lock size={14} /> : <LockOpen size={14} />}</span><span className="group-folder" role="button" tabIndex={-1} aria-label={collapsed ? '展开图层组' : '收起图层组'} title={collapsed ? '展开图层组' : '收起图层组'} onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); store.toggleGroupCollapsed(node.group.id) }}>{collapsed ? <Folder size={16} /> : <FolderOpen size={16} />}</span><Tooltip className="layer-name" content={node.group.description?.trim()}><span>{node.group.name}</span><small>{blendOptions.find((option) => option.value === node.group.blendMode)?.label} · {Math.round(node.group.opacity * 100)}%</small></Tooltip></button>
       }
       const selected = session.selectedLayerIds.includes(node.layer.id) && !session.selectedGroupId
       const indicator = dropTarget?.kind === 'layer' && dropTarget.id === node.layer.id
         ? <span className={`layer-drop-indicator ${dropTarget.insertAfter ? 'above' : 'below'}`} style={{ left: `${8 + dropTarget.depth * 14}px` }} aria-hidden="true"><i /><b /><i /></span>
         : null
-      return <button key={node.layer.id} data-layer-id={node.layer.id} className={`layer-row ${node.depth > 0 ? 'group-member' : ''} ${selected ? 'selected' : ''} ${draggingIds.includes(node.layer.id) ? 'dragging' : ''}`} style={{ '--layer-depth': node.depth } as React.CSSProperties} onPointerDown={(event) => beginLayerDrag(event, node.layer.id)} onDoubleClick={() => editLayer(node.layer)}>{indicator}<span className="layer-visibility" role="button" tabIndex={-1} aria-label={node.layer.visible ? '隐藏图层' : '显示图层'} onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); store.toggleLayerVisibility(node.layer.id) }}>{node.layer.visible ? <Eye size={14} /> : <EyeOff size={14} />}</span><span className={`layer-lock-toggle ${node.layer.locked ? 'locked' : ''}`} role="button" tabIndex={-1} aria-label={node.layer.locked ? '解除图层锁定' : '锁定图层'} aria-pressed={node.layer.locked} onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); store.setLayerPropertiesWithBlend(node.layer.id, node.layer.name, node.layer.opacity, node.layer.blendMode, !node.layer.locked) }}>{node.layer.locked ? <Lock size={14} /> : <LockOpen size={14} />}</span><span className="layer-name"><span>{node.layer.name}</span><small>{blendOptions.find((option) => option.value === node.layer.blendMode)?.label} · {Math.round(node.layer.opacity * 100)}%</small></span></button>
+      return <button key={node.layer.id} data-layer-id={node.layer.id} className={`layer-row ${node.depth > 0 ? 'group-member' : ''} ${selected ? 'selected' : ''} ${draggingIds.includes(node.layer.id) ? 'dragging' : ''}`} style={{ '--layer-depth': node.depth } as React.CSSProperties} onPointerDown={(event) => beginLayerDrag(event, node.layer.id)} onDoubleClick={() => editLayer(node.layer)}>{indicator}{node.layer.displayColor && <span className="layer-color-stripe" style={{ backgroundColor: `rgba(${node.layer.displayColor.r}, ${node.layer.displayColor.g}, ${node.layer.displayColor.b}, ${node.layer.displayColor.a / 255})` }} aria-hidden="true" />}<span className="layer-visibility" role="button" tabIndex={-1} aria-label={node.layer.visible ? '隐藏图层' : '显示图层'} onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); store.toggleLayerVisibility(node.layer.id) }}>{node.layer.visible ? <Eye size={14} /> : <EyeOff size={14} />}</span><span className={`layer-lock-toggle ${node.layer.locked ? 'locked' : ''}`} role="button" tabIndex={-1} aria-label={node.layer.locked ? '解除图层锁定' : '锁定图层'} aria-pressed={node.layer.locked} onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); store.setLayerPropertiesWithBlend(node.layer.id, node.layer.name, node.layer.opacity, node.layer.blendMode, !node.layer.locked, node.layer.displayColor, node.layer.description) }}>{node.layer.locked ? <Lock size={14} /> : <LockOpen size={14} />}</span><Tooltip className="layer-name" content={node.layer.description?.trim()}><span>{node.layer.name}</span><small>{blendOptions.find((option) => option.value === node.layer.blendMode)?.label} · {Math.round(node.layer.opacity * 100)}%</small></Tooltip></button>
     })}{dropTarget?.kind === 'root' && <div className="layer-root-drop-target" aria-hidden="true"><span>移到最外层</span></div>}{dragGhost && <div className="layer-drag-ghost" style={{ top: dragGhost.y }}><span>{dragGhost.name}</span>{dragGhost.count > 1 && <small>+{dragGhost.count - 1}</small>}</div>}</div>
     {contextMenu && <div className="layer-context-menu" style={{ left: contextMenu.x, top: contextMenu.y }} role="menu" onPointerDown={(event) => event.stopPropagation()}><button role="menuitem" onClick={() => { void store.addLayer(); closeContextMenu() }}><Plus size={14} />新建图层</button><button role="menuitem" onClick={() => { store.createLayerGroup(); closeContextMenu() }}><FolderPlus size={14} />新建图层组</button>{contextMenu.kind === 'layer' && <><button role="menuitem" onClick={() => { store.duplicateActiveLayer(); closeContextMenu() }}><Copy size={14} />复制图层</button><button role="menuitem" onClick={() => { session.selectedLayerIds.length > 1 ? store.mergeSelectedLayers() : store.mergeActiveLayerDown(); closeContextMenu() }}><Combine size={14} />{session.selectedLayerIds.length > 1 ? '合并所选图层' : '向下合并'}</button></>}{contextMenu.kind === 'group' && <><button role="menuitem" onClick={() => { store.toggleGroupCollapsed(contextMenu.id); closeContextMenu() }}><FolderOpen size={14} />展开/收起图层组</button><button role="menuitem" onClick={() => { store.mergeSelectedGroup(); closeContextMenu() }}><Combine size={14} />合并图层组</button><button role="menuitem" onClick={() => { store.ungroupSelected(); closeContextMenu() }}><FolderMinus size={14} />解组</button></>}<button role="menuitem" onClick={() => { store.mergeVisibleLayers(); closeContextMenu() }}><Layers2 size={14} />合并可见图层</button><button role="menuitem" onClick={openProperties}><Settings2 size={14} />属性</button>{contextMenu.kind === 'layer' && <button role="menuitem" className="danger" onClick={() => { store.deleteActiveLayer(); closeContextMenu() }}><Trash2 size={14} />删除</button>}</div>}
-    {form && <div className="modal-backdrop" role="presentation" onPointerDown={(event) => { if (event.target === event.currentTarget) closeProperties() }}><form className="modal layer-modal" onSubmit={(event) => { event.preventDefault(); closeProperties() }} onKeyDown={(event) => { if (event.key !== 'Enter' || event.nativeEvent.isComposing || (event.target as HTMLElement).tagName === 'TEXTAREA') return; event.preventDefault(); event.stopPropagation(); closeProperties() }}><header><div><span className="eyebrow">{form.kind === 'group' ? 'GROUP PROPERTIES' : 'LAYER PROPERTIES'}</span><h2>{form.kind === 'group' ? '图层组属性' : '图层属性'}</h2></div><button type="button" className="icon-button" aria-label="关闭" onClick={closeProperties}><X size={16} /></button></header><div className="modal-body"><label>名称<input autoFocus value={form.name} onChange={(event) => previewProperties({ ...form, name: event.target.value })} /></label><label>混合模式<ThemedSelect label="混合模式" value={form.blendMode} groups={blendOptionGroups} onChange={(blendMode) => previewProperties({ ...form, blendMode })} /></label><label>不透明度<div className="layer-opacity-control"><input aria-label="不透明度" type="range" min="0" max="100" step="1" value={form.opacity} onChange={(event) => previewProperties({ ...form, opacity: Number(event.target.value) })} /><NumberInput aria-label="不透明度数值" min={0} max={100} value={form.opacity} onValueChange={(opacity) => previewProperties({ ...form, opacity })} /><span>%</span></div></label></div></form></div>}
+    {form && <div className="modal-backdrop" role="presentation" onPointerDown={(event) => { if (event.target === event.currentTarget) closeProperties() }}><form className="modal layer-modal" onSubmit={(event) => { event.preventDefault(); closeProperties() }} onKeyDown={(event) => { if (event.key !== 'Enter' || event.nativeEvent.isComposing || (event.target as HTMLElement).tagName === 'TEXTAREA') return; event.preventDefault(); event.stopPropagation(); closeProperties() }}><header><div><span className="eyebrow">{form.kind === 'group' ? 'GROUP PROPERTIES' : 'LAYER PROPERTIES'}</span><h2>{form.kind === 'group' ? '图层组属性' : '图层属性'}</h2></div><button type="button" className="icon-button" aria-label="关闭" onClick={closeProperties}><X size={16} /></button></header><div className="modal-body"><label>名称<input autoFocus value={form.name} onChange={(event) => previewProperties({ ...form, name: event.target.value })} /></label><label>混合模式<ThemedSelect label="混合模式" value={form.blendMode} groups={blendOptionGroups} onChange={(blendMode) => previewProperties({ ...form, blendMode })} /></label><label>不透明度<div className="layer-opacity-control"><input aria-label="不透明度" type="range" min="0" max="100" step="1" value={form.opacity} onChange={(event) => previewProperties({ ...form, opacity: Number(event.target.value) })} /><NumberInput aria-label="不透明度数值" min={0} max={100} value={form.opacity} onValueChange={(opacity) => previewProperties({ ...form, opacity })} /><span>%</span></div></label><label className="layer-display-color-field">显示颜色<div className="layer-display-color-options"><button type="button" className={`layer-color-preset no-color ${form.displayColor === null ? 'selected' : ''}`} aria-label="无显示颜色" aria-pressed={form.displayColor === null} onClick={() => previewProperties({ ...form, displayColor: null })}><span /></button>{layerDisplayColorPresets.map((color) => <button key={`${color.r}-${color.g}-${color.b}`} type="button" className={`layer-color-preset ${sameColor(form.displayColor, color) ? 'selected' : ''}`} aria-label={`显示颜色 ${color.r}, ${color.g}, ${color.b}`} aria-pressed={sameColor(form.displayColor, color)} style={{ '--layer-preset-color': `rgb(${color.r} ${color.g} ${color.b})` } as React.CSSProperties} onClick={() => previewProperties({ ...form, displayColor: { ...color } })}><span /></button>)}<ColorValueControl color={form.displayColor ?? defaultLayerDisplayColor} onChange={(displayColor) => previewProperties({ ...form, displayColor })} label="图层显示颜色" roleLabel="自定义" className="layer-custom-color-trigger" /></div></label><label>描述<TextAreaInput rows={4} value={form.description} placeholder="输入图层描述" onChange={(event) => previewProperties({ ...form, description: event.target.value })} /></label></div></form></div>}
     {floating.style && <PanelResizeHandles onResize={floating.startResize} />}
   </section>
   <FloatingDockPreview style={floating.dockPreview} />

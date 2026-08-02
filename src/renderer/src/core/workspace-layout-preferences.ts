@@ -6,6 +6,7 @@ export type MainWindowState = NonNullable<WorkspaceLayout['mainWindow']>
 export const MAIN_WINDOW_STORAGE_KEY = 'moonsprite.main-window-state.v2'
 export const INSPECTOR_WIDTH_STORAGE_KEY = 'moonsprite.inspector-width.v1'
 export const PANEL_DOCKS_STORAGE_KEY = 'moonsprite.panel-docks.v1'
+export const PANEL_VISIBILITY_STORAGE_KEY = 'moonsprite.panel-visibility.v1'
 export const LEGACY_LAYERS_DOCK_STORAGE_KEY = 'moonsprite.layers-dock.v1'
 export const BOTTOM_DOCK_HEIGHT_STORAGE_KEY = 'moonsprite.bottom-layers-height.v1'
 export const LEFT_DOCK_WIDTH_STORAGE_KEY = 'moonsprite.left-dock-width.v1'
@@ -23,6 +24,9 @@ export const FLOATING_PANEL_STORAGE_KEYS: Record<WorkspacePanelId, string> = {
 
 export const DEFAULT_PANEL_DOCKS: Record<WorkspacePanelId, WorkspacePanelDock> = {
   color: 'left', palette: 'left', layers: 'right', preview: 'right'
+}
+export const DEFAULT_PANEL_VISIBILITY: Record<WorkspacePanelId, boolean> = {
+  color: true, palette: true, layers: true, preview: true
 }
 
 const clamp = (value: unknown, fallback: number, minimum: number, maximum: number): number => {
@@ -46,6 +50,14 @@ export function loadPanelDocks(storage?: Storage): Record<WorkspacePanelId, Work
     if (dock === 'right' || dock === 'left' || dock === 'bottom' || dock === 'floating') next[id] = dock
   }
   if (!stored && readStoredString(LEGACY_LAYERS_DOCK_STORAGE_KEY, storage) === 'bottom') next.layers = 'bottom'
+  return next
+}
+
+export function loadPanelVisibility(storage?: Storage): Record<WorkspacePanelId, boolean> {
+  const stored = readStoredJson<Partial<Record<WorkspacePanelId, boolean>> | null>(PANEL_VISIBILITY_STORAGE_KEY, null, storage)
+  const next = { ...DEFAULT_PANEL_VISIBILITY }
+  if (!stored) return next
+  for (const id of Object.keys(next) as WorkspacePanelId[]) if (typeof stored[id] === 'boolean') next[id] = stored[id]!
   return next
 }
 
@@ -74,6 +86,10 @@ export function savePanelDocks(panelDocks: Record<WorkspacePanelId, WorkspacePan
   writeStoredJson(PANEL_DOCKS_STORAGE_KEY, panelDocks, storage)
 }
 
+export function savePanelVisibility(panelVisibility: Record<WorkspacePanelId, boolean>, storage?: Storage): void {
+  writeStoredJson(PANEL_VISIBILITY_STORAGE_KEY, panelVisibility, storage)
+}
+
 export function readLayoutStorage(key: string, storage?: Storage): string | null {
   return readStoredString(key, storage)
 }
@@ -85,6 +101,7 @@ export function writeLayoutStorage(key: string, value: string | null, storage?: 
 
 export interface NormalizedWorkspaceLayout {
   panelDocks: Record<WorkspacePanelId, WorkspacePanelDock>
+  panelVisibility: Record<WorkspacePanelId, boolean>
   inspectorWidth: number
   leftDockWidth: number
   bottomDockHeight: number
@@ -98,12 +115,19 @@ export function normalizeWorkspaceLayout(layout: WorkspaceLayout, viewportWidth:
     const dock = layout.panelDocks?.[id]
     if (dock === 'left' || dock === 'right' || dock === 'bottom' || dock === 'floating') panelDocks[id] = dock
   }
+  const panelVisibility = { ...DEFAULT_PANEL_VISIBILITY }
+  if (layout.panelVisibility) {
+    for (const id of Object.keys(panelVisibility) as WorkspacePanelId[]) if (typeof layout.panelVisibility[id] === 'boolean') panelVisibility[id] = layout.panelVisibility[id]!
+  } else {
+    panelVisibility.preview = layout.previewOpen !== false
+  }
   return {
     panelDocks,
+    panelVisibility,
     inspectorWidth: clamp(layout.inspectorWidth, 310, 180, Math.max(180, viewportWidth - 220)),
     leftDockWidth: clamp(layout.leftDockWidth, 250, 180, Math.min(520, Math.max(180, viewportWidth - 520))),
     bottomDockHeight: clamp(layout.bottomDockHeight, 190, 120, 520),
     toolRailSide: layout.toolRailSide === 'right' ? 'right' : 'left',
-    previewOpen: layout.previewOpen !== false
+    previewOpen: panelVisibility.preview
   }
 }

@@ -25,10 +25,10 @@ export function NewDocumentDialog({ open, presets = DEFAULT_DOCUMENT_SIZE_PRESET
   useEffect(() => {
     if (!open || !window.moonSprite) return
     let active = true
-    void window.moonSprite.readClipboardImage().then((image) => {
-      if (!active || !image || image.width < 1 || image.height < 1) return
-      setWidth(image.width)
-      setHeight(image.height)
+    void window.moonSprite.readClipboardImageSize().then((size) => {
+      if (!active || !size || size.width < 1 || size.height < 1) return
+      setWidth(size.width)
+      setHeight(size.height)
     }).catch(() => {
       // Clipboard access is optional; keep the normal document defaults.
     })

@@ -1,5 +1,5 @@
 import { strFromU8, strToU8, unzipSync, zipSync } from 'fflate'
-import { BLEND_MODES, type BlendMode, type ColorMode, type LayerGroup, type PaletteEntry, type ProjectBrush, type RasterLayer, type SpriteDocument } from '@shared/types'
+import { BLEND_MODES, type BlendMode, type ColorMode, type LayerGroup, type PaletteEntry, type ProjectBrush, type RasterLayer, type RgbaColor, type SpriteDocument } from '@shared/types'
 import { compositeDocument, createId } from './document'
 import { createDefaultAnimationTimeline, normalizeAnimationTimeline } from './animation'
 import { encodePng } from './png'
@@ -7,6 +7,8 @@ import { encodePng } from './png'
 interface ManifestLayer {
   id: string
   name: string
+  displayColor?: RgbaColor
+  description?: string
   visible: boolean
   locked: boolean
   opacity: number
@@ -64,6 +66,8 @@ const normalizeLayerGroups = (source: unknown): LayerGroup[] => {
     groups.push({
       id: candidate.id,
       name: typeof candidate.name === 'string' && candidate.name ? candidate.name : '未命名组',
+      ...(normalizeDisplayColor(candidate.displayColor) ? { displayColor: normalizeDisplayColor(candidate.displayColor)! } : {}),
+      ...(typeof candidate.description === 'string' && candidate.description ? { description: candidate.description } : {}),
       ...(candidate.parentGroupId === undefined ? {} : { parentGroupId: typeof candidate.parentGroupId === 'string' ? candidate.parentGroupId : null }),
       visible: candidate.visible !== false,
       locked: candidate.locked === true,
@@ -94,6 +98,13 @@ const normalizeLayerGroups = (source: unknown): LayerGroup[] => {
   return groups
 }
 
+const normalizeDisplayColor = (value: unknown): RgbaColor | null => {
+  if (!value || typeof value !== 'object') return null
+  const color = value as Partial<RgbaColor>
+  if (![color.r, color.g, color.b, color.a].every((channel) => typeof channel === 'number' && Number.isFinite(channel))) return null
+  return { r: Math.max(0, Math.min(255, Math.round(color.r!))), g: Math.max(0, Math.min(255, Math.round(color.g!))), b: Math.max(0, Math.min(255, Math.round(color.b!))), a: Math.max(0, Math.min(255, Math.round(color.a!))) }
+}
+
 export function encodeProject(document: SpriteDocument): Uint8Array {
   const files: Record<string, Uint8Array> = {}
   const layers: ManifestLayer[] = document.layers.map((layer) => {
@@ -102,6 +113,8 @@ export function encodeProject(document: SpriteDocument): Uint8Array {
     return {
       id: layer.id,
       name: layer.name,
+      ...(layer.displayColor ? { displayColor: layer.displayColor } : {}),
+      ...(layer.description ? { description: layer.description } : {}),
       visible: layer.visible,
       locked: layer.locked,
       opacity: layer.opacity,
@@ -221,9 +234,9 @@ export function decodeProject(input: Uint8Array): SpriteDocument {
     if (!bytes || bytes.byteLength !== expectedBytes) throw new Error(`图层“${metadata.name}”数据损坏或不完整。`)
     const copied = bytes.slice()
     if (mode === 'rgba') {
-      return { ...metadata, width, height, offsetX: Number.isFinite(metadata.offsetX) ? Math.trunc(metadata.offsetX!) : 0, offsetY: Number.isFinite(metadata.offsetY) ? Math.trunc(metadata.offsetY!) : 0, blendMode: normalizeBlendMode(metadata.blendMode), format: 'rgba', pixels: new Uint8ClampedArray(copied.buffer) }
+      return { ...metadata, ...(normalizeDisplayColor(metadata.displayColor) ? { displayColor: normalizeDisplayColor(metadata.displayColor)! } : {}), ...(typeof metadata.description === 'string' && metadata.description ? { description: metadata.description } : {}), width, height, offsetX: Number.isFinite(metadata.offsetX) ? Math.trunc(metadata.offsetX!) : 0, offsetY: Number.isFinite(metadata.offsetY) ? Math.trunc(metadata.offsetY!) : 0, blendMode: normalizeBlendMode(metadata.blendMode), format: 'rgba', pixels: new Uint8ClampedArray(copied.buffer) }
     }
-    return { ...metadata, width, height, offsetX: Number.isFinite(metadata.offsetX) ? Math.trunc(metadata.offsetX!) : 0, offsetY: Number.isFinite(metadata.offsetY) ? Math.trunc(metadata.offsetY!) : 0, blendMode: normalizeBlendMode(metadata.blendMode), format: 'indexed', pixels: new Uint32Array(copied.buffer) }
+    return { ...metadata, ...(normalizeDisplayColor(metadata.displayColor) ? { displayColor: normalizeDisplayColor(metadata.displayColor)! } : {}), ...(typeof metadata.description === 'string' && metadata.description ? { description: metadata.description } : {}), width, height, offsetX: Number.isFinite(metadata.offsetX) ? Math.trunc(metadata.offsetX!) : 0, offsetY: Number.isFinite(metadata.offsetY) ? Math.trunc(metadata.offsetY!) : 0, blendMode: normalizeBlendMode(metadata.blendMode), format: 'indexed', pixels: new Uint32Array(copied.buffer) }
   })
   if (layers.length === 0) throw new Error('工程文件不包含图层。')
   const groups = normalizeLayerGroups(source.groups)

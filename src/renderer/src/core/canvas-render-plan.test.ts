@@ -33,4 +33,14 @@ describe('createCanvasRenderPlan', () => {
     expect(plan.toX).toBeLessThanOrEqual(128)
     expect(plan.toY).toBeLessThanOrEqual(128)
   })
+
+  it('covers a mirrored viewport around a panned canvas pivot without clipping edges', () => {
+    const plan = createCanvasRenderPlan(320, 240, { width: 128, height: 128 }, view({ panX: 80, panY: -30, mirrored: true, mirroredVertical: true }), 'canvas')
+    expect(plan.rotated).toBe(true)
+    expect(plan.viewport).toEqual({ left: 160, top: -60, right: 480, bottom: 180 })
+    expect(plan.sceneLeft).toBeLessThanOrEqual(plan.viewport.left)
+    expect(plan.sceneTop).toBeLessThanOrEqual(plan.viewport.top)
+    expect(plan.sceneLeft + plan.sceneWidth).toBeGreaterThanOrEqual(plan.viewport.right)
+    expect(plan.sceneTop + plan.sceneHeight).toBeGreaterThanOrEqual(plan.viewport.bottom)
+  })
 })

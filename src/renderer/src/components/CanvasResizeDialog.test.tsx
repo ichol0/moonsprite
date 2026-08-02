@@ -38,7 +38,7 @@ describe('CanvasResizeDialog', () => {
     )
     const widthInput = screen.getAllByRole('spinbutton')[0]
     fireEvent.change(widthInput, { target: { value: '64' } })
-    expect(widthInput).toHaveValue(64)
+    expect(widthInput).toHaveValue('64')
 
     const nextPreview = vi.fn()
     view.rerender(
@@ -53,7 +53,7 @@ describe('CanvasResizeDialog', () => {
       />
     )
 
-    expect(screen.getAllByRole('spinbutton')[0]).toHaveValue(64)
+    expect(screen.getAllByRole('spinbutton')[0]).toHaveValue('64')
     expect(nextPreview).not.toHaveBeenCalled()
   })
 })

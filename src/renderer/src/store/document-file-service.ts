@@ -1,6 +1,6 @@
 import type { MoonSpriteApi, SpriteDocument } from '@shared/types'
 import { checkResourceLimit } from '@/core/resource-policy'
-import { decodeDocumentFile, encodeDocumentForPath, normalizeSaveDialogPath, sanitizeFileStem, saveImageDialogFormat, saveImageExtension, saveImageKindForPath } from '@/core/document-files'
+import { decodeDocumentFileAsync, encodeDocumentForPath, normalizeSaveDialogPath, sanitizeFileStem, saveImageDialogFormat, saveImageExtension, saveImageKindForPath } from '@/core/document-files'
 import { exportDocumentImage, type ImageExportKind, type SaveImageKind } from '@/core/png'
 
 export interface ExportOptions {
@@ -22,6 +22,12 @@ interface SaveDocumentRequest {
   saveAs: boolean
   options?: SaveAsOptions
   preferredImageFormat: SaveImageKind | null
+  lifecycle?: FileOperationLifecycle
+}
+
+export interface FileOperationLifecycle {
+  onEncodeStart?: () => void
+  onWriteStart?: () => void
 }
 
 const saveOperations = new Map<string, Promise<string | null>>()
@@ -52,7 +58,9 @@ export function saveDocumentFile(request: SaveDocumentRequest): Promise<string |
     }
     const document = request.getDocument()
     if (!document || !filePath) return null
+    request.lifecycle?.onEncodeStart?.()
     const data = await encodeDocumentForPath(document, filePath, imageFormat, request.options?.scalePercent ?? 100)
+    request.lifecycle?.onWriteStart?.()
     await request.api.writeBinaryAtomic(filePath, data)
     return filePath
   })()
@@ -63,7 +71,7 @@ export function saveDocumentFile(request: SaveDocumentRequest): Promise<string |
   return operation
 }
 
-export async function exportDocumentFile(api: MoonSpriteApi, document: SpriteDocument, options?: ExportOptions): Promise<string | null> {
+export async function exportDocumentFile(api: MoonSpriteApi, document: SpriteDocument, options?: ExportOptions, lifecycle?: FileOperationLifecycle): Promise<string | null> {
   const scalePercent = Math.max(1, Math.min(6400, Math.round(options?.scalePercent ?? 100)))
   const exportWidth = Math.max(1, Math.round(document.width * scalePercent / 100))
   const exportHeight = Math.max(1, Math.round(document.height * scalePercent / 100))
@@ -73,17 +81,21 @@ export async function exportDocumentFile(api: MoonSpriteApi, document: SpriteDoc
   if (!check.allowed) throw new Error(check.reason)
   const fallbackName = sanitizeFileStem(document.name, 'MoonSprite-export')
   const requestedName = sanitizeFileStem(options?.name ?? fallbackName, fallbackName)
-  const output = await exportDocumentImage(document, scalePercent, options?.format ?? 'png-auto')
-  const dialogFormat = output.extension === 'jpg' ? 'jpeg' : output.extension === 'png' ? 'png' : output.extension === 'svg' ? 'svg' : 'webp'
-  const result = await api.exportImage(`${requestedName}.${output.extension}`, dialogFormat)
+  const format = options?.format ?? 'png-auto'
+  const extension = saveImageExtension(format)
+  const dialogFormat = extension === 'jpg' ? 'jpeg' : extension === 'png' ? 'png' : extension === 'svg' ? 'svg' : 'webp'
+  const result = await api.exportImage(`${requestedName}.${extension}`, dialogFormat)
   if (result.canceled || !result.filePath) return null
+  lifecycle?.onEncodeStart?.()
+  const output = await exportDocumentImage(document, scalePercent, format)
   const path = result.filePath.toLowerCase().endsWith(`.${output.extension}`) ? result.filePath : `${result.filePath}.${output.extension}`
+  lifecycle?.onWriteStart?.()
   await api.writeBinaryAtomic(path, output.bytes)
   return output.indexed ? '已导出索引 PNG。' : `已导出 ${output.extension.toUpperCase()} 图像。`
 }
 
 export async function openDocumentFile(api: MoonSpriteApi, filePath: string): Promise<SpriteDocument> {
-  const document = decodeDocumentFile(await api.readBinary(filePath), filePath)
+  const document = await decodeDocumentFileAsync(await api.readBinary(filePath), filePath)
   const resources = await api.getResourceInfo()
   const check = checkResourceLimit(document.width, document.height, document.layers.length, document.colorMode, resources)
   if (!check.allowed) throw new Error(check.reason)

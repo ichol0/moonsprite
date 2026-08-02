@@ -1,11 +1,12 @@
-import { stat } from 'node:fs/promises'
+import { readFile, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 
 const releaseDirectory = join(process.cwd(), 'release')
+const { version } = JSON.parse(await readFile(join(process.cwd(), 'package.json'), 'utf8'))
 const artifactLimit = 100 * 1024 * 1024
 const artifacts = [
-  'MoonSprite-Setup-0.1.0-x64.exe',
-  'MoonSprite-Portable-0.1.0-x64.exe'
+  `MoonSprite-Setup-${version}-x64.exe`,
+  `MoonSprite-Portable-${version}-x64.exe`
 ]
 
 for (const name of artifacts) {

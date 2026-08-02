@@ -4,6 +4,7 @@ import { checkResourceLimit } from '@/core/resource-policy'
 import { beginPixelEdit, commitPixelEdit, HistoryStack, recordPixel, revertPixelEdit, type HistoryEntry, type PixelEdit } from '@/core/history'
 import { convertDocumentColorMode, createDocument, createId, createLayer, duplicateLayer, findOrAddPaletteColor, getDescendantGroupIds, getGroup, getLayerIdsInGroup, getLayer, getActiveLayer, isLayerEffectivelyLocked, isLayerEffectivelyVisible, layerContentBounds, readLayerColor, readLayerColorAt, resizeDocumentAt, resizeDocumentImage, writeLayerColor } from '@/core/document'
 import { decodeProject, encodeProject } from '@/core/project-format'
+import { flushViewPreview } from '@/core/view-preview-lifecycle'
 import { fileNameFromPath } from '@/core/document-files'
 import { createSelectionBrush } from '@/core/brushes'
 import { applySelectionTransform, clampSelection, clearSelection, fillSelectionOrCanvas, flipLayer, flipSelection, moveSelection, outlineSelection, transformSelectionCopy, type SelectionTransformSource } from '@/core/tools'
@@ -32,7 +33,7 @@ interface WorkspaceState {
   sessions: DocumentSession[]
   activeId: string | null
   message: string | null
-  saveProgress: { value: number; label: string } | null
+  saveProgress: { title: string; value: number; label: string } | null
   dialog: AppDialog | null
   recoveryRecords: RecoveryRecord[]
   newDocument(name: string, width: number, height: number, colorMode: ColorMode): Promise<void>
@@ -57,6 +58,7 @@ interface WorkspaceState {
   setMoveAutoSelect(enabled: boolean): void
   setPrimaryColor(color: RgbaColor): void
   setSecondaryColor(color: RgbaColor): void
+  swapPrimarySecondaryColors(): void
   setView(view: Partial<ViewState>): void
   setSelection(selection: SelectionMask | null): void
   beginLayerTransform(): void
@@ -106,13 +108,13 @@ interface WorkspaceState {
   selectGroup(groupId: string): void
   toggleGroupCollapsed(groupId: string): void
   toggleGroupVisibility(groupId: string): void
-  setGroupProperties(groupId: string, name: string, opacity: number, blendMode: BlendMode, locked: boolean): void
+  setGroupProperties(groupId: string, name: string, opacity: number, blendMode: BlendMode, locked: boolean, displayColor?: RgbaColor | null, description?: string): void
   toggleLayerVisibility(layerId: string): void
   selectLayer(layerId: string, additive?: boolean): void
   renameLayer(layerId: string, name: string): void
   setLayerOpacity(layerId: string, opacity: number): void
   setLayerProperties(layerId: string, name: string, opacity: number): void
-  setLayerPropertiesWithBlend(layerId: string, name: string, opacity: number, blendMode: BlendMode, locked?: boolean): void
+  setLayerPropertiesWithBlend(layerId: string, name: string, opacity: number, blendMode: BlendMode, locked?: boolean, displayColor?: RgbaColor | null, description?: string): void
   applyActiveLayerAdjustment(adjustment: ColorAdjustment): void
   captureActiveLayerAdjustmentSnapshot(): AdjustmentSnapshot | null
   previewActiveLayerAdjustment(adjustment: ColorAdjustment, baseline: AdjustmentSnapshot): void
@@ -359,6 +361,17 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     }, false)
   },
   setSecondaryColor(color) { get().mutateActive((session) => { session.secondaryColor = { ...color }; if (session.brushImage?.intrinsicSize) session.brushImage = remapSelectionBrushColors(session.brushImage, session.primaryColor, session.secondaryColor) }, false) },
+  swapPrimarySecondaryColors() {
+    get().mutateActive((session) => {
+      const primary = session.primaryColor
+      session.primaryColor = { ...session.secondaryColor }
+      session.secondaryColor = { ...primary }
+      if (session.brushImage?.intrinsicSize) session.brushImage = remapSelectionBrushColors(session.brushImage, session.primaryColor, session.secondaryColor)
+      const matching = session.document.palette.find((entry) => session.document.paletteOrder.includes(entry.id) && colorEquals(entry.color, session.primaryColor))
+      session.paletteSelectionId = matching?.id ?? null
+      session.selectedPaletteIds = matching ? [matching.id] : []
+    }, false)
+  },
   setView(view) { get().mutateActive((session) => { Object.assign(session.view, view) }, false) },
   setSelection(selection) { get().mutateActive((session) => { session.selection = selection ? { ...selection, mask: selection.mask?.slice() } : null }, false) },
   beginLayerTransform() {
@@ -476,7 +489,9 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
   },
 
   undo() {
-    const session = activeSession(get())
+    let session = activeSession(get())
+    if (session) flushViewPreview(session.document.id)
+    session = activeSession(get())
     if (session?.pendingPaste) { get().cancelFloatingPaste(); return }
     if (!session?.history.canUndo) return
     get().mutateActive((session) => {
@@ -487,7 +502,9 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
   },
 
   redo() {
-    const session = activeSession(get())
+    let session = activeSession(get())
+    if (session) flushViewPreview(session.document.id)
+    session = activeSession(get())
     if (!session?.history.canRedo) return
     get().mutateActive((session) => {
       const view = { ...session.view }
@@ -806,13 +823,13 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     })
   },
 
-  setGroupProperties(groupId, name, opacity, blendMode, locked) {
+  setGroupProperties(groupId, name, opacity, blendMode, locked, displayColor, description) {
     const trimmed = name.trim()
     if (!trimmed) return
     get().mutateActive((session) => {
       const group = getGroup(session.document, groupId)
-      const before = { name: group.name, opacity: group.opacity, blendMode: group.blendMode, locked: group.locked }
-      const after = { name: trimmed, opacity: Math.max(0, Math.min(1, opacity)), blendMode, locked }
+      const before = { name: group.name, opacity: group.opacity, blendMode: group.blendMode, locked: group.locked, displayColor: group.displayColor, description: group.description ?? '' }
+      const after = { name: trimmed, opacity: Math.max(0, Math.min(1, opacity)), blendMode, locked, displayColor: displayColor === undefined ? group.displayColor : displayColor ?? undefined, description: description ?? group.description ?? '' }
       Object.assign(group, after)
       session.history.push({ label: '修改图层组属性', bytes: 48 + before.name.length + after.name.length, undo: () => Object.assign(group, before), redo: () => Object.assign(group, after) })
     })
@@ -852,13 +869,13 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     })
   },
 
-  setLayerPropertiesWithBlend(layerId, name, opacity, blendMode, locked) {
+  setLayerPropertiesWithBlend(layerId, name, opacity, blendMode, locked, displayColor, description) {
     const trimmed = name.trim()
     if (!trimmed) return
     get().mutateActive((session) => {
       const layer = getLayer(session.document, layerId)
-      const before = { name: layer.name, opacity: layer.opacity, blendMode: layer.blendMode, locked: layer.locked }
-      const after = { name: trimmed, opacity: Math.max(0, Math.min(1, opacity)), blendMode, locked: locked ?? layer.locked }
+      const before = { name: layer.name, opacity: layer.opacity, blendMode: layer.blendMode, locked: layer.locked, displayColor: layer.displayColor, description: layer.description ?? '' }
+      const after = { name: trimmed, opacity: Math.max(0, Math.min(1, opacity)), blendMode, locked: locked ?? layer.locked, displayColor: displayColor === undefined ? layer.displayColor : displayColor ?? undefined, description: description ?? layer.description ?? '' }
       Object.assign(layer, after)
       session.history.push({ label: '修改图层属性', bytes: 40 + before.name.length + after.name.length, undo: () => Object.assign(layer, before), redo: () => Object.assign(layer, after) })
     })
@@ -1254,7 +1271,13 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     const documentId = session.document.id
     get().commitFloatingPaste()
     const showProgress = saveAs || Boolean(options)
-    if (showProgress) set({ saveProgress: { value: 0, label: '正在保存…' } })
+    let progressStarted = false
+    const updateProgress = (value: number, label: string): void => {
+      if (!showProgress) return
+      if (progressStarted && !get().saveProgress) return
+      progressStarted = true
+      set({ saveProgress: { title: '正在另存为', value, label } })
+    }
     try {
       const filePath = await saveDocumentFile({
         api: window.moonSprite,
@@ -1262,11 +1285,15 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
         getDocument: () => get().sessions.find((item) => item.document.id === documentId)?.document ?? null,
         saveAs,
         options,
-        preferredImageFormat: saveImageKindForPreference(readStoredString(SAVE_FORMAT_PREFERENCE_KEY))
+        preferredImageFormat: saveImageKindForPreference(readStoredString(SAVE_FORMAT_PREFERENCE_KEY)),
+        lifecycle: {
+          onEncodeStart: () => updateProgress(12, '正在生成工程数据…'),
+          onWriteStart: () => updateProgress(72, '正在写入文件…')
+        }
       })
-      if (!filePath) { if (showProgress) set({ saveProgress: null }); return false }
+      if (!filePath) { if (progressStarted) set({ saveProgress: null }); return false }
       const saved = get().sessions.find((item) => item.document.id === documentId)
-      if (!saved) { if (showProgress) set({ saveProgress: null }); return false }
+      if (!saved) { if (progressStarted) set({ saveProgress: null }); return false }
       saved.document.filePath = filePath
       saved.document.name = fileNameFromPath(filePath)
       saved.document.dirty = false
@@ -1274,11 +1301,12 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       recordRecentProject(filePath, saved.document.name)
       await get().autosaveDirty()
       await recoveryService.delete(window.moonSprite, documentId)
-      set({ message: '工程已保存。', ...(showProgress ? { saveProgress: { value: 100, label: '已保存' } } : {}) })
-      if (showProgress) window.setTimeout(() => { if (get().saveProgress?.value === 100) set({ saveProgress: null }) }, 180)
+      const progressVisible = progressStarted && Boolean(get().saveProgress)
+      set({ message: '工程已保存。', ...(progressVisible ? { saveProgress: { title: '正在另存为', value: 100, label: '另存为完成' } } : {}) })
+      if (progressVisible) window.setTimeout(() => { if (get().saveProgress?.value === 100) set({ saveProgress: null }) }, 180)
       return true
     } catch (error) {
-      set({ message: error instanceof Error ? error.message : '保存工程失败。', ...(showProgress ? { saveProgress: null } : {}) })
+      set({ message: error instanceof Error ? error.message : '保存工程失败。', ...(progressStarted ? { saveProgress: null } : {}) })
       return false
     }
   },
@@ -1287,13 +1315,24 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     get().commitFloatingPaste()
     const session = activeSession(get())
     if (!session) return false
+    let progressStarted = false
+    const updateProgress = (value: number, label: string): void => {
+      if (progressStarted && !get().saveProgress) return
+      progressStarted = true
+      set({ saveProgress: { title: '正在导出', value, label } })
+    }
     try {
-      const message = await exportDocumentFile(window.moonSprite, session.document, options)
-      if (!message) return false
-      set({ message })
+      const message = await exportDocumentFile(window.moonSprite, session.document, options, {
+        onEncodeStart: () => updateProgress(12, '正在生成图像数据…'),
+        onWriteStart: () => updateProgress(72, '正在写入文件…')
+      })
+      if (!message) { if (progressStarted) set({ saveProgress: null }); return false }
+      const progressVisible = progressStarted && Boolean(get().saveProgress)
+      set({ message, ...(progressVisible ? { saveProgress: { title: '正在导出', value: 100, label: '导出完成' } } : {}) })
+      if (progressVisible) window.setTimeout(() => { if (get().saveProgress?.value === 100) set({ saveProgress: null }) }, 180)
       return true
     } catch (error) {
-      set({ message: error instanceof Error ? error.message : '导出图像失败。' })
+      set({ message: error instanceof Error ? error.message : '导出图像失败。', ...(progressStarted ? { saveProgress: null } : {}) })
       return false
     }
   },

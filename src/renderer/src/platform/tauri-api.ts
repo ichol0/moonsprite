@@ -1,7 +1,8 @@
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
-import type { ClipboardImage, MoonSpriteApi, RgbaColor, SaveDialogFormat, StoredBrush, StoredPalette, StoredWorkspace } from '@shared/types'
+import type { ClipboardImage, ClipboardImageSize, MoonSpriteApi, RgbaColor, SaveDialogFormat, StoredBrush, StoredPalette, StoredWorkspace } from '@shared/types'
 import { builtInPalettes } from '@/core/built-in-palettes'
+import { createResourceInfoReader } from './resource-info-cache'
 
 const browserRecoveries = new Map<string, { name: string; data: Uint8Array; updatedAt: string }>()
 const browserBrushes = new Map<string, { stored: StoredBrush; data: Uint8Array }>()
@@ -13,9 +14,14 @@ const browserPalettes = new Map<string, StoredPalette>(builtInPalettes.map((pale
 }]))
 const browserWorkspaces = new Map<string, StoredWorkspace>([['builtin-default', {
   id: 'builtin-default', name: '默认工作区', filePath: '', updatedAt: '', builtIn: true,
-  layout: { panelDocks: { color: 'left', palette: 'left', layers: 'right', preview: 'right' }, inspectorWidth: 300, leftDockWidth: 280, bottomDockHeight: 180, toolRailSide: 'left', previewOpen: true, inspectorLayout: '{"order":["palette","color","layers","preview"],"sizes":{"color":330,"palette":620,"layers":560,"preview":220},"bottomWidths":{"color":280,"palette":280,"layers":320,"preview":280}}', colorSquareDock: 'left', colorSquareAnchor: 'end', floatingPanels: { color: null, palette: null, layers: null, preview: null }, mainWindow: null },
-  initialLayout: { panelDocks: { color: 'left', palette: 'left', layers: 'right', preview: 'right' }, inspectorWidth: 300, leftDockWidth: 280, bottomDockHeight: 180, toolRailSide: 'left', previewOpen: true, inspectorLayout: '{"order":["palette","color","layers","preview"],"sizes":{"color":330,"palette":620,"layers":560,"preview":220},"bottomWidths":{"color":280,"palette":280,"layers":320,"preview":280}}', colorSquareDock: 'left', colorSquareAnchor: 'end', floatingPanels: { color: null, palette: null, layers: null, preview: null }, mainWindow: null }
+  layout: { panelDocks: { color: 'left', palette: 'left', layers: 'right', preview: 'right' }, panelVisibility: { color: true, palette: true, layers: true, preview: true }, inspectorWidth: 300, leftDockWidth: 280, bottomDockHeight: 180, toolRailSide: 'left', previewOpen: true, inspectorLayout: '{"order":["palette","color","layers","preview"],"sizes":{"color":330,"palette":620,"layers":560,"preview":220},"bottomWidths":{"color":280,"palette":280,"layers":320,"preview":280}}', colorSquareDock: 'left', colorSquareAnchor: 'end', floatingPanels: { color: null, palette: null, layers: null, preview: null }, mainWindow: null },
+  initialLayout: { panelDocks: { color: 'left', palette: 'left', layers: 'right', preview: 'right' }, panelVisibility: { color: true, palette: true, layers: true, preview: true }, inspectorWidth: 300, leftDockWidth: 280, bottomDockHeight: 180, toolRailSide: 'left', previewOpen: true, inspectorLayout: '{"order":["palette","color","layers","preview"],"sizes":{"color":330,"palette":620,"layers":560,"preview":220},"bottomWidths":{"color":280,"palette":280,"layers":320,"preview":280}}', colorSquareDock: 'left', colorSquareAnchor: 'end', floatingPanels: { color: null, palette: null, layers: null, preview: null }, mainWindow: null }
 } as StoredWorkspace]])
+
+const readTauriResourceInfo = createResourceInfoReader(async () => {
+  const [totalBytes, freeBytes] = await invoke<[number, number]>('get_resource_info')
+  return { totalBytes, freeBytes }
+})
 
 const browserPaletteId = (name: string): string => {
   const base = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || `palette-${Date.now()}`
@@ -39,6 +45,7 @@ const createBrowserApi = (): MoonSpriteApi => ({
   writeBinaryAtomic: async () => { throw new Error('浏览器预览不支持写入本地文件。') },
   writeClipboardImage: async () => {},
   readClipboardImage: async () => null,
+  readClipboardImageSize: async () => null,
   listPalettes: async () => ({ directoryPath: 'palettes', palettes: [...browserPalettes.values()].map((palette) => ({ ...palette, colors: palette.colors.map((color) => ({ ...color })) })) }),
   savePalette: async (requestedId, name, colors) => {
     const id = requestedId ?? browserPaletteId(name)
@@ -110,6 +117,7 @@ export const createTauriApi = (): MoonSpriteApi => ({
     const image = await invoke<{ width: number; height: number; data: number[] } | null>('read_clipboard_image')
     return image ? { width: image.width, height: image.height, data: new Uint8Array(image.data) } : null
   },
+  readClipboardImageSize: () => invoke<ClipboardImageSize | null>('read_clipboard_image_size'),
   listPalettes: () => invoke('list_palettes'),
   savePalette: (id, name, colors) => invoke('save_palette', { id, name, colors }),
   deletePalette: (id) => invoke('delete_palette', { id }),
@@ -132,10 +140,7 @@ export const createTauriApi = (): MoonSpriteApi => ({
   ensureBuiltinExample: () => invoke('ensure_builtin_example'),
   openProjectInFolder: (filePath) => invoke('open_project_in_folder', { filePath }),
   openExternalUrl: (url) => invoke('open_external_url', { url }),
-  getResourceInfo: async () => {
-    const [totalBytes, freeBytes] = await invoke<[number, number]>('get_resource_info')
-    return { totalBytes, freeBytes }
-  },
+  getResourceInfo: readTauriResourceInfo,
   confirmUnsaved: (name) => invoke('confirm_unsaved', { name }),
   pathForFile: (file) => (file as File & { path?: string }).path ?? '',
   onRequestClose: (callback) => {

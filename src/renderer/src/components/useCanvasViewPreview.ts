@@ -1,9 +1,11 @@
-import { useRef } from 'react'
+import { useEffect, useRef } from 'react'
 import type { ViewState } from '@shared/types'
 import type { CanvasPoint as Point } from '@/core/canvas-input'
 import { useWorkspace } from '@/store/workspace'
+import { registerViewPreviewFlusher } from '@/core/view-preview-lifecycle'
 
 interface CanvasViewPreviewOptions {
+  documentId: string
   sessionView: ViewState
   activeViewDrag: boolean
   canvasRef: React.RefObject<HTMLCanvasElement | null>
@@ -11,7 +13,7 @@ interface CanvasViewPreviewOptions {
   drawRef: React.RefObject<() => void>
 }
 
-export function useCanvasViewPreview({ sessionView, activeViewDrag, canvasRef, selectionCanvasRef, drawRef }: CanvasViewPreviewOptions) {
+export function useCanvasViewPreview({ documentId, sessionView, activeViewDrag, canvasRef, selectionCanvasRef, drawRef }: CanvasViewPreviewOptions) {
   const pendingViewRef = useRef<Partial<ViewState> | null>(null)
   const liveViewRef = useRef(sessionView)
   const viewFrameRef = useRef<number | null>(null)
@@ -20,6 +22,7 @@ export function useCanvasViewPreview({ sessionView, activeViewDrag, canvasRef, s
   const panPreviewFrameRef = useRef<number | null>(null)
   const pendingPanPreviewOffsetRef = useRef<Point | null>(null)
   const appliedRotationStyleRef = useRef('')
+  const flushPreviewRef = useRef<() => void>(() => {})
 
   if (!activeViewDrag) liveViewRef.current = { ...sessionView, ...pendingViewRef.current }
 
@@ -96,6 +99,13 @@ export function useCanvasViewPreview({ sessionView, activeViewDrag, canvasRef, s
     pendingViewRef.current = null
     return view
   }
+
+  flushPreviewRef.current = () => {
+    if (zoomPreviewStartRef.current) finishZoomPreview()
+    else if (pendingViewRef.current) finishPanPreview()
+  }
+
+  useEffect(() => registerViewPreviewFlusher(documentId, () => flushPreviewRef.current()), [documentId])
 
   const cancelViewPreviews = (): void => {
     if (viewFrameRef.current !== null) window.cancelAnimationFrame(viewFrameRef.current)

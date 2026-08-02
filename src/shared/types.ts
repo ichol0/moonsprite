@@ -121,6 +121,10 @@ export interface PaletteEntry {
 export interface RgbaLayer {
   id: string
   name: string
+  /** Optional visual marker shown in the layer panel. */
+  displayColor?: RgbaColor
+  /** Optional user-facing note shown when hovering the layer row. */
+  description?: string
   visible: boolean
   locked: boolean
   opacity: number
@@ -139,6 +143,10 @@ export interface RgbaLayer {
 export interface IndexedLayer {
   id: string
   name: string
+  /** Optional visual marker shown in the layer panel. */
+  displayColor?: RgbaColor
+  /** Optional user-facing note shown when hovering the layer row. */
+  description?: string
   visible: boolean
   locked: boolean
   opacity: number
@@ -157,6 +165,10 @@ export type RasterLayer = RgbaLayer | IndexedLayer
 export interface LayerGroup {
   id: string
   name: string
+  /** Optional visual marker shown in the layer panel. */
+  displayColor?: RgbaColor
+  /** Optional user-facing note shown when hovering the group row. */
+  description?: string
   parentGroupId?: string | null
   visible: boolean
   locked: boolean
@@ -300,6 +312,8 @@ export type ToolRailSide = 'left' | 'right'
 
 export interface WorkspaceLayout {
   panelDocks: Record<WorkspacePanelId, WorkspacePanelDock>
+  /** Optional for backward compatibility with workspaces saved before panel visibility was persisted. */
+  panelVisibility?: Partial<Record<WorkspacePanelId, boolean>>
   inspectorWidth: number
   leftDockWidth: number
   bottomDockHeight: number
@@ -333,6 +347,11 @@ export interface ClipboardImage {
   data: Uint8Array
 }
 
+export interface ClipboardImageSize {
+  width: number
+  height: number
+}
+
 export interface MoonSpriteApi {
   openFiles(): Promise<OpenDialogResult>
   takeStartupFiles(): Promise<string[]>
@@ -343,6 +362,7 @@ export interface MoonSpriteApi {
   writeBinaryAtomic(filePath: string, data: Uint8Array): Promise<void>
   writeClipboardImage(image: ClipboardImage): Promise<void>
   readClipboardImage(): Promise<ClipboardImage | null>
+  readClipboardImageSize(): Promise<ClipboardImageSize | null>
   listPalettes(): Promise<PaletteListing>
   savePalette(id: string | null, name: string, colors: RgbaColor[]): Promise<StoredPalette>
   deletePalette(id: string): Promise<void>

@@ -6,6 +6,10 @@ const red = { r: 255, g: 0, b: 0, a: 255 }
 const blue = { r: 0, g: 0, b: 255, a: 128 }
 
 describe('document compositing', () => {
+  it('creates layers without a display color marker by default', () => {
+    expect(createLayer('plain', 1, 1, 'rgba').displayColor).toBeUndefined()
+  })
+
   it('copies a single RGBA layer region without changing transparent pixels', () => {
     const document = createDocument('single layer', 3, 2, 'rgba')
     const layer = document.layers[0]

@@ -3,27 +3,37 @@ import { Minus, Plus, X } from 'lucide-react'
 import { FloatingDockPreview, PanelResizeHandles, useFloatingPanel } from '@/components/floating-panel'
 import type { DockDragProps } from '@/components/workspace-panel-types'
 import { createCompositeSampler } from '@/core/document'
+import { anchoredPreviewPan } from '@/core/preview-geometry'
 import { relativeLuminanceColor } from '@/core/raster'
+import { loadEditorPreferences, type CheckerboardPreferences } from '@/core/file-preferences'
 import type { DocumentSession } from '@/store/workspace'
 
-export function PreviewPanel({ session, onClose, docked = false, onDockDragStart, onFloatingDock, relativeLuminanceInPreview = true }: { session: DocumentSession; onClose: () => void; relativeLuminanceInPreview?: boolean } & DockDragProps) {
+export function PreviewPanel({ session, onClose, docked = false, onDockDragStart, onPanelContextMenu, onFloatingDock, relativeLuminanceInPreview = true }: { session: DocumentSession; onClose: () => void; relativeLuminanceInPreview?: boolean } & DockDragProps) {
   const defaultPosition = { x: Math.max(12, window.innerWidth - 310 - 250 - 16), y: Math.max(46, window.innerHeight - 27 - 260 - 16), width: 250, height: 260 }
-  const floating = useFloatingPanel(docked ? null : defaultPosition, false, true, 'moonsprite.preview-panel.v1', true, onFloatingDock, docked)
+  const floating = useFloatingPanel(docked ? null : defaultPosition, false, true, 'moonsprite.preview-panel.v1', false, onFloatingDock, docked)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const [zoom, setZoom] = useState(1)
   const [pan, setPan] = useState({ x: 0, y: 0 })
+  const [checkerboard, setCheckerboard] = useState<CheckerboardPreferences>(() => loadEditorPreferences().checkerboard)
   const panDrag = useRef<{ x: number; y: number; panX: number; panY: number } | null>(null)
-  const sourceRef = useRef<{ documentId: string; revision: number; relativeLuminance: boolean; canvas: OffscreenCanvas } | null>(null)
-  const baseFitRef = useRef<{ documentId: string; width: number; height: number; scale: number } | null>(null)
+  const sourceRef = useRef<{ documentId: string; revision: number; relativeLuminance: boolean; checkerboardKey: string; canvas: OffscreenCanvas } | null>(null)
+  const baseFitRef = useRef<{ documentId: string; width: number; height: number; viewportWidth: number; viewportHeight: number; scale: number } | null>(null)
   const panFrameRef = useRef<number | null>(null)
   const pendingPanRef = useRef<{ x: number; y: number } | null>(null)
   const showRelativeLuminance = session.view.relativeLuminance && relativeLuminanceInPreview
+  const checkerboardKey = `${checkerboard.size}:${checkerboard.lightColor.r}:${checkerboard.lightColor.g}:${checkerboard.lightColor.b}:${checkerboard.darkColor.r}:${checkerboard.darkColor.g}:${checkerboard.darkColor.b}`
+
+  useEffect(() => {
+    const syncPreferences = (): void => setCheckerboard(loadEditorPreferences().checkerboard)
+    window.addEventListener('moonsprite:preferences-changed', syncPreferences)
+    return () => window.removeEventListener('moonsprite:preferences-changed', syncPreferences)
+  }, [])
 
   useEffect(() => {
     const canvas = canvasRef.current
     if (!canvas) return
     let source = sourceRef.current
-    if (!source || source.documentId !== session.document.id || source.revision !== session.revision || source.relativeLuminance !== showRelativeLuminance) {
+    if (!source || source.documentId !== session.document.id || source.revision !== session.revision || source.relativeLuminance !== showRelativeLuminance || source.checkerboardKey !== checkerboardKey) {
       const documentWidth = session.document.width
       const documentHeight = session.document.height
       const sourceScale = Math.min(1, 512 / Math.max(documentWidth, documentHeight))
@@ -39,16 +49,16 @@ export function PreviewPanel({ session, onClose, docked = false, onDockDragStart
         const sourceY = Math.min(documentHeight - 1, Math.floor(previewY / sourceScale))
         const sampled = sampleComposite(sourceY * documentWidth + sourceX)
         const color = showRelativeLuminance ? relativeLuminanceColor(sampled) : sampled
-        const checker = (Math.floor(sourceX / 16) + Math.floor(sourceY / 16)) % 2 === 0 ? 215 : 155
+        const checker = (Math.floor(sourceX / checkerboard.size) + Math.floor(sourceY / checkerboard.size)) % 2 === 0 ? checkerboard.lightColor : checkerboard.darkColor
         const alpha = color.a / 255
-        pixels[offset] = Math.round(color.r * alpha + checker * (1 - alpha))
-        pixels[offset + 1] = Math.round(color.g * alpha + checker * (1 - alpha))
-        pixels[offset + 2] = Math.round(color.b * alpha + checker * (1 - alpha))
+        pixels[offset] = Math.round(color.r * alpha + checker.r * (1 - alpha))
+        pixels[offset + 1] = Math.round(color.g * alpha + checker.g * (1 - alpha))
+        pixels[offset + 2] = Math.round(color.b * alpha + checker.b * (1 - alpha))
         pixels[offset + 3] = 255
       }
       const sourceCanvas = new OffscreenCanvas(width, height)
       sourceCanvas.getContext('2d')?.putImageData(new ImageData(pixels, width, height), 0, 0)
-      source = { documentId: session.document.id, revision: session.revision, relativeLuminance: showRelativeLuminance, canvas: sourceCanvas }
+      source = { documentId: session.document.id, revision: session.revision, relativeLuminance: showRelativeLuminance, checkerboardKey, canvas: sourceCanvas }
       sourceRef.current = source
     }
     const draw = (): void => {
@@ -64,8 +74,8 @@ export function PreviewPanel({ session, onClose, docked = false, onDockDragStart
       const displayHeight = bounds.height
       context.clearRect(0, 0, displayWidth, displayHeight)
       let baseFit = baseFitRef.current
-      if (!baseFit || baseFit.documentId !== session.document.id || baseFit.width !== session.document.width || baseFit.height !== session.document.height) {
-        baseFit = { documentId: session.document.id, width: session.document.width, height: session.document.height, scale: Math.min(displayWidth / session.document.width, displayHeight / session.document.height) }
+      if (!baseFit || baseFit.documentId !== session.document.id || baseFit.width !== session.document.width || baseFit.height !== session.document.height || baseFit.viewportWidth !== displayWidth || baseFit.viewportHeight !== displayHeight) {
+        baseFit = { documentId: session.document.id, width: session.document.width, height: session.document.height, viewportWidth: displayWidth, viewportHeight: displayHeight, scale: Math.min(displayWidth / session.document.width, displayHeight / session.document.height) }
         baseFitRef.current = baseFit
       }
       const scale = baseFit.scale * zoom
@@ -82,7 +92,7 @@ export function PreviewPanel({ session, onClose, docked = false, onDockDragStart
     const observer = new ResizeObserver(draw)
     observer.observe(canvas)
     return () => observer.disconnect()
-  }, [session.document, session.revision, showRelativeLuminance, zoom, pan])
+  }, [session.document, session.revision, showRelativeLuminance, checkerboard, checkerboardKey, zoom, pan])
 
   useEffect(() => () => {
     if (panFrameRef.current !== null) window.cancelAnimationFrame(panFrameRef.current)
@@ -99,10 +109,26 @@ export function PreviewPanel({ session, onClose, docked = false, onDockDragStart
     })
   }
 
-  const adjustZoom = (factor: number): void => setZoom((value) => Math.max(0.25, Math.min(16, value * factor)))
-  return <section ref={floating.ref} className={`panel preview-panel ${floating.style ? 'floating-panel' : ''}`} style={floating.style} onPointerDown={floating.bringToFront}>
+  const adjustZoom = (factor: number, pointer?: { x: number; y: number }): void => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+    const bounds = canvas.getBoundingClientRect()
+    if (bounds.width < 1 || bounds.height < 1) return
+    const nextZoom = Math.max(0.25, Math.min(16, zoom * factor))
+    if (nextZoom === zoom) return
+    setPan(anchoredPreviewPan({
+      documentSize: { width: session.document.width, height: session.document.height },
+      viewportSize: { width: bounds.width, height: bounds.height },
+      pointer: pointer ?? { x: bounds.width / 2, y: bounds.height / 2 },
+      pan,
+      zoom,
+      nextZoom
+    }))
+    setZoom(nextZoom)
+  }
+  return <section ref={floating.ref} className={`panel preview-panel ${floating.style ? 'floating-panel' : ''}`} style={floating.style} onPointerDown={floating.bringToFront} onContextMenu={onPanelContextMenu}>
     <header onPointerDown={(event) => floating.style ? floating.startDrag(event) : onDockDragStart?.(event, floating.startDetachedDrag)}><span>预览</span><small>{Math.round(zoom * 100)}%</small><span className="panel-actions"><button title="缩小预览" aria-label="缩小预览" onClick={() => adjustZoom(0.8)}><Minus size={14} /></button><button title="放大预览" aria-label="放大预览" onClick={() => adjustZoom(1.25)}><Plus size={14} /></button><button title="关闭预览" aria-label="关闭预览" onClick={onClose}><X size={14} /></button></span></header>
-    <div className="preview-canvas-wrap" onWheel={(event) => { event.preventDefault(); adjustZoom(event.deltaY < 0 ? 1.15 : 1 / 1.15) }} onPointerDown={(event) => { if (event.button !== 1) return; panDrag.current = { x: event.clientX, y: event.clientY, panX: pan.x, panY: pan.y }; event.currentTarget.setPointerCapture(event.pointerId); event.preventDefault() }} onPointerMove={(event) => { const drag = panDrag.current; if (!drag) return; schedulePan({ x: drag.panX + event.clientX - drag.x, y: drag.panY + event.clientY - drag.y }) }} onPointerUp={(event) => { panDrag.current = null; if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId) }} onPointerCancel={() => { panDrag.current = null }}><canvas ref={canvasRef} aria-label="作品预览" /></div>
+    <div className="preview-canvas-wrap" onWheel={(event) => { const bounds = canvasRef.current?.getBoundingClientRect(); if (!bounds) return; event.preventDefault(); adjustZoom(event.deltaY < 0 ? 1.15 : 1 / 1.15, { x: event.clientX - bounds.left, y: event.clientY - bounds.top }) }} onPointerDown={(event) => { if (event.button !== 1) return; panDrag.current = { x: event.clientX, y: event.clientY, panX: pan.x, panY: pan.y }; event.currentTarget.setPointerCapture(event.pointerId); event.preventDefault() }} onPointerMove={(event) => { const drag = panDrag.current; if (!drag) return; schedulePan({ x: drag.panX + event.clientX - drag.x, y: drag.panY + event.clientY - drag.y }) }} onPointerUp={(event) => { panDrag.current = null; if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId) }} onPointerCancel={() => { panDrag.current = null }}><canvas ref={canvasRef} aria-label="作品预览" /></div>
     {floating.style && <PanelResizeHandles onResize={floating.startResize} />}
     <FloatingDockPreview style={floating.dockPreview} />
   </section>

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { WorkspaceLayout } from '@shared/types'
-import { INSPECTOR_WIDTH_STORAGE_KEY, LEGACY_LAYERS_DOCK_STORAGE_KEY, loadInspectorWidth, loadMainWindowState, loadPanelDocks, normalizeWorkspaceLayout, saveMainWindowState } from './workspace-layout-preferences'
+import { INSPECTOR_WIDTH_STORAGE_KEY, LEGACY_LAYERS_DOCK_STORAGE_KEY, PANEL_VISIBILITY_STORAGE_KEY, loadInspectorWidth, loadMainWindowState, loadPanelDocks, loadPanelVisibility, normalizeWorkspaceLayout, saveMainWindowState, savePanelVisibility } from './workspace-layout-preferences'
 
 function createStorage(): Storage {
   const values = new Map<string, string>()
@@ -20,6 +20,7 @@ const layout = (changes: Partial<WorkspaceLayout> = {}): WorkspaceLayout => ({
   leftDockWidth: 280,
   bottomDockHeight: 180,
   toolRailSide: 'left',
+  panelVisibility: { color: true, palette: true, layers: true, preview: true },
   previewOpen: true,
   inspectorLayout: null,
   colorSquareDock: null,
@@ -53,5 +54,18 @@ describe('workspace layout preferences', () => {
       bottomDockHeight: 520,
       toolRailSide: 'right'
     })
+  })
+
+  it('persists independent visibility for every workspace panel', () => {
+    const storage = createStorage()
+    savePanelVisibility({ color: true, palette: false, layers: true, preview: false }, storage)
+    expect(storage.getItem(PANEL_VISIBILITY_STORAGE_KEY)).not.toBeNull()
+    expect(loadPanelVisibility(storage)).toEqual({ color: true, palette: false, layers: true, preview: false })
+  })
+
+  it('migrates legacy preview visibility and repairs incomplete workspace layouts', () => {
+    const legacy = layout({ panelVisibility: undefined, previewOpen: false })
+    expect(normalizeWorkspaceLayout(legacy, 1200).panelVisibility).toEqual({ color: true, palette: true, layers: true, preview: false })
+    expect(normalizeWorkspaceLayout(layout({ panelVisibility: { color: false, layers: false } }), 1200).panelVisibility).toEqual({ color: false, palette: true, layers: false, preview: true })
   })
 })

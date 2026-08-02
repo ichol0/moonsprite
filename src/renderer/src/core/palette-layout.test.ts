@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { PALETTE_SWATCH_PIXELS, paletteColorsEqual, paletteMarkerColor, paletteReorderTarget, reorderPalettePreview } from './palette-layout'
+import { PALETTE_SWATCH_PIXELS, isPaletteDeleteKey, paletteColorRoles, paletteColorsEqual, paletteMarkerColor, paletteReorderTarget, reorderPalettePreview } from './palette-layout'
 
 describe('palette layout helpers', () => {
+  it('recognizes both Windows palette deletion keys', () => {
+    expect(isPaletteDeleteKey('Delete')).toBe(true)
+    expect(isPaletteDeleteKey('Backspace')).toBe(true)
+    expect(isPaletteDeleteKey('Enter')).toBe(false)
+  })
   it('keeps swatch size presets stable', () => {
     expect(PALETTE_SWATCH_PIXELS).toEqual({ small: 22, medium: 30, large: 40 })
   })
@@ -15,6 +20,12 @@ describe('palette layout helpers', () => {
     expect(paletteMarkerColor({ r: 255, g: 255, b: 255, a: 255 })).toBe('#090a0d')
     expect(paletteMarkerColor({ r: 0, g: 0, b: 0, a: 255 })).toBe('#fff')
     expect(paletteMarkerColor({ r: 255, g: 0, b: 0, a: 0 })).toBe('#090a0d')
+  })
+
+  it('tracks foreground and background roles independently, including the same swatch', () => {
+    const color = { r: 41, g: 121, b: 255, a: 255 }
+    expect(paletteColorRoles(color, color, { r: 255, g: 255, b: 255, a: 255 })).toEqual({ primary: true, secondary: false })
+    expect(paletteColorRoles(color, color, color)).toEqual({ primary: true, secondary: true })
   })
 
   it('reorders selected swatches as one block and returns an insertion target', () => {

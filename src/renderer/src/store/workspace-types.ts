@@ -130,7 +130,7 @@ export interface WorkspaceDataState {
   sessions: DocumentSession[]
   activeId: string | null
   message: string | null
-  saveProgress: { value: number; label: string } | null
+  saveProgress: { title: string; value: number; label: string } | null
   dialog: AppDialog | null
   recoveryRecords: RecoveryRecord[]
 }

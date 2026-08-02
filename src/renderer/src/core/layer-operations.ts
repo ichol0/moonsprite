@@ -204,7 +204,7 @@ export const createLayerGroup = (state: LayerOperationState, id: string, name: s
   const selected = state.selectedGroupId ? [] : document.layers.filter((layer) => state.selectedLayerIds.includes(layer.id))
   const layers = selected.length > 0 ? selected : state.selectedGroupId ? [] : [getActiveLayer(document)]
   const commonParent = state.selectedGroupId ?? (layers.length > 0 && layers.every((layer) => (layer.groupId ?? null) === (layers[0].groupId ?? null)) ? layers[0].groupId ?? null : null)
-  const group: LayerGroup = { id, name, parentGroupId: commonParent, visible: true, locked: false, opacity: 1, blendMode: 'normal' }
+  const group: LayerGroup = { id, name, description: '', parentGroupId: commonParent, visible: true, locked: false, opacity: 1, blendMode: 'normal' }
   const beforeGroupIds = new Map(layers.map((layer) => [layer.id, layer.groupId ?? null]))
   document.groups.push(group)
   for (const layer of layers) layer.groupId = group.id

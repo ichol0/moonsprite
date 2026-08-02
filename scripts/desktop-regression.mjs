@@ -84,6 +84,7 @@ try {
   await rotationInput.waitFor({ state: 'visible' })
   const canvasAtZeroDegrees = await canvas.screenshot()
   await rotationInput.fill('45')
+  await rotationInput.press('Enter')
   await page.waitForFunction(() => document.querySelector('input[aria-label="旋转度数"]')?.value === '45')
   await delay(150)
   const canvasAtFortyFiveDegrees = await canvas.screenshot()
@@ -105,12 +106,12 @@ try {
   await page.waitForFunction(() => !document.querySelector('main.app-shell')?.classList.contains('advanced-mode'))
   assert(await canvas.isVisible(), 'Canvas did not remain visible after leaving advanced mode.')
 
-  const viewMenuButton = page.getByRole('button', { name: '视图', exact: true })
-  await viewMenuButton.click()
+  const windowMenuButton = page.getByRole('button', { name: '窗口', exact: true })
+  await windowMenuButton.click()
   const relativeLuminanceItem = page.locator('.menu-popover button').filter({ hasText: '查看相对明暗' })
   await relativeLuminanceItem.waitFor({ state: 'visible' })
   assert(await relativeLuminanceItem.isEnabled(), 'Relative luminance menu command is unexpectedly disabled.')
-  await viewMenuButton.click()
+  await windowMenuButton.click()
 
   const selectionToolButton = page.locator('.tool-rail button[aria-label="选区"]')
   await selectionToolButton.click()

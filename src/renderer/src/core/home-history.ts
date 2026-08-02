@@ -10,6 +10,7 @@ export interface RecentProject {
 
 const recentStorageKey = 'moonsprite.recent-projects.v1'
 const galleryPinsStorageKey = 'moonsprite.gallery-pins.v1'
+export const RECENT_FILE_EXTENSIONS = ['moonsprite', 'ase', 'aseprite', 'png', 'jpg', 'jpeg', 'webp', 'bmp', 'gif'] as const
 
 const readJson = <T>(key: string, fallback: T): T => {
   const value = readStoredJson<T | null>(key, null)
@@ -26,6 +27,7 @@ const normalizeRecentProjects = (projects: RecentProject[]): RecentProject[] => 
 const writeRecentProjects = (projects: RecentProject[]): RecentProject[] => {
   const next = normalizeRecentProjects(projects).slice(0, 24)
   writeStoredJson(recentStorageKey, next)
+  if (typeof window !== 'undefined') window.dispatchEvent(new Event('moonsprite:recent-files-changed'))
   return next
 }
 
@@ -36,8 +38,8 @@ export function getRecentProjects(): RecentProject[] {
     if (typeof item?.filePath !== 'string' || typeof item?.lastOpened !== 'number') return []
     return [{
       filePath: item.filePath,
-      fileName: typeof item.fileName === 'string' ? item.fileName : baseName(item.filePath),
-      name: typeof item.name === 'string' ? item.name : baseName(item.filePath),
+      fileName: baseName(item.filePath),
+      name: baseName(item.filePath),
       lastOpened: item.lastOpened,
       pinned: item.pinned === true
     }]
@@ -45,11 +47,13 @@ export function getRecentProjects(): RecentProject[] {
   return normalizeRecentProjects(projects)
 }
 
-export function recordRecentProject(filePath: string, name: string): void {
-  if (!/\.moonsprite$/i.test(filePath)) return
+export function recordRecentProject(filePath: string, _name?: string): void {
+  const extension = filePath.split('.').pop()?.toLowerCase()
+  if (!RECENT_FILE_EXTENSIONS.includes(extension as (typeof RECENT_FILE_EXTENSIONS)[number])) return
   const previous = getRecentProjects().find((item) => item.filePath === filePath)
+  const fileName = baseName(filePath)
   writeRecentProjects([
-    { filePath, fileName: baseName(filePath), name: name || baseName(filePath), lastOpened: Date.now(), pinned: previous?.pinned === true },
+    { filePath, fileName, name: fileName, lastOpened: Date.now(), pinned: previous?.pinned === true },
     ...getRecentProjects().filter((item) => item.filePath !== filePath)
   ])
 }

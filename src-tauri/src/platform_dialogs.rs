@@ -69,10 +69,23 @@ fn file_dialog(default_path: Option<&str>) -> FileDialog {
 #[tauri::command]
 pub(crate) fn open_files() -> OpenDialogResult {
     let paths = FileDialog::new()
+        .add_filter(
+            "所有支持的文件",
+            &[
+                "moonsprite",
+                "ase",
+                "aseprite",
+                "png",
+                "jpg",
+                "jpeg",
+                "webp",
+                "bmp",
+                "gif",
+            ],
+        )
         .add_filter("Aseprite files", &["ase", "aseprite"])
-        .add_filter("MoonSprite 工程或 PNG", &["moonsprite", "png"])
         .add_filter("MoonSprite 工程", &["moonsprite"])
-        .add_filter("PNG 图片", &["png"])
+        .add_filter("图片", &["png", "jpg", "jpeg", "webp", "bmp", "gif"])
         .pick_files();
     let file_paths = paths
         .unwrap_or_default()

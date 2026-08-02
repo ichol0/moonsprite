@@ -3,6 +3,7 @@ import { colorEquals } from './raster'
 
 export type PaletteSwatchSize = 'small' | 'medium' | 'large'
 export const PALETTE_SWATCH_PIXELS: Record<PaletteSwatchSize, number> = { small: 22, medium: 30, large: 40 }
+export const isPaletteDeleteKey = (key: string): boolean => key === 'Delete' || key === 'Backspace'
 
 export const paletteColorsEqual = (left: RgbaColor[], right: RgbaColor[]): boolean =>
   left.length === right.length && left.every((color, index) => colorEquals(color, right[index]))
@@ -16,6 +17,11 @@ export const paletteMarkerColor = (color: RgbaColor): string => {
   const luminance = linear(color.r) * 0.2126 + linear(color.g) * 0.7152 + linear(color.b) * 0.0722
   return luminance > 0.179 ? '#090a0d' : '#fff'
 }
+
+export const paletteColorRoles = (color: RgbaColor, primary: RgbaColor, secondary: RgbaColor): { primary: boolean; secondary: boolean } => ({
+  primary: colorEquals(color, primary),
+  secondary: colorEquals(color, secondary)
+})
 
 export const reorderPalettePreview = (order: number[], ids: number[], targetSlot: number): number[] => {
   const selected = new Set(ids)

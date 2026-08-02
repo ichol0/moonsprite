@@ -22,17 +22,20 @@ platform/tauri-api ----> Tauri commands ----> Windows/file system
 - `src-tauri/src/platform_paths.rs` 统一管理随应用目录保存的图库、色板、笔刷和工作区目录；迁移用户数据位置时只从这里切换。
 - `src-tauri/src/platform_clipboard.rs`、`platform_files.rs` 和 `platform_resources.rs` 分别负责系统剪贴板、二进制文件和资源信息；`lib.rs` 只注册命令并协调窗口生命周期。
 
-## 当前风险状态
+## 当前维护风险状态
 
-五个原高风险入口已完成第一轮渐进拆分：
+- 计划状态：已完成
+- 未完成高风险拆分项：0
 
-- `App.tsx` 保留应用外壳、文档标签和工作区布局编排；菜单、设置、快捷键、调整、另存为弹窗及笔刷库生命周期已迁入 `components/app/` 与 `components/dialogs/`。
+五个原高风险入口已完成计划内的分阶段拆分与验证，已从集中式高风险入口降为边界明确的受控维护点：
+
+- `App.tsx` 保留全局命令、模态框和工作区布局编排；文档标签、工具栏、工具属性栏、状态栏、画布主机和编辑器布局外壳已迁入 `components/app/`。
 - `CanvasStage.tsx` 保留画布事件编排和工具预览；选区轮廓、视图预览调度与文档合成缓存已迁入独立模块。
 - `workspace.ts` 保留 Zustand 公共 API 和命令编排；公开类型、会话构造、工具设置、历史快照与调色板命令已迁入 `workspace-*` 模块。
 - `WorkspacePanels.tsx` 仅负责编排停靠栏目，颜色、调色板、图层和预览均为独立组件。
 - Rust `lib.rs` 仅保留应用状态、命令注册、setup 和窗口生命周期协调；调色板、工作区、笔刷、图库、恢复和文件对话框分别位于 `platform_*` 模块。
 
-剩余风险集中在 `App.tsx` 的工作区/标签页编排、`CanvasStage.tsx` 的指针手势状态机和 `workspace.ts` 的图层/选区命令。后续功能开发应继续按职责迁移，禁止重新向入口文件加入无关规则；不以一次性重写替代渐进拆分。
+本轮计划中没有未完成的高风险拆分项。仍需长期控制的维护风险集中在 `App.tsx` 的工作区持久化与全局模态框编排、`CanvasStage.tsx` 的指针手势状态机和 `workspace.ts` 的图层/选区命令；这些模块已有边界和测试保护，但未来新增功能时仍不得重新堆积无关职责。后续开发继续按职责迁移，不以一次性重写替代渐进拆分。
 
 ## 目标模块边界
 
@@ -62,16 +65,21 @@ platform/tauri-api ----> Tauri commands ----> Windows/file system
 - `core/canvas-visuals.ts` 统一画布指针、透明棋盘、选区边界预览和预览层的对比色规则；`CanvasStage.tsx` 不再自行决定这些视觉语义。
 - `core/animation.ts` 统一单帧兼容、帧持续时间、cel 关联和动画时间轴的校验；工程格式迁移只在 `project-format.ts` 入口发生。
 - `core/panel-layout.ts` 是栏目顺序、默认尺寸、最小尺寸、旧布局兼容和移动排序的唯一入口；`WorkspacePanels.tsx` 只负责将布局状态连接到栏目渲染和停靠交互。
+- `core/panel-render-keys.ts` 定义颜色、色板、图层和预览栏目的最小刷新边界。像素编辑只刷新作品预览，视图平移、缩放和旋转不刷新栏目内容；图层结构、颜色和色板变化只唤醒对应栏目。栏目不得重新订阅整份 Zustand store。
 - `core/palette-layout.ts` 统一调色板色块尺寸、颜色比较、标记对比色和多选色块排序规则；`PalettePanel` 只负责 DOM 命中、文件操作与 store 编排。
 - `core/layer-operations.ts` 统一图层移动、跨组、组排序、建组与解组的结构变更和可撤销历史；`workspace.ts` 只负责调用命令、维护会话和展示被阻止操作的提示。
 - `App.tsx` 只在实际进入对应流程时动态加载 `CanvasStage`、`HomeWorkspace` 和 `ComponentLibrary`，避免首页启动路径预先解析编辑器与组件库代码。动态加载模块必须保留明确的加载边界，不得把核心文档状态放进懒加载组件内部。
 - `core/project-format.ts` 通过 `PROJECT_SCHEMA_VERSION` 和 `migrateProjectManifest()` 作为工程格式入口。未知版本拒绝打开，不猜测字段；未来版本迁移只增加独立迁移分支。
-- `components/app/useBrushLibrary.ts` 负责编排程序笔刷、项目笔刷和本地笔刷的加载、保存、删除与当前会话同步；`App.tsx` 只消费整理后的笔刷集合和命令。
+- `components/app/useBrushLibrary.ts` 负责编排程序笔刷、项目笔刷和本地笔刷的加载、保存、删除与当前会话同步；`EditorToolOptions.tsx` 消费整理后的笔刷集合和命令。
+- `core/app-render-keys.ts` 定义菜单、标签、工具栏、工具属性栏、状态栏和应用协调器的最小刷新签名。签名不得包含像素数组；动画接入后按帧身份和可见 UI 字段扩展，不得序列化 cel 像素。
+- `components/app/DocumentTabs.tsx`、`EditorToolRail.tsx`、`EditorToolOptions.tsx` 和 `EditorStatusBar.tsx` 各自订阅领域签名并拥有自身弹层状态；`EditorCanvasHost.tsx` 是高频会话更新入口，`EditorWorkspaceShell.tsx` 只编排停靠布局。
 - `components/canvas-selection-renderer.ts` 负责选区屏幕几何、边界路径缓存和抓手绘制；`components/useCanvasViewPreview.ts` 负责平移、缩放预览及提交；`components/canvas-composite-cache.ts` 负责整图/分块合成缓存和局部失效。
 - `store/workspace-session.ts` 管理会话构造和工具设置持久化，`store/workspace-history.ts` 管理文档与图层历史快照，`store/workspace-palette.ts` 管理调色板选择、排序和历史命令。
 - Rust 平台命令按领域拆分为 `platform_palette.rs`、`platform_workspaces.rs`、`platform_brushes.rs`、`platform_gallery.rs`、`platform_recovery.rs` 和 `platform_dialogs.rs`；新增系统命令必须进入对应领域模块。
 
 后续拆分大模块时，优先把纯规则提取到 `core/` 并补测试，再让 `store/` 编排状态，最后由 React 组件接入。禁止把新的持久化 key、格式版本判断或坐标算法直接散落到 `App.tsx`、`CanvasStage.tsx` 或面板组件中。
+
+React 性能探针通过 `?moonsprite-perf=1` 启用，普通软件启动不执行 Profiler 测量。应用协调器不响应像素、平移和旋转等高频变化；画布主机、作品预览及实际变化的 UI 领域仍独立更新。后续优化应以区域探针确认的新热点为依据，不得以跳过必要状态更新换取指标。
 ## 工具设置边界
 
 `core/tool-preferences.ts` 统一管理画笔、油漆桶、程序纹理、魔棒和选区工具设置，包括默认值、旧版本兼容、范围限制和 `localStorage` 存取。`workspace.ts` 只负责把这些设置应用到当前会话，不再负责解释持久化数据。
