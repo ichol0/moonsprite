@@ -109,6 +109,9 @@ export class CanvasCompositeCache {
     const firstTileY = Math.floor(fromY / TILE_SIZE)
     const lastTileX = Math.floor((toX - 1) / TILE_SIZE)
     const lastTileY = Math.floor((toY - 1) / TILE_SIZE)
+    context.save()
+    context.translate(originX, originY)
+    context.scale(view.zoom, view.zoom)
     for (let tileY = firstTileY; tileY <= lastTileY; tileY += 1) {
       for (let tileX = firstTileX; tileX <= lastTileX; tileX += 1) {
         const startX = tileX * TILE_SIZE
@@ -135,12 +138,9 @@ export class CanvasCompositeCache {
             if (oldest !== undefined) this.tiles.delete(oldest)
           }
         }
-        context.save()
-        context.translate(originX, originY)
-        context.scale(view.zoom, view.zoom)
         context.drawImage(tile.canvas, tile.x, tile.y)
-        context.restore()
       }
     }
+    context.restore()
   }
 }

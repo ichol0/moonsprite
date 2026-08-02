@@ -6,7 +6,8 @@ import { applyRelativeLuminance, blendOver, relativeLuminanceColor, TRANSPARENT 
 import { appendPerfectPixelSegment, applySelectionTransform, applySelectionTranslationPreview, brushMaskOffsets, brushStampAnchor, brushStampDimensions, captureSelectionTransform, floodFill, outlinePixelIndices, paintBrush, paintLine, paintShape, sampleCompositeColor, selectionTranslationPreviewEdit, shapePixelPoints } from '@/core/tools'
 import { useWorkspace, type DocumentSession } from '@/store/workspace'
 import { DRAWING_BRUSH_PREVIEW_ENABLED_KEY, ROTATION_INDICATOR_POSITION_KEY, ZOOM_TOOL_DRAG_MODE_PREFERENCE_KEY, parseDrawingBrushPreviewEnabled, parseRotationIndicatorPosition, parseZoomToolDragMode, type RotationIndicatorPosition, type ZoomToolDragMode } from '@/core/file-preferences'
-import { documentPointFromViewportPoint, rotationIndicatorFitsCanvas, unrotateViewportPoint, unrotatedViewportBounds, viewPanDeltaFromScreen, viewRotationPivot, zoomViewAroundViewportPoint } from '@/core/view-geometry'
+import { documentPointFromViewportPoint, rotationIndicatorFitsCanvas, unrotateViewportPoint, viewPanDeltaFromScreen, viewRotationPivot, zoomViewAroundViewportPoint } from '@/core/view-geometry'
+import { createCanvasRenderPlan } from '@/core/canvas-render-plan'
 import { cloneSelection, combineSelection, ellipseSelection, lassoSelection, magicWandSelection, rectSelection, selectionContains, transformSelectionMask } from '@/core/selection'
 import { CANVAS_RESIZE_PREVIEW_EVENT } from '@/core/canvas-resize-preview'
 import { loadShortcuts, modifierShortcutMatches } from '@/core/shortcuts'
@@ -24,6 +25,10 @@ import rotationBackground6 from '@/assets/rotation-indicator/background-6.png'
 import rotationPointer from '@/assets/rotation-indicator/pointer.png'
 
 interface CompositeSurface { canvas: OffscreenCanvas; revision: string }
+interface CanvasPerformanceProbe {
+  recordDraw(duration: number): void
+  recordInput?(kind: 'pointer-down' | 'pointer-move' | 'pointer-up', duration: number): void
+}
 const insideSelection = (selection: SelectionMask, point: Point): boolean => selectionContains(selection, point.x, point.y)
 
 export function CanvasStage({ session }: { session: DocumentSession }) {
@@ -45,6 +50,7 @@ export function CanvasStage({ session }: { session: DocumentSession }) {
   // must therefore resolve the current render function instead of the brush
   // configuration that was active when the listener was registered.
   const drawRef = useRef<() => void>(() => {})
+  const stageSizeRef = useRef({ width: 0, height: 0 })
   const compositeCacheRef = useRef(new CanvasCompositeCache())
   const canvasResizeSurfaceRef = useRef<CompositeSurface | null>(null)
   const outlinePreviewCacheRef = useRef<{ revision: number; layerId: string; selection: SelectionMask; preview: NonNullable<DocumentSession['outlinePreview']>; indices: number[] } | null>(null)
@@ -72,6 +78,13 @@ export function CanvasStage({ session }: { session: DocumentSession }) {
     return { x: point.x - anchor.x, y: point.y - anchor.y }
   }
   const stageBounds = (): DOMRect => stageRef.current?.getBoundingClientRect() ?? canvasRef.current?.getBoundingClientRect() ?? new DOMRect()
+  const stageSize = (): { width: number; height: number } => {
+    const cached = stageSizeRef.current
+    if (cached.width > 0 && cached.height > 0) return cached
+    const bounds = stageBounds()
+    stageSizeRef.current = { width: bounds.width, height: bounds.height }
+    return stageSizeRef.current
+  }
   const modifierActive = (event: Pick<KeyboardEvent, 'ctrlKey' | 'metaKey' | 'altKey' | 'shiftKey'>, id: keyof typeof shortcuts): boolean => modifierShortcutMatches(event, shortcuts[id] ?? '')
   const lineConnectionShortcut = shortcuts.lineConnectionMode ?? ''
   const lineConnectionConfigured = Boolean(lineConnectionShortcut.trim())
@@ -96,8 +109,8 @@ export function CanvasStage({ session }: { session: DocumentSession }) {
     const indicator = rotationIndicatorRef.current
     const pointer = rotationPointerRef.current
     if (!indicator || !pointer) return
-    const bounds = stageBounds()
-    const indicatorCenter = viewRotationPivot(bounds.width, bounds.height, liveViewRef.current.panX, liveViewRef.current.panY, rotationIndicatorPosition)
+    const size = stageSize()
+    const indicatorCenter = viewRotationPivot(size.width, size.height, liveViewRef.current.panX, liveViewRef.current.panY, rotationIndicatorPosition)
     indicator.hidden = !visible || !rotationIndicatorFitsCanvas(session.document.width, session.document.height, liveViewRef.current.zoom)
     indicator.style.left = `${indicatorCenter.x}px`
     indicator.style.top = `${indicatorCenter.y}px`
@@ -225,7 +238,7 @@ export function CanvasStage({ session }: { session: DocumentSession }) {
     const visibleSelection = previewingSelection ? selectionDrag.previewSelection ?? currentSession.selection : currentSession.selection
     const creationSelection = creatingSelection ? selectionDrag.selectionStart : null
     if (!visibleSelection && !creationSelection && !selectionOverlayVisibleRef.current) return
-    const rect = stageBounds()
+    const rect = stageSize()
     const dpr = window.devicePixelRatio || 1
     const backingWidth = Math.max(1, Math.round(rect.width * dpr))
     const backingHeight = Math.max(1, Math.round(rect.height * dpr))
@@ -234,12 +247,8 @@ export function CanvasStage({ session }: { session: DocumentSession }) {
     if (!displayContext) return
     displayContext.setTransform(dpr, 0, 0, dpr, 0, 0)
     displayContext.clearRect(0, 0, rect.width, rect.height)
-    const rotated = Math.abs(liveViewRef.current.rotation) > 0.000001 || liveViewRef.current.mirrored || liveViewRef.current.mirroredVertical
-    const sceneBounds = rotated ? unrotatedViewportBounds(rect.width, rect.height, liveViewRef.current, rotationIndicatorPosition) : { left: 0, top: 0, right: rect.width, bottom: rect.height }
-    const sceneLeft = Math.floor(sceneBounds.left) - 2
-    const sceneTop = Math.floor(sceneBounds.top) - 2
-    const sceneWidth = Math.ceil(sceneBounds.right) - sceneLeft + 2
-    const sceneHeight = Math.ceil(sceneBounds.bottom) - sceneTop + 2
+    const renderPlan = createCanvasRenderPlan(rect.width, rect.height, session.document, liveViewRef.current, rotationIndicatorPosition)
+    const { rotated, sceneLeft, sceneTop, sceneWidth, sceneHeight } = renderPlan
     let context: RasterContext2D = displayContext
     if (rotated) {
       let scene = selectionRotationSceneRef.current
@@ -262,8 +271,8 @@ export function CanvasStage({ session }: { session: DocumentSession }) {
         selection,
         box: selectionScreenBox(rect.width, rect.height, session.document.width, session.document.height, liveViewRef.current, selection),
         view: liveViewRef.current,
-        viewportWidth: canvas.clientWidth,
-        viewportHeight: canvas.clientHeight,
+        viewportWidth: rect.width,
+        viewportHeight: rect.height,
         rotationIndicatorPosition,
         cache: selectionBoundaryCacheRef.current,
         showHandles
@@ -282,13 +291,15 @@ export function CanvasStage({ session }: { session: DocumentSession }) {
   }
 
   const draw = (): void => {
+    const performanceProbe = (window as typeof window & { __moonSpriteCanvasProbe?: CanvasPerformanceProbe }).__moonSpriteCanvasProbe
+    const drawStartedAt = performanceProbe ? performance.now() : 0
     const canvas = canvasRef.current
     if (!canvas) return
     const currentSession = useWorkspace.getState().sessions.find((item) => item.document.id === session.document.id) ?? session
     const currentActiveLayer = getActiveLayer(currentSession.document)
     const currentHasRasterSelection = !currentSession.selectedGroupId && currentSession.selectedLayerIds.some((id) => currentSession.document.layers.some((layer) => layer.id === id))
     const canRenderToolPreview = !canvasResizePreviewRef.current && currentHasRasterSelection && isLayerEffectivelyVisible(currentSession.document, currentActiveLayer) && !isLayerEffectivelyLocked(currentSession.document, currentActiveLayer)
-    const rect = stageBounds()
+    const rect = stageSize()
     const dpr = window.devicePixelRatio || 1
     const backingWidth = Math.max(1, Math.round(rect.width * dpr))
     const backingHeight = Math.max(1, Math.round(rect.height * dpr))
@@ -299,12 +310,8 @@ export function CanvasStage({ session }: { session: DocumentSession }) {
     displayContext.clearRect(0, 0, rect.width, rect.height)
     const document = session.document
     const view = liveViewRef.current
-    const rotated = Math.abs(view.rotation) > 0.000001 || view.mirrored || view.mirroredVertical
-    const viewport = unrotatedViewportBounds(rect.width, rect.height, view, rotationIndicatorPosition)
-    const sceneLeft = Math.floor(viewport.left) - 2
-    const sceneTop = Math.floor(viewport.top) - 2
-    const sceneWidth = Math.ceil(viewport.right) - sceneLeft + 2
-    const sceneHeight = Math.ceil(viewport.bottom) - sceneTop + 2
+    const renderPlan = createCanvasRenderPlan(rect.width, rect.height, document, view, rotationIndicatorPosition)
+    const { rotated, viewport, sceneLeft, sceneTop, sceneWidth, sceneHeight, originX, originY, canvasWidth, canvasHeight, fromX, fromY, toX, toY } = renderPlan
     let context: RasterContext2D = displayContext
     if (rotated) {
       let scene = rotationSceneRef.current
@@ -320,11 +327,6 @@ export function CanvasStage({ session }: { session: DocumentSession }) {
       sceneContext.clearRect(sceneLeft, sceneTop, sceneWidth, sceneHeight)
       context = sceneContext
     }
-    const originX = rect.width / 2 + view.panX - document.width * view.zoom / 2
-    const originY = rect.height / 2 + view.panY - document.height * view.zoom / 2
-    const canvasWidth = document.width * view.zoom
-    const canvasHeight = document.height * view.zoom
-
     context.fillStyle = '#4a4a51'
     context.fillRect(rotated ? sceneLeft : 0, rotated ? sceneTop : 0, rotated ? sceneWidth : rect.width, rotated ? sceneHeight : rect.height)
     context.save()
@@ -350,10 +352,6 @@ export function CanvasStage({ session }: { session: DocumentSession }) {
     }
     context.restore()
 
-    const fromX = Math.max(0, Math.floor((viewport.left - originX) / view.zoom))
-    const fromY = Math.max(0, Math.floor((viewport.top - originY) / view.zoom))
-    const toX = Math.min(document.width, Math.ceil((viewport.right - originX) / view.zoom))
-    const toY = Math.min(document.height, Math.ceil((viewport.bottom - originY) / view.zoom))
     if (toX > fromX && toY > fromY) {
       const activeDrag = inputRef.current.drag?.kind
       compositeCacheRef.current.draw({ context, document, view, originX, originY, canvasWidth, canvasHeight, fromX, fromY, toX, toY, revision: currentSession.revision, activeDrag })
@@ -704,6 +702,7 @@ export function CanvasStage({ session }: { session: DocumentSession }) {
       displayContext.fillText(`当前视图：${mirrorLabel}`, 12, rect.height - 30)
     }
     drawSelectionOverlay()
+    performanceProbe?.recordDraw(performance.now() - drawStartedAt)
   }
 
   const scheduleDraw = (): void => {
@@ -820,8 +819,16 @@ export function CanvasStage({ session }: { session: DocumentSession }) {
       if (currentSession?.selection) rafRef.current = window.setTimeout(renderSelection, 160)
     }
     if (session.selection) rafRef.current = window.setTimeout(renderSelection, 160)
-    const observer = new ResizeObserver(() => draw())
-    if (canvasRef.current) observer.observe(canvasRef.current)
+    const observer = new ResizeObserver((entries) => {
+      const entry = entries[0]
+      if (entry) stageSizeRef.current = { width: entry.contentRect.width, height: entry.contentRect.height }
+      draw()
+    })
+    if (stageRef.current) {
+      const bounds = stageRef.current.getBoundingClientRect()
+      stageSizeRef.current = { width: bounds.width, height: bounds.height }
+      observer.observe(stageRef.current)
+    }
     return () => {
       observer.disconnect()
       if (rafRef.current) window.clearTimeout(rafRef.current)
@@ -1033,10 +1040,9 @@ export function CanvasStage({ session }: { session: DocumentSession }) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session.tool, session.selectionKind, session.primaryColor.r, session.primaryColor.g, session.primaryColor.b, session.primaryColor.a, activeLayerEditable])
 
-  const markChanged = (dirty = true): void => useWorkspace.getState().mutateActive(() => {}, dirty)
   const activeColor = (button = 0): RgbaColor => session.tool === 'eraser' ? TRANSPARENT : button === 2 ? session.secondaryColor : session.primaryColor
 
-  const pointerDown = (event: React.PointerEvent<HTMLCanvasElement>): void => {
+  const handlePointerDown = (event: React.PointerEvent<HTMLCanvasElement>): void => {
     event.currentTarget.tabIndex = -1
     event.currentTarget.focus({ preventScroll: true })
     const state = useWorkspace.getState()
@@ -1237,10 +1243,9 @@ export function CanvasStage({ session }: { session: DocumentSession }) {
     paintBrush(session.document, editableLayer, edit, point.x, point.y, session.brushSize, activeColor(event.button), session.brushShape, session.selection, session.tool === 'pencil' || session.tool === 'eraser' ? activeBrushTexture : 'solid', session.brushTextureScale, session.tool === 'pencil' || session.tool === 'eraser' ? activeBrushImage : null, session.brushImageSettings, proceduralAntialiasStrength, activeBrushPaintMode, patternOrigin)
     invalidateStrokeSegment(point, point)
     inputRef.current.drag = { kind: 'draw', start: point, last: point, edit, path: [point], patternOrigin, color: activeColor(event.button) }
-    markChanged()
   }
 
-  const pointerMove = (event: React.PointerEvent<HTMLCanvasElement>): void => {
+  const handlePointerMove = (event: React.PointerEvent<HTMLCanvasElement>): void => {
     const activeDrag = inputRef.current.drag
     if (activeDrag?.kind === 'pan' && activeDrag.startPan && activeDrag.startClient) {
       const delta = viewPanDeltaFromScreen(event.clientX - activeDrag.startClient.x, event.clientY - activeDrag.startClient.y, liveViewRef.current.rotation, rotationIndicatorPosition, liveViewRef.current.mirrored, liveViewRef.current.mirroredVertical)
@@ -1450,7 +1455,7 @@ export function CanvasStage({ session }: { session: DocumentSession }) {
     }
   }
 
-  const pointerUp = (event: React.PointerEvent<HTMLCanvasElement>): void => {
+  const handlePointerUp = (event: React.PointerEvent<HTMLCanvasElement>): void => {
     const drag = inputRef.current.finish()
     if (!drag) return
     if (drag.kind === 'canvas-resize' || drag.kind === 'canvas-move') flushCanvasResizePreview()
@@ -1589,6 +1594,16 @@ export function CanvasStage({ session }: { session: DocumentSession }) {
     if (newZoom === oldZoom) return
     scheduleZoomPreview({ ...liveView, ...zoomViewAroundViewportPoint(liveView, newZoom, { x: event.clientX - rect.left, y: event.clientY - rect.top }, rect.width, rect.height, session.document.width, session.document.height, rotationIndicatorPosition) })
   }
+
+  const measurePointerInput = (kind: 'pointer-down' | 'pointer-move' | 'pointer-up', action: () => void): void => {
+    const performanceProbe = (window as typeof window & { __moonSpriteCanvasProbe?: CanvasPerformanceProbe }).__moonSpriteCanvasProbe
+    if (!performanceProbe?.recordInput) { action(); return }
+    const startedAt = performance.now()
+    try { action() } finally { performanceProbe.recordInput(kind, performance.now() - startedAt) }
+  }
+  const pointerDown = (event: React.PointerEvent<HTMLCanvasElement>): void => measurePointerInput('pointer-down', () => handlePointerDown(event))
+  const pointerMove = (event: React.PointerEvent<HTMLCanvasElement>): void => measurePointerInput('pointer-move', () => handlePointerMove(event))
+  const pointerUp = (event: React.PointerEvent<HTMLCanvasElement>): void => measurePointerInput('pointer-up', () => handlePointerUp(event))
 
   const rotationStyle = { transform: 'none', transformOrigin: '50% 50%' }
   return <div ref={stageRef} className="stage-surface"><canvas ref={canvasRef} style={rotationStyle} className="stage-canvas" aria-label="像素画布" onPointerDown={pointerDown} onPointerMove={pointerMove} onPointerUp={pointerUp} onPointerCancel={pointerUp} onPointerLeave={(event) => { inputRef.current.pointer.visible = false; inputRef.current.shiftLinePreview = false; inputRef.current.sampling = false; if (!inputRef.current.drag) event.currentTarget.style.cursor = canvasResizePreviewRef.current ? canvasCursors.unavailable : inputRef.current.spaceHeld ? canvasCursors.grab : canvasToolCursor(session.tool, session.primaryColor); draw() }} onPointerEnter={(event) => { updateCursor(event); inputRef.current.shiftLinePreview = lineConnectionActive(event.nativeEvent) && !canvasResizePreviewRef.current && !inputRef.current.sampling && (session.tool === 'pencil' || session.tool === 'eraser') && Boolean(lineAnchor); draw() }} onContextMenu={(event) => event.preventDefault()} onWheel={onWheel} /><canvas ref={selectionCanvasRef} style={rotationStyle} className="stage-selection-overlay" aria-hidden="true" /><div ref={rotationIndicatorRef} className="rotation-indicator" hidden aria-hidden="true"><span className="rotation-indicator-background">{[rotationBackground1, rotationBackground2, rotationBackground3, rotationBackground4, rotationBackground5, rotationBackground6].map((source) => <img key={source} src={source} alt="" />)}</span><span ref={rotationPointerRef} className="rotation-indicator-pointer"><img src={rotationPointer} alt="" /></span></div></div>

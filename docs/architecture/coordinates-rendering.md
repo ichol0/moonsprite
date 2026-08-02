@@ -30,4 +30,9 @@ layer -> canvas -> view rotation -> viewport -> screen
 
 推荐顺序：背景、画布边界、合成像素、网格、选区预览、变换预览、工具预览、指针辅助。每层必须独立控制更新频率，平移和缩放不得重复重算不变的像素数据。
 
+- `core/canvas-render-plan.ts` 统一计算未旋转可见范围、旋转场景边界、画布原点和可见文档像素；组件不得再复制这些计算。
+- `CanvasStage` 的绘制尺寸由 `ResizeObserver` 缓存。指针命中仍读取实时屏幕边界，避免停靠布局变化后坐标失真。
+- `CanvasCompositeCache` 在一次分块绘制中只应用一次平移和缩放变换，tile 只负责缓存像素和提交 `drawImage`。
+- 画布性能探针默认不工作，只有自动基准注入 `window.__moonSpriteCanvasProbe` 时才记录主绘制和指针处理耗时。
+
 任何坐标 Bug 修复都应包含未旋转、旋转、不同缩放、图层偏移和画布外内容五类测试。

@@ -66,12 +66,15 @@ export function mirrorViewportPoint(point: ViewportPoint, pivot: ViewportPoint, 
 export function unrotatedViewportBounds(width: number, height: number, view: ViewGeometryState, position: RotationIndicatorPosition): ViewportBounds {
   if (Math.abs(view.rotation) < 0.000001) return { left: 0, top: 0, right: width, bottom: height }
   const pivot = viewRotationPivot(width, height, view.panX, view.panY, position)
-  const corners = [{ x: 0, y: 0 }, { x: width, y: 0 }, { x: 0, y: height }, { x: width, y: height }].map((point) => unrotateViewportPoint(point, pivot, view.rotation))
+  const topLeft = unrotateViewportPoint({ x: 0, y: 0 }, pivot, view.rotation)
+  const topRight = unrotateViewportPoint({ x: width, y: 0 }, pivot, view.rotation)
+  const bottomLeft = unrotateViewportPoint({ x: 0, y: height }, pivot, view.rotation)
+  const bottomRight = unrotateViewportPoint({ x: width, y: height }, pivot, view.rotation)
   return {
-    left: Math.min(...corners.map((point) => point.x)),
-    top: Math.min(...corners.map((point) => point.y)),
-    right: Math.max(...corners.map((point) => point.x)),
-    bottom: Math.max(...corners.map((point) => point.y))
+    left: Math.min(topLeft.x, topRight.x, bottomLeft.x, bottomRight.x),
+    top: Math.min(topLeft.y, topRight.y, bottomLeft.y, bottomRight.y),
+    right: Math.max(topLeft.x, topRight.x, bottomLeft.x, bottomRight.x),
+    bottom: Math.max(topLeft.y, topRight.y, bottomLeft.y, bottomRight.y)
   }
 }
 
