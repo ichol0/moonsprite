@@ -1,4 +1,4 @@
-import { access } from 'node:fs/promises'
+import { access, readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
 const root = process.cwd()
@@ -17,11 +17,13 @@ const requiredFiles = [
   'docs/interactions/workspace-docking.md',
   'docs/testing/regression-matrix.md',
   'docs/testing/performance-baseline.md',
+  'docs/testing/performance-history.md',
   'docs/release/release-checklist.md',
   'docs/adr/README.md',
   'docs/templates/feature-spec.md',
   'docs/templates/bug-regression.md',
   '.github/workflows/ci.yml',
+  '.github/workflows/performance.yml',
   '.github/pull_request_template.md',
 ]
 
@@ -40,4 +42,44 @@ if (missing.length > 0) {
   process.exit(1)
 }
 
-console.log(`维护契约检查通过：${requiredFiles.length} 个文件存在。`)
+const overviewPath = join(root, 'docs/architecture/overview.md')
+const overview = await readFile(overviewPath, 'utf8')
+const statusMatch = overview.match(/^- 计划状态：(已完成|进行中|暂停)$/m)
+const remainingMatch = overview.match(/^- 未完成高风险拆分项：(\d+)$/m)
+const contentErrors = []
+
+if (!statusMatch) {
+  contentErrors.push('docs/architecture/overview.md 缺少有效的“计划状态”字段。')
+}
+
+if (!remainingMatch) {
+  contentErrors.push('docs/architecture/overview.md 缺少“未完成高风险拆分项”数量。')
+}
+
+if (statusMatch && remainingMatch) {
+  const status = statusMatch[1]
+  const remaining = Number(remainingMatch[1])
+  if (status === '已完成' && remaining !== 0) {
+    contentErrors.push('计划状态为“已完成”时，未完成高风险拆分项必须为 0。')
+  }
+  if (status === '进行中' && remaining === 0) {
+    contentErrors.push('计划状态为“进行中”时，必须登记至少 1 个未完成高风险拆分项。')
+  }
+}
+
+const stalePhrases = ['五个原高风险入口已完成第一轮渐进拆分']
+for (const phrase of stalePhrases) {
+  if (overview.includes(phrase)) {
+    contentErrors.push(`docs/architecture/overview.md 仍包含过期状态描述：“${phrase}”。`)
+  }
+}
+
+if (contentErrors.length > 0) {
+  console.error('维护契约内容与当前状态不一致：')
+  for (const error of contentErrors) console.error(`- ${error}`)
+  process.exit(1)
+}
+
+console.log(
+  `维护契约检查通过：${requiredFiles.length} 个文件存在，架构计划状态为“${statusMatch[1]}”，未完成高风险拆分项 ${remainingMatch[1]} 个。`,
+)

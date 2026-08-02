@@ -65,9 +65,9 @@ describe('MoonSprite project format', () => {
     const document = createDocument('groups', 2, 2, 'rgba')
     const layer = getActiveLayer(document)
     layer.groupId = 'group-1'
-    document.groups.push({ id: 'group-1', name: '角色', visible: true, locked: true, opacity: 0.6, blendMode: 'multiply' })
+    document.groups.push({ id: 'group-1', name: '角色', displayColor: { r: 12, g: 34, b: 56, a: 255 }, description: '角色说明', visible: true, locked: true, opacity: 0.6, blendMode: 'multiply' })
     const restored = decodeProject(encodeProject(document))
-    expect(restored.groups).toEqual([{ id: 'group-1', name: '角色', visible: true, locked: true, opacity: 0.6, blendMode: 'multiply' }])
+    expect(restored.groups).toEqual([{ id: 'group-1', name: '角色', displayColor: { r: 12, g: 34, b: 56, a: 255 }, description: '角色说明', visible: true, locked: true, opacity: 0.6, blendMode: 'multiply' }])
     expect(restored.layers[0].groupId).toBe('group-1')
   })
 

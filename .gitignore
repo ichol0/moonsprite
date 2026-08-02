@@ -4,6 +4,7 @@ out/
 /release/
 coverage/
 .vite/
+.planning/
 *.tsbuildinfo
 *.log
 *.tmp

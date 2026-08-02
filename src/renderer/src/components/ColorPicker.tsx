@@ -1,20 +1,12 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { createPortal } from 'react-dom'
+import { useEffect, useRef, useState } from 'react'
 import type { RgbaColor } from '@shared/types'
-import { clampByte, colorToHex, hsvToRgb, rgbToHsv } from '@/core/raster'
-import { NumberInput } from './NumberInput'
+import { clampByte, hsvToRgb, rgbToHsv } from '@/core/raster'
+import { hslToRgb, rgbToHsl } from '@/core/color-values'
+import { ColorValueControl } from './ColorValueControl'
 
 export const colorCss = (color: RgbaColor): string => `rgba(${color.r}, ${color.g}, ${color.b}, ${color.a / 255})`
-export const rgbaHex = (color: RgbaColor): string => `${colorToHex(color)}${clampByte(color.a).toString(16).padStart(2, '0').toUpperCase()}`
-
-export const parseColorHex = (value: string, fallbackAlpha: number): RgbaColor | null => {
-  const match = /^#?([0-9a-f]{6})([0-9a-f]{2})?$/i.exec(value.trim())
-  if (!match) return null
-  const rgb = Number.parseInt(match[1], 16)
-  return { r: rgb >>> 16, g: (rgb >>> 8) & 0xff, b: rgb & 0xff, a: match[2] ? Number.parseInt(match[2], 16) : fallbackAlpha }
-}
-
-interface PopoverPosition { left: number; top: number }
+export { parseRgbaHex as parseColorHex } from '@/core/color-values'
+export { rgbaHex } from '@/core/color-values'
 interface TriangleVertices { tip: { x: number; y: number }; white: { x: number; y: number }; black: { x: number; y: number } }
 export interface TriangleWeights { tip: number; white: number; black: number }
 export const MOON_RING_HUE_ROTATION = 150
@@ -32,30 +24,6 @@ const equilateralTriangleVertices = (radius: number): TriangleVertices => ({
   white: { x: 0.5 - radius / 4, y: 0.5 - radius * Math.sqrt(3) / 4 },
   black: { x: 0.5 - radius / 4, y: 0.5 + radius * Math.sqrt(3) / 4 }
 })
-
-const hslToRgb = (hue: number, saturation: number, lightness: number, alpha = 255): RgbaColor => {
-  const h = ((hue % 360) + 360) % 360 / 360
-  const s = Math.max(0, Math.min(1, saturation)); const l = Math.max(0, Math.min(1, lightness))
-  if (s === 0) { const value = Math.round(l * 255); return { r: value, g: value, b: value, a: alpha } }
-  const hueChannel = (position: number): number => {
-    let x = (h + position) % 1
-    if (x < 0) x += 1
-    const q = l < 0.5 ? l * (1 + s) : l + s - l * s
-    const p = 2 * l - q
-    return p + (q - p) * (x < 1 / 6 ? 6 * x : x < 1 / 2 ? 1 : x < 2 / 3 ? (2 / 3 - x) * 6 : 0)
-  }
-  return { r: Math.round(hueChannel(1 / 3) * 255), g: Math.round(hueChannel(0) * 255), b: Math.round(hueChannel(-1 / 3) * 255), a: alpha }
-}
-
-const rgbToHsl = (color: RgbaColor): { h: number; s: number; l: number } => {
-  const r = color.r / 255; const g = color.g / 255; const b = color.b / 255
-  const max = Math.max(r, g, b); const min = Math.min(r, g, b); const lightness = (max + min) / 2
-  const delta = max - min
-  if (delta === 0) return { h: 0, s: 0, l: lightness }
-  const saturation = delta / (1 - Math.abs(2 * lightness - 1))
-  const hue = ((max === r ? (g - b) / delta : max === g ? (b - r) / delta + 2 : (r - g) / delta + 4) * 60 + 360) % 360
-  return { h: hue, s: saturation, l: lightness }
-}
 
 export const triangleWeightsAt = (vertices: TriangleVertices, x: number, y: number): TriangleWeights | null => {
   const { tip, white, black } = vertices
@@ -181,15 +149,8 @@ export const triangleWeightsFromColor = (color: RgbaColor): TriangleWeights => {
 export function ColorPicker({ color, secondaryColor, onChange, onSecondaryChange, compact = false, label = '颜色', config = { scheme: 'sv-square', hueSteps: 0, colorSteps: 0 } }: { color: RgbaColor; secondaryColor?: RgbaColor; onChange: (color: RgbaColor) => void; onSecondaryChange?: (color: RgbaColor) => void; compact?: boolean; label?: string; config?: ColorPickerConfig }) {
   const [pickerHsv, setPickerHsv] = useState(() => rgbToHsv(color))
   const [secondaryPickerHsv, setSecondaryPickerHsv] = useState(() => rgbToHsv(secondaryColor ?? color))
-  const [valuesOpen, setValuesOpen] = useState(false)
-  const [hexText, setHexText] = useState(() => rgbaHex(color))
-  const [valuesRole, setValuesRole] = useState<'primary' | 'secondary'>('primary')
   const [stripRole, setStripRole] = useState<'primary' | 'secondary'>('primary')
-  const [popoverPosition, setPopoverPosition] = useState<PopoverPosition>({ left: 8, top: 8 })
   const pickerRef = useRef<HTMLDivElement>(null)
-  const triggerRef = useRef<HTMLButtonElement>(null)
-  const secondaryTriggerRef = useRef<HTMLButtonElement>(null)
-  const popoverRef = useRef<HTMLDivElement>(null)
   const fieldRef = useRef<HTMLCanvasElement>(null)
   const hueRingRef = useRef<HTMLCanvasElement>(null)
   const wheelHitMaskRef = useRef<{ width: number; height: number; data: Uint8Array } | null>(null)
@@ -292,7 +253,6 @@ export function ColorPicker({ color, secondaryColor, onChange, onSecondaryChange
   const steppedSliderColorPosition = (value: number, max: number): number => steppedColorPosition(value / max)
 
   useEffect(() => {
-    setHexText(rgbaHex(color))
     const emitted = lastEmittedColorRef.current
     if (emitted && emitted.r === color.r && emitted.g === color.g && emitted.b === color.b && emitted.a === color.a) {
       lastEmittedColorRef.current = null
@@ -464,33 +424,6 @@ export function ColorPicker({ color, secondaryColor, onChange, onSecondaryChange
     context.putImageData(image, 0, 0)
   }, [scheme, hueSteps])
 
-  useLayoutEffect(() => {
-    if (!valuesOpen) return
-    const place = (): void => {
-      const trigger = (valuesRole === 'secondary' ? secondaryTriggerRef.current : triggerRef.current)?.getBoundingClientRect()
-      const popover = popoverRef.current?.getBoundingClientRect()
-      if (!trigger || !popover) return
-      const left = Math.max(8, Math.min(window.innerWidth - popover.width - 8, trigger.right - popover.width))
-      const top = window.innerHeight - trigger.bottom >= popover.height + 5
-        ? trigger.bottom + 4
-        : Math.max(8, trigger.top - popover.height - 4)
-      setPopoverPosition({ left, top })
-    }
-    place()
-    window.addEventListener('resize', place)
-    return () => window.removeEventListener('resize', place)
-  }, [valuesOpen, valuesRole])
-
-  useEffect(() => {
-    if (!valuesOpen) return
-    const close = (event: PointerEvent): void => {
-      const target = event.target as Node
-      if (!pickerRef.current?.contains(target) && !popoverRef.current?.contains(target)) setValuesOpen(false)
-    }
-    window.addEventListener('pointerdown', close, true)
-    return () => window.removeEventListener('pointerdown', close, true)
-  }, [valuesOpen])
-
   const pickField = (event: React.PointerEvent<HTMLElement>, begin = false): void => {
     const bounds = fieldRef.current?.getBoundingClientRect() ?? event.currentTarget.getBoundingClientRect()
     const pointerX = (event.clientX - bounds.left) / bounds.width
@@ -577,15 +510,6 @@ export function ColorPicker({ color, secondaryColor, onChange, onSecondaryChange
       window.removeEventListener('pointercancel', finish, true)
     }
   }, [])
-  const valueColor = valuesRole === 'secondary' ? secondaryColor ?? color : color
-  const updateChannel = (channel: keyof RgbaColor, value: number, role: 'primary' | 'secondary' = 'primary'): void => {
-    const source = role === 'secondary' ? secondaryColor ?? color : color
-    const nextColor = { ...source, [channel]: clampByte(value) }
-    if (role === 'secondary') lastEmittedSecondaryColorRef.current = nextColor
-    else lastEmittedColorRef.current = nextColor
-    if (role === 'secondary' && onSecondaryChange) onSecondaryChange(nextColor)
-    else onChange(nextColor)
-  }
   const pickStrip = (event: React.PointerEvent<HTMLInputElement>, kind: 'value' | 'alpha', begin = false): void => {
     if (begin) {
       const role = event.button === 2 && secondaryColor && onSecondaryChange ? 'secondary' : 'primary'
@@ -709,17 +633,6 @@ export function ColorPicker({ color, secondaryColor, onChange, onSecondaryChange
     '--triangle-black-x': `${moonTriangleVertices.black.x * 100}%`, '--triangle-black-y': `${moonTriangleVertices.black.y * 100}%`
   } as React.CSSProperties : undefined
 
-  const openValueEditor = (role: 'primary' | 'secondary'): void => {
-    const nextColor = role === 'secondary' ? secondaryColor ?? color : color
-    setValuesRole(role)
-    setHexText(rgbaHex(nextColor))
-    setValuesOpen((open) => role === valuesRole ? !open : true)
-  }
-  const valuesPopover = valuesOpen ? <div ref={popoverRef} className="color-values-popover" role="dialog" aria-label={`${label}数值`} style={popoverPosition}>
-    <label className="hex-value"><span>HEX</span><input autoFocus aria-label={`${label} HEX`} value={hexText} onChange={(event) => { setHexText(event.target.value); const next = parseColorHex(event.target.value, valueColor.a); if (next) valuesRole === 'secondary' && onSecondaryChange ? onSecondaryChange(next) : onChange(next) }} /></label>
-    <div className="rgba-value-grid">{(['r', 'g', 'b', 'a'] as const).map((channel) => <label key={channel}><span>{channel.toUpperCase()}</span><NumberInput aria-label={label + ' ' + channel.toUpperCase() + ' 通道'} min={0} max={255} value={valueColor[channel]} onValueChange={(value) => updateChannel(channel, value, valuesRole)} /></label>)}</div>
-  </div> : null
-
   return <div ref={pickerRef} className={`moon-color-picker ${compact ? 'compact' : ''}`}>
     <div className="integrated-color-picker">
       <div className={`color-spectrum-stack scheme-${scheme} ${moonTriangle ? 'moon-triangle' : ''} ${scheme === 'wheel' && colorSteps > 0 ? 'quantized-wheel' : ''}`}>
@@ -729,9 +642,8 @@ export function ColorPicker({ color, secondaryColor, onChange, onSecondaryChange
           : <input className="value-strip-input" aria-label={`${label}明度`} style={{ '--value-color': `rgb(${fullValueColor.r} ${fullValueColor.g} ${fullValueColor.b})`, ...(valueStripGradient ? { background: valueStripGradient } : {}) } as React.CSSProperties} type="range" min="0" max="1000" value={valueSliderValue} onContextMenu={(event) => event.preventDefault()} onPointerDown={(event) => beginStripPointer(event, 'value')} onPointerMove={(event) => moveStripPointer(event, 'value')} onPointerUp={endStripPointer} onPointerCancel={endStripPointer} onInput={(event) => { if (!pointerInputActiveRef.current) updateStripFromNativeInput('value', Number(event.currentTarget.value), 1000) }} />}
         <input className="alpha-strip-input" aria-label={`${label}透明度`} style={{ '--alpha-color': `rgb(${stripColor.r} ${stripColor.g} ${stripColor.b})`, ...(alphaStripGradient ? { background: `${alphaStripGradient}, repeating-conic-gradient(#6e7278 0 25%, #b7b9bc 0 50%) 50% / 8px 8px` } : {}) } as React.CSSProperties} type="range" min="0" max="255" value={alphaSliderValue} onContextMenu={(event) => event.preventDefault()} onPointerDown={(event) => beginStripPointer(event, 'alpha')} onPointerMove={(event) => moveStripPointer(event, 'alpha')} onPointerUp={endStripPointer} onPointerCancel={endStripPointer} onInput={(event) => { if (!pointerInputActiveRef.current) updateStripFromNativeInput('alpha', Number(event.currentTarget.value), 255) }} />
       </div>
-      <button ref={triggerRef} type="button" className="color-current-button" aria-expanded={valuesOpen && valuesRole === 'primary'} onClick={() => openValueEditor('primary')}><span className="current-color-swatch"><i style={{ background: colorCss(color) }} /></span><strong>{rgbaHex(color)}</strong><small>前景</small></button>
-      {secondaryColor && onSecondaryChange && <button ref={secondaryTriggerRef} type="button" className="color-current-button color-secondary-button" aria-expanded={valuesOpen && valuesRole === 'secondary'} onClick={() => openValueEditor('secondary')}><span className="current-color-swatch"><i style={{ background: colorCss(secondaryColor) }} /></span><strong>{rgbaHex(secondaryColor)}</strong><small>背景</small></button>}
-    </div>
-    {valuesPopover && createPortal(valuesPopover, document.body)}
+       <ColorValueControl color={color} onChange={onChange} label={label} roleLabel="前景" />
+       {secondaryColor && onSecondaryChange && <ColorValueControl color={secondaryColor} onChange={onSecondaryChange} label={label} roleLabel="背景" className="color-secondary-value-control" />}
+     </div>
   </div>
 }

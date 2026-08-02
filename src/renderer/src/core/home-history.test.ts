@@ -8,7 +8,7 @@ describe('recent project history', () => {
     recordRecentProject('C:\\art\\first.moonsprite', 'first')
     toggleRecentProjectPinned('C:\\art\\first.moonsprite')
     recordRecentProject('C:\\art\\second.moonsprite', 'second')
-    expect(getRecentProjects().map((item) => [item.name, item.pinned])).toEqual([['first', true], ['second', false]])
+    expect(getRecentProjects().map((item) => [item.name, item.pinned])).toEqual([['first.moonsprite', true], ['second.moonsprite', false]])
   })
 
   it('preserves pin state when a project is opened again', () => {
@@ -28,20 +28,27 @@ describe('recent project history', () => {
       'C:\\art\\second.moonsprite',
       'C:\\art\\third.moonsprite'
     ])
-    expect(getRecentProjects().map((item) => item.name)).toEqual(['first', 'second', 'third'])
+    expect(getRecentProjects().map((item) => item.name)).toEqual(['first.moonsprite', 'second.moonsprite', 'third.moonsprite'])
   })
 
   it('clears only unpinned projects', () => {
     recordRecentProject('C:\\art\\pinned.moonsprite', 'pinned')
     toggleRecentProjectPinned('C:\\art\\pinned.moonsprite')
     recordRecentProject('C:\\art\\temporary.moonsprite', 'temporary')
-    expect(clearRecentProjects().map((item) => item.name)).toEqual(['pinned'])
-    expect(getRecentProjects().map((item) => item.name)).toEqual(['pinned'])
+    expect(clearRecentProjects().map((item) => item.name)).toEqual(['pinned.moonsprite'])
+    expect(getRecentProjects().map((item) => item.name)).toEqual(['pinned.moonsprite'])
   })
 
   it('removes an unreadable project from recent history', () => {
     recordRecentProject('C:\\art\\missing.moonsprite', 'missing')
     recordRecentProject('C:\\art\\available.moonsprite', 'available')
-    expect(removeRecentProject('C:\\art\\missing.moonsprite').map((item) => item.name)).toEqual(['available'])
+    expect(removeRecentProject('C:\\art\\missing.moonsprite').map((item) => item.name)).toEqual(['available.moonsprite'])
+  })
+
+  it('records supported project and raster formats with their full file names', () => {
+    recordRecentProject('C:\\art\\sprite.aseprite', 'ignored')
+    recordRecentProject('C:\\art\\reference.webp', 'ignored')
+    recordRecentProject('C:\\art\\notes.txt', 'ignored')
+    expect(getRecentProjects().map((item) => item.name)).toEqual(['reference.webp', 'sprite.aseprite'])
   })
 })

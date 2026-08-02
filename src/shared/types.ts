@@ -121,6 +121,10 @@ export interface PaletteEntry {
 export interface RgbaLayer {
   id: string
   name: string
+  /** Optional visual marker shown in the layer panel. */
+  displayColor?: RgbaColor
+  /** Optional user-facing note shown when hovering the layer row. */
+  description?: string
   visible: boolean
   locked: boolean
   opacity: number
@@ -139,6 +143,10 @@ export interface RgbaLayer {
 export interface IndexedLayer {
   id: string
   name: string
+  /** Optional visual marker shown in the layer panel. */
+  displayColor?: RgbaColor
+  /** Optional user-facing note shown when hovering the layer row. */
+  description?: string
   visible: boolean
   locked: boolean
   opacity: number
@@ -157,6 +165,10 @@ export type RasterLayer = RgbaLayer | IndexedLayer
 export interface LayerGroup {
   id: string
   name: string
+  /** Optional visual marker shown in the layer panel. */
+  displayColor?: RgbaColor
+  /** Optional user-facing note shown when hovering the group row. */
+  description?: string
   parentGroupId?: string | null
   visible: boolean
   locked: boolean
@@ -164,8 +176,29 @@ export interface LayerGroup {
   blendMode: BlendMode
 }
 
+/** 动画时间轴中的一帧。持续时间以毫秒保存，便于后续导入 Aseprite 帧时保持原始节奏。 */
+export interface AnimationFrame {
+  id: string
+  duration: number
+}
+
+/** cel 与图层、帧的稳定关联。像素存储会在实际动画编辑器落地时加入独立数据文件。 */
+export interface AnimationCel {
+  id: string
+  layerId: string
+  frameId: string
+  linkedCelId?: string | null
+}
+
+export interface AnimationTimeline {
+  frames: AnimationFrame[]
+  cels: AnimationCel[]
+  activeFrameId: string
+  loop: boolean
+}
+
 export interface SpriteDocument {
-  schemaVersion: 1
+  schemaVersion: 1 | 2
   id: string
   name: string
   width: number
@@ -179,6 +212,8 @@ export interface SpriteDocument {
   nextColorId: number
   /** Project-owned brushes are stored in the .moonsprite container. */
   customBrushes?: ProjectBrush[]
+  /** Animation metadata is independent from layer ordering and optional for v1 compatibility. */
+  animation?: AnimationTimeline
   filePath: string | null
   /** Original path used to open imported images or Aseprite projects. */
   sourceFilePath?: string
@@ -192,6 +227,11 @@ export interface SelectionRect {
   y: number
   width: number
   height: number
+  flipHorizontal?: boolean
+  flipVertical?: boolean
+  /** 在跨越对侧边界时，记录被拖动轴线的连续像素坐标。 */
+  flipOriginX?: number
+  flipOriginY?: number
 }
 
 export type SelectionMode = 'replace' | 'add' | 'subtract' | 'intersect'
@@ -213,6 +253,10 @@ export interface ViewState {
   panY: number
   /** View-only clockwise rotation in degrees. Never changes document pixels. */
   rotation: number
+  /** View-only horizontal mirror. Never changes document pixels. */
+  mirrored: boolean
+  /** View-only vertical mirror. Never changes document pixels. */
+  mirroredVertical: boolean
   showGrid: boolean
   relativeLuminance: boolean
 }
@@ -268,6 +312,8 @@ export type ToolRailSide = 'left' | 'right'
 
 export interface WorkspaceLayout {
   panelDocks: Record<WorkspacePanelId, WorkspacePanelDock>
+  /** Optional for backward compatibility with workspaces saved before panel visibility was persisted. */
+  panelVisibility?: Partial<Record<WorkspacePanelId, boolean>>
   inspectorWidth: number
   leftDockWidth: number
   bottomDockHeight: number
@@ -301,6 +347,11 @@ export interface ClipboardImage {
   data: Uint8Array
 }
 
+export interface ClipboardImageSize {
+  width: number
+  height: number
+}
+
 export interface MoonSpriteApi {
   openFiles(): Promise<OpenDialogResult>
   takeStartupFiles(): Promise<string[]>
@@ -311,6 +362,7 @@ export interface MoonSpriteApi {
   writeBinaryAtomic(filePath: string, data: Uint8Array): Promise<void>
   writeClipboardImage(image: ClipboardImage): Promise<void>
   readClipboardImage(): Promise<ClipboardImage | null>
+  readClipboardImageSize(): Promise<ClipboardImageSize | null>
   listPalettes(): Promise<PaletteListing>
   savePalette(id: string | null, name: string, colors: RgbaColor[]): Promise<StoredPalette>
   deletePalette(id: string): Promise<void>

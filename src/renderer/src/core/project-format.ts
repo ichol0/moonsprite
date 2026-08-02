@@ -1,11 +1,14 @@
 import { strFromU8, strToU8, unzipSync, zipSync } from 'fflate'
-import { BLEND_MODES, type BlendMode, type ColorMode, type LayerGroup, type PaletteEntry, type ProjectBrush, type RasterLayer, type SpriteDocument } from '@shared/types'
+import { BLEND_MODES, type BlendMode, type ColorMode, type LayerGroup, type PaletteEntry, type ProjectBrush, type RasterLayer, type RgbaColor, type SpriteDocument } from '@shared/types'
 import { compositeDocument, createId } from './document'
+import { createDefaultAnimationTimeline, normalizeAnimationTimeline } from './animation'
 import { encodePng } from './png'
 
 interface ManifestLayer {
   id: string
   name: string
+  displayColor?: RgbaColor
+  description?: string
   visible: boolean
   locked: boolean
   opacity: number
@@ -29,10 +32,12 @@ interface ManifestProjectBrush {
   sourceY?: number
 }
 
+export const PROJECT_SCHEMA_VERSION = 2
+
 interface ProjectManifest {
-  schemaVersion: 1
+  schemaVersion: typeof PROJECT_SCHEMA_VERSION
   app: 'MoonSprite'
-  document: Omit<SpriteDocument, 'layers' | 'palette' | 'customBrushes' | 'filePath' | 'sourceFilePath' | 'dirty'> & { layers: ManifestLayer[]; palette: PaletteEntry[]; customBrushes: ManifestProjectBrush[] }
+  document: Omit<SpriteDocument, 'layers' | 'palette' | 'customBrushes' | 'filePath' | 'sourceFilePath' | 'dirty'> & { schemaVersion: typeof PROJECT_SCHEMA_VERSION; layers: ManifestLayer[]; palette: PaletteEntry[]; customBrushes: ManifestProjectBrush[] }
 }
 
 export interface ProjectGalleryMetadata {
@@ -61,6 +66,8 @@ const normalizeLayerGroups = (source: unknown): LayerGroup[] => {
     groups.push({
       id: candidate.id,
       name: typeof candidate.name === 'string' && candidate.name ? candidate.name : '未命名组',
+      ...(normalizeDisplayColor(candidate.displayColor) ? { displayColor: normalizeDisplayColor(candidate.displayColor)! } : {}),
+      ...(typeof candidate.description === 'string' && candidate.description ? { description: candidate.description } : {}),
       ...(candidate.parentGroupId === undefined ? {} : { parentGroupId: typeof candidate.parentGroupId === 'string' ? candidate.parentGroupId : null }),
       visible: candidate.visible !== false,
       locked: candidate.locked === true,
@@ -91,6 +98,13 @@ const normalizeLayerGroups = (source: unknown): LayerGroup[] => {
   return groups
 }
 
+const normalizeDisplayColor = (value: unknown): RgbaColor | null => {
+  if (!value || typeof value !== 'object') return null
+  const color = value as Partial<RgbaColor>
+  if (![color.r, color.g, color.b, color.a].every((channel) => typeof channel === 'number' && Number.isFinite(channel))) return null
+  return { r: Math.max(0, Math.min(255, Math.round(color.r!))), g: Math.max(0, Math.min(255, Math.round(color.g!))), b: Math.max(0, Math.min(255, Math.round(color.b!))), a: Math.max(0, Math.min(255, Math.round(color.a!))) }
+}
+
 export function encodeProject(document: SpriteDocument): Uint8Array {
   const files: Record<string, Uint8Array> = {}
   const layers: ManifestLayer[] = document.layers.map((layer) => {
@@ -99,6 +113,8 @@ export function encodeProject(document: SpriteDocument): Uint8Array {
     return {
       id: layer.id,
       name: layer.name,
+      ...(layer.displayColor ? { displayColor: layer.displayColor } : {}),
+      ...(layer.description ? { description: layer.description } : {}),
       visible: layer.visible,
       locked: layer.locked,
       opacity: layer.opacity,
@@ -118,12 +134,13 @@ export function encodeProject(document: SpriteDocument): Uint8Array {
     if (colorsFile) files[colorsFile] = toU8(brush.colors!)
     return { id: brush.id, name: brush.name, width: brush.width, height: brush.height, dataFile, colorsFile, sourceX: brush.sourceX, sourceY: brush.sourceY }
   })
-  const { layers: _layers, palette: _palette, customBrushes: _customBrushes, filePath: _filePath, sourceFilePath: _sourceFilePath, dirty: _dirty, ...serializable } = document
+  const { schemaVersion: _schemaVersion, layers: _layers, palette: _palette, customBrushes: _customBrushes, filePath: _filePath, sourceFilePath: _sourceFilePath, dirty: _dirty, ...serializable } = document
   const manifest: ProjectManifest = {
-    schemaVersion: 1,
+    schemaVersion: PROJECT_SCHEMA_VERSION,
     app: 'MoonSprite',
     document: {
       ...serializable,
+      schemaVersion: PROJECT_SCHEMA_VERSION,
       layers,
       palette: document.palette.map((entry) => ({ ...entry, color: { ...entry.color } })),
       customBrushes
@@ -134,16 +151,37 @@ export function encodeProject(document: SpriteDocument): Uint8Array {
   return zipSync(files, { level: 6 })
 }
 
+export function migrateProjectManifest(input: unknown): ProjectManifest {
+  if (!input || typeof input !== 'object') throw new Error('manifest.json format is invalid')
+  const candidate = input as { app?: unknown; schemaVersion?: unknown; document?: Record<string, unknown> }
+  if (candidate.app !== 'MoonSprite' || !candidate.document) throw new Error('Unsupported MoonSprite project version')
+  if (candidate.schemaVersion === PROJECT_SCHEMA_VERSION && candidate.document.schemaVersion === PROJECT_SCHEMA_VERSION) {
+    return {
+      ...(candidate as ProjectManifest),
+      schemaVersion: PROJECT_SCHEMA_VERSION,
+      document: { ...(candidate.document as ProjectManifest['document']), schemaVersion: PROJECT_SCHEMA_VERSION, animation: normalizeAnimationTimeline(candidate.document.animation) }
+    }
+  }
+  if (candidate.schemaVersion === 1 && candidate.document.schemaVersion === 1) {
+    return {
+      ...(candidate as Omit<ProjectManifest, 'schemaVersion' | 'document'>),
+      schemaVersion: PROJECT_SCHEMA_VERSION,
+      document: { ...(candidate.document as ProjectManifest['document']), schemaVersion: PROJECT_SCHEMA_VERSION, animation: createDefaultAnimationTimeline() }
+    }
+  }
+  throw new Error('Unsupported MoonSprite project version')
+}
+
 function readManifest(files: Record<string, Uint8Array>): ProjectManifest {
   const manifestFile = files['manifest.json']
   if (!manifestFile) throw new Error('工程文件缺少 manifest.json。')
   let manifest: ProjectManifest
   try {
-    manifest = JSON.parse(strFromU8(manifestFile)) as ProjectManifest
+    manifest = migrateProjectManifest(JSON.parse(strFromU8(manifestFile)))
   } catch {
     throw new Error('工程文件的 manifest.json 无法读取。')
   }
-  if (manifest.app !== 'MoonSprite' || manifest.schemaVersion !== 1 || manifest.document?.schemaVersion !== 1) {
+  if (manifest.app !== 'MoonSprite' || manifest.schemaVersion !== PROJECT_SCHEMA_VERSION || manifest.document?.schemaVersion !== PROJECT_SCHEMA_VERSION) {
     throw new Error('该工程版本不受当前 MoonSprite 支持。')
   }
   return manifest
@@ -196,9 +234,9 @@ export function decodeProject(input: Uint8Array): SpriteDocument {
     if (!bytes || bytes.byteLength !== expectedBytes) throw new Error(`图层“${metadata.name}”数据损坏或不完整。`)
     const copied = bytes.slice()
     if (mode === 'rgba') {
-      return { ...metadata, width, height, offsetX: Number.isFinite(metadata.offsetX) ? Math.trunc(metadata.offsetX!) : 0, offsetY: Number.isFinite(metadata.offsetY) ? Math.trunc(metadata.offsetY!) : 0, blendMode: normalizeBlendMode(metadata.blendMode), format: 'rgba', pixels: new Uint8ClampedArray(copied.buffer) }
+      return { ...metadata, ...(normalizeDisplayColor(metadata.displayColor) ? { displayColor: normalizeDisplayColor(metadata.displayColor)! } : {}), ...(typeof metadata.description === 'string' && metadata.description ? { description: metadata.description } : {}), width, height, offsetX: Number.isFinite(metadata.offsetX) ? Math.trunc(metadata.offsetX!) : 0, offsetY: Number.isFinite(metadata.offsetY) ? Math.trunc(metadata.offsetY!) : 0, blendMode: normalizeBlendMode(metadata.blendMode), format: 'rgba', pixels: new Uint8ClampedArray(copied.buffer) }
     }
-    return { ...metadata, width, height, offsetX: Number.isFinite(metadata.offsetX) ? Math.trunc(metadata.offsetX!) : 0, offsetY: Number.isFinite(metadata.offsetY) ? Math.trunc(metadata.offsetY!) : 0, blendMode: normalizeBlendMode(metadata.blendMode), format: 'indexed', pixels: new Uint32Array(copied.buffer) }
+    return { ...metadata, ...(normalizeDisplayColor(metadata.displayColor) ? { displayColor: normalizeDisplayColor(metadata.displayColor)! } : {}), ...(typeof metadata.description === 'string' && metadata.description ? { description: metadata.description } : {}), width, height, offsetX: Number.isFinite(metadata.offsetX) ? Math.trunc(metadata.offsetX!) : 0, offsetY: Number.isFinite(metadata.offsetY) ? Math.trunc(metadata.offsetY!) : 0, blendMode: normalizeBlendMode(metadata.blendMode), format: 'indexed', pixels: new Uint32Array(copied.buffer) }
   })
   if (layers.length === 0) throw new Error('工程文件不包含图层。')
   const groups = normalizeLayerGroups(source.groups)
@@ -219,7 +257,7 @@ export function decodeProject(input: Uint8Array): SpriteDocument {
     customBrushes.push({ id: metadata.id, name: metadata.name, width: metadata.width, height: metadata.height, coverage: bytes.slice(), colors, sourceX: metadata.sourceX, sourceY: metadata.sourceY })
   }
   return {
-    schemaVersion: 1,
+    schemaVersion: PROJECT_SCHEMA_VERSION,
     id: createId('doc'),
     name: source.name || '未命名作品',
     width: source.width,
@@ -232,6 +270,7 @@ export function decodeProject(input: Uint8Array): SpriteDocument {
     paletteOrder: Array.isArray(source.paletteOrder) ? source.paletteOrder : [],
     nextColorId: Math.max(1, source.nextColorId ?? 1),
     customBrushes,
+    animation: normalizeAnimationTimeline(source.animation),
     filePath: null,
     dirty: false,
     createdAt: source.createdAt || new Date().toISOString(),

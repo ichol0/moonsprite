@@ -925,6 +925,17 @@ describe('pixel tools', () => {
     expect(layer.offsetY).toBe(1)
   })
 
+  it('includes the right and bottom boundary pixels of a closed lasso path', () => {
+    const document = createDocument('lasso bounds', 10, 10, 'rgba')
+    const lasso = lassoSelection(document, [
+      { x: 2, y: 2 }, { x: 6, y: 2 }, { x: 6, y: 6 }, { x: 2, y: 6 }
+    ])
+    expect(lasso).toMatchObject({ x: 2, y: 2, width: 5, height: 5 })
+    expect(selectionContains(lasso, 6, 2)).toBe(true)
+    expect(selectionContains(lasso, 6, 6)).toBe(true)
+    expect(selectionContains(lasso, 2, 6)).toBe(true)
+  })
+
   it('resizes a canvas using explicit edge offsets', () => {
     const document = createDocument('edge resize', 2, 2, 'rgba')
     const layer = getActiveLayer(document)

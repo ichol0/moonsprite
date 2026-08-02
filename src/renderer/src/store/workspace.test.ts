@@ -5,6 +5,7 @@ import { revertPixelEdit } from '@/core/history'
 import { applySelectionTransform } from '@/core/tools'
 import { builtInPalettes } from '@/core/built-in-palettes'
 import { createProceduralBrush } from '@/core/brushes'
+import { registerViewPreviewFlusher } from '@/core/view-preview-lifecycle'
 import { useWorkspace } from './workspace'
 
 const transparent = { r: 0, g: 0, b: 0, a: 0 }
@@ -27,7 +28,23 @@ function installApi(overrides: Partial<MoonSpriteApi> = {}): MoonSpriteApi {
 beforeEach(() => {
   installApi()
   localStorage.clear()
-  useWorkspace.setState({ sessions: [], activeId: null, message: null, dialog: null })
+  useWorkspace.setState({ sessions: [], activeId: null, message: null, saveProgress: null, dialog: null })
+})
+
+describe('layer properties', () => {
+  it('clears an optional display color and restores it with one undo', () => {
+    const document = createDocument('layer marker', 2, 2, 'rgba')
+    const layer = getActiveLayer(document)
+    layer.displayColor = { ...red }
+    useWorkspace.getState().addSession(document)
+
+    useWorkspace.getState().setLayerPropertiesWithBlend(layer.id, layer.name, layer.opacity, layer.blendMode, layer.locked, null, '说明')
+
+    expect(layer.displayColor).toBeUndefined()
+    expect(layer.description).toBe('说明')
+    useWorkspace.getState().undo()
+    expect(layer.displayColor).toEqual(red)
+  })
 })
 
 describe('procedural brush settings', () => {
@@ -180,9 +197,40 @@ describe('workspace history', () => {
     useWorkspace.getState().redo()
     expect(session.view).toMatchObject({ zoom: 9, panX: 34, panY: -18, rotation: 45 })
   })
+
+  it('flushes a pending zoom preview before preserving the view for undo', () => {
+    const document = createDocument('pending zoom history isolation', 3, 2, 'rgba')
+    useWorkspace.getState().addSession(document)
+    const session = useWorkspace.getState().sessions[0]
+    useWorkspace.getState().setView({ zoom: 9, panX: 12, panY: -6 })
+    useWorkspace.getState().pushHistory({ label: 'pixel operation', bytes: 1, undo: () => {}, redo: () => {} })
+    const unregister = registerViewPreviewFlusher(document.id, () => {
+      useWorkspace.getState().setView({ zoom: 14, panX: 28, panY: -10 })
+    })
+
+    try {
+      useWorkspace.getState().undo()
+      expect(session.view).toMatchObject({ zoom: 14, panX: 28, panY: -10 })
+    } finally {
+      unregister()
+    }
+  })
 })
 
 describe('foreground fill command', () => {
+  it('swaps foreground and background colors as one state update', () => {
+    const document = createDocument('swap colors', 1, 1, 'rgba')
+    useWorkspace.getState().addSession(document)
+    useWorkspace.getState().setPrimaryColor(red)
+    useWorkspace.getState().setSecondaryColor(blue)
+
+    useWorkspace.getState().swapPrimarySecondaryColors()
+
+    const session = useWorkspace.getState().sessions[0]
+    expect(session.primaryColor).toEqual(blue)
+    expect(session.secondaryColor).toEqual(red)
+  })
+
   it('fills the active selection and supports undo and redo', () => {
     const document = createDocument('fill command', 3, 1, 'rgba')
     useWorkspace.getState().addSession(document)
@@ -683,6 +731,48 @@ describe('recovery cleanup', () => {
 })
 
 describe('save concurrency', () => {
+  it('shows Save As progress only after the native file dialog confirms a path', async () => {
+    const dialog: { resolve?: (result: { canceled: boolean; filePath?: string }) => void } = {}
+    const write: { resolve?: () => void } = {}
+    const saveProject = vi.fn(() => new Promise<{ canceled: boolean; filePath?: string }>((resolve) => { dialog.resolve = resolve }))
+    const writeBinaryAtomic = vi.fn(() => new Promise<void>((resolve) => { write.resolve = resolve }))
+    installApi({ saveProject, writeBinaryAtomic })
+    useWorkspace.getState().addSession(createDocument('save progress', 2, 2, 'rgba'))
+
+    const saving = useWorkspace.getState().saveActive(true, { name: 'save progress', format: 'moonsprite', scalePercent: 100 })
+    await vi.waitFor(() => expect(saveProject).toHaveBeenCalledTimes(1))
+    expect(useWorkspace.getState().saveProgress).toBeNull()
+
+    dialog.resolve?.({ canceled: false, filePath: 'D:/gallery/save-progress.moonsprite' })
+    await vi.waitFor(() => expect(writeBinaryAtomic).toHaveBeenCalledTimes(1))
+    expect(useWorkspace.getState().saveProgress).toMatchObject({ title: '正在另存为' })
+    useWorkspace.getState().dismissSaveProgress()
+    write.resolve?.()
+    await expect(saving).resolves.toBe(true)
+    expect(useWorkspace.getState().saveProgress).toBeNull()
+  })
+
+  it('shows export progress only after the native export dialog confirms a path', async () => {
+    const dialog: { resolve?: (result: { canceled: boolean; filePath?: string }) => void } = {}
+    const write: { resolve?: () => void } = {}
+    const exportImage = vi.fn(() => new Promise<{ canceled: boolean; filePath?: string }>((resolve) => { dialog.resolve = resolve }))
+    const writeBinaryAtomic = vi.fn(() => new Promise<void>((resolve) => { write.resolve = resolve }))
+    installApi({ exportImage, writeBinaryAtomic })
+    useWorkspace.getState().addSession(createDocument('export progress', 2, 2, 'rgba'))
+
+    const exporting = useWorkspace.getState().exportActive({ name: 'export progress', format: 'png-rgba', scalePercent: 100 })
+    await vi.waitFor(() => expect(exportImage).toHaveBeenCalledTimes(1))
+    expect(useWorkspace.getState().saveProgress).toBeNull()
+
+    dialog.resolve?.({ canceled: false, filePath: 'D:/gallery/export-progress.png' })
+    await vi.waitFor(() => expect(writeBinaryAtomic).toHaveBeenCalledTimes(1))
+    expect(useWorkspace.getState().saveProgress).toMatchObject({ title: '正在导出' })
+    useWorkspace.getState().dismissSaveProgress()
+    write.resolve?.()
+    await expect(exporting).resolves.toBe(true)
+    expect(useWorkspace.getState().saveProgress).toBeNull()
+  })
+
   it('uses the preferred image format when saving an unsaved document', async () => {
     localStorage.setItem('moonsprite.preference.save-format', 'png')
     const saveProject = vi.fn(async () => ({ canceled: false, filePath: 'D:/gallery/preferred.png' }))

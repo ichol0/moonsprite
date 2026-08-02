@@ -11,5 +11,6 @@ ADR 用于记录会长期影响实现的决定，避免后续只看到代码而�
 ## 当前决策
 
 - [0001：文档历史与视图状态分离](0001-separate-document-and-view-history.md)
+- [0002：动画时间轴与静态图层数据分离](0002-animation-timeline-schema.md)
 
 新增 ADR 时按编号递增；废弃旧决定时保留原文件并指向替代 ADR。

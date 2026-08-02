@@ -21,6 +21,7 @@
 
 - [回归矩阵](testing/regression-matrix.md)
 - [性能基线](testing/performance-baseline.md)
+- [性能更新记录](testing/performance-history.md)
 - [发布检查表](release/release-checklist.md)
 - [架构决策记录](adr/README.md)
 
@@ -29,6 +30,7 @@
 - 行为变化：更新产品或交互契约。
 - 状态、历史、坐标或文件格式变化：更新架构文档并新增 ADR。
 - Bug 修复：在回归矩阵中增加自动化场景。
+- 性能验证：先按 [性能基线](testing/performance-baseline.md) 判断 P0-P4 影响等级；P0/P1 不跑性能基准，P2 定向验证，P3/P4 才运行完整基准。仅 P2-P4 或实际性能变化需要更新性能记录。
 - 用户可见变化：更新根目录 `CHANGELOG.md`。
 - 发布：逐项执行发布检查表。
 

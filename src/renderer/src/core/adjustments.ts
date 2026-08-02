@@ -5,7 +5,15 @@ import { packColor, unpackColor } from './raster'
 import { selectionContains } from './selection'
 
 export type AdjustmentKind = 'color-balance' | 'brightness-contrast' | 'hue-saturation' | 'curves'
+export type CurveChannel = 'rgb' | 'red' | 'green' | 'blue'
 export interface CurvePoint { x: number; y: number }
+
+export interface CurveHistogram {
+  rgb: Uint32Array
+  red: Uint32Array
+  green: Uint32Array
+  blue: Uint32Array
+}
 
 export interface ColorAdjustment {
   kind: AdjustmentKind
@@ -19,6 +27,9 @@ export interface ColorAdjustment {
   /** Curve's midpoint, 0-255. 128 is the identity. */
   curveMidpoint?: number
   curvePoints?: CurvePoint[]
+  curveRedPoints?: CurvePoint[]
+  curveGreenPoints?: CurvePoint[]
+  curveBluePoints?: CurvePoint[]
   shadowsCyanRed?: number
   shadowsMagentaGreen?: number
   shadowsYellowBlue?: number
@@ -32,6 +43,48 @@ export interface ColorAdjustment {
 }
 
 const clamp = (value: number): number => Math.max(0, Math.min(255, Math.round(value)))
+
+const identityCurve: CurvePoint[] = [{ x: 0, y: 0 }, { x: 255, y: 255 }]
+
+export function buildCurveHistogram(pixels: Uint8ClampedArray | Uint32Array, format: 'rgba' | 'indexed', palette: Array<{ id: number; color: RgbaColor }>): CurveHistogram {
+  const histogram: CurveHistogram = { rgb: new Uint32Array(256), red: new Uint32Array(256), green: new Uint32Array(256), blue: new Uint32Array(256) }
+  const paletteMap = format === 'indexed' ? new Map(palette.map((entry) => [entry.id, entry.color])) : null
+  const add = (color: RgbaColor): void => {
+    if (color.a === 0) return
+    histogram.rgb[Math.round((color.r + color.g + color.b) / 3)] += 1
+    histogram.red[color.r] += 1
+    histogram.green[color.g] += 1
+    histogram.blue[color.b] += 1
+  }
+  if (format === 'rgba') {
+    for (let index = 0; index < pixels.length; index += 4) add({ r: pixels[index], g: pixels[index + 1], b: pixels[index + 2], a: pixels[index + 3] })
+  } else {
+    for (const value of pixels) {
+      const color = paletteMap?.get(value)
+      if (color) add(color)
+    }
+  }
+  return histogram
+}
+
+export function buildHistogramPath(values: Uint32Array, width = 255, height = 255): string {
+  const maximum = Math.max(1, ...values)
+  const commands = [`M 0 ${height}`]
+  for (let index = 0; index < values.length; index += 1) {
+    const x = index / Math.max(1, values.length - 1) * width
+    const y = height - values[index] / maximum * (height - 4)
+    commands.push(`L ${x.toFixed(2)} ${y.toFixed(2)}`)
+  }
+  commands.push(`L ${width} ${height} Z`)
+  return commands.join(' ')
+}
+
+const curveControls = (points: CurvePoint[], index: number, axis: 'x' | 'y'): number => {
+  const current = points[index]
+  const previous = points[Math.max(0, index - 1)]
+  const next = points[Math.min(points.length - 1, index + 1)]
+  return (next[axis] - previous[axis]) / Math.max(1, next.x - previous.x)
+}
 
 export function buildCurveLut(points: CurvePoint[]): Uint8Array {
   const normalized = points
@@ -47,9 +100,39 @@ export function buildCurveLut(points: CurvePoint[]): Uint8Array {
     const left = normalized[segment]
     const right = normalized[Math.min(segment + 1, normalized.length - 1)]
     const distance = Math.max(1, right.x - left.x)
-    lut[input] = clamp(left.y + (right.y - left.y) * (input - left.x) / distance)
+    const t = Math.max(0, Math.min(1, (input - left.x) / distance))
+    const leftSlope = curveControls(normalized, segment, 'y')
+    const rightSlope = curveControls(normalized, Math.min(segment + 1, normalized.length - 1), 'y')
+    const controlLeft = left.y + leftSlope * distance / 3
+    const controlRight = right.y - rightSlope * distance / 3
+    const inverse = 1 - t
+    lut[input] = clamp(inverse ** 3 * left.y + 3 * inverse ** 2 * t * controlLeft + 3 * inverse * t ** 2 * controlRight + t ** 3 * right.y)
   }
   return lut
+}
+
+export function buildCurvePath(points: CurvePoint[]): string {
+  const normalized = points
+    .map((point) => ({ x: clamp(point.x), y: clamp(point.y) }))
+    .sort((left, right) => left.x - right.x)
+  if (normalized.length < 2) return ''
+  const commands = [`M ${normalized[0].x} ${255 - normalized[0].y}`]
+  for (let index = 0; index < normalized.length - 1; index += 1) {
+    const left = normalized[index]
+    const right = normalized[index + 1]
+    const distance = Math.max(1, right.x - left.x)
+    const leftControlY = left.y + curveControls(normalized, index, 'y') * distance / 3
+    const rightControlY = right.y - curveControls(normalized, index + 1, 'y') * distance / 3
+    commands.push(`C ${left.x + distance / 3} ${255 - leftControlY} ${right.x - distance / 3} ${255 - rightControlY} ${right.x} ${255 - right.y}`)
+  }
+  return commands.join(' ')
+}
+
+export interface PreparedCurveLuts {
+  rgb: Uint8Array
+  red: Uint8Array
+  green: Uint8Array
+  blue: Uint8Array
 }
 
 const rgbToHsl = (color: RgbaColor): { h: number; s: number; l: number } => {
@@ -69,7 +152,7 @@ const hslToRgb = (hue: number, saturation: number, lightness: number, alpha: num
   return { r: component(1 / 3), g: component(0), b: component(-1 / 3), a: alpha }
 }
 
-export function adjustColor(color: RgbaColor, adjustment: ColorAdjustment, preparedCurve?: Uint8Array): RgbaColor {
+export function adjustColor(color: RgbaColor, adjustment: ColorAdjustment, preparedCurve?: Uint8Array | PreparedCurveLuts): RgbaColor {
   if (color.a === 0) return color
   if (adjustment.kind === 'brightness-contrast') {
     const brightness = (adjustment.brightness ?? 0) * 2.55
@@ -102,14 +185,27 @@ export function adjustColor(color: RgbaColor, adjustment: ColorAdjustment, prepa
     return { r: clamp(red), g: clamp(green), b: clamp(blue), a: color.a }
   }
   const midpoint = Math.max(1, Math.min(254, adjustment.curveMidpoint ?? 128))
-  const curve = preparedCurve ?? buildCurveLut(adjustment.curvePoints ?? [{ x: 0, y: 0 }, { x: 128, y: midpoint }, { x: 255, y: 255 }])
-  return { r: curve[color.r], g: curve[color.g], b: curve[color.b], a: color.a }
+  const curves: PreparedCurveLuts = preparedCurve && !(preparedCurve instanceof Uint8Array)
+    ? preparedCurve
+    : {
+        rgb: preparedCurve instanceof Uint8Array ? preparedCurve : buildCurveLut(adjustment.curvePoints ?? [{ x: 0, y: 0 }, { x: 128, y: midpoint }, { x: 255, y: 255 }]),
+        red: buildCurveLut(adjustment.curveRedPoints ?? identityCurve),
+        green: buildCurveLut(adjustment.curveGreenPoints ?? identityCurve),
+        blue: buildCurveLut(adjustment.curveBluePoints ?? identityCurve)
+      }
+  const rgb = curves.rgb
+  return { r: curves.red[rgb[color.r]], g: curves.green[rgb[color.g]], b: curves.blue[rgb[color.b]], a: color.a }
 }
 
 export function applyColorAdjustment(document: SpriteDocument, layer: RasterLayer, adjustment: ColorAdjustment, selection: SelectionMask | null = null): PixelEdit {
   const edit = beginPixelEdit(layer.id)
   const preparedCurve = adjustment.kind === 'curves'
-    ? buildCurveLut(adjustment.curvePoints ?? [{ x: 0, y: 0 }, { x: 128, y: adjustment.curveMidpoint ?? 128 }, { x: 255, y: 255 }])
+    ? {
+        rgb: buildCurveLut(adjustment.curvePoints ?? [{ x: 0, y: 0 }, { x: 128, y: adjustment.curveMidpoint ?? 128 }, { x: 255, y: 255 }]),
+        red: buildCurveLut(adjustment.curveRedPoints ?? identityCurve),
+        green: buildCurveLut(adjustment.curveGreenPoints ?? identityCurve),
+        blue: buildCurveLut(adjustment.curveBluePoints ?? identityCurve)
+      }
     : undefined
   const total = layer.width * layer.height
   for (let index = 0; index < total; index += 1) {

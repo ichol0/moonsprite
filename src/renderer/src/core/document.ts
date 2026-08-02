@@ -1,4 +1,5 @@
 import type { CanvasAnchor, ColorMode, ImageResizeInterpolation, IndexedLayer, LayerGroup, PaletteEntry, RasterLayer, RgbaColor, RgbaLayer, SelectionRect, SpriteDocument } from '@shared/types'
+import { createDefaultAnimationTimeline } from './animation'
 import { blendWithMode, colorEquals, packColor, pixelIndex, readRgbaPixel, TRANSPARENT, unpackColor, writeRgbaPixel } from './raster'
 
 let sequence = 0
@@ -7,7 +8,7 @@ export const createId = (prefix: string): string => `${prefix}-${Date.now().toSt
 const transparentEntry = (): PaletteEntry => ({ id: 0, name: '透明', color: TRANSPARENT })
 
 export function createLayer(name: string, width: number, height: number, mode: ColorMode): RasterLayer {
-  const common = { id: createId('layer'), name, visible: true, locked: false, opacity: 1, blendMode: 'normal' as const, width, height, offsetX: 0, offsetY: 0 }
+  const common = { id: createId('layer'), name, description: '', visible: true, locked: false, opacity: 1, blendMode: 'normal' as const, width, height, offsetX: 0, offsetY: 0 }
   return mode === 'rgba'
     ? { ...common, format: 'rgba', pixels: new Uint8ClampedArray(width * height * 4) }
     : { ...common, format: 'indexed', pixels: new Uint32Array(width * height) }
@@ -19,7 +20,7 @@ export function createDocument(name: string, width: number, height: number, colo
     ? [transparentEntry(), { id: 1, name: '墨黑', color: { r: 24, g: 27, b: 33, a: 255 } }, { id: 2, name: '月蓝', color: { r: 41, g: 121, b: 255, a: 255 } }]
     : [{ id: 1, name: '墨黑', color: { r: 24, g: 27, b: 33, a: 255 } }, { id: 2, name: '月蓝', color: { r: 41, g: 121, b: 255, a: 255 } }]
   const now = new Date().toISOString()
-  return { schemaVersion: 1, id: createId('doc'), name, width, height, colorMode, layers: [layer], groups: [], activeLayerId: layer.id, palette, paletteOrder: palette.map((entry) => entry.id), nextColorId: 3, customBrushes: [], filePath: null, dirty: false, createdAt: now, updatedAt: now }
+  return { schemaVersion: 2, id: createId('doc'), name, width, height, colorMode, layers: [layer], groups: [], activeLayerId: layer.id, palette, paletteOrder: palette.map((entry) => entry.id), nextColorId: 3, customBrushes: [], animation: createDefaultAnimationTimeline(), filePath: null, dirty: false, createdAt: now, updatedAt: now }
 }
 
 export function resizeDocumentAt(document: SpriteDocument, width: number, height: number, offsetX: number, offsetY: number, trimOutside = false): { offsetX: number; offsetY: number } {
@@ -439,10 +440,9 @@ export function compositeRegion(document: SpriteDocument, startX: number, startY
       return output
     }
   }
-  const sample = createCompositeSampler(document)
+  const sample = createCompositePointSampler(document)
   for (let y = 0; y < height; y += 1) for (let x = 0; x < width; x += 1) {
-    const index = pixelIndex(document.width, startX + x, startY + y)
-    writeRgbaPixel(output, y * width + x, sample(index))
+    writeRgbaPixel(output, y * width + x, sample(startX + x, startY + y))
   }
   return output
 }
@@ -452,7 +452,7 @@ export function compositePixel(document: SpriteDocument, index: number): RgbaCol
 }
 
 /** Composites a pixel while optionally substituting one layer's source color. */
-export function createCompositeSampler(document: SpriteDocument, layerId?: string, replacement?: RgbaColor): (index: number) => RgbaColor {
+export function createCompositePointSampler(document: SpriteDocument, layerId?: string, replacement?: RgbaColor): (x: number, y: number) => RgbaColor {
   const groupById = new Map(document.groups.map((group) => [group.id, group]))
   const layerOrder = new Map(document.layers.map((layer, order) => [layer.id, order]))
   const groupOrder = new Map(document.groups.map((group, order) => [group.id, order]))
@@ -470,20 +470,16 @@ export function createCompositeSampler(document: SpriteDocument, layerId?: strin
   }
 
   const paletteById = new Map(document.palette.map((entry) => [entry.id, entry.color]))
-  type CompiledItem = { kind: 'layer'; layer: RasterLayer; read: (index: number) => RgbaColor } | { kind: 'group'; group: LayerGroup; children: CompiledItem[] }
+  type CompiledItem = { kind: 'layer'; layer: RasterLayer; read: (x: number, y: number) => RgbaColor } | { kind: 'group'; group: LayerGroup; children: CompiledItem[] }
   const compileLayer = (layer: RasterLayer): CompiledItem => {
-    const readIndex = (index: number): number | null => {
-      const x = index % document.width
-      const y = Math.floor(index / document.width)
-      return layerIndexAt(layer, x, y)
-    }
-    if (layer.id === layerId && replacement) return { kind: 'layer', layer, read: (index) => readIndex(index) === null ? TRANSPARENT : replacement }
+    const readIndex = (x: number, y: number): number | null => layerIndexAt(layer, x, y)
+    if (layer.id === layerId && replacement) return { kind: 'layer', layer, read: (x, y) => readIndex(x, y) === null ? TRANSPARENT : replacement }
     if (layer.format === 'rgba') {
       const pixels = layer.pixels
-      return { kind: 'layer', layer, read: (index) => { const local = readIndex(index); return local === null ? TRANSPARENT : readRgbaPixel(pixels, local) } }
+      return { kind: 'layer', layer, read: (x, y) => { const local = readIndex(x, y); return local === null ? TRANSPARENT : readRgbaPixel(pixels, local) } }
     }
     const pixels = layer.pixels
-    return { kind: 'layer', layer, read: (index) => { const local = readIndex(index); return local === null ? TRANSPARENT : (paletteById.get(pixels[local]) ?? TRANSPARENT) } }
+    return { kind: 'layer', layer, read: (x, y) => { const local = readIndex(x, y); return local === null ? TRANSPARENT : (paletteById.get(pixels[local]) ?? TRANSPARENT) } }
   }
   const compileContainer = (parentGroupId: string | null, visiting: Set<string>): CompiledItem[] => {
     const items: Array<
@@ -507,12 +503,12 @@ export function createCompositeSampler(document: SpriteDocument, layerId?: strin
   }
 
   const root = compileContainer(null, new Set())
-  const compositeContainer = (items: CompiledItem[], index: number): RgbaColor => {
+  const compositeContainer = (items: CompiledItem[], x: number, y: number): RgbaColor => {
     let color = TRANSPARENT
     for (const item of items) {
       if (item.kind === 'layer') {
         if (!item.layer.visible || item.layer.opacity <= 0) continue
-        const source = item.read(index)
+        const source = item.read(x, y)
         if (source.a === 0) continue
         color = item.layer.opacity === 1 && (color.a === 0 || (item.layer.blendMode === 'normal' && source.a === 255))
           ? source
@@ -520,7 +516,7 @@ export function createCompositeSampler(document: SpriteDocument, layerId?: strin
         continue
       }
       if (!item.group.visible || item.group.opacity <= 0) continue
-      const groupColor = compositeContainer(item.children, index)
+      const groupColor = compositeContainer(item.children, x, y)
       if (groupColor.a === 0) continue
       color = item.group.opacity === 1 && (color.a === 0 || (item.group.blendMode === 'normal' && groupColor.a === 255))
         ? groupColor
@@ -528,7 +524,13 @@ export function createCompositeSampler(document: SpriteDocument, layerId?: strin
     }
     return color
   }
-  return (index) => compositeContainer(root, index)
+  return (x, y) => compositeContainer(root, x, y)
+}
+
+/** Composites document coordinates through the same compiled layer tree. */
+export function createCompositeSampler(document: SpriteDocument, layerId?: string, replacement?: RgbaColor): (index: number) => RgbaColor {
+  const samplePoint = createCompositePointSampler(document, layerId, replacement)
+  return (index) => samplePoint(index % document.width, Math.floor(index / document.width))
 }
 
 export function compositePixelWithLayerColor(document: SpriteDocument, index: number, layerId?: string, replacement?: RgbaColor): RgbaColor {

@@ -1,11 +1,11 @@
 import { create } from 'zustand'
-import type { BlendMode, BrushPaintMode, BrushShape, BrushTexture, CanvasAnchor, ClipboardImage, ColorMode, FillMode, ImageBrush, ImageBrushSettings, ImageResizeInterpolation, OutlineDirections, OutlineKernel, OutlinePosition, ProceduralBrushId, ProceduralBrushSettings, RasterLayer, RecoveryRecord, RgbaColor, SelectionKind, SelectionMask, SelectionMode, SelectionRect, ShapeKind, SpriteDocument, ToolId, ViewState } from '@shared/types'
+import type { BlendMode, BrushPaintMode, BrushShape, BrushTexture, CanvasAnchor, ColorMode, FillMode, ImageBrush, ImageBrushSettings, ImageResizeInterpolation, OutlineDirections, OutlineKernel, OutlinePosition, ProceduralBrushId, ProceduralBrushSettings, RasterLayer, RecoveryRecord, RgbaColor, SelectionKind, SelectionMask, SelectionMode, SelectionRect, ShapeKind, SpriteDocument, ToolId, ViewState } from '@shared/types'
 import { checkResourceLimit } from '@/core/resource-policy'
 import { beginPixelEdit, commitPixelEdit, HistoryStack, recordPixel, revertPixelEdit, type HistoryEntry, type PixelEdit } from '@/core/history'
 import { convertDocumentColorMode, createDocument, createId, createLayer, duplicateLayer, findOrAddPaletteColor, getDescendantGroupIds, getGroup, getLayerIdsInGroup, getLayer, getActiveLayer, isLayerEffectivelyLocked, isLayerEffectivelyVisible, layerContentBounds, readLayerColor, readLayerColorAt, resizeDocumentAt, resizeDocumentImage, writeLayerColor } from '@/core/document'
 import { decodeProject, encodeProject } from '@/core/project-format'
-import { decodePng, exportDocumentImage, type ImageExportKind, type SaveImageKind } from '@/core/png'
-import { decodeAseprite } from '@/core/aseprite'
+import { flushViewPreview } from '@/core/view-preview-lifecycle'
+import { fileNameFromPath } from '@/core/document-files'
 import { createSelectionBrush } from '@/core/brushes'
 import { applySelectionTransform, clampSelection, clearSelection, fillSelectionOrCanvas, flipLayer, flipSelection, moveSelection, outlineSelection, transformSelectionCopy, type SelectionTransformSource } from '@/core/tools'
 import { colorEquals, packColor, pixelIndex, unpackColor } from '@/core/raster'
@@ -14,100 +14,26 @@ import { recordRecentProject } from '@/core/home-history'
 import { createProceduralBrush, isProceduralBrushId, normalizeProceduralBrushSettings, PROCEDURAL_BRUSH_IDS } from '@/core/brushes'
 import { mergeLayerDown, mergeLayerGroup, mergeRasterLayers, mergeVisibleLayers as mergeVisibleDocumentLayers, type LayerMergeSuccess } from '@/core/layer-merge'
 import { applyColorAdjustment, type ColorAdjustment } from '@/core/adjustments'
+import { assignGroupToGroup as assignGroupToGroupOperation, assignGroupToRoot as assignGroupToRootOperation, assignLayersAboveGroup as assignLayersAboveGroupOperation, assignLayersToGroup as assignLayersToGroupOperation, assignLayersToRoot as assignLayersToRootOperation, canMoveGroupInto, createLayerGroup as createLayerGroupOperation, reorderGroup as reorderGroupOperation, reorderLayers as reorderLayersOperation, ungroupSelected as ungroupSelectedOperation } from '@/core/layer-operations'
 import { SAVE_FORMAT_PREFERENCE_KEY, saveImageKindForPreference } from '@/core/file-preferences'
+import { cloneProceduralSettings, defaultToolSettings, loadToolSettings, normalizePersistedBrushProfile, saveToolSettings, type BrushTool, type PersistedBrushProfile, type PersistedToolSettings } from '@/core/tool-preferences'
+import { readStoredString } from '@/core/storage'
+import { exportDocumentFile, openDocumentFile, saveDocumentFile, type ExportOptions, type SaveAsOptions } from './document-file-service'
+import { RecoveryService } from './recovery-service'
+import { ClipboardService, selectionClipboardImage } from './clipboard-service'
+import { captureAdjustmentSnapshot, captureLayerUi, commitLayerMerge, restoreAdjustmentSnapshot, restoreDocumentSnapshot } from './workspace-history'
+import { applyBrushProfile, brushProfileFromSession, clearSelectionBrushPaintColors, cloneSelectionMask, isBrushTool, persistToolSettings, remapSelectionBrushColors, rememberBrushProfile, sessionFromDocument, touch } from './workspace-session'
+import { addPaletteColor as addPaletteColorCommand, applyPalette as applyPaletteCommand, deletePaletteColors as deletePaletteColorsCommand, movePaletteColor as movePaletteColorCommand, reorderPaletteColors as reorderPaletteColorsCommand, selectPaletteColor as selectPaletteColorCommand } from './workspace-palette'
+import type { AdjustmentSnapshot, AppDialog, CanvasResizePreview, DocumentSession, OutlinePreview } from './workspace-types'
 
-export interface ExportOptions {
-  name: string
-  format: ImageExportKind
-  scalePercent: number
-}
-
-export interface SaveAsOptions {
-  name: string
-  format: 'moonsprite' | SaveImageKind
-  scalePercent: number
-}
-
-export interface CanvasResizePreview {
-  width: number
-  height: number
-  offsetX: number
-  offsetY: number
-}
-
-export interface AdjustmentSnapshot {
-  layerId: string
-  pixels: Uint8ClampedArray | Uint32Array
-  palette: SpriteDocument['palette']
-  nextColorId: number
-}
-
-export interface OutlinePreview {
-  color: RgbaColor
-  thickness: number
-  position: OutlinePosition
-  directions: OutlineDirections
-  kernel: OutlineKernel
-}
-
-export interface FloatingPaste {
-  layerId: string
-  beforeSelection: SelectionMask | null
-  source: SelectionTransformSource
-  target: SelectionMask
-  previewEdit: PixelEdit
-}
-
-export interface DocumentSession {
-  document: SpriteDocument
-  history: HistoryStack
-  tool: ToolId
-  primaryColor: RgbaColor
-  secondaryColor: RgbaColor
-  brushSize: number
-  brushShape: BrushShape
-  brushTexture: BrushTexture
-  brushTextureScale: number
-  brushPaintMode: BrushPaintMode
-  brushImageId: string | null
-  brushImage: ImageBrush | null
-  brushImageTemporary: boolean
-  brushImageSettings: ImageBrushSettings
-  brushProfiles: Record<BrushTool, BrushProfile>
-  proceduralBrushSettings: Record<ProceduralBrushId, ProceduralBrushSettings>
-  proceduralAntialias: boolean
-  proceduralAntialiasStrength: number
-  shapeKind: ShapeKind
-  fillMode: FillMode
-  moveAutoSelect: boolean
-  selection: SelectionMask | null
-  selectionKind: SelectionKind
-  selectionMode: SelectionMode
-  wandTolerance: number
-  wandContiguous: boolean
-  perfectPixels: boolean
-  lastPencilPoint: { x: number; y: number } | null
-  lastEraserPoint: { x: number; y: number } | null
-  canvasResizePreview: CanvasResizePreview | null
-  outlinePreview: OutlinePreview | null
-  pendingPaste: FloatingPaste | null
-  view: ViewState
-  paletteSelectionId: number | null
-  selectedPaletteIds: number[]
-  selectedGroupId: string | null
-  selectedLayerIds: string[]
-  collapsedGroupIds: string[]
-  revision: number
-  recoverySuppressed: boolean
-}
-
-export interface DialogChoice { id: string; label: string; tone?: 'primary' | 'danger' | 'quiet' }
-export interface AppDialog { title: string; message: string; detail?: string; choices: DialogChoice[]; resolve: (choice: string) => void }
+export type { ExportOptions, SaveAsOptions } from './document-file-service'
+export type { AdjustmentSnapshot, AppDialog, CanvasResizePreview, DialogChoice, DocumentSession, FloatingPaste, OutlinePreview } from './workspace-types'
 
 interface WorkspaceState {
   sessions: DocumentSession[]
   activeId: string | null
   message: string | null
+  saveProgress: { title: string; value: number; label: string } | null
   dialog: AppDialog | null
   recoveryRecords: RecoveryRecord[]
   newDocument(name: string, width: number, height: number, colorMode: ColorMode): Promise<void>
@@ -132,6 +58,7 @@ interface WorkspaceState {
   setMoveAutoSelect(enabled: boolean): void
   setPrimaryColor(color: RgbaColor): void
   setSecondaryColor(color: RgbaColor): void
+  swapPrimarySecondaryColors(): void
   setView(view: Partial<ViewState>): void
   setSelection(selection: SelectionMask | null): void
   beginLayerTransform(): void
@@ -181,13 +108,13 @@ interface WorkspaceState {
   selectGroup(groupId: string): void
   toggleGroupCollapsed(groupId: string): void
   toggleGroupVisibility(groupId: string): void
-  setGroupProperties(groupId: string, name: string, opacity: number, blendMode: BlendMode, locked: boolean): void
+  setGroupProperties(groupId: string, name: string, opacity: number, blendMode: BlendMode, locked: boolean, displayColor?: RgbaColor | null, description?: string): void
   toggleLayerVisibility(layerId: string): void
   selectLayer(layerId: string, additive?: boolean): void
   renameLayer(layerId: string, name: string): void
   setLayerOpacity(layerId: string, opacity: number): void
   setLayerProperties(layerId: string, name: string, opacity: number): void
-  setLayerPropertiesWithBlend(layerId: string, name: string, opacity: number, blendMode: BlendMode, locked?: boolean): void
+  setLayerPropertiesWithBlend(layerId: string, name: string, opacity: number, blendMode: BlendMode, locked?: boolean, displayColor?: RgbaColor | null, description?: string): void
   applyActiveLayerAdjustment(adjustment: ColorAdjustment): void
   captureActiveLayerAdjustmentSnapshot(): AdjustmentSnapshot | null
   previewActiveLayerAdjustment(adjustment: ColorAdjustment, baseline: AdjustmentSnapshot): void
@@ -219,479 +146,27 @@ interface WorkspaceState {
   openPath(filePath: string, options?: { duplicate?: boolean }): Promise<boolean>
   closeDocument(id: string): Promise<void>
   restoreRecoveries(): Promise<void>
-  restoreRecovery(id: string): Promise<void>
+  restoreRecovery(id: string): Promise<boolean>
   autosaveDirty(): Promise<void>
   discardRecovery(id: string): Promise<void>
+  dismissSaveProgress(): void
   setMessage(message: string | null): void
   requestDialog(options: Omit<AppDialog, 'resolve'>): Promise<string>
   resolveDialog(choice: string): void
-}
-
-const defaultColor: RgbaColor = { r: 41, g: 121, b: 255, a: 255 }
-const defaultSecondary: RgbaColor = { r: 241, g: 244, b: 248, a: 255 }
-const TOOL_SETTINGS_KEY = 'moonsprite.tool-settings.v1'
-
-type BrushTool = 'pencil' | 'eraser' | 'fill'
-
-interface PersistedBrushProfile {
-  brushSize: number
-  brushShape: BrushShape
-  brushTexture: BrushTexture
-  brushTextureScale: number
-  brushPaintMode: BrushPaintMode
-  brushImageId: string | null
-  brushImageSettings: ImageBrushSettings
-  proceduralBrushSettings: Record<ProceduralBrushId, ProceduralBrushSettings>
-  proceduralAntialias: boolean
-  proceduralAntialiasStrength: number
-}
-
-interface PersistedToolSettings extends PersistedBrushProfile {
-  brushPaintModePreferenceVersion: number
-  proceduralAntialiasPreferenceVersion: number
-  brushProfiles?: Partial<Record<BrushTool, PersistedBrushProfile>>
-  shapeKind: ShapeKind
-  fillMode: FillMode
-  moveAutoSelect: boolean
-  selectionKind: SelectionKind
-  selectionMode: SelectionMode
-  wandTolerance: number
-  wandContiguous: boolean
-  perfectPixels: boolean
-}
-
-interface BrushProfile {
-  brushSize: number
-  brushShape: BrushShape
-  brushTexture: BrushTexture
-  brushTextureScale: number
-  brushPaintMode: BrushPaintMode
-  brushImageId: string | null
-  brushImage: ImageBrush | null
-  brushImageTemporary: boolean
-  brushImageSettings: ImageBrushSettings
-  proceduralBrushSettings: Record<ProceduralBrushId, ProceduralBrushSettings>
-  proceduralAntialias: boolean
-  proceduralAntialiasStrength: number
-}
-
-const isBrushTool = (tool: ToolId): tool is BrushTool => tool === 'pencil' || tool === 'eraser' || tool === 'fill'
-
-const saveImageExtension = (format: SaveImageKind): 'png' | 'jpg' | 'webp' | 'svg' | 'ase' | 'aseprite' => {
-  if (format === 'jpeg') return 'jpg'
-  if (format === 'ase') return 'ase'
-  if (format === 'aseprite') return 'aseprite'
-  if (format === 'svg') return 'svg'
-  if (format === 'webp') return 'webp'
-  return 'png'
-}
-
-const saveImageDialogFormat = (format: SaveImageKind): 'png' | 'jpeg' | 'webp' | 'ase' | 'aseprite' => {
-  if (format === 'jpeg') return 'jpeg'
-  if (format === 'webp') return 'webp'
-  if (format === 'ase') return 'ase'
-  if (format === 'aseprite') return 'aseprite'
-  return 'png'
-}
-
-const saveImageKindForPath = (filePath: string): SaveImageKind | null => {
-  const match = filePath.toLowerCase().match(/\.([^.]+)$/)
-  if (!match) return null
-  if (match[1] === 'png') return 'png-auto'
-  if (match[1] === 'jpg' || match[1] === 'jpeg') return 'jpeg'
-  if (match[1] === 'webp') return 'webp'
-  if (match[1] === 'ase') return 'ase'
-  if (match[1] === 'aseprite') return 'aseprite'
-  return null
-}
-
-const normalizeSaveDialogPath = (filePath: string, format: SaveImageKind, extension: ReturnType<typeof saveImageExtension>): string => {
-  const lowerPath = filePath.toLowerCase()
-  const accepted = format === 'jpeg'
-    ? /\.(jpg|jpeg)$/i.test(lowerPath)
-    : format === 'ase' || format === 'aseprite'
-      ? /\.(ase|aseprite)$/i.test(lowerPath)
-      : lowerPath.endsWith(`.${extension}`)
-  if (accepted) return filePath
-  return /\.(moonsprite|png|jpg|jpeg|webp|svg|ase|aseprite)$/i.test(filePath)
-    ? filePath.replace(/\.(moonsprite|png|jpg|jpeg|webp|svg|ase|aseprite)$/i, `.${extension}`)
-    : `${filePath}.${extension}`
-}
-
-const cloneProceduralSettings = (settings: Record<ProceduralBrushId, ProceduralBrushSettings>): Record<ProceduralBrushId, ProceduralBrushSettings> => Object.fromEntries(
-  PROCEDURAL_BRUSH_IDS.map((id) => [id, { ...settings[id] }])
-) as Record<ProceduralBrushId, ProceduralBrushSettings>
-
-const brushProfileFromSession = (session: DocumentSession): BrushProfile => ({
-  brushSize: session.brushSize,
-  brushShape: session.brushShape,
-  brushTexture: session.brushTexture,
-  brushTextureScale: session.brushTextureScale,
-  brushPaintMode: session.brushPaintMode,
-  brushImageId: session.brushImageId,
-  brushImage: session.brushImage,
-  brushImageTemporary: session.brushImageTemporary,
-  brushImageSettings: { ...session.brushImageSettings },
-  proceduralBrushSettings: cloneProceduralSettings(session.proceduralBrushSettings),
-  proceduralAntialias: session.proceduralAntialias,
-  proceduralAntialiasStrength: session.proceduralAntialiasStrength
-})
-
-const applyBrushProfile = (session: DocumentSession, profile: BrushProfile): void => {
-  session.brushSize = profile.brushSize
-  session.brushShape = profile.brushShape
-  session.brushTexture = profile.brushTexture
-  session.brushTextureScale = profile.brushTextureScale
-  session.brushPaintMode = profile.brushPaintMode
-  session.brushImageId = profile.brushImageId
-  session.brushImage = profile.brushImage
-  session.brushImageTemporary = profile.brushImageTemporary
-  session.brushImageSettings = { ...profile.brushImageSettings }
-  session.proceduralBrushSettings = cloneProceduralSettings(profile.proceduralBrushSettings)
-  session.proceduralAntialias = profile.proceduralAntialias
-  session.proceduralAntialiasStrength = profile.proceduralAntialiasStrength
-}
-
-const remapSelectionBrushColors = (brush: ImageBrush, primary: RgbaColor, secondary: RgbaColor): ImageBrush => {
-  if (!brush.intrinsicSize || !brush.colors || brush.colors.length !== brush.width * brush.height) return brush
-  const paintColors = new Uint32Array(brush.colors.length)
-  for (let index = 0; index < brush.colors.length; index += 1) {
-    const source = unpackColor(brush.colors[index] ?? 0)
-    if (source.a === 0) continue
-    const luminance = (source.r * 2126 + source.g * 7152 + source.b * 722) / 10000
-    const replacement = luminance >= 128 ? primary : secondary
-    paintColors[index] = packColor({ ...replacement, a: Math.round(replacement.a * source.a / 255) })
-  }
-  return { ...brush, paintColors }
-}
-
-const clearSelectionBrushPaintColors = (brush: ImageBrush | null): ImageBrush | null => brush ? { ...brush, paintColors: undefined } : null
-
-const rememberBrushProfile = (session: DocumentSession): void => {
-  if (isBrushTool(session.tool)) session.brushProfiles[session.tool] = brushProfileFromSession(session)
-}
-
-const createDefaultProceduralBrushSettings = (): Record<ProceduralBrushId, ProceduralBrushSettings> => Object.fromEntries(
-  PROCEDURAL_BRUSH_IDS.map((id) => [id, normalizeProceduralBrushSettings(id)])
-) as Record<ProceduralBrushId, ProceduralBrushSettings>
-
-const defaultToolSettings: PersistedToolSettings = {
-  brushSize: 1,
-  brushShape: 'round',
-  brushTexture: 'solid',
-  brushTextureScale: 1,
-  brushPaintMode: 'pattern-source',
-  brushPaintModePreferenceVersion: 1,
-  brushImageId: null,
-  brushImageSettings: { mode: 'dither', threshold: 128, blackPoint: 0, whitePoint: 255, invert: false },
-  proceduralBrushSettings: createDefaultProceduralBrushSettings(),
-  proceduralAntialias: false,
-  proceduralAntialiasPreferenceVersion: 1,
-  proceduralAntialiasStrength: 20,
-  brushProfiles: undefined,
-  shapeKind: 'rectangle',
-  fillMode: 'contiguous',
-  moveAutoSelect: true,
-  selectionKind: 'rectangle',
-  selectionMode: 'replace',
-  wandTolerance: 0,
-  wandContiguous: true,
-  perfectPixels: false
-}
-let toolSettingsPersistTimer: number | null = null
-
-function normalizePersistedBrushProfile(stored: Partial<PersistedBrushProfile> | undefined, fallback: PersistedBrushProfile): PersistedBrushProfile {
-  const proceduralBrushSettings = Object.fromEntries(PROCEDURAL_BRUSH_IDS.map((id) => [
-    id,
-    normalizeProceduralBrushSettings(id, stored?.proceduralBrushSettings?.[id] ?? fallback.proceduralBrushSettings[id])
-  ])) as Record<ProceduralBrushId, ProceduralBrushSettings>
-  return {
-    brushSize: Number.isFinite(stored?.brushSize) ? Math.max(1, Math.min(128, Math.round(stored!.brushSize!))) : fallback.brushSize,
-    brushShape: stored?.brushShape === 'square' || stored?.brushShape === 'round' || stored?.brushShape === 'line' ? stored.brushShape : fallback.brushShape,
-    brushTexture: stored?.brushTexture === 'cracks' || stored?.brushTexture === 'wood' || stored?.brushTexture === 'grain' || stored?.brushTexture === 'solid' ? stored.brushTexture : fallback.brushTexture,
-    brushTextureScale: Number.isFinite(stored?.brushTextureScale) ? Math.max(1, Math.min(16, Math.round(stored!.brushTextureScale!))) : fallback.brushTextureScale,
-    brushPaintMode: stored?.brushPaintMode === 'paint' || stored?.brushPaintMode === 'pattern-source' || stored?.brushPaintMode === 'pattern-target' ? stored.brushPaintMode : fallback.brushPaintMode,
-    brushImageId: typeof stored?.brushImageId === 'string' && stored.brushImageId.length > 0 ? stored.brushImageId : null,
-    brushImageSettings: {
-      mode: stored?.brushImageSettings?.mode === 'threshold' ? 'threshold' : stored?.brushImageSettings?.mode === 'dither' ? 'dither' : fallback.brushImageSettings.mode,
-      threshold: Number.isFinite(stored?.brushImageSettings?.threshold) ? Math.max(0, Math.min(255, Math.round(stored!.brushImageSettings!.threshold))) : fallback.brushImageSettings.threshold,
-      blackPoint: Number.isFinite(stored?.brushImageSettings?.blackPoint) ? Math.max(0, Math.min(254, Math.round(stored!.brushImageSettings!.blackPoint))) : fallback.brushImageSettings.blackPoint,
-      whitePoint: Number.isFinite(stored?.brushImageSettings?.whitePoint) ? Math.max(1, Math.min(255, Math.round(stored!.brushImageSettings!.whitePoint))) : fallback.brushImageSettings.whitePoint,
-      invert: stored?.brushImageSettings?.invert === true
-    },
-    proceduralBrushSettings,
-    proceduralAntialias: stored?.proceduralAntialias === true,
-    proceduralAntialiasStrength: Number.isFinite(stored?.proceduralAntialiasStrength) ? Math.max(1, Math.min(100, Math.round(stored!.proceduralAntialiasStrength!))) : fallback.proceduralAntialiasStrength
-  }
-}
-
-function persistedBrushProfileFromSession(profile: BrushProfile): PersistedBrushProfile {
-  return {
-    brushSize: profile.brushSize,
-    brushShape: profile.brushShape,
-    brushTexture: profile.brushTexture,
-    brushTextureScale: profile.brushTextureScale,
-    brushPaintMode: profile.brushPaintMode,
-    brushImageId: profile.brushImageTemporary ? null : profile.brushImageId,
-    brushImageSettings: { ...profile.brushImageSettings },
-    proceduralBrushSettings: cloneProceduralSettings(profile.proceduralBrushSettings),
-    proceduralAntialias: profile.proceduralAntialias,
-    proceduralAntialiasStrength: profile.proceduralAntialiasStrength
-  }
-}
-
-function brushProfileFromPersisted(profile: PersistedBrushProfile): BrushProfile {
-  return {
-    ...profile,
-    brushImage: null,
-    brushImageTemporary: false,
-    brushImageSettings: { ...profile.brushImageSettings },
-    proceduralBrushSettings: cloneProceduralSettings(profile.proceduralBrushSettings)
-  }
-}
-
-function loadToolSettings(): PersistedToolSettings {
-  try {
-    const stored = JSON.parse(localStorage.getItem(TOOL_SETTINGS_KEY) ?? 'null') as Partial<PersistedToolSettings> | null
-    if (!stored) return { ...defaultToolSettings, proceduralBrushSettings: createDefaultProceduralBrushSettings() }
-    const legacyProfile = normalizePersistedBrushProfile(stored, defaultToolSettings)
-    if (stored.brushPaintModePreferenceVersion !== 1) legacyProfile.brushPaintMode = defaultToolSettings.brushPaintMode
-    if (stored.proceduralAntialiasPreferenceVersion !== 1) legacyProfile.proceduralAntialias = defaultToolSettings.proceduralAntialias
-    const storedProfiles = stored.brushProfiles
-    const brushProfiles = Object.fromEntries((['pencil', 'eraser', 'fill'] as BrushTool[]).map((tool) => [
-      tool,
-      normalizePersistedBrushProfile(storedProfiles?.[tool], legacyProfile)
-    ])) as Record<BrushTool, PersistedBrushProfile>
-    return {
-      ...legacyProfile,
-      brushPaintModePreferenceVersion: 1,
-      proceduralAntialiasPreferenceVersion: 1,
-      brushProfiles,
-      shapeKind: stored.shapeKind === 'ellipse' || stored.shapeKind === 'rectangle' ? stored.shapeKind : defaultToolSettings.shapeKind,
-      fillMode: stored.fillMode === 'global' || stored.fillMode === 'contiguous' ? stored.fillMode : defaultToolSettings.fillMode,
-      moveAutoSelect: typeof stored.moveAutoSelect === 'boolean' ? stored.moveAutoSelect : defaultToolSettings.moveAutoSelect,
-      selectionKind: stored.selectionKind === 'magic' || stored.selectionKind === 'lasso' || stored.selectionKind === 'ellipse' || stored.selectionKind === 'rectangle' ? stored.selectionKind : defaultToolSettings.selectionKind,
-      selectionMode: stored.selectionMode === 'add' || stored.selectionMode === 'subtract' || stored.selectionMode === 'intersect' || stored.selectionMode === 'replace' ? stored.selectionMode : defaultToolSettings.selectionMode,
-      wandTolerance: Number.isFinite(stored.wandTolerance) ? Math.max(0, Math.min(255, Math.round(stored.wandTolerance!))) : defaultToolSettings.wandTolerance,
-      wandContiguous: typeof stored.wandContiguous === 'boolean' ? stored.wandContiguous : defaultToolSettings.wandContiguous,
-      perfectPixels: typeof stored.perfectPixels === 'boolean' ? stored.perfectPixels : defaultToolSettings.perfectPixels
-    }
-  } catch {
-    return { ...defaultToolSettings, proceduralBrushSettings: createDefaultProceduralBrushSettings() }
-  }
-}
-
-function persistToolSettings(session: DocumentSession): void {
-  const activeProfile = brushProfileFromSession(session)
-  if (isBrushTool(session.tool)) session.brushProfiles[session.tool] = activeProfile
-  const profiles = Object.fromEntries((['pencil', 'eraser', 'fill'] as BrushTool[]).map((tool) => [
-    tool,
-    persistedBrushProfileFromSession(session.brushProfiles[tool])
-  ])) as Record<BrushTool, PersistedBrushProfile>
-  const active = persistedBrushProfileFromSession(activeProfile)
-  const snapshot: PersistedToolSettings = {
-    ...active,
-    brushPaintModePreferenceVersion: 1,
-    proceduralAntialiasPreferenceVersion: 1,
-    brushProfiles: profiles,
-    shapeKind: session.shapeKind,
-    fillMode: session.fillMode,
-    moveAutoSelect: session.moveAutoSelect,
-    selectionKind: session.selectionKind,
-    selectionMode: session.selectionMode,
-    wandTolerance: session.wandTolerance,
-    wandContiguous: session.wandContiguous,
-    perfectPixels: session.perfectPixels
-  }
-  try {
-    if (toolSettingsPersistTimer !== null) window.clearTimeout(toolSettingsPersistTimer)
-    toolSettingsPersistTimer = window.setTimeout(() => {
-      try { localStorage.setItem(TOOL_SETTINGS_KEY, JSON.stringify(snapshot)) } catch { /* Ignore unavailable renderer storage. */ }
-      toolSettingsPersistTimer = null
-    }, 100)
-  } catch { /* Ignore unavailable renderer storage. */ }
-}
-
-const sessionFromDocument = (document: SpriteDocument): DocumentSession => {
-  const settings = loadToolSettings()
-  const fallbackProfile = normalizePersistedBrushProfile(settings, defaultToolSettings)
-  const persistedProfiles = settings.brushProfiles ?? Object.fromEntries((['pencil', 'eraser', 'fill'] as BrushTool[]).map((tool) => [tool, fallbackProfile])) as Record<BrushTool, PersistedBrushProfile>
-  const brushProfiles = Object.fromEntries((['pencil', 'eraser', 'fill'] as BrushTool[]).map((tool) => [
-    tool,
-    brushProfileFromPersisted(persistedProfiles[tool] ?? fallbackProfile)
-  ])) as Record<BrushTool, BrushProfile>
-  const session = {
-    document,
-    history: new HistoryStack(),
-    tool: 'pencil',
-    primaryColor: document.palette.find((entry) => entry.id !== 0)?.color ?? defaultColor,
-    secondaryColor: defaultSecondary,
-    brushSize: settings.brushSize,
-    brushShape: settings.brushShape,
-    brushTexture: settings.brushTexture,
-    brushTextureScale: settings.brushTextureScale,
-    brushPaintMode: settings.brushPaintMode,
-    brushImageId: settings.brushImageId,
-    brushImage: null,
-    brushImageTemporary: false,
-    brushImageSettings: { ...settings.brushImageSettings },
-    brushProfiles: {} as Record<BrushTool, BrushProfile>,
-    proceduralBrushSettings: Object.fromEntries(PROCEDURAL_BRUSH_IDS.map((id) => [id, { ...settings.proceduralBrushSettings[id] }])) as Record<ProceduralBrushId, ProceduralBrushSettings>,
-    proceduralAntialias: settings.proceduralAntialias,
-    proceduralAntialiasStrength: settings.proceduralAntialiasStrength,
-    shapeKind: settings.shapeKind,
-    fillMode: settings.fillMode,
-    moveAutoSelect: settings.moveAutoSelect,
-    selection: null,
-    selectionKind: settings.selectionKind,
-    selectionMode: settings.selectionMode,
-    wandTolerance: settings.wandTolerance,
-    wandContiguous: settings.wandContiguous,
-    perfectPixels: settings.perfectPixels,
-    lastPencilPoint: null,
-    lastEraserPoint: null,
-    canvasResizePreview: null,
-    outlinePreview: null,
-    pendingPaste: null,
-    view: { zoom: 16, panX: 0, panY: 0, rotation: 0, showGrid: false, relativeLuminance: false },
-    paletteSelectionId: document.palette.find((entry) => entry.id !== 0)?.id ?? document.palette[0]?.id ?? null,
-    selectedPaletteIds: document.palette.find((entry) => entry.id !== 0)?.id !== undefined
-      ? [document.palette.find((entry) => entry.id !== 0)!.id]
-      : document.palette[0] ? [document.palette[0].id] : [],
-    selectedGroupId: null,
-    selectedLayerIds: [document.activeLayerId],
-    collapsedGroupIds: [],
-    revision: 0,
-    recoverySuppressed: false
-  } as DocumentSession
-  applyBrushProfile(session, brushProfiles.pencil)
-  session.brushProfiles = brushProfiles
-  return session
-}
-
-const basename = (filePath: string): string => filePath.split(/[\\/]/).pop() ?? filePath
-const joinFilePath = (directory: string, fileName: string): string => `${directory}${/[\\/]$/.test(directory) ? '' : directory.includes('\\') ? '\\' : '/'}${fileName}`
-const extension = (filePath: string): string => filePath.split('.').pop()?.toLowerCase() ?? ''
-
-function touch(session: DocumentSession, dirty = true): void {
-  if (dirty) {
-    session.document.dirty = true
-    session.document.updatedAt = new Date().toISOString()
-    session.revision += 1
-    session.recoverySuppressed = false
-  }
 }
 
 function activeSession(state: WorkspaceState): DocumentSession | null {
   return state.sessions.find((session) => session.document.id === state.activeId) ?? null
 }
 
-function captureAdjustmentSnapshot(session: DocumentSession): AdjustmentSnapshot {
-  const layer = getActiveLayer(session.document)
-  return {
-    layerId: layer.id,
-    pixels: layer.format === 'rgba' ? new Uint8ClampedArray(layer.pixels) : new Uint32Array(layer.pixels),
-    palette: session.document.palette.map((entry) => ({ ...entry, color: { ...entry.color } })),
-    nextColorId: session.document.nextColorId
-  }
-}
-
-function restoreAdjustmentSnapshot(session: DocumentSession, snapshot: AdjustmentSnapshot): void {
-  const layer = getLayer(session.document, snapshot.layerId)
-  if (layer.format === 'rgba' && snapshot.pixels instanceof Uint8ClampedArray) layer.pixels = new Uint8ClampedArray(snapshot.pixels)
-  else if (layer.format === 'indexed' && snapshot.pixels instanceof Uint32Array) layer.pixels = new Uint32Array(snapshot.pixels)
-  else throw new Error('调整预览的图层格式已发生变化。')
-  session.document.palette = snapshot.palette.map((entry) => ({ ...entry, color: { ...entry.color } }))
-  session.document.nextColorId = snapshot.nextColorId
-}
-
-function restoreDocumentSnapshot(target: SpriteDocument, data: Uint8Array): void {
-  const restored = decodeProject(data)
-  restored.id = target.id
-  restored.filePath = target.filePath
-  restored.dirty = true
-  Object.assign(target, restored)
-}
-
-interface LayerUiSnapshot {
-  selectedLayerIds: string[]
-  selectedGroupId: string | null
-  collapsedGroupIds: string[]
-}
-
-const captureLayerUi = (session: DocumentSession): LayerUiSnapshot => ({
-  selectedLayerIds: [...session.selectedLayerIds],
-  selectedGroupId: session.selectedGroupId,
-  collapsedGroupIds: [...session.collapsedGroupIds]
-})
-
-const restoreLayerUi = (session: DocumentSession, snapshot: LayerUiSnapshot): void => {
-  session.selectedLayerIds = [...snapshot.selectedLayerIds]
-  session.selectedGroupId = snapshot.selectedGroupId
-  session.collapsedGroupIds = [...snapshot.collapsedGroupIds]
-}
-
-function commitLayerMerge(session: DocumentSession, beforeDocument: Uint8Array, beforeUi: LayerUiSnapshot, result: LayerMergeSuccess, label: string): void {
-  session.selectedGroupId = null
-  session.selectedLayerIds = [result.layerId]
-  session.collapsedGroupIds = session.collapsedGroupIds.filter((id) => !result.removedGroupIds.includes(id))
-  touch(session)
-  const afterDocument = encodeProject(session.document)
-  const afterUi = captureLayerUi(session)
-  session.history.push({
-    label,
-    bytes: beforeDocument.byteLength + afterDocument.byteLength,
-    undo: () => { restoreDocumentSnapshot(session.document, beforeDocument); restoreLayerUi(session, beforeUi) },
-    redo: () => { restoreDocumentSnapshot(session.document, afterDocument); restoreLayerUi(session, afterUi) }
-  })
-}
-
-let autosaveQueue: Promise<void> = Promise.resolve()
-const saveOperations = new Map<string, Promise<boolean>>()
-interface SelectionClipboard { width: number; height: number; pixels: Uint32Array; mask: Uint8Array }
-interface LayerClipboard { name: string; width: number; height: number; offsetX: number; offsetY: number; visible: boolean; locked: boolean; opacity: number; blendMode: RasterLayer['blendMode']; pixels: Uint8ClampedArray }
-
-let selectionClipboard: SelectionClipboard | null = null
-let layerClipboard: LayerClipboard | null = null
-
-const selectionClipboardFromImage = (image: ClipboardImage): SelectionClipboard | null => {
-  const pixels = image.width * image.height
-  if (!Number.isSafeInteger(pixels) || pixels < 1 || pixels > 16 * 1024 * 1024 || image.data.length !== pixels * 4) return null
-  const packed = new Uint32Array(pixels)
-  const mask = new Uint8Array(pixels)
-  let opaque = 0
-  for (let index = 0; index < pixels; index += 1) {
-    const offset = index * 4
-    const alpha = image.data[offset + 3]
-    if (alpha === 0) continue
-    packed[index] = packColor({ r: image.data[offset], g: image.data[offset + 1], b: image.data[offset + 2], a: alpha })
-    mask[index] = 1
-    opaque += 1
-  }
-  return opaque > 0 ? { width: image.width, height: image.height, pixels: packed, mask } : null
-}
-
-const selectionClipboardImage = (clipboard: SelectionClipboard): ClipboardImage => {
-  const data = new Uint8Array(clipboard.width * clipboard.height * 4)
-  for (let index = 0; index < clipboard.pixels.length; index += 1) {
-    if (clipboard.mask[index] !== 1) continue
-    const color = unpackColor(clipboard.pixels[index])
-    const offset = index * 4
-    data[offset] = color.r
-    data[offset + 1] = color.g
-    data[offset + 2] = color.b
-    data[offset + 3] = color.a
-  }
-  return { width: clipboard.width, height: clipboard.height, data }
-}
-
-const cloneSelectionMask = (selection: SelectionMask | null): SelectionMask | null =>
-  selection ? { ...selection, mask: selection.mask?.slice() } : null
+const recoveryService = new RecoveryService()
+const clipboardService = new ClipboardService()
 
 export const useWorkspace = create<WorkspaceState>((set, get) => ({
   sessions: [],
   activeId: null,
   message: null,
+  saveProgress: null,
   dialog: null,
   recoveryRecords: [],
 
@@ -886,6 +361,17 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     }, false)
   },
   setSecondaryColor(color) { get().mutateActive((session) => { session.secondaryColor = { ...color }; if (session.brushImage?.intrinsicSize) session.brushImage = remapSelectionBrushColors(session.brushImage, session.primaryColor, session.secondaryColor) }, false) },
+  swapPrimarySecondaryColors() {
+    get().mutateActive((session) => {
+      const primary = session.primaryColor
+      session.primaryColor = { ...session.secondaryColor }
+      session.secondaryColor = { ...primary }
+      if (session.brushImage?.intrinsicSize) session.brushImage = remapSelectionBrushColors(session.brushImage, session.primaryColor, session.secondaryColor)
+      const matching = session.document.palette.find((entry) => session.document.paletteOrder.includes(entry.id) && colorEquals(entry.color, session.primaryColor))
+      session.paletteSelectionId = matching?.id ?? null
+      session.selectedPaletteIds = matching ? [matching.id] : []
+    }, false)
+  },
   setView(view) { get().mutateActive((session) => { Object.assign(session.view, view) }, false) },
   setSelection(selection) { get().mutateActive((session) => { session.selection = selection ? { ...selection, mask: selection.mask?.slice() } : null }, false) },
   beginLayerTransform() {
@@ -958,114 +444,25 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
   },
   toggleGrid() { get().mutateActive((session) => { session.view.showGrid = !session.view.showGrid }, false) },
   selectPaletteColor(id, additive = false) {
-    get().mutateActive((session) => {
-      const entry = session.document.palette.find((candidate) => candidate.id === id)
-      if (!entry) return
-      if (!additive) session.selectedPaletteIds = [id]
-      else if (session.selectedPaletteIds.includes(id)) session.selectedPaletteIds = session.selectedPaletteIds.filter((entryId) => entryId !== id)
-      else session.selectedPaletteIds = [...session.selectedPaletteIds, id]
-      session.paletteSelectionId = session.selectedPaletteIds.includes(id) ? id : session.selectedPaletteIds.at(-1) ?? null
-      const active = session.document.palette.find((candidate) => candidate.id === session.paletteSelectionId)
-      if (active) {
-        session.primaryColor = { ...active.color }
-        if (session.brushImage?.intrinsicSize) session.brushImage = remapSelectionBrushColors(session.brushImage, session.primaryColor, session.secondaryColor)
-      }
-    }, false)
+    get().mutateActive((session) => selectPaletteColorCommand(session, id, additive), false)
   },
   addPaletteColor() {
-    get().mutateActive((session) => {
-      const id = findOrAddPaletteColor(session.document, session.primaryColor, true)
-      session.paletteSelectionId = id
-      session.selectedPaletteIds = [id]
-    })
+    get().mutateActive(addPaletteColorCommand)
   },
   applyPalette(colors) {
-    get().mutateActive((session) => {
-      const document = session.document
-      const beforeOrder = [...document.paletteOrder]
-      const beforeSelected = [...session.selectedPaletteIds]
-      const beforePrimary = session.paletteSelectionId
-      const colorIds = colors.map((color) => findOrAddPaletteColor(document, color, false))
-      const afterOrder = [...new Set(document.colorMode === 'indexed' ? [0, ...colorIds] : colorIds)]
-      if (afterOrder.length === beforeOrder.length && afterOrder.every((id, index) => id === beforeOrder[index])) return
-      const matchingCurrent = afterOrder.find((id) => {
-        const entry = document.palette.find((candidate) => candidate.id === id)
-        return Boolean(entry && colorEquals(entry.color, session.primaryColor))
-      })
-      const afterSelected = matchingCurrent === undefined ? [] : [matchingCurrent]
-      const afterPrimary = matchingCurrent ?? null
-      const apply = (order: number[], selected: number[], primary: number | null): void => {
-        document.paletteOrder = [...order]
-        session.selectedPaletteIds = [...selected]
-        session.paletteSelectionId = primary
-      }
-      apply(afterOrder, afterSelected, afterPrimary)
-      session.history.push({
-        label: '切换调色板',
-        bytes: (beforeOrder.length + afterOrder.length + beforeSelected.length + afterSelected.length) * 4 + 32,
-        undo: () => apply(beforeOrder, beforeSelected, beforePrimary),
-        redo: () => apply(afterOrder, afterSelected, afterPrimary)
-      })
-    })
+    get().mutateActive((session) => applyPaletteCommand(session, colors))
   },
   deletePaletteColor(id) {
     get().deletePaletteColors([id])
   },
   deletePaletteColors(ids) {
-    get().mutateActive((session) => {
-      const document = session.document
-      const removed = new Set(ids.filter((id) => document.paletteOrder.includes(id)))
-      if (removed.size === 0) return
-      const beforeOrder = [...document.paletteOrder]
-      const afterOrder = beforeOrder.filter((id) => !removed.has(id))
-      const beforeSelected = [...session.selectedPaletteIds]
-      const beforePrimary = session.paletteSelectionId
-      const afterSelected = beforeSelected.filter((id) => !removed.has(id))
-      const afterPrimary = afterSelected.includes(beforePrimary ?? -1) ? beforePrimary : afterSelected.at(-1) ?? null
-      document.paletteOrder = afterOrder
-      session.selectedPaletteIds = afterSelected
-      session.paletteSelectionId = afterPrimary
-      session.history.push({
-        label: removed.size > 1 ? '批量移除调色板颜色' : '从调色板移除颜色',
-        bytes: (beforeOrder.length + afterOrder.length + beforeSelected.length + afterSelected.length) * 4 + 32,
-        undo: () => { document.paletteOrder = [...beforeOrder]; session.selectedPaletteIds = [...beforeSelected]; session.paletteSelectionId = beforePrimary },
-        redo: () => { document.paletteOrder = [...afterOrder]; session.selectedPaletteIds = [...afterSelected]; session.paletteSelectionId = afterPrimary }
-      })
-    })
+    get().mutateActive((session) => deletePaletteColorsCommand(session, ids))
   },
   movePaletteColor(direction) {
-    get().mutateActive((session) => {
-      const document = session.document
-      const order = session.document.paletteOrder
-      const currentIndex = order.indexOf(session.paletteSelectionId ?? -1)
-      const targetIndex = currentIndex + direction
-      if (currentIndex < 0 || targetIndex < 0 || targetIndex >= order.length) return
-      ;[order[currentIndex], order[targetIndex]] = [order[targetIndex], order[currentIndex]]
-      const swap = (): void => { ;[document.paletteOrder[currentIndex], document.paletteOrder[targetIndex]] = [document.paletteOrder[targetIndex], document.paletteOrder[currentIndex]] }
-      session.history.push({ label: '调整调色板顺序', bytes: 16, undo: swap, redo: swap })
-    })
+    get().mutateActive((session) => movePaletteColorCommand(session, direction))
   },
   reorderPaletteColors(ids, targetId, insertAfter = false) {
-    get().mutateActive((session) => {
-      const document = session.document
-      const selected = new Set(ids.filter((id) => document.paletteOrder.includes(id)))
-      if (selected.size === 0 || selected.has(targetId)) return
-      const before = [...document.paletteOrder]
-      const moving = before.filter((id) => selected.has(id))
-      const remaining = before.filter((id) => !selected.has(id))
-      const targetIndex = remaining.indexOf(targetId)
-      if (targetIndex < 0) return
-      remaining.splice(targetIndex + (insertAfter ? 1 : 0), 0, ...moving)
-      if (remaining.every((id, index) => id === before[index])) return
-      const after = [...remaining]
-      document.paletteOrder = after
-      session.history.push({
-        label: moving.length > 1 ? '批量调整调色板顺序' : '调整调色板顺序',
-        bytes: (before.length + after.length) * 4,
-        undo: () => { document.paletteOrder = [...before] },
-        redo: () => { document.paletteOrder = [...after] }
-      })
-    })
+    get().mutateActive((session) => reorderPaletteColorsCommand(session, ids, targetId, insertAfter))
   },
 
   mutateActive(mutator, dirty = true) {
@@ -1092,7 +489,9 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
   },
 
   undo() {
-    const session = activeSession(get())
+    let session = activeSession(get())
+    if (session) flushViewPreview(session.document.id)
+    session = activeSession(get())
     if (session?.pendingPaste) { get().cancelFloatingPaste(); return }
     if (!session?.history.canUndo) return
     get().mutateActive((session) => {
@@ -1103,7 +502,9 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
   },
 
   redo() {
-    const session = activeSession(get())
+    let session = activeSession(get())
+    if (session) flushViewPreview(session.document.id)
+    session = activeSession(get())
     if (!session?.history.canRedo) return
     get().mutateActive((session) => {
       const view = { ...session.view }
@@ -1300,26 +701,9 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
   },
 
   reorderLayers(layerIds, targetLayerId, insertAfterTarget = true) {
-    const uniqueIds = [...new Set(layerIds)]
-    if (uniqueIds.length === 0 || uniqueIds.includes(targetLayerId)) return
     get().mutateActive((session) => {
-      const document = session.document
-      const dragged = document.layers.filter((layer) => uniqueIds.includes(layer.id))
-      if (dragged.length === 0) return
-      const beforeOrder = document.layers.map((layer) => layer.id)
-      const layerById = new Map(document.layers.map((layer) => [layer.id, layer]))
-      document.layers = document.layers.filter((layer) => !uniqueIds.includes(layer.id))
-      const targetIndex = document.layers.findIndex((layer) => layer.id === targetLayerId)
-      document.layers.splice(targetIndex + (insertAfterTarget ? 1 : 0), 0, ...dragged)
-      document.activeLayerId = dragged.at(-1)!.id
-      session.selectedGroupId = null
-      session.selectedLayerIds = dragged.map((layer) => layer.id)
-      const afterOrder = document.layers.map((layer) => layer.id)
-      const applyOrder = (order: string[]): void => {
-        document.layers = order.map((id) => layerById.get(id)!).filter(Boolean)
-        document.activeLayerId = dragged.at(-1)!.id
-      }
-      session.history.push({ label: '拖动图层', bytes: (beforeOrder.length + afterOrder.length) * 8, undo: () => applyOrder(beforeOrder), redo: () => applyOrder(afterOrder) })
+      const history = reorderLayersOperation(session, layerIds, targetLayerId, insertAfterTarget)
+      if (history) session.history.push(history)
     })
   },
 
@@ -1328,244 +712,65 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
   },
 
   assignLayersToGroup(layerIds, groupId, targetLayerId, insertAfterTarget = true) {
-    const uniqueIds = [...new Set(layerIds)]
     get().mutateActive((session) => {
-      const document = session.document
-      const selected = document.layers.filter((layer) => uniqueIds.includes(layer.id))
-      if (selected.length === 0) return
-      getGroup(document, groupId)
-      const beforeOrder = document.layers.map((item) => item.id)
-      const beforeGroupIds = new Map(selected.map((layer) => [layer.id, layer.groupId ?? null]))
-      const layerById = new Map(document.layers.map((item) => [item.id, item]))
-      document.layers = document.layers.filter((item) => !uniqueIds.includes(item.id))
-      const targetIndex = targetLayerId ? document.layers.findIndex((item) => item.id === targetLayerId && item.groupId === groupId) : -1
-      const lastMember = document.layers.reduce((last, item, index) => item.groupId === groupId ? index : last, -1)
-      const insertionIndex = targetIndex >= 0 ? targetIndex + (insertAfterTarget ? 1 : 0) : lastMember + 1
-      document.layers.splice(insertionIndex, 0, ...selected)
-      for (const layer of selected) layer.groupId = groupId
-      document.activeLayerId = selected.at(-1)!.id
-      session.selectedGroupId = groupId
-      session.selectedLayerIds = selected.map((layer) => layer.id)
-      const afterOrder = document.layers.map((item) => item.id)
-      const apply = (order: string[], assignedGroupIds: Map<string, string | null>): void => {
-        document.layers = order.map((id) => layerById.get(id)!).filter(Boolean)
-        for (const layer of selected) layer.groupId = assignedGroupIds.get(layer.id) ?? null
-        document.activeLayerId = selected.at(-1)!.id
-      }
-      const afterGroupIds = new Map(selected.map((layer) => [layer.id, groupId]))
-      session.history.push({ label: '移动到图层组', bytes: (beforeOrder.length + afterOrder.length) * 8, undo: () => apply(beforeOrder, beforeGroupIds), redo: () => apply(afterOrder, afterGroupIds) })
+      const history = assignLayersToGroupOperation(session, layerIds, groupId, targetLayerId, insertAfterTarget)
+      if (history) session.history.push(history)
     })
   },
 
   assignLayersToRoot(layerIds, targetLayerId, insertAfterTarget = true) {
-    const uniqueIds = [...new Set(layerIds)]
     get().mutateActive((session) => {
-      const document = session.document
-      const selected = document.layers.filter((layer) => uniqueIds.includes(layer.id))
-      if (selected.length === 0) return
-      const beforeOrder = document.layers.map((item) => item.id)
-      const beforeGroupIds = new Map(selected.map((layer) => [layer.id, layer.groupId ?? null]))
-      const layerById = new Map(document.layers.map((item) => [item.id, item]))
-      document.layers = document.layers.filter((item) => !uniqueIds.includes(item.id))
-      const targetIndex = targetLayerId ? document.layers.findIndex((layer) => layer.id === targetLayerId) : -1
-      const insertionIndex = targetIndex >= 0 ? targetIndex + (insertAfterTarget ? 1 : 0) : 0
-      document.layers.splice(insertionIndex, 0, ...selected)
-      for (const layer of selected) layer.groupId = null
-      document.activeLayerId = selected.at(-1)!.id
-      session.selectedGroupId = null
-      session.selectedLayerIds = selected.map((layer) => layer.id)
-      const afterOrder = document.layers.map((item) => item.id)
-      const apply = (order: string[], groupIds: Map<string, string | null>): void => {
-        document.layers = order.map((id) => layerById.get(id)!).filter(Boolean)
-        for (const layer of selected) layer.groupId = groupIds.get(layer.id) ?? null
-        document.activeLayerId = selected.at(-1)!.id
-      }
-      const rootGroupIds = new Map(selected.map((layer) => [layer.id, null]))
-      session.history.push({ label: '移到最外层', bytes: (beforeOrder.length + afterOrder.length) * 8 + selected.length * 16, undo: () => apply(beforeOrder, beforeGroupIds), redo: () => apply(afterOrder, rootGroupIds) })
+      const history = assignLayersToRootOperation(session, layerIds, targetLayerId, insertAfterTarget)
+      if (history) session.history.push(history)
     })
   },
 
   assignLayersAboveGroup(layerIds, groupId) {
-    const uniqueIds = [...new Set(layerIds)]
     get().mutateActive((session) => {
-      const document = session.document
-      const selected = document.layers.filter((layer) => uniqueIds.includes(layer.id))
-      if (selected.length === 0) return
-      const group = getGroup(document, groupId)
-      const containerGroupIds = new Set([groupId, ...getDescendantGroupIds(document, groupId)])
-      const beforeOrder = document.layers.map((item) => item.id)
-      const beforeGroupIds = new Map(selected.map((layer) => [layer.id, layer.groupId ?? null]))
-      const layerById = new Map(document.layers.map((item) => [item.id, item]))
-      const originalIndex = new Map(document.layers.map((item, index) => [item.id, index]))
-      const groupTopIndex = document.layers.reduce((top, item, index) => item.groupId && containerGroupIds.has(item.groupId) ? Math.max(top, index) : top, -1)
-      document.layers = document.layers.filter((item) => !uniqueIds.includes(item.id))
-      const insertionIndex = groupTopIndex < 0
-        ? 0
-        : document.layers.reduce((count, item) => (originalIndex.get(item.id) ?? Number.POSITIVE_INFINITY) <= groupTopIndex ? count + 1 : count, 0)
-      document.layers.splice(insertionIndex, 0, ...selected)
-      const parentGroupId = group.parentGroupId ?? null
-      for (const layer of selected) layer.groupId = parentGroupId
-      document.activeLayerId = selected.at(-1)!.id
-      session.selectedGroupId = null
-      session.selectedLayerIds = selected.map((layer) => layer.id)
-      const afterOrder = document.layers.map((item) => item.id)
-      const afterGroupIds = new Map(selected.map((layer) => [layer.id, parentGroupId]))
-      const apply = (order: string[], groupIds: Map<string, string | null>): void => {
-        document.layers = order.map((id) => layerById.get(id)!).filter(Boolean)
-        for (const layer of selected) layer.groupId = groupIds.get(layer.id) ?? null
-        document.activeLayerId = selected.at(-1)!.id
-      }
-      session.history.push({ label: '移动到图层组上方', bytes: (beforeOrder.length + afterOrder.length) * 8 + selected.length * 16, undo: () => apply(beforeOrder, beforeGroupIds), redo: () => apply(afterOrder, afterGroupIds) })
+      const history = assignLayersAboveGroupOperation(session, layerIds, groupId)
+      if (history) session.history.push(history)
     })
   },
 
   reorderGroup(groupId, targetGroupId, insertAfterTarget = true) {
     if (groupId === targetGroupId) return
     get().mutateActive((session) => {
-      const document = session.document
-      const group = getGroup(document, groupId)
-      const target = getGroup(document, targetGroupId)
-      if (getDescendantGroupIds(document, groupId).includes(targetGroupId)) {
+      if (!canMoveGroupInto(session.document, groupId, targetGroupId)) {
         set({ message: '不能把图层组移动到自己的子组旁。' })
         return
       }
-      const movingGroupIds = new Set([groupId, ...getDescendantGroupIds(document, groupId)])
-      const targetGroupIds = new Set([targetGroupId, ...getDescendantGroupIds(document, targetGroupId)])
-      const movingLayers = document.layers.filter((layer) => layer.groupId && movingGroupIds.has(layer.groupId))
-      const movingLayerIds = new Set(movingLayers.map((layer) => layer.id))
-      const beforeLayerOrder = document.layers.map((layer) => layer.id)
-      const beforeGroupOrder = document.groups.map((item) => item.id)
-      const beforeParent = group.parentGroupId ?? null
-      const layerById = new Map(document.layers.map((layer) => [layer.id, layer]))
-      const groupById = new Map(document.groups.map((item) => [item.id, item]))
-
-      const remainingLayers = document.layers.filter((layer) => !movingLayerIds.has(layer.id))
-      const targetLayerIndexes = remainingLayers.flatMap((layer, index) => layer.groupId && targetGroupIds.has(layer.groupId) ? [index] : [])
-      if (movingLayers.length > 0 && targetLayerIndexes.length > 0) {
-        const insertionIndex = insertAfterTarget ? Math.max(...targetLayerIndexes) + 1 : Math.min(...targetLayerIndexes)
-        remainingLayers.splice(insertionIndex, 0, ...movingLayers)
-        document.layers = remainingLayers
-      }
-
-      const remainingGroups = document.groups.filter((item) => item.id !== groupId)
-      const targetIndex = remainingGroups.findIndex((item) => item.id === targetGroupId)
-      remainingGroups.splice(targetIndex + (insertAfterTarget ? 1 : 0), 0, group)
-      document.groups = remainingGroups
-      group.parentGroupId = target.parentGroupId ?? null
-      session.selectedGroupId = group.id
-      session.selectedLayerIds = getLayerIdsInGroup(document, group.id)
-
-      const afterLayerOrder = document.layers.map((layer) => layer.id)
-      const afterGroupOrder = document.groups.map((item) => item.id)
-      const afterParent = group.parentGroupId ?? null
-      const apply = (layerOrder: string[], groupOrder: string[], parentGroupId: string | null): void => {
-        document.layers = layerOrder.map((id) => layerById.get(id)!).filter(Boolean)
-        document.groups = groupOrder.map((id) => groupById.get(id)!).filter(Boolean)
-        group.parentGroupId = parentGroupId
-        session.selectedGroupId = group.id
-        session.selectedLayerIds = getLayerIdsInGroup(document, group.id)
-      }
-      session.history.push({
-        label: '移动图层组',
-        bytes: (beforeLayerOrder.length + afterLayerOrder.length + beforeGroupOrder.length + afterGroupOrder.length) * 8 + 48,
-        undo: () => apply(beforeLayerOrder, beforeGroupOrder, beforeParent),
-        redo: () => apply(afterLayerOrder, afterGroupOrder, afterParent)
-      })
+      const history = reorderGroupOperation(session, groupId, targetGroupId, insertAfterTarget)
+      if (history) session.history.push(history)
     })
   },
 
   assignGroupToGroup(groupId, parentGroupId) {
     if (groupId === parentGroupId) return
     get().mutateActive((session) => {
-      const document = session.document
-      const group = getGroup(document, groupId)
-      getGroup(document, parentGroupId)
-      if (getDescendantGroupIds(document, groupId).includes(parentGroupId)) { set({ message: '不能把图层组移动到自己的子组中。' }); return }
-      const before = group.parentGroupId ?? null
-      if (before === parentGroupId) return
-      group.parentGroupId = parentGroupId
-      session.selectedGroupId = group.id
-      session.selectedLayerIds = getLayerIdsInGroup(document, group.id)
-      session.history.push({
-        label: '移动图层组', bytes: 48,
-        undo: () => { group.parentGroupId = before },
-        redo: () => { group.parentGroupId = parentGroupId }
-      })
+      if (!canMoveGroupInto(session.document, groupId, parentGroupId)) { set({ message: '不能把图层组移动到自己的子组中。' }); return }
+      const history = assignGroupToGroupOperation(session, groupId, parentGroupId)
+      if (history) session.history.push(history)
     })
   },
 
   assignGroupToRoot(groupId) {
     get().mutateActive((session) => {
-      const document = session.document
-      const group = getGroup(document, groupId)
-      const before = group.parentGroupId ?? null
-      if (!before) return
-      group.parentGroupId = null
-      session.selectedGroupId = group.id
-      session.selectedLayerIds = getLayerIdsInGroup(document, group.id)
-      session.history.push({ label: '移到最外层', bytes: 48, undo: () => { group.parentGroupId = before }, redo: () => { group.parentGroupId = null } })
+      const history = assignGroupToRootOperation(session, groupId)
+      if (history) session.history.push(history)
     })
   },
 
   createLayerGroup() {
     get().mutateActive((session) => {
-      const document = session.document
-      const selected = session.selectedGroupId ? [] : document.layers.filter((layer) => session.selectedLayerIds.includes(layer.id))
-      const layers = selected.length > 0 ? selected : session.selectedGroupId ? [] : [getLayer(document, document.activeLayerId)]
-      const commonParent = session.selectedGroupId ?? (layers.length > 0 && layers.every((layer) => (layer.groupId ?? null) === (layers[0].groupId ?? null)) ? layers[0].groupId ?? null : null)
-      const group = { id: createId('group'), name: `组 ${document.groups.length + 1}`, parentGroupId: commonParent, visible: true, locked: false, opacity: 1, blendMode: 'normal' as const }
-      document.groups.push(group)
-      const beforeGroupIds = new Map(layers.map((layer) => [layer.id, layer.groupId ?? null]))
-      for (const layer of layers) layer.groupId = group.id
-      session.selectedGroupId = group.id
-      session.selectedLayerIds = layers.map((layer) => layer.id)
-      session.history.push({
-        label: '新建图层组', bytes: 96 + layers.length * 16,
-        undo: () => { document.groups = document.groups.filter((item) => item.id !== group.id); for (const layer of layers) layer.groupId = beforeGroupIds.get(layer.id) ?? null; session.selectedGroupId = commonParent },
-        redo: () => { document.groups.push(group); for (const layer of layers) layer.groupId = group.id; session.selectedGroupId = group.id }
-      })
+      const history = createLayerGroupOperation(session, createId('group'), `组 ${session.document.groups.length + 1}`)
+      if (history) session.history.push(history)
     })
   },
 
   ungroupSelected() {
     get().mutateActive((session) => {
-      const document = session.document
-      const groupIds = new Set<string>()
-      if (session.selectedGroupId) groupIds.add(session.selectedGroupId)
-      else for (const layer of document.layers) if (session.selectedLayerIds.includes(layer.id) && layer.groupId) groupIds.add(layer.groupId)
-      if (groupIds.size === 0) return
-      const removedGroups = document.groups.filter((group) => groupIds.has(group.id))
-      const removedById = new Map(removedGroups.map((group) => [group.id, group]))
-      const beforeGroups = [...document.groups]
-      const beforeLayerGroupIds = new Map(document.layers.map((layer) => [layer.id, layer.groupId ?? null]))
-      const beforeParentGroupIds = new Map(document.groups.map((group) => [group.id, group.parentGroupId ?? null]))
-      const survivingParent = (groupId: string): string | null => {
-        let parentId = removedById.get(groupId)?.parentGroupId ?? null
-        const visited = new Set<string>()
-        while (parentId && groupIds.has(parentId) && !visited.has(parentId)) {
-          visited.add(parentId)
-          parentId = removedById.get(parentId)?.parentGroupId ?? null
-        }
-        return parentId
-      }
-      const applyUngroup = (): void => {
-        for (const layer of document.layers) if (layer.groupId && groupIds.has(layer.groupId)) layer.groupId = survivingParent(layer.groupId)
-        for (const group of document.groups) if (group.parentGroupId && groupIds.has(group.parentGroupId)) group.parentGroupId = survivingParent(group.parentGroupId)
-        document.groups = document.groups.filter((group) => !groupIds.has(group.id))
-      }
-      applyUngroup()
-      session.selectedGroupId = null
-      session.selectedLayerIds = document.layers.filter((layer) => beforeLayerGroupIds.get(layer.id) && groupIds.has(beforeLayerGroupIds.get(layer.id)!)).map((layer) => layer.id)
-      session.collapsedGroupIds = session.collapsedGroupIds.filter((id) => !groupIds.has(id))
-      session.history.push({
-        label: '解组图层', bytes: 96 + document.layers.length * 20 + document.groups.length * 16,
-        undo: () => {
-          document.groups = [...beforeGroups]
-          for (const layer of document.layers) layer.groupId = beforeLayerGroupIds.get(layer.id) ?? null
-          for (const group of document.groups) group.parentGroupId = beforeParentGroupIds.get(group.id) ?? null
-        },
-        redo: applyUngroup
-      })
+      const history = ungroupSelectedOperation(session)
+      if (history) session.history.push(history)
     })
   },
 
@@ -1618,13 +823,13 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     })
   },
 
-  setGroupProperties(groupId, name, opacity, blendMode, locked) {
+  setGroupProperties(groupId, name, opacity, blendMode, locked, displayColor, description) {
     const trimmed = name.trim()
     if (!trimmed) return
     get().mutateActive((session) => {
       const group = getGroup(session.document, groupId)
-      const before = { name: group.name, opacity: group.opacity, blendMode: group.blendMode, locked: group.locked }
-      const after = { name: trimmed, opacity: Math.max(0, Math.min(1, opacity)), blendMode, locked }
+      const before = { name: group.name, opacity: group.opacity, blendMode: group.blendMode, locked: group.locked, displayColor: group.displayColor, description: group.description ?? '' }
+      const after = { name: trimmed, opacity: Math.max(0, Math.min(1, opacity)), blendMode, locked, displayColor: displayColor === undefined ? group.displayColor : displayColor ?? undefined, description: description ?? group.description ?? '' }
       Object.assign(group, after)
       session.history.push({ label: '修改图层组属性', bytes: 48 + before.name.length + after.name.length, undo: () => Object.assign(group, before), redo: () => Object.assign(group, after) })
     })
@@ -1664,13 +869,13 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     })
   },
 
-  setLayerPropertiesWithBlend(layerId, name, opacity, blendMode, locked) {
+  setLayerPropertiesWithBlend(layerId, name, opacity, blendMode, locked, displayColor, description) {
     const trimmed = name.trim()
     if (!trimmed) return
     get().mutateActive((session) => {
       const layer = getLayer(session.document, layerId)
-      const before = { name: layer.name, opacity: layer.opacity, blendMode: layer.blendMode, locked: layer.locked }
-      const after = { name: trimmed, opacity: Math.max(0, Math.min(1, opacity)), blendMode, locked: locked ?? layer.locked }
+      const before = { name: layer.name, opacity: layer.opacity, blendMode: layer.blendMode, locked: layer.locked, displayColor: layer.displayColor, description: layer.description ?? '' }
+      const after = { name: trimmed, opacity: Math.max(0, Math.min(1, opacity)), blendMode, locked: locked ?? layer.locked, displayColor: displayColor === undefined ? layer.displayColor : displayColor ?? undefined, description: description ?? layer.description ?? '' }
       Object.assign(layer, after)
       session.history.push({ label: '修改图层属性', bytes: 40 + before.name.length + after.name.length, undo: () => Object.assign(layer, before), redo: () => Object.assign(layer, after) })
     })
@@ -1780,7 +985,6 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     }
     const layer = session.document.layers.find((candidate) => candidate.id === session.selectedLayerIds[0])
     if (!layer) return
-    selectionClipboard = null
     const pixels = new Uint8ClampedArray(layer.width * layer.height * 4)
     for (let y = 0; y < layer.height; y += 1) for (let x = 0; x < layer.width; x += 1) {
       const color = readLayerColorAt(session.document, layer, layer.offsetX + x, layer.offsetY + y)
@@ -1790,12 +994,12 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       pixels[offset + 2] = color.b
       pixels[offset + 3] = color.a
     }
-    layerClipboard = { name: layer.name, width: layer.width, height: layer.height, offsetX: layer.offsetX, offsetY: layer.offsetY, visible: layer.visible, locked: layer.locked, opacity: layer.opacity, blendMode: layer.blendMode, pixels }
+    clipboardService.setLayer({ name: layer.name, width: layer.width, height: layer.height, offsetX: layer.offsetX, offsetY: layer.offsetY, visible: layer.visible, locked: layer.locked, opacity: layer.opacity, blendMode: layer.blendMode, pixels })
     set({ message: `已复制图层“${layer.name}”。` })
   },
 
   pasteLayerFromClipboard() {
-    const clipboard = layerClipboard
+    const clipboard = clipboardService.getLayer()
     const current = activeSession(get())
     if (!clipboard || !current) return false
     get().mutateActive((session) => {
@@ -1850,10 +1054,11 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       mask[clipboardIndex] = 1
       copied += 1
     }
-    if (copied === 0) { selectionClipboard = null; set({ message: '选区内没有可复制的非透明像素。' }); return }
-    layerClipboard = null
-    selectionClipboard = { width: selection.width, height: selection.height, pixels, mask }
-    void window.moonSprite.writeClipboardImage(selectionClipboardImage(selectionClipboard)).catch(() => {
+    if (copied === 0) { clipboardService.clearSelection(); set({ message: '选区内没有可复制的非透明像素。' }); return }
+    clipboardService.setSelection({ width: selection.width, height: selection.height, pixels, mask })
+    const clipboard = clipboardService.getSelection()
+    if (!clipboard) return
+    void window.moonSprite.writeClipboardImage(selectionClipboardImage(clipboard)).catch(() => {
       set({ message: '已复制到软件内部剪贴板，但无法写入系统剪贴板。' })
     })
     set({ message: `已复制 ${copied} 个非透明像素。` })
@@ -1867,14 +1072,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
 
   async pasteSelection() {
     get().commitFloatingPaste()
-    let clipboard = selectionClipboard
-    try {
-      const systemImage = await window.moonSprite.readClipboardImage()
-      if (systemImage) clipboard = selectionClipboardFromImage(systemImage)
-    } catch {
-      // Keep the last MoonSprite copy usable when another application exposes
-      // no readable image representation through the system clipboard.
-    }
+    const clipboard = await clipboardService.readSelection(() => window.moonSprite.readClipboardImage())
     get().mutateActive((session) => {
       if (!clipboard) { set({ message: '剪贴板中没有像素内容。' }); return }
       const document = session.document
@@ -1996,6 +1194,8 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
         || (beforeSelection?.mask?.length === afterSelection?.mask?.length && beforeSelection?.mask?.every((value, index) => value === afterSelection?.mask?.[index]))
       const selectionChanged = !sameMask
       session.selection = afterSelection
+      session.lastPencilPoint = null
+      session.lastEraserPoint = null
       if (entry) {
         session.history.push({ ...entry, bytes: entry.bytes + (beforeSelection?.mask?.byteLength ?? 0) + (afterSelection?.mask?.byteLength ?? 0), undo: () => { entry.undo(); session.selection = cloneSelectionMask(beforeSelection) }, redo: () => { entry.redo(); session.selection = cloneSelectionMask(afterSelection) } })
       } else if (selectionChanged) {
@@ -2068,58 +1268,46 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
   async saveActive(saveAs = false, options?: SaveAsOptions) {
     const session = activeSession(get())
     if (!session) return false
-    const preferredImageFormat = saveImageKindForPreference(typeof localStorage === 'undefined' ? null : localStorage.getItem(SAVE_FORMAT_PREFERENCE_KEY))
-    const existingFormat = session.document.filePath
-      ? (/\.moonsprite$/i.test(session.document.filePath) ? 'moonsprite' as const : saveImageKindForPath(session.document.filePath))
-      : null
-    const selectedFormat: 'moonsprite' | SaveImageKind = options?.format ?? existingFormat ?? preferredImageFormat ?? 'moonsprite'
-    const imageFormat = selectedFormat === 'moonsprite' ? null : selectedFormat
-    const fallbackName = session.document.name.replace(/\.(moonsprite|aseprite|ase|png|jpe?g|webp)$/i, '') || 'MoonSprite-export'
-    const requestedName = (options?.name.trim() || fallbackName).replace(/\.(moonsprite|aseprite|ase|png|jpe?g|webp)$/i, '').replace(/[\\/:*?"<>|]/g, '_')
     const documentId = session.document.id
-    const pending = saveOperations.get(documentId)
-    if (pending) return pending
     get().commitFloatingPaste()
-    const operation = (async (): Promise<boolean> => {
-      try {
-        let filePath = session.document.filePath
-        if ((!filePath || saveAs) && imageFormat) {
-          const extension = saveImageExtension(imageFormat)
-          const result = await window.moonSprite.saveProject(`${requestedName}.${extension}`, saveImageDialogFormat(imageFormat))
-          if (result.canceled || !result.filePath || !get().sessions.some((item) => item.document.id === documentId)) return false
-          filePath = normalizeSaveDialogPath(result.filePath, imageFormat, extension)
-        } else if (!filePath || saveAs) {
-          const defaultPath = `${requestedName}.moonsprite`
-          const result = await window.moonSprite.saveProject(defaultPath)
-          if (result.canceled || !result.filePath || !get().sessions.some((item) => item.document.id === documentId)) return false
-          filePath = result.filePath.endsWith('.moonsprite') ? result.filePath : `${result.filePath}.moonsprite`
-        }
-        const current = get().sessions.find((item) => item.document.id === documentId)
-        if (!current || !filePath) return false
-        const outputFormat = imageFormat ?? saveImageKindForPath(filePath)
-        const data = outputFormat ? (await exportDocumentImage(current.document, options?.scalePercent ?? 100, outputFormat)).bytes : encodeProject(current.document)
-        await window.moonSprite.writeBinaryAtomic(filePath, data)
-        const saved = get().sessions.find((item) => item.document.id === documentId)
-        if (!saved) return false
-        saved.document.filePath = filePath
-        saved.document.name = basename(filePath)
-        saved.document.dirty = false
-        set({ sessions: [...get().sessions] })
-        recordRecentProject(filePath, saved.document.name)
-        await get().autosaveDirty()
-        await window.moonSprite.deleteRecovery(documentId)
-        set({ message: '工程已保存。' })
-        return true
-      } catch (error) {
-        set({ message: error instanceof Error ? error.message : '保存工程失败。' })
-        return false
-      }
-    })()
-    saveOperations.set(documentId, operation)
+    const showProgress = saveAs || Boolean(options)
+    let progressStarted = false
+    const updateProgress = (value: number, label: string): void => {
+      if (!showProgress) return
+      if (progressStarted && !get().saveProgress) return
+      progressStarted = true
+      set({ saveProgress: { title: '正在另存为', value, label } })
+    }
     try {
-      return await operation
-    } finally {
-      if (saveOperations.get(documentId) === operation) saveOperations.delete(documentId)
+      const filePath = await saveDocumentFile({
+        api: window.moonSprite,
+        documentId,
+        getDocument: () => get().sessions.find((item) => item.document.id === documentId)?.document ?? null,
+        saveAs,
+        options,
+        preferredImageFormat: saveImageKindForPreference(readStoredString(SAVE_FORMAT_PREFERENCE_KEY)),
+        lifecycle: {
+          onEncodeStart: () => updateProgress(12, '正在生成工程数据…'),
+          onWriteStart: () => updateProgress(72, '正在写入文件…')
+        }
+      })
+      if (!filePath) { if (progressStarted) set({ saveProgress: null }); return false }
+      const saved = get().sessions.find((item) => item.document.id === documentId)
+      if (!saved) { if (progressStarted) set({ saveProgress: null }); return false }
+      saved.document.filePath = filePath
+      saved.document.name = fileNameFromPath(filePath)
+      saved.document.dirty = false
+      set({ sessions: [...get().sessions] })
+      recordRecentProject(filePath, saved.document.name)
+      await get().autosaveDirty()
+      await recoveryService.delete(window.moonSprite, documentId)
+      const progressVisible = progressStarted && Boolean(get().saveProgress)
+      set({ message: '工程已保存。', ...(progressVisible ? { saveProgress: { title: '正在另存为', value: 100, label: '另存为完成' } } : {}) })
+      if (progressVisible) window.setTimeout(() => { if (get().saveProgress?.value === 100) set({ saveProgress: null }) }, 180)
+      return true
+    } catch (error) {
+      set({ message: error instanceof Error ? error.message : '保存工程失败。', ...(progressStarted ? { saveProgress: null } : {}) })
+      return false
     }
   },
 
@@ -2127,27 +1315,24 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     get().commitFloatingPaste()
     const session = activeSession(get())
     if (!session) return false
+    let progressStarted = false
+    const updateProgress = (value: number, label: string): void => {
+      if (progressStarted && !get().saveProgress) return
+      progressStarted = true
+      set({ saveProgress: { title: '正在导出', value, label } })
+    }
     try {
-      const scalePercent = Math.max(1, Math.min(6400, Math.round(options?.scalePercent ?? 100)))
-      const exportWidth = Math.max(1, Math.round(session.document.width * scalePercent / 100))
-      const exportHeight = Math.max(1, Math.round(session.document.height * scalePercent / 100))
-      if (!Number.isSafeInteger(exportWidth) || !Number.isSafeInteger(exportHeight)) throw new Error('导出尺寸超出安全范围。')
-      const resources = await window.moonSprite.getResourceInfo()
-      const check = checkResourceLimit(exportWidth, exportHeight, 1, 'rgba', resources)
-      if (!check.allowed) throw new Error(check.reason)
-      const fallbackName = session.document.name.replace(/\.(moonsprite|aseprite|ase|png|jpe?g|webp|svg)$/i, '')
-      const requestedName = (options?.name.trim() || fallbackName || 'MoonSprite-export').replace(/[\\/:*?"<>|]/g, '_')
-      const output = await exportDocumentImage(session.document, scalePercent, options?.format ?? 'png-auto')
-       const dialogFormat = output.extension === 'jpg' ? 'jpeg' : output.extension === 'png' ? 'png' : output.extension === 'svg' ? 'svg' : 'webp'
-       const result = await window.moonSprite.exportImage(`${requestedName}.${output.extension}`, dialogFormat)
-       if (result.canceled || !result.filePath) return false
-       const lowerPath = result.filePath.toLowerCase()
-       const path = lowerPath.endsWith(`.${output.extension}`) ? result.filePath : `${result.filePath}.${output.extension}`
-      await window.moonSprite.writeBinaryAtomic(path, output.bytes)
-      set({ message: output.indexed ? '已导出索引 PNG。' : `已导出 ${output.extension.toUpperCase()} 图像。` })
+      const message = await exportDocumentFile(window.moonSprite, session.document, options, {
+        onEncodeStart: () => updateProgress(12, '正在生成图像数据…'),
+        onWriteStart: () => updateProgress(72, '正在写入文件…')
+      })
+      if (!message) { if (progressStarted) set({ saveProgress: null }); return false }
+      const progressVisible = progressStarted && Boolean(get().saveProgress)
+      set({ message, ...(progressVisible ? { saveProgress: { title: '正在导出', value: 100, label: '导出完成' } } : {}) })
+      if (progressVisible) window.setTimeout(() => { if (get().saveProgress?.value === 100) set({ saveProgress: null }) }, 180)
       return true
     } catch (error) {
-      set({ message: error instanceof Error ? error.message : '导出图像失败。' })
+      set({ message: error instanceof Error ? error.message : '导出图像失败。', ...(progressStarted ? { saveProgress: null } : {}) })
       return false
     }
   },
@@ -2159,25 +1344,13 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
 
   async openPath(filePath, options) {
     try {
-      const data = await window.moonSprite.readBinary(filePath)
-       const fileExtension = extension(filePath)
-       const parsed = fileExtension === 'moonsprite'
-         ? decodeProject(data)
-         : fileExtension === 'ase' || fileExtension === 'aseprite'
-           ? decodeAseprite(data, basename(filePath).replace(/\.(aseprite|ase)$/i, ''))
-           : decodePng(data, basename(filePath).replace(/\.png$/i, ''))
-      const resources = await window.moonSprite.getResourceInfo()
-      const check = checkResourceLimit(parsed.width, parsed.height, parsed.layers.length, parsed.colorMode, resources)
-      if (!check.allowed) throw new Error(check.reason)
-       parsed.filePath = fileExtension === 'moonsprite' ? filePath : null
-      parsed.sourceFilePath = filePath
+      const parsed = await openDocumentFile(window.moonSprite, filePath)
       if (options?.duplicate) parsed.id = createId('doc')
-      parsed.name = basename(filePath)
       get().addSession(parsed)
       recordRecentProject(filePath, parsed.name)
       return true
     } catch (error) {
-      set({ message: error instanceof Error ? `${basename(filePath)}：${error.message}` : '打开文件失败。' })
+      set({ message: error instanceof Error ? `${fileNameFromPath(filePath)}：${error.message}` : '打开文件失败。' })
       return false
     }
   },
@@ -2204,7 +1377,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
 
   async restoreRecoveries() {
     try {
-      const recoveries = await window.moonSprite.listRecoveries()
+      const recoveries = await recoveryService.list(window.moonSprite)
       set({ recoveryRecords: recoveries })
     } catch {
       set({ recoveryRecords: [], message: '读取恢复栏目时出现问题。' })
@@ -2213,27 +1386,24 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
 
   async restoreRecovery(id) {
     const record = get().recoveryRecords.find((item) => item.id === id)
-    if (!record) return
+    if (!record) return false
     try {
-      const document = decodeProject(await window.moonSprite.readRecovery(record.id))
-      document.name = `${record.name}（恢复）`
-      document.dirty = true
+      const document = await recoveryService.restore(window.moonSprite, record)
       get().addSession(document)
-      await window.moonSprite.deleteRecovery(record.id)
+      await recoveryService.delete(window.moonSprite, record.id)
       set((state) => ({ recoveryRecords: state.recoveryRecords.filter((item) => item.id !== record.id), message: `已恢复“${record.name}”。` }))
+      return true
     } catch {
       set({ message: `无法恢复“${record.name}”，草稿仍保留在恢复栏目。` })
+      return false
     }
   },
 
   async autosaveDirty() {
-    autosaveQueue = autosaveQueue.catch(() => {}).then(async () => {
-      const dirty = get().sessions.filter((session) => session.document.dirty && !session.recoverySuppressed)
-      await Promise.all(dirty.map(async (session) => {
-        try { await window.moonSprite.writeRecovery(session.document.id, session.document.name, encodeProject(session.document)) } catch { /* Autosave failures stay non-blocking. */ }
-      }))
-    })
-    await autosaveQueue
+    const dirty = get().sessions
+      .filter((session) => session.document.dirty && !session.recoverySuppressed)
+      .map((session) => session.document)
+    await recoveryService.autosave(window.moonSprite, dirty)
   },
 
   async discardRecovery(id) {
@@ -2242,12 +1412,11 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       session.recoverySuppressed = true
       set({ sessions: [...get().sessions] })
     }
-    autosaveQueue = autosaveQueue.catch(() => {}).then(async () => {
-      try { await window.moonSprite.deleteRecovery(id) } catch { /* Closing should not be blocked by stale recovery cleanup. */ }
-    })
-    await autosaveQueue
+    await recoveryService.discard(window.moonSprite, id)
     set((state) => ({ recoveryRecords: state.recoveryRecords.filter((item) => item.id !== id) }))
   },
+
+  dismissSaveProgress() { set({ saveProgress: null }) },
 
   requestDialog(options) {
     return new Promise((resolve) => set({ dialog: { ...options, resolve } }))

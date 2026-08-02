@@ -1,5 +1,6 @@
 import { ChevronDown, ChevronUp } from 'lucide-react'
-import type { InputHTMLAttributes } from 'react'
+import { useEffect, useState, type CSSProperties, type InputHTMLAttributes } from 'react'
+import { evaluateNumericExpression } from '@/core/numeric-expression'
 
 interface NumberInputProps extends Omit<InputHTMLAttributes<HTMLInputElement>, 'type' | 'value' | 'onChange' | 'min' | 'max' | 'step'> {
   value: number | ''
@@ -10,17 +11,26 @@ interface NumberInputProps extends Omit<InputHTMLAttributes<HTMLInputElement>, '
   suffix?: string
 }
 
-export function NumberInput({ value, onValueChange, min, max, step = 1, suffix, className = '', ...inputProps }: NumberInputProps) {
+export function NumberInput({ value, onValueChange, min, max, step = 1, suffix, className = '', onFocus, onKeyDown, ...inputProps }: NumberInputProps) {
+  const [draft, setDraft] = useState(String(value))
+  useEffect(() => setDraft(String(value)), [value])
   const normalize = (next: number): number => {
     if (!Number.isFinite(next)) return typeof value === 'number' ? value : min ?? 0
     return Math.min(max ?? Number.POSITIVE_INFINITY, Math.max(min ?? Number.NEGATIVE_INFINITY, next))
   }
   const adjust = (delta: number): void => onValueChange(normalize((typeof value === 'number' ? value : min ?? 0) + delta))
-  const inputWidth = suffix ? `${Math.max(2, String(value).length + 1)}ch` : undefined
+  const commit = (): void => {
+    if (!draft.trim()) { setDraft(String(value)); return }
+    const evaluated = evaluateNumericExpression(draft)
+    if (evaluated === null) { setDraft(String(value)); return }
+    const next = normalize(evaluated)
+    setDraft(String(next))
+    if (next !== value) onValueChange(next)
+  }
 
   const control = <span className={`number-input ${suffix ? 'has-suffix' : ''} ${className}`.trim()}>
-    <span className="number-input-editor">
-      <input {...inputProps} type="number" min={min} max={max} step={step} value={value} style={{ ...inputProps.style, ...(inputWidth ? { flex: `0 0 ${inputWidth}`, width: inputWidth } : {}) }} onChange={(event) => { if (event.target.value !== '') onValueChange(normalize(Number(event.target.value))) }} />
+    <span className="number-input-editor" style={suffix ? { '--number-input-value-chars': Math.max(1, draft.length) } as CSSProperties : undefined}>
+      <input {...inputProps} type="text" inputMode="decimal" role="spinbutton" aria-valuemin={min} aria-valuemax={max} aria-valuenow={typeof value === 'number' ? value : undefined} value={draft} style={inputProps.style} onFocus={onFocus} onChange={(event) => setDraft(event.target.value)} onBlur={commit} onKeyDown={(event) => { onKeyDown?.(event); if (event.defaultPrevented || event.key !== 'Enter') return; event.preventDefault(); commit(); if (event.currentTarget.form) event.currentTarget.form.requestSubmit(); else event.currentTarget.blur() }} />
       {suffix && <span className="number-input-suffix" aria-hidden="true">{suffix}</span>}
     </span>
     <span className="number-input-stepper">

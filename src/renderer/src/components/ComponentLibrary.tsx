@@ -2,8 +2,11 @@ import { useMemo, useState, type ReactElement } from 'react'
 import { Check, ChevronRight, Copy, Eye, EyeOff, FileText, FolderOpen, Info, Layers2, Lock, LockOpen, MoreHorizontal, Palette, Plus, Search, Settings2, Trash2, X } from 'lucide-react'
 import type { RgbaColor } from '@shared/types'
 import { ColorPicker, type ColorPickerConfig } from './ColorPicker'
+import { ColorValueControl } from './ColorValueControl'
 import { NumberInput } from './NumberInput'
+import { TextAreaInput } from './TextAreaInput'
 import { ThemedSelect, type ThemedSelectGroup } from './ThemedSelect'
+import { Tooltip } from './Tooltip'
 
 type ComponentCategory = 'all' | 'controls' | 'forms' | 'panels' | 'dialogs' | 'editor'
 
@@ -31,6 +34,7 @@ export const COMPONENT_LIBRARY_ENTRIES: ComponentLibraryEntry[] = [
   { id: 'context-menu', name: '上下文菜单', category: 'controls', description: '通过右键或更多操作打开的紧凑菜单，支持图标、禁用和危险操作状态。', source: '.context-menu / .context-menu-item', tags: ['右键', '菜单', '操作'] },
   { id: 'segmented', name: '分段选择', category: 'controls', description: '用于工具模式、视图模式和互斥选项。', source: '.segmented-control', tags: ['模式', '选中'] },
   { id: 'number-input', name: '数值输入', category: 'forms', description: '统一的数字输入、步进按钮和边界限制。', source: 'NumberInput', tags: ['数字', '步进'] },
+  { id: 'text-area-input', name: '多行文本输入', category: 'forms', description: '用于描述和备注的固定尺寸多行输入，不允许用户拖动改变大小。', source: 'TextAreaInput', tags: ['文本', '描述', '输入'] },
   { id: 'themed-select', name: '主题下拉', category: 'forms', description: '带分组、选中标记和键盘导航的下拉菜单。', source: 'ThemedSelect', tags: ['下拉', '分组'] },
   { id: 'range', name: '滑块', category: 'forms', description: '适用于尺寸、不透明度、强度等连续数值。', source: '.brush-size-popover input[type=range]', tags: ['数值', '实时'] },
   { id: 'checkbox', name: '复选框', category: 'forms', description: '用于可以同时启用的独立选项。', source: '.tool-checkbox', tags: ['设置', '复选'] },
@@ -41,8 +45,10 @@ export const COMPONENT_LIBRARY_ENTRIES: ComponentLibraryEntry[] = [
   { id: 'swatches', name: '颜色格', category: 'panels', description: '调色板中的选中、悬浮和多选状态。', source: '.swatch-grid / .swatch', tags: ['颜色', '多选'] },
   { id: 'modal-shell', name: '弹窗框架', category: 'dialogs', description: '统一标题、内容、底部操作区和关闭行为。', source: '.modal / .modal-backdrop', tags: ['弹窗', '布局'] },
   { id: 'status', name: '状态提示', category: 'dialogs', description: '用于操作反馈、模式提示和不可用状态。', source: '.statusbar / .advanced-mode-notice', tags: ['提示', '反馈'] },
+  { id: 'tooltip', name: '悬浮提示', category: 'dialogs', description: '用于描述等较长内容的自定义悬浮提示，自动避开视口边缘。', source: 'Tooltip', tags: ['提示', '悬浮', '描述'] },
   { id: 'tool-options', name: '工具属性栏', category: 'editor', description: '工具名称、参数、模式和撤销重做操作。', source: '.tool-options', tags: ['工具', '属性'] },
   { id: 'color-picker', name: '颜色选择器', category: 'editor', description: '色盘、色相、透明度、前景色和背景色。', source: 'ColorPicker', tags: ['颜色', '实时'] },
+  { id: 'color-value', name: '颜色值按钮', category: 'editor', description: '颜色预览、HEX 文本和 RGB/HSV/HSL/Gray 多模式编辑。', source: 'ColorValueControl', tags: ['颜色', 'HEX', '通道'] },
   { id: 'panel-dock', name: '停靠栏目', category: 'editor', description: '右侧、左侧和底部停靠区的容器行为。', source: 'InspectorPanels', tags: ['布局', '停靠'] }
 ]
 
@@ -101,6 +107,11 @@ function NumberInputPreview() {
   </div>
 }
 
+function TextAreaInputPreview() {
+  const [value, setValue] = useState('用于记录图层用途、绘制要求或协作备注。')
+  return <div className="component-preview-form"><label className="component-preview-label">描述</label><TextAreaInput aria-label="描述输入预览" rows={4} value={value} placeholder="输入描述" onChange={(event) => setValue(event.target.value)} /></div>
+}
+
 function SelectPreview() {
   const [value, setValue] = useState('normal')
   return <div className="component-preview-form"><label className="component-preview-label">混合模式</label><ThemedSelect value={value} groups={selectGroups} label="混合模式" onChange={setValue} /></div>
@@ -133,7 +144,7 @@ function LayerRowPreview() {
   const [selected, setSelected] = useState(true)
   const [visible, setVisible] = useState(true)
   const [locked, setLocked] = useState(false)
-  return <div className="component-layer-list-preview"><button className={`layer-row ${selected ? 'selected' : ''}`} type="button" onClick={() => setSelected((value) => !value)}><span className="layer-visibility" role="button" tabIndex={-1} aria-label={visible ? '隐藏图层' : '显示图层'} onClick={(event) => { event.stopPropagation(); setVisible((value) => !value) }}>{visible ? <Eye size={14} /> : <EyeOff size={14} />}</span><span className={`layer-lock-toggle ${locked ? 'locked' : ''}`} role="button" tabIndex={-1} aria-label={locked ? '解除图层锁定' : '锁定图层'} onClick={(event) => { event.stopPropagation(); setLocked((value) => !value) }}>{locked ? <Lock size={14} /> : <LockOpen size={14} />}</span><span className="layer-name"><span>前景图层</span><small>正常 · 100%</small></span></button><button className="layer-row group-row" type="button"><span className="layer-visibility" role="button" tabIndex={-1} aria-label="显示图层组"><Eye size={14} /></span><span className="layer-lock-toggle" role="button" tabIndex={-1} aria-label="锁定图层组"><LockOpen size={14} /></span><span className="group-folder" role="button" tabIndex={-1} aria-label="收起图层组"><FolderOpen size={16} /></span><span className="layer-name"><span>角色</span><small>正常 · 100%</small></span></button></div>
+  return <div className="component-layer-list-preview"><button className={`layer-row ${selected ? 'selected' : ''}`} type="button" onClick={() => setSelected((value) => !value)}><span className="layer-color-stripe" style={{ backgroundColor: '#ef5350' }} aria-hidden="true" /><span className="layer-visibility" role="button" tabIndex={-1} aria-label={visible ? '隐藏图层' : '显示图层'} onClick={(event) => { event.stopPropagation(); setVisible((value) => !value) }}>{visible ? <Eye size={14} /> : <EyeOff size={14} />}</span><span className={`layer-lock-toggle ${locked ? 'locked' : ''}`} role="button" tabIndex={-1} aria-label={locked ? '解除图层锁定' : '锁定图层'} onClick={(event) => { event.stopPropagation(); setLocked((value) => !value) }}>{locked ? <Lock size={14} /> : <LockOpen size={14} />}</span><Tooltip className="layer-name" content="角色主体与服装的前景像素"><span>前景图层</span><small>正常 · 100%</small></Tooltip></button><button className="layer-row group-row" type="button"><span className="layer-visibility" role="button" tabIndex={-1} aria-label="显示图层组"><Eye size={14} /></span><span className="layer-lock-toggle" role="button" tabIndex={-1} aria-label="锁定图层组"><LockOpen size={14} /></span><span className="group-folder" role="button" tabIndex={-1} aria-label="收起图层组"><FolderOpen size={16} /></span><span className="layer-name"><span>角色</span><small>正常 · 100%</small></span></button></div>
 }
 
 function SwatchesPreview() {
@@ -150,6 +161,10 @@ function StatusPreview() {
   return <div className="advanced-mode-notice component-library-status-preview" role="status"><strong>高级模式已开启</strong><small>CTRL+F 恢复</small></div>
 }
 
+function TooltipPreview() {
+  return <div className="component-tooltip-preview"><Tooltip content="这是使用 MoonSprite 统一样式显示的图层描述。"><button className="quiet-button" type="button">悬停查看描述</button></Tooltip></div>
+}
+
 function ToolOptionsPreview() {
   return <div className="component-tool-options-preview"><strong>画笔</strong><button className="quiet-button" type="button">返回</button><label>尺寸 <NumberInput value={4} min={1} max={128} onValueChange={() => undefined} /></label><span className="component-preview-spacer" /><button className="tool-text-button" type="button">撤销</button><button className="tool-text-button" type="button">重做</button></div>
 }
@@ -158,6 +173,11 @@ function ColorPickerPreview() {
   const [color, setColor] = useState(initialColor)
   const [secondary, setSecondary] = useState<RgbaColor>({ r: 12, g: 14, b: 18, a: 255 })
   return <div className="component-color-picker-preview">{colorPickerVariants.map((variant) => <section key={variant.id}><header><strong>{variant.label}</strong><code>{variant.id}</code></header><div><ColorPicker color={color} secondaryColor={secondary} onChange={setColor} onSecondaryChange={setSecondary} compact label={variant.label} config={variant.config} /></div></section>)}</div>
+}
+
+function ColorValuePreview() {
+  const [color, setColor] = useState(initialColor)
+  return <div className="component-color-value-preview"><ColorValueControl color={color} onChange={setColor} label="颜色值" roleLabel="前景" /><ColorValueControl color={{ r: 155, g: 155, b: 159, a: 255 }} onChange={() => undefined} label="颜色值" roleLabel="背景" /></div>
 }
 
 function DockPreview() {
@@ -170,6 +190,7 @@ const previewRenderers: Record<string, () => ReactElement> = {
   'context-menu': ContextMenuPreview,
   segmented: SegmentedPreview,
   'number-input': NumberInputPreview,
+  'text-area-input': TextAreaInputPreview,
   'themed-select': SelectPreview,
   range: RangePreview,
   checkbox: CheckboxPreview,
@@ -180,8 +201,10 @@ const previewRenderers: Record<string, () => ReactElement> = {
   swatches: SwatchesPreview,
   'modal-shell': ModalShellPreview,
   status: StatusPreview,
+  tooltip: TooltipPreview,
   'tool-options': ToolOptionsPreview,
   'color-picker': ColorPickerPreview,
+  'color-value': ColorValuePreview,
   'panel-dock': DockPreview
 }
 

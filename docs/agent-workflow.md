@@ -16,7 +16,7 @@
 3. UI：先检查组件库，优先复用现有组件；新增可复用组件必须登记并提供交互预览。
 4. 坐标、选区、指针和撤销：必须阅读对应契约，禁止在组件中私自复制算法或状态语义。
 5. 文件格式和持久化：先评估兼容性、迁移和失败回滚，必要时新增 ADR。
-6. 性能：使用固定输入基准，记录优化前后结果，不以牺牲像素正确性换取速度。
+6. 性能：先运行 `pnpm check:performance-scope` 辅助判断 P0-P4 影响等级；若工作树包含任务开始前的改动，则通过命令参数只传本任务文件。P0/P1 不跑性能基准；P2 只跑相关定向场景；P3 完整运行一次；P4 完整运行三次取中位数并做桌面验证。不得为普通 UI、快捷键或文件规则修改机械运行完整画布基准。
 
 ## 三、验证与收尾
 
@@ -27,12 +27,16 @@
 | TypeScript、核心算法、UI | `pnpm typecheck`、`pnpm test` |
 | Rust、Tauri、文件系统 | `cargo fmt --check --manifest-path src-tauri/Cargo.toml`、`cargo check --manifest-path src-tauri/Cargo.toml` |
 | 完整桌面行为 | `pnpm build`、`pnpm test:tauri` |
-| 选择、魔棒、渲染性能 | `pnpm bench:selection` 和相关场景 |
+| P2 选择、魔棒或局部交互热点 | `pnpm bench:selection` 或 `pnpm bench:canvas -- --size=512 --scenario=<相关场景>` |
+| P3 高频渲染路径 | `pnpm bench:canvas -- --full` |
+| P4 依赖升级、大规模重构或发布 | 完整画布基准三次取中位数、`pnpm bench:selection`、桌面验证 |
 | 安装包或交付 | `docs/release/release-checklist.md` 全部适用项 |
 
 收尾时必须：
 
 - 检查测试、构建和 CI 结果。
+- 对照实际完成范围检查所有有效文档中的阶段性状态；架构或重构计划结束时，必须同步更新 `docs/architecture/overview.md` 的“计划状态”和“未完成高风险拆分项”，禁止继续保留“第一轮”“待继续”等已失效结论。
+- 仅在 P2-P4、明确性能优化、发生退化或更新基线时更新性能记录；P0/P1 不追加“免测”流水账。
 - 更新中文文档、回归矩阵和 `CHANGELOG.md`。
 - 只暂存本任务相关文件。
 - 提交清晰的 Conventional Commit。

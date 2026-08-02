@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { applyColorAdjustment, adjustColor, buildCurveLut } from './adjustments'
+import { applyColorAdjustment, adjustColor, buildCurveHistogram, buildCurveLut, buildCurvePath } from './adjustments'
 import { createDocument, getActiveLayer, readLayerColor, writeLayerColor } from './document'
 
 describe('color adjustments', () => {
@@ -52,8 +52,45 @@ describe('color adjustments', () => {
 
   it('applies manually positioned curve controls', () => {
     const next = adjustColor({ r: 128, g: 64, b: 200, a: 180 }, { kind: 'curves', curvePoints: [{ x: 0, y: 0 }, { x: 128, y: 192 }, { x: 255, y: 255 }] })
-    expect(next.r).toBe(192)
-    expect(next.g).toBe(96)
+    expect(next.r).toBeGreaterThan(160)
+    expect(next.g).toBeGreaterThan(64)
     expect(next.a).toBe(180)
+  })
+
+  it('applies RGB and independent channel bezier curves', () => {
+    const next = adjustColor({ r: 64, g: 64, b: 64, a: 255 }, {
+      kind: 'curves',
+      curvePoints: [{ x: 0, y: 0 }, { x: 255, y: 255 }],
+      curveRedPoints: [{ x: 0, y: 0 }, { x: 64, y: 160 }, { x: 255, y: 255 }]
+    })
+    expect(next.r).toBeGreaterThan(next.g)
+    expect(next.g).toBe(64)
+    expect(next.b).toBe(64)
+  })
+
+  it('uses a cubic bezier path for curve editing', () => {
+    expect(buildCurvePath([{ x: 0, y: 0 }, { x: 128, y: 220 }, { x: 255, y: 255 }])).toContain('C')
+  })
+
+  it('builds channel histograms from opaque RGBA pixels', () => {
+    const histogram = buildCurveHistogram(new Uint8ClampedArray([
+      255, 0, 0, 255,
+      0, 255, 0, 255,
+      0, 0, 255, 0
+    ]), 'rgba', [])
+    expect(histogram.red[255]).toBe(1)
+    expect(histogram.green[255]).toBe(1)
+    expect(histogram.blue[255]).toBe(0)
+    expect(histogram.rgb[85]).toBe(2)
+  })
+
+  it('builds channel histograms from indexed palette pixels', () => {
+    const histogram = buildCurveHistogram(new Uint32Array([2, 1]), 'indexed', [
+      { id: 1, color: { r: 12, g: 34, b: 56, a: 255 } },
+      { id: 2, color: { r: 200, g: 100, b: 50, a: 255 } }
+    ])
+    expect(histogram.red[200]).toBe(1)
+    expect(histogram.green[34]).toBe(1)
+    expect(histogram.blue[50]).toBe(1)
   })
 })

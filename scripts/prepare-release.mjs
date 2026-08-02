@@ -1,18 +1,19 @@
-import { copyFile, mkdir } from 'node:fs/promises'
+import { copyFile, mkdir, readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
 const root = process.cwd()
 const releaseDirectory = join(root, 'release')
 const targetDirectory = join(root, 'src-tauri', 'target', 'release')
+const { version } = JSON.parse(await readFile(join(root, 'package.json'), 'utf8'))
 
 await mkdir(releaseDirectory, { recursive: true })
 await copyFile(
-  join(targetDirectory, 'bundle', 'nsis', 'MoonSprite_0.1.0_x64-setup.exe'),
-  join(releaseDirectory, 'MoonSprite-Setup-0.1.0-x64.exe')
+  join(targetDirectory, 'bundle', 'nsis', `MoonSprite_${version}_x64-setup.exe`),
+  join(releaseDirectory, `MoonSprite-Setup-${version}-x64.exe`)
 )
 await copyFile(
   join(targetDirectory, 'moonsprite.exe'),
-  join(releaseDirectory, 'MoonSprite-Portable-0.1.0-x64.exe')
+  join(releaseDirectory, `MoonSprite-Portable-${version}-x64.exe`)
 )
 await copyFile(
   join(root, 'src-tauri', 'thumbnail-provider', 'target', 'release', 'moonsprite_thumbnail.dll'),

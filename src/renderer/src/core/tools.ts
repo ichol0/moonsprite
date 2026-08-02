@@ -865,7 +865,7 @@ export function applySelectionTransform(document: SpriteDocument, source: Select
 
   // Moving an unscaled selection is the common interactive path. Iterate its
   // captured offsets directly instead of allocating a TransformCell per pixel.
-  if (normalizedAngle === 0 && target.width === sourceSelection.width && target.height === sourceSelection.height) {
+  if (normalizedAngle === 0 && target.width === sourceSelection.width && target.height === sourceSelection.height && !target.flipHorizontal && !target.flipVertical) {
     if (!copy) {
       for (const offset of source.selectedOffsets) {
         const localX = offset % sourceSelection.width

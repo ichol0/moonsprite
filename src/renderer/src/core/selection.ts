@@ -156,8 +156,18 @@ export const transformedSelectionSourcePoint = (
   const normalizedX = (unrotatedX - target.x) / target.width
   const normalizedY = (unrotatedY - target.y) / target.height
   if (normalizedX < -1e-9 || normalizedX > 1 + 1e-9 || normalizedY < -1e-9 || normalizedY > 1 + 1e-9) return null
-  const sourceX = Math.min(source.x + source.width - 1, Math.max(source.x, source.x + Math.floor(normalizedX * source.width)))
-  const sourceY = Math.min(source.y + source.height - 1, Math.max(source.y, source.y + Math.floor(normalizedY * source.height)))
+  // Cross-boundary resizing uses the dragged edge/point as the mirror axis.
+  // For a left/top axis the source direction stays forward; for a right/bottom
+  // axis it runs backward. This avoids silently falling back to the rectangle
+  // center when a side or corner has crossed its opposite edge.
+  const axisMapped = (normalized: number, start: number, size: number, axis: number | undefined): number => {
+    if (!Number.isFinite(axis)) return 1 - normalized
+    return axis! <= start + 1e-9 ? normalized : axis! >= start + size - 1e-9 ? 1 - normalized : 1 - normalized
+  }
+  const mappedX = target.flipHorizontal ? axisMapped(normalizedX, target.x, target.width, target.flipOriginX) : normalizedX
+  const mappedY = target.flipVertical ? axisMapped(normalizedY, target.y, target.height, target.flipOriginY) : normalizedY
+  const sourceX = Math.min(source.x + source.width - 1, Math.max(source.x, source.x + Math.floor(mappedX * source.width)))
+  const sourceY = Math.min(source.y + source.height - 1, Math.max(source.y, source.y + Math.floor(mappedY * source.height)))
   return selectionContains(source, sourceX, sourceY) ? { x: sourceX, y: sourceY } : null
 }
 
@@ -289,6 +299,11 @@ export const lassoSelection = (document: SpriteDocument, path: Array<{ x: number
     let inside = false
     for (let i = 0, j = path.length - 1; i < path.length; j = i++) {
       const a = path[i]; const b = path[j]
+      const cross = (x - a.x) * (b.y - a.y) - (y - a.y) * (b.x - a.x)
+      const onBoundary = cross === 0
+        && x >= Math.min(a.x, b.x) && x <= Math.max(a.x, b.x)
+        && y >= Math.min(a.y, b.y) && y <= Math.max(a.y, b.y)
+      if (onBoundary) { inside = true; break }
       if (((a.y > y) !== (b.y > y)) && x < ((b.x - a.x) * (y - a.y)) / ((b.y - a.y) || 1) + a.x) inside = !inside
     }
     if (inside) points.push({ x, y })

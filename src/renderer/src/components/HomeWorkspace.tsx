@@ -3,6 +3,8 @@ import { Eraser, FileImage, FolderOpen, GripVertical, Images, MoreHorizontal, Pi
 import type { RecoveryRecord } from '@shared/types'
 import { APP_CHANNEL_LABEL } from '@/core/app-meta'
 import { readProjectGalleryMetadata } from '@/core/project-format'
+import { decodeDocumentFileAsync } from '@/core/document-files'
+import { exportDocumentImage } from '@/core/png'
 import { clearRecentProjects, getGalleryPins, getRecentProjects, recordRecentProject, removeGalleryPin, removeRecentProject, reorderRecentProjects, toggleGalleryPin, toggleRecentProjectPinned, type RecentProject } from '@/core/home-history'
 import { useWorkspace } from '@/store/workspace'
 import moonspriteLogo from '@/assets/moonsprite-logo.svg'
@@ -19,6 +21,7 @@ interface HomeWorkspaceProps {
   onNew(): void
   onOpen(): void
   onOpenProject(filePath: string, keepHomeOpen?: boolean): Promise<boolean>
+  onRestoreRecovery(id: string): Promise<boolean>
 }
 
 type HomeSection = 'recent' | 'gallery' | 'recovery' | 'other'
@@ -88,7 +91,7 @@ function RecoveryFileRow({ record, onRestore, onDiscard }: { record: RecoveryRec
   </article>
 }
 
-export function HomeWorkspace({ onNew, onOpen, onOpenProject }: HomeWorkspaceProps) {
+export function HomeWorkspace({ onNew, onOpen, onOpenProject, onRestoreRecovery }: HomeWorkspaceProps) {
   const [section, setSection] = useState<HomeSection>(loadHomeSection)
   const [projects, setProjects] = useState<ProjectCard[]>([])
   const [galleryDirectory, setGalleryDirectory] = useState('')
@@ -103,7 +106,6 @@ export function HomeWorkspace({ onNew, onOpen, onOpenProject }: HomeWorkspacePro
   const [removePendingProjectPath, setRemovePendingProjectPath] = useState('')
   const setMessage = useWorkspace((state) => state.setMessage)
   const recoveryRecords = useWorkspace((state) => state.recoveryRecords)
-  const restoreRecovery = useWorkspace((state) => state.restoreRecovery)
   const discardRecovery = useWorkspace((state) => state.discardRecovery)
   const requestDialog = useWorkspace((state) => state.requestDialog)
 
@@ -115,10 +117,17 @@ export function HomeWorkspace({ onNew, onOpen, onOpenProject }: HomeWorkspacePro
   const readCards = async (records: RecentProject[]): Promise<ProjectCard[]> => Promise.all(records.map(async (record): Promise<ProjectCard> => {
     try {
       const bytes = await window.moonSprite.readBinary(record.filePath)
-      const metadata = readProjectGalleryMetadata(bytes)
-      const buffer = metadata.preview.buffer.slice(metadata.preview.byteOffset, metadata.preview.byteOffset + metadata.preview.byteLength) as ArrayBuffer
+      if (/\.moonsprite$/i.test(record.filePath)) {
+        const metadata = readProjectGalleryMetadata(bytes)
+        const buffer = metadata.preview.buffer.slice(metadata.preview.byteOffset, metadata.preview.byteOffset + metadata.preview.byteLength) as ArrayBuffer
+        const previewUrl = URL.createObjectURL(new Blob([buffer], { type: 'image/png' }))
+        return { ...record, name: record.fileName, previewUrl, width: metadata.width, height: metadata.height, colorMode: metadata.colorMode }
+      }
+      const document = await decodeDocumentFileAsync(bytes, record.filePath)
+      const preview = await exportDocumentImage(document, 100, 'png-auto')
+      const buffer = preview.bytes.buffer.slice(preview.bytes.byteOffset, preview.bytes.byteOffset + preview.bytes.byteLength) as ArrayBuffer
       const previewUrl = URL.createObjectURL(new Blob([buffer], { type: 'image/png' }))
-      return { ...record, name: record.fileName, previewUrl, width: metadata.width, height: metadata.height, colorMode: metadata.colorMode }
+      return { ...record, name: record.fileName, previewUrl, width: document.width, height: document.height, colorMode: document.colorMode }
     } catch (error) {
       return { ...record, name: record.fileName, error: error instanceof Error ? error.message : '工程文件无法读取' }
     }
@@ -363,8 +372,8 @@ export function HomeWorkspace({ onNew, onOpen, onOpenProject }: HomeWorkspacePro
       <div className="start-screen-layout">
         <aside className="start-actions" aria-label="新建和打开">
           <button className="start-action primary-button" type="button" onClick={onNew}><Plus size={20} /><span><strong>新建精灵</strong><small>创建一个新的像素画布</small></span></button>
-          <button className="start-action quiet-button" type="button" onClick={onOpen}><FolderOpen size={20} /><span><strong>打开精灵</strong><small>打开 MoonSprite、Aseprite 工程或 PNG</small></span></button>
-          <div className="start-action-note"><FileImage size={15} /><span>支持：`.moonsprite`、`.ase`、`.aseprite`、`.png`</span></div>
+          <button className="start-action quiet-button" type="button" onClick={onOpen}><FolderOpen size={20} /><span><strong>打开精灵</strong><small>打开工程或常用图片</small></span></button>
+          <div className="start-action-note"><FileImage size={15} /><span>支持：MoonSprite、Aseprite、PNG、JPEG、WebP、BMP、GIF</span></div>
         </aside>
         <section className="recent-files-panel" aria-label={section === 'recent' ? '最近文件' : section === 'gallery' ? '画廊' : section === 'recovery' ? '恢复' : '其他栏目'}>
           <header className="recent-files-header">
@@ -384,7 +393,7 @@ export function HomeWorkspace({ onNew, onOpen, onOpenProject }: HomeWorkspacePro
             {loading && <div className="start-screen-state"><RefreshCw className="spin" size={22} /><span>正在读取工程</span></div>}
             {!loading && loadError && <div className="start-screen-state error"><TriangleAlert size={22} /><strong>无法读取栏目</strong><span>{loadError}</span><button className="quiet-button" type="button" onClick={() => void loadSection(section)}>重试</button></div>}
             {!loading && !loadError && ((section !== 'recovery' && projects.length === 0) || (section === 'recovery' && recoveryRecords.length === 0)) && <div className="start-screen-state">{emptyState.icon}<strong>{emptyState.title}</strong><span>{emptyState.detail}</span></div>}
-            {!loading && !loadError && section === 'recovery' && recoveryRecords.map((record) => <RecoveryFileRow key={record.id} record={record} onRestore={() => void restoreRecovery(record.id)} onDiscard={() => void discardRecovery(record.id)} />)}
+            {!loading && !loadError && section === 'recovery' && recoveryRecords.map((record) => <RecoveryFileRow key={record.id} record={record} onRestore={() => void onRestoreRecovery(record.id)} onDiscard={() => void discardRecovery(record.id)} />)}
             {!loading && !loadError && section !== 'recovery' && projects.map((project) => <ProjectFileRow key={project.filePath} project={project} reorderable={section === 'recent'} dragging={draggingProjectPath === project.filePath} removePending={removePendingProjectPath === project.filePath} onOpen={() => void openProject(project)} onOpenInBackground={() => void openProject(project, true)} onPin={() => pinProject(project.filePath)} onDelete={section === 'gallery' ? () => void deleteGalleryProject(project) : undefined} onReorderStart={startRecentReorder} onReorderMove={moveRecentReorder} onReorderEnd={endRecentReorder} />)}
           </div>
         </section>
