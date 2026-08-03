@@ -18,6 +18,7 @@ const requiredFiles = [
   'docs/testing/regression-matrix.md',
   'docs/testing/performance-baseline.md',
   'docs/testing/performance-history.md',
+  'docs/release/changelog-policy.md',
   'docs/release/release-checklist.md',
   'docs/adr/README.md',
   'docs/templates/feature-spec.md',
@@ -25,6 +26,7 @@ const requiredFiles = [
   '.github/workflows/ci.yml',
   '.github/workflows/performance.yml',
   '.github/pull_request_template.md',
+  'scripts/check-changelog-update.mjs',
 ]
 
 const missing = []
