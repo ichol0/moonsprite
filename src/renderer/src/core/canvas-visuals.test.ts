@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { canvasCursors, canvasStatusTextColor, canvasToolCursor, selectionPreviewPixels, selectionTransformDragCursor, transparencyColorAt } from './canvas-visuals'
+import { canvasCursors, canvasStatusTextColor, canvasToolCursor, selectionCreationCursor, selectionCursorCornerRects, selectionPathPreviewPixelVisible, selectionPreviewPixels, selectionTransformDragCursor, transparencyColorAt } from './canvas-visuals'
 
 describe('canvas visual rules', () => {
   it('chooses a visible cursor from the sampled canvas color', () => {
@@ -22,10 +22,39 @@ describe('canvas visual rules', () => {
     expect(canvasStatusTextColor([{ r: 245, g: 245, b: 245, a: 255 }, { r: 210, g: 214, b: 220, a: 255 }])).toBe('#111318')
   })
 
+  it('places compact selection marks at all four corners of the current pixel', () => {
+    const marks = selectionCursorCornerRects({ x: 10, y: 20, width: 16, height: 16 }, 2)
+    expect(marks).toHaveLength(8)
+    expect(marks[0]).toEqual({ x: 10, y: 20, width: 4, height: 1 })
+    expect(marks.at(-1)).toEqual({ x: 25, y: 32, width: 1, height: 4 })
+  })
+
+  it('keeps selection marks at least 8 CSS pixels wide with a fixed line width', () => {
+    const marks = selectionCursorCornerRects({ x: 10, y: 20, width: 2, height: 3 }, 2)
+    expect(Math.min(...marks.map((mark) => mark.x))).toBe(7)
+    expect(Math.max(...marks.map((mark) => mark.x + mark.width))).toBe(15)
+    expect(Math.min(...marks.map((mark) => mark.y))).toBe(17.5)
+    expect(Math.max(...marks.map((mark) => mark.y + mark.height))).toBe(25.5)
+    expect(marks.every((mark) => mark.width === 1 || mark.height === 1)).toBe(true)
+  })
+
   it('uses the move cursor while dragging a selection transform', () => {
     expect(selectionTransformDragCursor('transform-content')).toBe(canvasCursors.move)
     expect(selectionTransformDragCursor('rotate-content')).toBe(canvasCursors.move)
     expect(selectionTransformDragCursor('marquee')).toBeNull()
+  })
+
+  it('clips selection creation preview pixels to the document', () => {
+    const pixelRect = { x: 12, y: 20, width: 8, height: 8 }
+    expect(selectionPathPreviewPixelVisible(pixelRect, 100, 80, false)).toBe(false)
+    expect(selectionPathPreviewPixelVisible({ ...pixelRect, x: 120 }, 100, 80, true)).toBe(false)
+    expect(selectionPathPreviewPixelVisible(pixelRect, 100, 80, true)).toBe(true)
+  })
+
+  it('uses only corner marks by default and an actual crosshair when requested', () => {
+    expect(selectionCreationCursor(false)).toBe('none')
+    expect(selectionCreationCursor(true)).toBe(canvasCursors.crosshair)
+    expect(selectionCreationCursor(false, false)).toBe(canvasCursors.unavailable)
   })
 
   it('returns only the outer boundary for irregular masked selections', () => {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { DEFAULT_SHORTCUTS, SHORTCUT_GROUPS, SHORTCUT_LABELS, deriveShortcutConflicts, normalizeShortcut, parseShortcutJson, shortcutText } from './shortcuts'
+import { DEFAULT_SHORTCUTS, POLYGON_LASSO_SHORTCUT_MIGRATION_KEY, SHORTCUTS_KEY, SHORTCUT_GROUPS, SHORTCUT_LABELS, deriveShortcutConflicts, loadShortcuts, normalizeShortcut, parseShortcutJson, saveShortcuts, shortcutText } from './shortcuts'
 
 describe('shortcut persistence boundary', () => {
   it('only accepts known shortcut ids and string values', () => {
@@ -8,6 +8,24 @@ describe('shortcut persistence boundary', () => {
 
   it('keeps defaults available to callers after a malformed payload', () => {
     expect({ ...DEFAULT_SHORTCUTS, ...parseShortcutJson('{bad') }).toMatchObject({ save: 'Ctrl+S', fillForeground: 'F' })
+  })
+
+  it('migrates the old empty polygon-lasso default once without overriding later user changes', () => {
+    const values = new Map<string, string>()
+    const storage = {
+      getItem: (key: string) => values.get(key) ?? null,
+      setItem: (key: string, value: string) => { values.set(key, value) },
+      removeItem: (key: string) => { values.delete(key) },
+      clear: () => values.clear(),
+      key: (index: number) => [...values.keys()][index] ?? null,
+      get length() { return values.size }
+    } as Storage
+    values.set(SHORTCUTS_KEY, JSON.stringify({ polygonLasso: '' }))
+
+    expect(loadShortcuts(storage).polygonLasso).toBe('Shift+Q')
+    expect(values.get(POLYGON_LASSO_SHORTCUT_MIGRATION_KEY)).toBe('done')
+    saveShortcuts({ ...DEFAULT_SHORTCUTS, polygonLasso: '' }, storage)
+    expect(loadShortcuts(storage).polygonLasso).toBe('')
   })
 
   it('registers every configurable command in one labeled group', () => {
@@ -21,6 +39,7 @@ describe('shortcut persistence boundary', () => {
     expect(DEFAULT_SHORTCUTS.adjustmentHueSaturation).toBe('Ctrl+U')
     expect(DEFAULT_SHORTCUTS.adjustmentColorBalance).toBe('')
     expect(DEFAULT_SHORTCUTS.newLayer).toBe('Shift+N')
+    expect(DEFAULT_SHORTCUTS.polygonLasso).toBe('Shift+Q')
     expect(DEFAULT_SHORTCUTS.toolRailLeft).toBe('')
     expect(DEFAULT_SHORTCUTS.swapForegroundBackground).toBe('X')
     expect(DEFAULT_SHORTCUTS.rotateViewClockwise90).toBe('')
@@ -33,6 +52,8 @@ describe('shortcut persistence boundary', () => {
     expect(shortcutText({ key: 'Control', code: 'ControlLeft', ctrlKey: true, metaKey: false, altKey: false, shiftKey: false } as KeyboardEvent)).toBe('Ctrl')
     expect(shortcutText({ key: 'Alt', code: 'AltLeft', ctrlKey: false, metaKey: false, altKey: true, shiftKey: false } as KeyboardEvent)).toBe('Alt')
     expect(shortcutText({ key: 'Shift', code: 'ShiftLeft', ctrlKey: false, metaKey: false, altKey: false, shiftKey: true } as KeyboardEvent)).toBe('Shift')
+    expect(shortcutText({ key: 'Shift', code: 'ShiftLeft', ctrlKey: true, metaKey: false, altKey: false, shiftKey: true } as KeyboardEvent)).toBe('Ctrl+Shift')
+    expect(shortcutText({ key: 'm', code: 'KeyM', ctrlKey: true, metaKey: false, altKey: true, shiftKey: true } as KeyboardEvent)).toBe('Ctrl+Alt+Shift+M')
   })
 
   it('rebuilds blocked shortcut conflicts from persisted settings', () => {

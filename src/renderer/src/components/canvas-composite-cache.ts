@@ -4,15 +4,16 @@ import { applyRelativeLuminance } from '@/core/raster'
 import type { CanvasDragState } from '@/core/canvas-input'
 import type { RasterContext2D } from './canvas-selection-renderer'
 
-interface CompositeTile {
-  canvas: OffscreenCanvas
-  x: number
-  y: number
-}
-
 interface CompositeSurface {
   canvas: OffscreenCanvas
   revision: string
+}
+
+interface CompositeRegionSurface extends CompositeSurface {
+  x: number
+  y: number
+  width: number
+  height: number
 }
 
 interface DrawCompositeOptions {
@@ -31,45 +32,37 @@ interface DrawCompositeOptions {
   activeDrag?: CanvasDragState['kind']
 }
 
-const TILE_SIZE = 128
-const MAX_TILES = 192
 const MAX_SURFACE_PIXELS = 2048 * 2048
-const CACHE_VERSION = 2
+const CACHE_VERSION = 3
 
 export class CanvasCompositeCache {
-  private readonly tiles = new Map<string, CompositeTile>()
   private revision = ''
   private surface: CompositeSurface | null = null
+  private region: CompositeRegionSurface | null = null
+  private dirtyRects: SelectionRect[] = []
 
   invalidateSurface(): void {
     this.surface = null
+    this.region = null
+    this.dirtyRects = []
   }
 
   invalidateAll(): void {
-    this.tiles.clear()
-    this.surface = null
+    this.invalidateSurface()
   }
 
   invalidateRect(selection: SelectionRect | null | undefined, documentWidth: number, documentHeight: number): void {
     if (!selection) return
-    // Tile sources include a one-pixel gutter. Invalidate neighboring gutters
-    // so an edited edge cannot leave a stale copy in an adjacent tile.
-    const left = Math.max(0, selection.x - 1)
-    const top = Math.max(0, selection.y - 1)
-    const right = Math.min(documentWidth, selection.x + selection.width + 1)
-    const bottom = Math.min(documentHeight, selection.y + selection.height + 1)
+    const left = Math.max(0, Math.floor(selection.x))
+    const top = Math.max(0, Math.floor(selection.y))
+    const right = Math.min(documentWidth, Math.ceil(selection.x + selection.width))
+    const bottom = Math.min(documentHeight, Math.ceil(selection.y + selection.height))
     if (right <= left || bottom <= top) return
-    const firstTileX = Math.floor(left / TILE_SIZE)
-    const firstTileY = Math.floor(top / TILE_SIZE)
-    const lastTileX = Math.floor((right - 1) / TILE_SIZE)
-    const lastTileY = Math.floor((bottom - 1) / TILE_SIZE)
-    for (let tileY = firstTileY; tileY <= lastTileY; tileY += 1) {
-      for (let tileX = firstTileX; tileX <= lastTileX; tileX += 1) this.tiles.delete(`${tileX}:${tileY}`)
-    }
-    this.surface = null
+    this.dirtyRects.push({ x: left, y: top, width: right - left, height: bottom - top })
+    this.region = null
   }
 
-  draw({ context, document, view, originX, originY, canvasWidth, canvasHeight, fromX, fromY, toX, toY, revision, activeDrag }: DrawCompositeOptions): void {
+  draw({ context, document, view, originX, originY, canvasWidth, canvasHeight, fromX, fromY, toX, toY, revision }: DrawCompositeOptions): void {
     const contentRevision = `${CACHE_VERSION}:${document.id}:${revision}:${view.relativeLuminance ? 'luminance' : 'color'}`
     if (this.revision !== contentRevision) {
       this.revision = contentRevision
@@ -81,13 +74,8 @@ export class CanvasCompositeCache {
     context.rect(originX, originY, canvasWidth, canvasHeight)
     context.clip()
     context.imageSmoothingEnabled = false
-    const canUseSurface = activeDrag !== 'draw'
-      && activeDrag !== 'move-content'
-      && activeDrag !== 'transform-content'
-      && activeDrag !== 'rotate-content'
-      && document.width * document.height <= MAX_SURFACE_PIXELS
-    if (canUseSurface) this.drawSurface(context, document, view, originX, originY, canvasWidth, canvasHeight, contentRevision)
-    else this.drawTiles(context, document, view, originX, originY, fromX, fromY, toX, toY)
+    if (document.width * document.height <= MAX_SURFACE_PIXELS) this.drawSurface(context, document, view, originX, originY, canvasWidth, canvasHeight, contentRevision)
+    else this.drawRegion(context, document, view, originX, originY, fromX, fromY, toX, toY, contentRevision)
     context.restore()
   }
 
@@ -100,47 +88,40 @@ export class CanvasCompositeCache {
       canvas.getContext('2d')?.putImageData(new ImageData(new Uint8ClampedArray(pixels), document.width, document.height), 0, 0)
       surface = { canvas, revision }
       this.surface = surface
+      this.dirtyRects = []
+    } else if (this.dirtyRects.length > 0) {
+      const surfaceContext = surface.canvas.getContext('2d')
+      if (surfaceContext) for (const rect of this.dirtyRects) {
+        const pixels = compositeRegion(document, rect.x, rect.y, rect.width, rect.height)
+        if (view.relativeLuminance) applyRelativeLuminance(pixels)
+        surfaceContext.putImageData(new ImageData(new Uint8ClampedArray(pixels), rect.width, rect.height), rect.x, rect.y)
+      }
+      this.dirtyRects = []
     }
     context.drawImage(surface.canvas, originX, originY, canvasWidth, canvasHeight)
   }
 
-  private drawTiles(context: RasterContext2D, document: SpriteDocument, view: ViewState, originX: number, originY: number, fromX: number, fromY: number, toX: number, toY: number): void {
-    const firstTileX = Math.floor(fromX / TILE_SIZE)
-    const firstTileY = Math.floor(fromY / TILE_SIZE)
-    const lastTileX = Math.floor((toX - 1) / TILE_SIZE)
-    const lastTileY = Math.floor((toY - 1) / TILE_SIZE)
+  private drawRegion(context: RasterContext2D, document: SpriteDocument, view: ViewState, originX: number, originY: number, fromX: number, fromY: number, toX: number, toY: number, revision: string): void {
+    const x = Math.max(0, Math.floor(fromX))
+    const y = Math.max(0, Math.floor(fromY))
+    const right = Math.min(document.width, Math.ceil(toX))
+    const bottom = Math.min(document.height, Math.ceil(toY))
+    const width = Math.max(0, right - x)
+    const height = Math.max(0, bottom - y)
+    if (width === 0 || height === 0) return
+    let region = this.region
+    if (!region || region.revision !== revision || region.x !== x || region.y !== y || region.width !== width || region.height !== height) {
+      const pixels = compositeRegion(document, x, y, width, height)
+      if (view.relativeLuminance) applyRelativeLuminance(pixels)
+      const canvas = new OffscreenCanvas(width, height)
+      canvas.getContext('2d')?.putImageData(new ImageData(new Uint8ClampedArray(pixels), width, height), 0, 0)
+      region = { canvas, revision, x, y, width, height }
+      this.region = region
+    }
     context.save()
     context.translate(originX, originY)
     context.scale(view.zoom, view.zoom)
-    for (let tileY = firstTileY; tileY <= lastTileY; tileY += 1) {
-      for (let tileX = firstTileX; tileX <= lastTileX; tileX += 1) {
-        const startX = tileX * TILE_SIZE
-        const startY = tileY * TILE_SIZE
-        const width = Math.min(TILE_SIZE, document.width - startX)
-        const height = Math.min(TILE_SIZE, document.height - startY)
-        const key = `${tileX}:${tileY}`
-        let tile = this.tiles.get(key)
-        if (!tile) {
-          const sourceX = Math.max(0, startX - 1)
-          const sourceY = Math.max(0, startY - 1)
-          const sourceRight = Math.min(document.width, startX + width + 1)
-          const sourceBottom = Math.min(document.height, startY + height + 1)
-          const sourceWidth = sourceRight - sourceX
-          const sourceHeight = sourceBottom - sourceY
-          const pixels = compositeRegion(document, sourceX, sourceY, sourceWidth, sourceHeight)
-          if (view.relativeLuminance) applyRelativeLuminance(pixels)
-          const source = new OffscreenCanvas(sourceWidth, sourceHeight)
-          source.getContext('2d')?.putImageData(new ImageData(new Uint8ClampedArray(pixels), sourceWidth, sourceHeight), 0, 0)
-          tile = { canvas: source, x: sourceX, y: sourceY }
-          this.tiles.set(key, tile)
-          if (this.tiles.size > MAX_TILES) {
-            const oldest = this.tiles.keys().next().value
-            if (oldest !== undefined) this.tiles.delete(oldest)
-          }
-        }
-        context.drawImage(tile.canvas, tile.x, tile.y)
-      }
-    }
+    context.drawImage(region.canvas, x, y)
     context.restore()
   }
 }

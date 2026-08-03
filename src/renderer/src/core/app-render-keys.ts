@@ -35,6 +35,7 @@ export const appCoordinatorRenderKey = (state: AppCoordinatorState): string => {
     session?.document.height ?? 0,
     session?.view.showGrid ? 1 : 0,
     session?.view.relativeLuminance ? 1 : 0,
+    session?.view.showSelectionOutline === false ? 0 : 1,
     preview ? `${preview.width}:${preview.height}:${preview.offsetX}:${preview.offsetY}` : '',
     state.saveProgress ? `${state.saveProgress.title}:${state.saveProgress.value}:${state.saveProgress.label}` : '',
     state.dialog ? `${state.dialog.title}:${state.dialog.message}:${state.dialog.detail ?? ''}:${state.dialog.choices.map((choice) => `${choice.id}:${choice.label}:${choice.tone ?? ''}`).join('|')}` : ''
@@ -56,9 +57,11 @@ export const appMenuRenderKey = (session: DocumentSession | null): string => ses
       session.history.canRedo ? 1 : 0,
       session.selection ? 1 : 0,
       session.selectedGroupId ?? '',
+      session.selectedGroupIds.join(','),
       session.selectedLayerIds.join(','),
       session.view.showGrid ? 1 : 0,
       session.view.relativeLuminance ? 1 : 0,
+      session.view.showSelectionOutline === false ? 0 : 1,
       session.view.mirrored ? 1 : 0,
       session.view.mirroredVertical ? 1 : 0
     ].join(';')
@@ -87,6 +90,8 @@ export const toolOptionsRenderKey = (session: DocumentSession | null): string =>
     session.proceduralAntialias ? 1 : 0,
     session.proceduralAntialiasStrength,
     session.shapeKind,
+    session.shapeRatio?.width ?? '',
+    session.shapeRatio?.height ?? '',
     session.fillMode,
     session.moveAutoSelect ? 1 : 0,
     session.selectionKind,

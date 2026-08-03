@@ -41,4 +41,28 @@ describe('ClipboardService', () => {
 
     expect(selectionClipboardImage(service.getSelection()!).data).toEqual(red)
   })
+
+  it('retains the internal origin when the matching system image is read back', async () => {
+    const service = new ClipboardService()
+    service.setSelection({ width: 1, height: 1, originX: 7, originY: -2, pixels: new Uint32Array([0xff0000ff]), mask: new Uint8Array([1]) })
+
+    const clipboard = await service.readSelection(async () => ({ width: 1, height: 1, data: red }))
+
+    expect(clipboard).toMatchObject({ originX: 7, originY: -2 })
+  })
+
+  it('copies a complete layer collection at service boundaries', () => {
+    const service = new ClipboardService()
+    const pixels = new Uint8ClampedArray([255, 0, 0, 255])
+    service.setLayers({
+      layers: [{ name: 'top', width: 1, height: 1, offsetX: 3, offsetY: -2, visible: true, locked: false, opacity: 0.5, blendMode: 'multiply', description: 'note', displayColor: { r: 1, g: 2, b: 3, a: 255 }, groupKey: 'group-a', pixels }],
+      groups: [{ key: 'group-a', name: 'group', visible: true, locked: false, opacity: 1, blendMode: 'normal', parentKey: null }]
+    })
+    pixels[0] = 0
+
+    const copied = service.getLayers()
+    expect(copied?.layers[0].pixels[0]).toBe(255)
+    copied!.layers[0].pixels[0] = 0
+    expect(service.getLayers()?.layers[0].pixels[0]).toBe(255)
+  })
 })

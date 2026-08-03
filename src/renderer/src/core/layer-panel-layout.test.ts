@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildLayerPanelTree, getLayerPanelDescendantGroupIds, resolveLayerPanelDropTarget, type LayerPanelNode } from './layer-panel-layout'
+import { buildLayerPanelTree, getLayerPanelDescendantGroupIds, resolveLayerPanelDropTarget, resolveLayerPanelEdgeDropTarget, type LayerPanelNode } from './layer-panel-layout'
 
 const layers = [
   { id: 'background', groupId: null },
@@ -13,6 +13,11 @@ const groups = [
 ]
 
 describe('layer panel layout helpers', () => {
+  it('uses explicit edge targets above and below the list', () => {
+    expect(resolveLayerPanelEdgeDropTarget(96, 100, 500)).toEqual({ kind: 'edge', edge: 'top' })
+    expect(resolveLayerPanelEdgeDropTarget(504, 100, 500)).toEqual({ kind: 'edge', edge: 'bottom' })
+    expect(resolveLayerPanelEdgeDropTarget(250, 100, 500)).toBeNull()
+  })
   it('flattens nested groups in top-to-bottom display order', () => {
     expect(buildLayerPanelTree({ layers, groups })).toEqual([
       { kind: 'group', id: 'characters', depth: 0 },
@@ -28,6 +33,40 @@ describe('layer panel layout helpers', () => {
     expect(buildLayerPanelTree({ layers, groups, collapsedGroupIds: ['characters'] })).toEqual([
       { kind: 'group', id: 'characters', depth: 0 },
       { kind: 'layer', id: 'background', depth: 0 }
+    ])
+  })
+
+  it('keeps empty groups ordered at the top of their container', () => {
+    expect(buildLayerPanelTree({
+      layers: [{ id: 'background', groupId: null }],
+      groups: [{ id: 'older', parentGroupId: null }, { id: 'newer', parentGroupId: null }]
+    })).toEqual([
+      { kind: 'group', id: 'newer', depth: 0 },
+      { kind: 'group', id: 'older', depth: 0 },
+      { kind: 'layer', id: 'background', depth: 0 }
+    ])
+  })
+
+  it('places an empty group between ordinary layers using its persisted anchor', () => {
+    expect(buildLayerPanelTree({
+      layers: [{ id: 'bottom', groupId: null }, { id: 'top', groupId: null }],
+      groups: [{ id: 'empty', parentGroupId: null, panelOrder: 0.25 }]
+    })).toEqual([
+      { kind: 'layer', id: 'top', depth: 0 },
+      { kind: 'group', id: 'empty', depth: 0 },
+      { kind: 'layer', id: 'bottom', depth: 0 }
+    ])
+  })
+
+  it('uses the persisted anchor for non-empty groups after they are moved', () => {
+    expect(buildLayerPanelTree({
+      layers: [{ id: 'bottom', groupId: null }, { id: 'member', groupId: 'moved' }, { id: 'top', groupId: null }],
+      groups: [{ id: 'moved', parentGroupId: null, panelOrder: 0.25 }]
+    })).toEqual([
+      { kind: 'layer', id: 'top', depth: 0 },
+      { kind: 'group', id: 'moved', depth: 0 },
+      { kind: 'layer', id: 'member', depth: 1 },
+      { kind: 'layer', id: 'bottom', depth: 0 }
     ])
   })
 

@@ -160,6 +160,21 @@ describe('pixel tools', () => {
     expect(readLayerColor(document, layer, 7 * 8 + 7)).toEqual(blue)
   })
 
+  it('paints a balanced Shift line from the same stair points used by its preview', () => {
+    const document = createDocument('balanced line', 9, 3, 'rgba')
+    const layer = getActiveLayer(document)
+    const edit = beginPixelEdit(layer.id)
+
+    paintLine(document, layer, edit, 0, 0, 8, 2, 1, blue, null, 'square', 'solid', 1, null, undefined, 0, 'paint', undefined, 'balanced')
+
+    const rows = Array.from({ length: 3 }, (_, y) => Array.from({ length: 9 }, (_, x) => readLayerColorAt(document, layer, x, y).a > 0 ? 1 : 0))
+    expect(rows).toEqual([
+      [1, 1, 1, 0, 0, 0, 0, 0, 0],
+      [0, 0, 0, 1, 1, 1, 0, 0, 0],
+      [0, 0, 0, 0, 0, 0, 1, 1, 1]
+    ])
+  })
+
   it('fills only the contiguous matching area', () => {
     const document = createDocument('fill', 4, 4, 'rgba')
     const layer = getActiveLayer(document)
@@ -485,6 +500,20 @@ describe('pixel tools', () => {
     expect(shapeEdit.before.size).toBe(3)
   })
 
+  it('draws hollow rectangles and ellipses without filling their centers', () => {
+    const document = createDocument('outline shapes', 7, 7, 'rgba')
+    const layer = getActiveLayer(document)
+    const rectangleEdit = beginPixelEdit(layer.id)
+    paintShape(document, layer, rectangleEdit, { x: 0, y: 0, width: 5, height: 5 }, 'rectangle-outline', blue)
+    expect(readLayerColorAt(document, layer, 0, 0).a).toBe(255)
+    expect(readLayerColorAt(document, layer, 2, 2).a).toBe(0)
+
+    const ellipseEdit = beginPixelEdit(layer.id)
+    paintShape(document, layer, ellipseEdit, { x: 1, y: 1, width: 5, height: 5 }, 'ellipse-outline', blue)
+    expect(readLayerColorAt(document, layer, 3, 1).a).toBe(255)
+    expect(readLayerColorAt(document, layer, 3, 3).a).toBe(0)
+  })
+
   it('clips an off-center brush stamp to an irregular selection', () => {
     const document = createDocument('brush selection overlap', 7, 5, 'rgba')
     const layer = getActiveLayer(document)
@@ -771,6 +800,19 @@ describe('pixel tools', () => {
     expect(edit.before.size).toBe(4)
     expect(readLayerColor(document, layer, 0)).toEqual(red)
     expect(readLayerColor(document, layer, 4)).toEqual(red)
+    expect(readLayerColor(document, layer, 2)).toEqual(blue)
+  })
+
+  it('keeps non-contiguous fill inside a non-rectangular selection mask', () => {
+    const document = createDocument('masked global fill', 3, 1, 'rgba')
+    const layer = getActiveLayer(document)
+    const selection = { x: 0, y: 0, width: 3, height: 1, mask: new Uint8Array([1, 0, 1]) }
+
+    const edit = floodFill(document, layer, 0, 0, blue, selection, false)
+
+    expect(edit?.before.size).toBe(2)
+    expect(readLayerColor(document, layer, 0)).toEqual(blue)
+    expect(readLayerColor(document, layer, 1).a).toBe(0)
     expect(readLayerColor(document, layer, 2)).toEqual(blue)
   })
 

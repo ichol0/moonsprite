@@ -9,6 +9,7 @@ const session = () => ({
   selectedPaletteIds: [] as number[],
   selectedLayerIds: [] as string[],
   selectedGroupId: null as string | null,
+  selectedGroupIds: [] as string[],
   collapsedGroupIds: [] as string[],
   revision: 0,
   view: { relativeLuminance: false }

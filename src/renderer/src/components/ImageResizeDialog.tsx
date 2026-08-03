@@ -1,6 +1,7 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { Lock, LockOpen, X } from 'lucide-react'
 import type { ImageResizeInterpolation } from '@shared/types'
+import { ModalShell } from './ModalShell'
 import { NumberInput } from './NumberInput'
 
 export function ImageResizeDialog({ open, currentWidth, currentHeight, onClose, onResize }: {
@@ -55,7 +56,7 @@ export function ImageResizeDialog({ open, currentWidth, currentHeight, onClose, 
   }
 
   return <div className="modal-backdrop" role="presentation">
-    <form className="modal image-resize-modal" onSubmit={submit} aria-label="调整图像尺寸">
+    <ModalShell as="form" storageKey="image-resize-v3" placement="right" defaultWidth={450} defaultHeight={500} minWidth={400} minHeight={430} maxWidth={600} maxHeight={720} className="image-resize-modal" onSubmit={submit} aria-label="调整图像尺寸">
       <header>
         <div><span className="eyebrow">IMAGE SIZE</span><h2>调整图像尺寸</h2></div>
         <button type="button" className="icon-button" aria-label="关闭" onClick={onClose}><X size={16} /></button>
@@ -80,6 +81,6 @@ export function ImageResizeDialog({ open, currentWidth, currentHeight, onClose, 
         <label className="image-resize-interpolation"><span>插值算法</span><select value={interpolation} onChange={(event) => setInterpolation(event.target.value as ImageResizeInterpolation)}><option value="nearest">最近邻（像素）</option><option value="smooth">平滑（双线性）</option></select></label>
       </div>
       <footer><button type="button" className="quiet-button" onClick={onClose}>取消</button><button className="primary-button" type="submit">完成</button></footer>
-    </form>
+    </ModalShell>
   </div>
 }

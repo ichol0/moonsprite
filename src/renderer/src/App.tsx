@@ -1,7 +1,6 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Check, ChevronRight, ExternalLink, FileOutput, FolderOpen, GitFork, Info, LayoutTemplate, Plus, Save, Trash2, X } from 'lucide-react'
-import { listen } from '@tauri-apps/api/event'
 import { PhysicalPosition, PhysicalSize } from '@tauri-apps/api/dpi'
 import { availableMonitors, getCurrentWindow } from '@tauri-apps/api/window'
 import type { ColorMode, ImageResizeInterpolation, StoredWorkspace, WorkspaceLayout } from '@shared/types'
@@ -26,12 +25,12 @@ import { PreferencesDialog } from '@/components/dialogs/PreferencesDialog'
 import { SaveAsDialog } from '@/components/dialogs/SaveAsDialog'
 import { ShortcutDialog } from '@/components/dialogs/ShortcutDialog'
 import { NumberInput } from '@/components/NumberInput'
+import { ModalShell } from '@/components/ModalShell'
 import { ThemedSelect } from '@/components/ThemedSelect'
-import { isPaletteDeleteKey } from '@/core/palette-layout'
+import { resolveCopyCommand, resolveDeleteCommand, shouldHandleGlobalSelectionEnter, shouldTriggerDeleteCommand, type EditorCommandScope } from '@/core/command-context'
 import { formatBytes } from '@/core/resource-policy'
 import { adjacentFormInput } from '@/core/form-focus'
-import { normalizeDroppedDocumentPaths } from '@/core/document-drop'
-import { subscribeToNativeDocumentDrops } from '@/platform/document-drop-events'
+import { startDocumentDropService } from '@/platform/document-drop-service'
 import { APP_CHANNEL_LABEL } from '@/core/app-meta'
 import { getRecentProjects, type RecentProject } from '@/core/home-history'
 import { EXPORT_FORMAT_PREFERENCE_KEY, EXPORT_SCALE_PRESETS_KEY, NEW_DOCUMENT_SIZE_PRESETS_KEY, RELATIVE_LUMINANCE_SCOPE_KEY, SAVE_FORMAT_PREFERENCE_KEY, imageExportKindForPreference, loadEditorPreferences, parseDocumentSizePresets, parseExportScalePresets, parseRelativeLuminanceScope, type RelativeLuminanceScope } from '@/core/file-preferences'
@@ -39,7 +38,7 @@ import { DEFAULT_SHORTCUTS, deriveShortcutConflicts, keyboardEventKey, loadShort
 import { readStoredJson, readStoredString, writeStoredJson, writeStoredString } from '@/core/storage'
 import { applyCursorPreferences } from '@/platform/cursor-theme'
 import { ACTIVE_WORKSPACE_STORAGE_KEY, BOTTOM_DOCK_HEIGHT_STORAGE_KEY, COLOR_SQUARE_ANCHOR_STORAGE_KEY, COLOR_SQUARE_DOCK_STORAGE_KEY, DEFAULT_PANEL_DOCKS, FLOATING_PANEL_STORAGE_KEYS, INSPECTOR_LAYOUT_STORAGE_KEY, INSPECTOR_WIDTH_STORAGE_KEY, LEFT_DOCK_WIDTH_STORAGE_KEY, PANEL_DOCKS_STORAGE_KEY, TOOL_RAIL_SIDE_STORAGE_KEY, loadBottomDockHeight, loadInspectorWidth, loadLeftDockWidth, loadMainWindowState, loadPanelDocks, loadPanelVisibility, loadToolRailSide, normalizeWorkspaceLayout, readLayoutStorage, saveMainWindowState, savePanelDocks, savePanelVisibility, writeLayoutStorage } from '@/core/workspace-layout-preferences'
-import { type ExportOptions, useWorkspace } from '@/store/workspace'
+import { type ExportOptions, type SaveAsOptions, useWorkspace } from '@/store/workspace'
 import './styles.css'
 
 const LazyHomeWorkspace = lazy(() => import('@/components/HomeWorkspace').then(({ HomeWorkspace }) => ({ default: HomeWorkspace })))
@@ -51,6 +50,12 @@ interface ExportPreset extends ExportOptions { presetName: string }
 const presetStorageKey = 'moonsprite.export-presets.v1'
 type ToolRailSide = 'left' | 'right'
 type AdvancedMode = 'tool-options' | 'canvas-only'
+
+const saveAsFormatForPreference = (value: string | null): SaveAsOptions['format'] => {
+  if (value === 'ase' || value === 'aseprite' || value === 'jpeg' || value === 'webp') return value
+  if (value === 'png') return 'png-auto'
+  return 'moonsprite'
+}
 
 const defaultPanelDocks: Record<WorkspacePanelId, PanelDock> = { ...DEFAULT_PANEL_DOCKS }
 const defaultInspectorLayout = JSON.stringify({
@@ -183,6 +188,7 @@ export default function App() {
   const workspaceApplyInProgress = useRef(false)
   const workspaceAutoSaveTimer = useRef<number | null>(null)
   const workspaceAutoSaveQueue = useRef<Promise<void>>(Promise.resolve())
+  const commandScopeRef = useRef<EditorCommandScope>('canvas')
   const [workspaceLayoutChange, setWorkspaceLayoutChange] = useState(0)
   const workAreaRef = useRef<HTMLElement>(null)
   const inspectorWidthRef = useRef(inspectorWidth)
@@ -211,6 +217,19 @@ export default function App() {
       // The CSS defaults remain usable when a custom cursor image cannot be decoded.
     })
   }, [runtimePreferences.cursorScale, runtimePreferences.useLocalCursors])
+  useEffect(() => {
+    const rememberCommandScope = (event: Event): void => {
+      const surface = (event.target as HTMLElement | null)?.closest<HTMLElement>('[data-command-scope], .stage-surface')
+      const scope = surface?.classList.contains('stage-surface') ? 'canvas' : surface?.dataset.commandScope
+      if (scope === 'canvas' || scope === 'layers' || scope === 'palette') commandScopeRef.current = scope
+    }
+    window.addEventListener('pointerdown', rememberCommandScope, true)
+    window.addEventListener('focusin', rememberCommandScope, true)
+    return () => {
+      window.removeEventListener('pointerdown', rememberCommandScope, true)
+      window.removeEventListener('focusin', rememberCommandScope, true)
+    }
+  }, [])
   useEffect(() => {
     const enabled = Boolean(session?.view.relativeLuminance && relativeLuminanceScope === 'app')
     document.body.classList.toggle('relative-luminance-app', enabled)
@@ -672,44 +691,11 @@ export default function App() {
   }, [])
 
   useEffect(() => {
-    let active = true
-    let removeNativeListener: (() => void) | null = null
-    let removeWindowDropListener: (() => void) | null = null
-    const recentlyOpened = new Set<string>()
-    const openDroppedPaths = (paths: string[]): void => {
-      for (const path of normalizeDroppedDocumentPaths(paths)) {
-        const key = path.toLowerCase()
-        if (recentlyOpened.has(key)) continue
-        recentlyOpened.add(key)
-        window.setTimeout(() => recentlyOpened.delete(key), 1_000)
-        void useWorkspace.getState().openPath(path).then((opened) => {
-          if (active && opened) setHomeOpen(false)
-        })
-      }
-    }
-    const dragOver = (event: DragEvent): void => event.preventDefault()
-    const drop = (event: DragEvent): void => {
-      event.preventDefault()
-      openDroppedPaths([...event.dataTransfer?.files ?? []].map((file) => window.moonSprite.pathForFile(file)).filter(Boolean))
-    }
-    window.addEventListener('dragover', dragOver, true)
-    window.addEventListener('drop', drop, true)
-    if ('__TAURI_INTERNALS__' in window) {
-      void subscribeToNativeDocumentDrops(getCurrentWindow(), openDroppedPaths).then((remove) => {
-        removeWindowDropListener = remove
-        if (!active) remove()
-      }).catch(() => {})
-      void listen<string[]>('app:file-drop', (event) => {
-        if (active) openDroppedPaths(event.payload)
-      }).then((remove) => { removeNativeListener = remove; if (!active) remove() })
-    }
-    return () => {
-      active = false
-      removeNativeListener?.()
-      removeWindowDropListener?.()
-      window.removeEventListener('dragover', dragOver, true)
-      window.removeEventListener('drop', drop, true)
-    }
+    return startDocumentDropService({
+      openPath: (path) => useWorkspace.getState().openPath(path),
+      pathForFile: (file) => window.moonSprite.pathForFile(file),
+      onOpened: () => setHomeOpen(false)
+    })
   }, [])
 
   useEffect(() => {
@@ -792,6 +778,8 @@ export default function App() {
   useEffect(() => {
     const keydown = (event: KeyboardEvent): void => {
       const key = keyboardEventKey(event).toLowerCase()
+      const target = event.target as HTMLElement | null
+      if (shortcutOpen && key !== 'escape' && target?.dataset.shortcutRecorder === 'true') return
       const matches = (action: string): boolean => {
         if (blockedShortcuts[action as keyof typeof blockedShortcuts]) return false
         const configured = shortcuts[action]
@@ -799,16 +787,30 @@ export default function App() {
         return expected !== '' && normalizeShortcut(shortcutText(event)).toLowerCase() === normalizeShortcut(expected).toLowerCase()
       }
       if (key === 'escape') {
+        const hasPaletteSurface = Boolean(document.querySelector('.palette-operation-dialog, .palette-library-popover, .palette-actions-popover, .palette-library-context'))
         const hasOwnedPopover = Boolean(document.querySelector('.document-tab-context-menu, .tool-flyout, .brush-library, .brush-size-popover, .brush-advanced-settings [aria-expanded="true"]'))
-        const hasTransientSurface = Boolean(workspace.dialog || workspace.saveProgress || newOpen || canvasResizeOpen || imageResizeOpen || outlineOpen || preferencesOpen || shortcutOpen || adjustmentOpen || aboutOpen || componentLibraryOpen || exportOpen || saveAsOpen || workspaceSaveOpen || workspaceManagerOpen || openMenu || hasOwnedPopover)
         const dialogChoice = workspace.dialog?.choices.find((choice) => choice.id === 'cancel')?.id ?? workspace.dialog?.choices.find((choice) => choice.tone === 'quiet')?.id
         if (workspace.dialog && dialogChoice) workspace.resolveDialog(dialogChoice)
-        if (workspace.saveProgress) workspace.dismissSaveProgress()
-        window.dispatchEvent(new Event('moonsprite:close-dialog'))
-        setNewOpen(false); setCanvasResizeOpen(false); setImageResizeOpen(false); setOutlineOpen(false); setPreferencesOpen(false); setShortcutOpen(false); setAdjustmentOpen(false); setAboutOpen(false); setComponentLibraryOpen(false); setExportOpen(false); setSaveAsOpen(false); setWorkspaceSaveOpen(false); setWorkspaceManagerOpen(false)
-        setOpenMenu(null)
-        if (session?.pendingPaste) workspace.cancelFloatingPaste()
-        else if (!hasTransientSurface) workspace.setSelection(null)
+        else if (workspace.saveProgress) workspace.dismissSaveProgress()
+        else if (adjustmentOpen) window.dispatchEvent(new CustomEvent('moonsprite:close-dialog', { detail: { target: 'adjustment' } }))
+        else if (document.querySelector('.layer-modal')) window.dispatchEvent(new CustomEvent('moonsprite:close-dialog', { detail: { target: 'layers' } }))
+        else if (hasPaletteSurface) window.dispatchEvent(new CustomEvent('moonsprite:close-dialog', { detail: { target: 'palette' } }))
+        else if (newOpen) setNewOpen(false)
+        else if (canvasResizeOpen) setCanvasResizeOpen(false)
+        else if (imageResizeOpen) setImageResizeOpen(false)
+        else if (outlineOpen) setOutlineOpen(false)
+        else if (preferencesOpen) setPreferencesOpen(false)
+        else if (shortcutOpen) setShortcutOpen(false)
+        else if (aboutOpen) setAboutOpen(false)
+        else if (componentLibraryOpen) setComponentLibraryOpen(false)
+        else if (exportOpen) setExportOpen(false)
+        else if (saveAsOpen) setSaveAsOpen(false)
+        else if (workspaceSaveOpen) setWorkspaceSaveOpen(false)
+        else if (workspaceManagerOpen) setWorkspaceManagerOpen(false)
+        else if (openMenu) setOpenMenu(null)
+        else if (hasOwnedPopover) window.dispatchEvent(new CustomEvent('moonsprite:close-dialog', { detail: { target: 'popover' } }))
+        else if (session?.pendingPaste) workspace.cancelFloatingPaste()
+        else workspace.setSelection(null)
         event.preventDefault()
         event.stopPropagation()
         return
@@ -819,25 +821,18 @@ export default function App() {
           event.preventDefault()
           event.stopPropagation()
           nextInput.focus()
+          nextInput.select()
           return
         }
       }
+      if (key === 'enter' && outlineOpen) return
       if (key === 'alt') event.preventDefault()
       const commandKey = event.ctrlKey || event.metaKey
-      const target = event.target as HTMLElement | null
       const inputType = target?.tagName === 'INPUT' ? (target as HTMLInputElement).type : ''
       const isTextEntry = Boolean(target?.isContentEditable)
         || target?.tagName === 'TEXTAREA'
         || target?.tagName === 'SELECT'
         || (target?.tagName === 'INPUT' && !['range', 'number', 'checkbox', 'radio', 'button', 'submit', 'reset'].includes(inputType))
-      if (target?.closest('[data-palette-id]') && isPaletteDeleteKey(event.key)) {
-        event.preventDefault()
-        event.stopPropagation()
-        const state = useWorkspace.getState()
-        const active = state.sessions.find((item) => item.document.id === state.activeId)
-        if (active?.selectedPaletteIds.length) state.deletePaletteColors(active.selectedPaletteIds)
-        return
-      }
       if (matches('advancedMode')) {
         event.preventDefault()
         event.stopPropagation()
@@ -894,9 +889,10 @@ export default function App() {
         state.setTool('selection')
         state.setSelection({ x: 0, y: 0, width: active.document.width, height: active.document.height })
       })) return
+      if (runCommand('invertSelection', () => workspace.invertSelection())) return
       if (runCommand('createBrushFromSelection', () => {
-        if (session?.tool === 'selection' && session.selection) workspace.createBrushFromSelection()
-        else workspace.setMessage('请先使用选区工具选择要作为笔刷的内容。')
+        if (session?.selection) workspace.createBrushFromSelection()
+        else workspace.setMessage('请先创建要作为笔刷的选区。')
       })) return
       if (runCommand('deselect', () => {
         if (session?.pendingPaste) workspace.commitFloatingPaste()
@@ -908,9 +904,23 @@ export default function App() {
       if (runCommand('exportDocument', openExport)) return
       if (runCommand('closeDocument', () => { if (workspace.activeId) void workspace.closeDocument(workspace.activeId) })) return
       if (runCommand('openProjectFolder', () => { if (session) openProjectFolder(session.document.id) })) return
-      if (runCommand('copy', () => { if (session && !session.selection && !session.selectedGroupId && session.selectedLayerIds.length === 1) workspace.copyActiveLayerToClipboard(); else workspace.copySelection() })) return
+      if (runCommand('copy', () => {
+        const target = resolveCopyCommand(commandScopeRef.current, Boolean(session?.selection))
+        if (target === 'layers') workspace.copySelectedLayersToClipboard()
+        else if (target === 'selection') workspace.copySelection()
+        else if (commandScopeRef.current === 'palette') workspace.setMessage('调色板颜色暂不支持复制。')
+        else if (session?.selectedLayerIds.length || session?.selectedGroupIds.length) workspace.copySelectedLayersToClipboard()
+        else workspace.setMessage('请先选择要复制的内容。')
+      })) return
       if (runCommand('cut', () => workspace.cutSelection())) return
-      if (runCommand('paste', () => { if (!session?.selection && workspace.pasteLayerFromClipboard()) return; void workspace.pasteSelection() })) return
+      if (runCommand('paste', () => {
+        if (commandScopeRef.current === 'layers' && workspace.pasteLayersFromClipboard()) return
+        if (commandScopeRef.current === 'palette') { workspace.setMessage('调色板区域暂不支持粘贴。'); return }
+        if (!session?.selection && workspace.pasteLayersFromClipboard()) return
+        void workspace.pasteSelection()
+      })) return
+      if (runCommand('pasteAsNewLayer', () => { void workspace.pasteAsNewLayer() })) return
+      if (runCommand('pasteAsNewDocument', () => { void workspace.pasteAsNewDocument() })) return
       if (runCommand('swapForegroundBackground', () => workspace.swapPrimarySecondaryColors())) return
       const adjustmentShortcuts: Array<[string, AdjustmentKind]> = [
         ['adjustmentColorBalance', 'color-balance'],
@@ -942,6 +952,7 @@ export default function App() {
       if (runCommand('mirrorView', () => { if (session) toggleMirrorView('horizontal') })) return
       if (runCommand('mirrorViewVertical', () => { if (session) toggleMirrorView('vertical') })) return
       if (runCommand('toggleGrid', () => { if (session) workspace.toggleGrid() })) return
+      if (runCommand('toggleSelectionOutline', () => { if (session) workspace.toggleSelectionOutline() })) return
       if (runCommand('rotateViewClockwise90', () => { if (session) workspace.setView({ rotation: (session.view.rotation + 90) % 360 }) })) return
       if (runCommand('rotateViewCounterClockwise90', () => { if (session) workspace.setView({ rotation: (session.view.rotation + 270) % 360 }) })) return
       if (runCommand('resetView', () => { if (session) workspace.setView({ zoom: 16, panX: 0, panY: 0, rotation: 0, mirrored: false, mirroredVertical: false }) })) return
@@ -955,9 +966,10 @@ export default function App() {
       if (runCommand('openAbout', () => setAboutOpen(true))) return
       if (runCommand('magic', () => { workspace.setTool('selection'); workspace.setSelectionKind('magic') })) return
       if (runCommand('lasso', () => { workspace.setTool('selection'); workspace.setSelectionKind('lasso') })) return
+      if (runCommand('polygonLasso', () => { workspace.setTool('selection'); workspace.setSelectionKind('polygon-lasso') })) return
       if (runCommand('tool.selection.ellipse', () => { workspace.setTool('selection'); workspace.setSelectionKind('ellipse') })) return
       if (runCommand('tool.selection', () => { workspace.setTool('selection'); workspace.setSelectionKind('rectangle') })) return
-      if (event.key === 'Enter' && session?.selection) {
+      if (event.key === 'Enter' && session?.selection && shouldHandleGlobalSelectionEnter(outlineOpen, true)) {
         event.preventDefault()
         if (session.pendingPaste) workspace.commitFloatingPaste()
         const active = useWorkspace.getState().sessions.find((item) => item.document.id === session.document.id)
@@ -971,10 +983,13 @@ export default function App() {
         if (!event.repeat) workspace.setTool(tool.id)
         return
       }
-      if (matches('deleteLayer')) {
+      if (shouldTriggerDeleteCommand(matches('deleteLayer'), event.key)) {
         event.preventDefault()
-        if (session?.selection) workspace.deleteSelection()
-        else if (session?.selectedLayerIds.length && !session.selectedGroupId) workspace.deleteActiveLayer()
+        event.stopPropagation()
+        const target = resolveDeleteCommand(commandScopeRef.current, Boolean(session?.selection))
+        if (target === 'palette' && session?.selectedPaletteIds.length) workspace.deletePaletteColors(session.selectedPaletteIds)
+        else if (target === 'layers' && (session?.selectedLayerIds.length || session?.selectedGroupIds.length)) workspace.deleteSelectedLayers()
+        else if (target === 'selection' && session?.selection) workspace.deleteSelection()
         return
       }
       if (runCommand('brushSizeDecrease', () => workspace.setBrushSize((session?.brushSize ?? 1) - 1), true)) return
@@ -1071,7 +1086,7 @@ export default function App() {
 
   const editorOnly = advancedMode !== null && Boolean(session) && !homeOpen
   return <main className={`app-shell ${session?.view.showGrid ? 'pixel-grid-on' : ''} ${editorOnly ? 'advanced-mode' : ''} ${advancedMode === 'tool-options' ? 'advanced-tool-options' : ''} ${advancedMode === 'canvas-only' ? 'advanced-canvas-only' : ''}`}>
-    {saveAsOpen && session && <SaveAsDialog initialName={session.document.name.replace(/\.(moonsprite|aseprite|ase|png|jpe?g|webp)$/i, '') || 'MoonSprite-project'} onClose={() => setSaveAsOpen(false)} onSave={(options) => workspace.saveActive(true, options)} />}
+    {saveAsOpen && session && <SaveAsDialog initialName={session.document.name.replace(/\.(moonsprite|aseprite|ase|png|jpe?g|webp)$/i, '') || 'MoonSprite-project'} initialFormat={saveAsFormatForPreference(readStoredString(SAVE_FORMAT_PREFERENCE_KEY))} onClose={() => setSaveAsOpen(false)} onSave={(options) => workspace.saveActive(true, options)} />}
     <AppMenuBar
       openMenu={openMenu}
       setOpenMenu={setOpenMenu}
@@ -1140,14 +1155,14 @@ export default function App() {
 
     <EditorStatusBar homeOpen={homeOpen} resourceLabel={resourceLabel} />
     {advancedModeNotice && <div className="advanced-mode-notice" role="status" aria-live="polite"><strong>{advancedModeNotice}</strong><small>{advancedModeNotice.startsWith('高级模式') ? `${advancedModeNoticeShortcut} 恢复` : advancedModeNoticeShortcut}</small></div>}
-    {workspace.saveProgress && <div className="modal-backdrop save-progress-backdrop" role="presentation"><section className="modal save-progress-modal" role="status" aria-live="polite"><header><div><span className="eyebrow">FILE OPERATION</span><h2>{workspace.saveProgress.title}</h2></div><button type="button" className="icon-button" aria-label={`关闭${workspace.saveProgress.title}进度`} onClick={() => workspace.dismissSaveProgress()}><X size={16} /></button></header><div className="save-progress-body"><strong>{workspace.saveProgress.label}</strong><div className="save-progress-track" aria-label={`${workspace.saveProgress.title}进度 ${workspace.saveProgress.value}%`}><i style={{ width: `${workspace.saveProgress.value}%` }} /></div><small>{workspace.saveProgress.value}%</small></div></section></div>}
-    {workspace.dialog && <div className="modal-backdrop dialog-backdrop" role="presentation"><section className="modal confirm-modal" role="alertdialog" aria-modal="true" aria-labelledby="app-dialog-title"><header><div><span className="eyebrow">MOONSPRITE</span><h2 id="app-dialog-title">{workspace.dialog.title}</h2></div></header><div className="confirm-content"><strong>{workspace.dialog.message}</strong>{workspace.dialog.detail && <p>{workspace.dialog.detail}</p>}</div><footer>{workspace.dialog.choices.map((choice) => <button key={choice.id} className={choice.tone === 'primary' ? 'primary-button' : choice.tone === 'danger' ? 'danger-button' : 'quiet-button'} onClick={() => workspace.resolveDialog(choice.id)}>{choice.label}</button>)}</footer></section></div>}
-    {exportOpen && <div className="modal-backdrop" role="presentation" onPointerDown={(event) => { if (event.target === event.currentTarget) setExportOpen(false) }}><form className="modal export-modal" onSubmit={(event) => { event.preventDefault(); void workspace.exportActive(exportForm).then((exported) => { if (exported) setExportOpen(false) }) }}><header><div><span className="eyebrow">EXPORT IMAGE</span><h2>导出设置</h2></div><button type="button" className="icon-button" aria-label="关闭" onClick={() => setExportOpen(false)}><X size={16} /></button></header><div className="modal-body"><label>文件名称<input autoFocus value={exportForm.name} onChange={(event) => setExportForm({ ...exportForm, name: event.target.value })} /></label><label>格式<ThemedSelect<ExportOptions['format']> value={exportForm.format} groups={[{ label: '导出格式', options: [{ value: 'png-auto', label: 'PNG 自动索引' }, { value: 'png-rgba', label: 'PNG RGBA' }, { value: 'jpeg', label: 'JPEG（白色背景）' }, { value: 'webp', label: 'WebP' }, { value: 'svg', label: 'SVG' }] }]} label="导出格式" onChange={(format) => setExportForm({ ...exportForm, format, scalePercent: format === 'svg' ? 100 : exportForm.scalePercent })} /></label><label>{exportForm.format === 'svg' ? '缩放倍数' : '放大比率'}<div className="scale-control"><NumberInput min={1} max={exportForm.format === 'svg' ? 64 : 6400} value={exportForm.format === 'svg' ? exportForm.scalePercent / 100 : exportForm.scalePercent} suffix={exportForm.format === 'svg' ? 'x' : '%'} onValueChange={(value) => setExportForm({ ...exportForm, scalePercent: exportForm.format === 'svg' ? Math.max(100, Math.round(value * 100)) : value })} /><div className="scale-presets" aria-label={exportForm.format === 'svg' ? '缩放倍数预设' : '放大比率预设'}>{exportScalePresets.map((scale) => <button type="button" key={scale} className={exportForm.scalePercent === scale ? 'selected' : ''} onClick={() => setExportForm({ ...exportForm, scalePercent: scale })}>{exportForm.format === 'svg' ? `${scale / 100}x` : `${scale}%`}</button>)}</div></div></label><label>导出预设<ThemedSelect value={presetName} groups={[{ label: '已保存预设', options: [{ value: '', label: '选择预设' }, ...presets.map((preset) => ({ value: preset.presetName, label: `${preset.presetName} · ${preset.scalePercent}%` }))] }]} label="导出预设" onChange={(value) => { const preset = presets.find((item) => item.presetName === value); setPresetName(value); if (preset) setExportForm({ name: preset.name, format: preset.format, scalePercent: preset.scalePercent }) }} /></label><div className="preset-row"><input aria-label="预设名称" placeholder="预设名称" value={presetName} onChange={(event) => setPresetName(event.target.value)} /><button type="button" className="quiet-button" onClick={savePreset}>保存预设</button><button type="button" className="icon-button preset-delete" title="删除当前预设" aria-label="删除当前预设" disabled={!presets.some((preset) => preset.presetName === presetName)} onClick={deletePreset}><Trash2 size={14} /></button></div></div><footer><button type="button" className="quiet-button" onClick={() => setExportOpen(false)}>取消</button><button className="primary-button" type="submit"><FileOutput size={15} />导出</button></footer></form></div>}
+    {workspace.saveProgress && <div className="modal-backdrop save-progress-backdrop" role="presentation"><ModalShell storageKey="save-progress" defaultWidth={228} defaultHeight={142} className="save-progress-modal" role="status" aria-live="polite"><header><div><span className="eyebrow">FILE OPERATION</span><h2>{workspace.saveProgress.title}</h2></div><button type="button" className="icon-button" aria-label={`关闭${workspace.saveProgress.title}进度`} onClick={() => workspace.dismissSaveProgress()}><X size={16} /></button></header><div className="save-progress-body"><strong>{workspace.saveProgress.label}</strong><div className="save-progress-track" aria-label={`${workspace.saveProgress.title}进度 ${workspace.saveProgress.value}%`}><i style={{ width: `${workspace.saveProgress.value}%` }} /></div><small>{workspace.saveProgress.value}%</small></div></ModalShell></div>}
+    {workspace.dialog && <div className="modal-backdrop dialog-backdrop" role="presentation"><ModalShell storageKey="confirm" defaultWidth={420} defaultHeight={260} className="confirm-modal" role="alertdialog" aria-modal="true" aria-labelledby="app-dialog-title"><header><div><span className="eyebrow">MOONSPRITE</span><h2 id="app-dialog-title">{workspace.dialog.title}</h2></div></header><div className="confirm-content"><strong>{workspace.dialog.message}</strong>{workspace.dialog.detail && <p>{workspace.dialog.detail}</p>}</div><footer>{workspace.dialog.choices.map((choice) => <button key={choice.id} className={choice.tone === 'primary' ? 'primary-button' : choice.tone === 'danger' ? 'danger-button' : 'quiet-button'} onClick={() => workspace.resolveDialog(choice.id)}>{choice.label}</button>)}</footer></ModalShell></div>}
+    {exportOpen && <div className="modal-backdrop" role="presentation" onPointerDown={(event) => { if (event.target === event.currentTarget) setExportOpen(false) }}><ModalShell as="form" storageKey="export" defaultWidth={420} defaultHeight={520} className="export-modal" onSubmit={(event) => { event.preventDefault(); void workspace.exportActive(exportForm).then((exported) => { if (exported) setExportOpen(false) }) }}><header><div><span className="eyebrow">EXPORT IMAGE</span><h2>导出设置</h2></div><button type="button" className="icon-button" aria-label="关闭" onClick={() => setExportOpen(false)}><X size={16} /></button></header><div className="modal-body"><label>文件名称<input autoFocus value={exportForm.name} onChange={(event) => setExportForm({ ...exportForm, name: event.target.value })} /></label><label>格式<ThemedSelect<ExportOptions['format']> value={exportForm.format} groups={[{ label: '导出格式', options: [{ value: 'png-auto', label: 'PNG 自动索引' }, { value: 'png-rgba', label: 'PNG RGBA' }, { value: 'jpeg', label: 'JPEG（白色背景）' }, { value: 'webp', label: 'WebP' }, { value: 'svg', label: 'SVG' }] }]} label="导出格式" onChange={(format) => setExportForm({ ...exportForm, format, scalePercent: format === 'svg' ? 100 : exportForm.scalePercent })} /></label><label>{exportForm.format === 'svg' ? '缩放倍数' : '放大比率'}<div className="scale-control"><NumberInput min={1} max={exportForm.format === 'svg' ? 64 : 6400} value={exportForm.format === 'svg' ? exportForm.scalePercent / 100 : exportForm.scalePercent} suffix={exportForm.format === 'svg' ? 'x' : '%'} onValueChange={(value) => setExportForm({ ...exportForm, scalePercent: exportForm.format === 'svg' ? Math.max(100, Math.round(value * 100)) : value })} /><div className="scale-presets" aria-label={exportForm.format === 'svg' ? '缩放倍数预设' : '放大比率预设'}>{exportScalePresets.map((scale) => <button type="button" key={scale} className={exportForm.scalePercent === scale ? 'selected' : ''} onClick={() => setExportForm({ ...exportForm, scalePercent: scale })}>{exportForm.format === 'svg' ? `${scale / 100}x` : `${scale}%`}</button>)}</div></div></label><label>导出预设<ThemedSelect value={presetName} groups={[{ label: '已保存预设', options: [{ value: '', label: '选择预设' }, ...presets.map((preset) => ({ value: preset.presetName, label: `${preset.presetName} · ${preset.scalePercent}%` }))] }]} label="导出预设" onChange={(value) => { const preset = presets.find((item) => item.presetName === value); setPresetName(value); if (preset) setExportForm({ name: preset.name, format: preset.format, scalePercent: preset.scalePercent }) }} /></label><div className="preset-row"><input aria-label="预设名称" placeholder="预设名称" value={presetName} onChange={(event) => setPresetName(event.target.value)} /><button type="button" className="quiet-button" onClick={savePreset}>保存预设</button><button type="button" className="icon-button preset-delete" title="删除当前预设" aria-label="删除当前预设" disabled={!presets.some((preset) => preset.presetName === presetName)} onClick={deletePreset}><Trash2 size={14} /></button></div></div><footer><button type="button" className="quiet-button" onClick={() => setExportOpen(false)}>取消</button><button className="primary-button" type="submit"><FileOutput size={15} />导出</button></footer></ModalShell></div>}
     {adjustmentOpen && <AdjustmentDialog kind={adjustmentKind} onClose={() => setAdjustmentOpen(false)} />}
-    {aboutOpen && <div className="modal-backdrop" role="presentation" onPointerDown={(event) => { if (event.target === event.currentTarget) setAboutOpen(false) }}><section className="modal about-modal" role="dialog" aria-modal="true" aria-labelledby="about-title"><header><div><span className="eyebrow">MOONSPRITE</span><h2 id="about-title">关于 MoonSprite</h2></div><button className="icon-button" aria-label="关闭" onClick={() => setAboutOpen(false)}><X size={16} /></button></header><div className="about-content"><Info size={28} /><div><strong>MoonSprite</strong><p className="about-description">为像素创作者打造的独立开源 Windows 绘画工作台，专注清晰、快速的像素级编辑体验。</p><dl><div><dt>版本</dt><dd>{APP_CHANNEL_LABEL}</dd></div><div><dt>作者</dt><dd>MoonPixel Studio 与 MoonSprite Contributors</dd></div><div><dt>许可</dt><dd>MIT License</dd></div></dl><a className="about-link" href="https://github.com/MoonPixelTeam/moonsprite" target="_blank" rel="noreferrer"><GitFork size={15} /><span>github.com/MoonPixelTeam/moonsprite</span><ExternalLink size={13} /></a><p className="about-notice">MoonSprite 是独立实现，与 Aseprite 无隶属关系，未使用其源码、品牌或视觉资产。</p></div></div><footer><button className="primary-button" onClick={() => setAboutOpen(false)}>确定</button></footer></section></div>}
+    {aboutOpen && <div className="modal-backdrop" role="presentation" onPointerDown={(event) => { if (event.target === event.currentTarget) setAboutOpen(false) }}><ModalShell storageKey="about" defaultWidth={460} defaultHeight={450} className="about-modal" role="dialog" aria-modal="true" aria-labelledby="about-title"><header><div><span className="eyebrow">MOONSPRITE</span><h2 id="about-title">关于 MoonSprite</h2></div><button className="icon-button" aria-label="关闭" onClick={() => setAboutOpen(false)}><X size={16} /></button></header><div className="about-content"><Info size={28} /><div><strong>MoonSprite</strong><p className="about-description">为像素创作者打造的独立开源 Windows 绘画工作台，专注清晰、快速的像素级编辑体验。</p><dl><div><dt>版本</dt><dd>{APP_CHANNEL_LABEL}</dd></div><div><dt>作者</dt><dd>MoonPixel Studio 与 MoonSprite Contributors</dd></div><div><dt>许可</dt><dd>MIT License</dd></div></dl><a className="about-link" href="https://github.com/MoonPixelTeam/moonsprite" target="_blank" rel="noreferrer"><GitFork size={15} /><span>github.com/MoonPixelTeam/moonsprite</span><ExternalLink size={13} /></a><p className="about-notice">MoonSprite 是独立实现，与 Aseprite 无隶属关系，未使用其源码、品牌或视觉资产。</p></div></div><footer><button className="primary-button" onClick={() => setAboutOpen(false)}>确定</button></footer></ModalShell></div>}
     {componentLibraryOpen && <Suspense fallback={null}><LazyComponentLibrary onClose={() => setComponentLibraryOpen(false)} /></Suspense>}
-    {workspaceSaveOpen && <div className="modal-backdrop" role="presentation" onPointerDown={(event) => { if (event.target === event.currentTarget && !workspaceBusy) setWorkspaceSaveOpen(false) }}><form className="modal workspace-save-dialog" onSubmit={(event) => { event.preventDefault(); void saveWorkspace(workspaceSaveName) }}><header><div><span className="eyebrow">WORKSPACE</span><h2>保存当前工作区</h2></div><button type="button" className="icon-button" aria-label="关闭" disabled={workspaceBusy} onClick={() => setWorkspaceSaveOpen(false)}><X size={16} /></button></header><div className="modal-body"><label>工作区名称<input autoFocus maxLength={96} value={workspaceSaveName} placeholder="例如：绘画、调色、动画" onChange={(event) => setWorkspaceSaveName(event.target.value)} /></label><p className="modal-note">将保存窗口大小和位置、工具栏、栏目停靠位置、排序、尺寸及浮动栏目位置。</p><p className="modal-note">文件夹：{workspaceDirectory || 'workspaces'}</p></div><footer><button type="button" className="quiet-button" disabled={workspaceBusy} onClick={() => setWorkspaceSaveOpen(false)}>取消</button><button type="submit" className="primary-button" disabled={workspaceBusy || !workspaceSaveName.trim()}><Save size={15} />保存</button></footer></form></div>}
-    {workspaceManagerOpen && <div className="modal-backdrop" role="presentation" onPointerDown={(event) => { if (event.target === event.currentTarget) setWorkspaceManagerOpen(false) }}><section className="modal workspace-manager-dialog" role="dialog" aria-labelledby="workspace-manager-title"><header><div><span className="eyebrow">WORKSPACE</span><h2 id="workspace-manager-title">管理工作区</h2></div><button type="button" className="icon-button" aria-label="关闭" onClick={() => setWorkspaceManagerOpen(false)}><X size={16} /></button></header><div className="workspace-manager-list">{savedWorkspaces.map((saved) => <div key={saved.id} className={`${saved.id === activeWorkspaceId ? 'active ' : ''}${saved.builtIn ? 'built-in' : ''}`}><button type="button" onClick={() => void applyWorkspaceLayout(saved)}><span>{saved.name}</span><small>{saved.id === activeWorkspaceId ? '当前' : '载入'}</small></button>{!saved.builtIn && <button type="button" className="icon-button" title={`删除 ${saved.name}`} aria-label={`删除 ${saved.name}`} onClick={() => void deleteSavedWorkspace(saved)}><Trash2 size={14} /></button>}</div>)}</div><footer className="workspace-manager-footer"><button type="button" className="quiet-button" onClick={() => void window.moonSprite.openWorkspaceFolder()}><FolderOpen size={15} />打开工作区文件夹</button><button type="button" className="primary-button" onClick={() => { setWorkspaceManagerOpen(false); setWorkspaceSaveName(''); setWorkspaceSaveOpen(true) }}><Plus size={15} />新建工作区</button></footer></section></div>}
+    {workspaceSaveOpen && <div className="modal-backdrop" role="presentation" onPointerDown={(event) => { if (event.target === event.currentTarget && !workspaceBusy) setWorkspaceSaveOpen(false) }}><ModalShell as="form" storageKey="workspace-save" defaultWidth={420} defaultHeight={330} className="workspace-save-dialog" onSubmit={(event) => { event.preventDefault(); void saveWorkspace(workspaceSaveName) }}><header><div><span className="eyebrow">WORKSPACE</span><h2>保存当前工作区</h2></div><button type="button" className="icon-button" aria-label="关闭" disabled={workspaceBusy} onClick={() => setWorkspaceSaveOpen(false)}><X size={16} /></button></header><div className="modal-body"><label>工作区名称<input autoFocus maxLength={96} value={workspaceSaveName} placeholder="例如：绘画、调色、动画" onChange={(event) => setWorkspaceSaveName(event.target.value)} /></label><p className="modal-note">将保存窗口大小和位置、工具栏、栏目停靠位置、排序、尺寸及浮动栏目位置。</p><p className="modal-note">文件夹：{workspaceDirectory || 'workspaces'}</p></div><footer><button type="button" className="quiet-button" disabled={workspaceBusy} onClick={() => setWorkspaceSaveOpen(false)}>取消</button><button type="submit" className="primary-button" disabled={workspaceBusy || !workspaceSaveName.trim()}><Save size={15} />保存</button></footer></ModalShell></div>}
+    {workspaceManagerOpen && <div className="modal-backdrop" role="presentation" onPointerDown={(event) => { if (event.target === event.currentTarget) setWorkspaceManagerOpen(false) }}><ModalShell storageKey="workspace-manager" defaultWidth={520} defaultHeight={500} className="workspace-manager-dialog" role="dialog" aria-labelledby="workspace-manager-title"><header><div><span className="eyebrow">WORKSPACE</span><h2 id="workspace-manager-title">管理工作区</h2></div><button type="button" className="icon-button" aria-label="关闭" onClick={() => setWorkspaceManagerOpen(false)}><X size={16} /></button></header><div className="workspace-manager-list">{savedWorkspaces.map((saved) => <div key={saved.id} className={`${saved.id === activeWorkspaceId ? 'active ' : ''}${saved.builtIn ? 'built-in' : ''}`}><button type="button" onClick={() => void applyWorkspaceLayout(saved)}><span>{saved.name}</span><small>{saved.id === activeWorkspaceId ? '当前' : '载入'}</small></button>{!saved.builtIn && <button type="button" className="icon-button" title={`删除 ${saved.name}`} aria-label={`删除 ${saved.name}`} onClick={() => void deleteSavedWorkspace(saved)}><Trash2 size={14} /></button>}</div>)}</div><footer className="workspace-manager-footer"><button type="button" className="quiet-button" onClick={() => void window.moonSprite.openWorkspaceFolder()}><FolderOpen size={15} />打开工作区文件夹</button><button type="button" className="primary-button" onClick={() => { setWorkspaceManagerOpen(false); setWorkspaceSaveName(''); setWorkspaceSaveOpen(true) }}><Plus size={15} />新建工作区</button></footer></ModalShell></div>}
     <NewDocumentDialog open={newOpen} presets={documentSizePresets} onClose={() => setNewOpen(false)} onCreate={(name, width, height, mode) => void createDocumentAndShow(name, width, height, mode)} />
     {session && <CanvasResizeDialog open={canvasResizeOpen} currentWidth={session.document.width} currentHeight={session.document.height} onClose={() => setCanvasResizeOpen(false)} onResize={workspace.resizeActiveCanvas} onPreview={(preview) => { workspace.setCanvasResizePreview(preview); publishCanvasResizePreview(session.document.id, preview) }} preview={session.canvasResizePreview} />}
     {session && <ImageResizeDialog open={imageResizeOpen} currentWidth={session.document.width} currentHeight={session.document.height} onClose={() => setImageResizeOpen(false)} onResize={(width, height, interpolation: ImageResizeInterpolation) => workspace.resizeActiveImage(width, height, interpolation)} />}

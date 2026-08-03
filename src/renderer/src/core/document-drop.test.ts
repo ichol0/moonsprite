@@ -30,4 +30,14 @@ describe('document drop paths', () => {
       'D:\\Art\\reference.gif'
     ])).toHaveLength(6)
   })
+
+  it('accepts Aseprite documents from the native desktop drop event', () => {
+    expect(normalizeDroppedDocumentPaths([
+      'D:\\Art\\sprite.ase',
+      'D:\\Art\\animated.aseprite'
+    ])).toEqual([
+      'D:\\Art\\sprite.ase',
+      'D:\\Art\\animated.aseprite'
+    ])
+  })
 })

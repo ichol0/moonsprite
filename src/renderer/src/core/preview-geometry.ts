@@ -1,6 +1,8 @@
 interface Point { x: number; y: number }
 interface Size { width: number; height: number }
 
+export const previewCheckerCellSize = (checkerSize: number, displayScale: number): number => checkerSize * displayScale
+
 interface AnchoredPreviewPanOptions {
   documentSize: Size
   viewportSize: Size

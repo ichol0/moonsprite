@@ -190,19 +190,34 @@ export const getLayerIdsInGroup = (document: SpriteDocument, groupId: string): s
   const groupIds = new Set([groupId, ...getDescendantGroupIds(document, groupId)])
   return document.layers.filter((layer) => Boolean(layer.groupId && groupIds.has(layer.groupId))).map((layer) => layer.id)
 }
-export const isLayerEffectivelyLocked = (document: SpriteDocument, layer: RasterLayer): boolean => {
-  if (layer.locked) return true
+export const getLayerLockingGroup = (document: SpriteDocument, layer: RasterLayer): LayerGroup | null => {
   const visited = new Set<string>()
   let groupId = layer.groupId ?? null
   while (groupId && !visited.has(groupId)) {
     visited.add(groupId)
     const group = document.groups.find((candidate) => candidate.id === groupId)
-    if (!group) return false
-    if (group.locked) return true
+    if (!group) return null
+    if (group.locked) return group
     groupId = group.parentGroupId ?? null
   }
-  return false
+  return null
 }
+
+export const getGroupLockingAncestor = (document: SpriteDocument, group: LayerGroup): LayerGroup | null => {
+  const visited = new Set<string>([group.id])
+  let groupId = group.parentGroupId ?? null
+  while (groupId && !visited.has(groupId)) {
+    visited.add(groupId)
+    const parent = document.groups.find((candidate) => candidate.id === groupId)
+    if (!parent) return null
+    if (parent.locked) return parent
+    groupId = parent.parentGroupId ?? null
+  }
+  return null
+}
+
+export const isLayerEffectivelyLocked = (document: SpriteDocument, layer: RasterLayer): boolean => layer.locked || Boolean(getLayerLockingGroup(document, layer))
+export const isGroupEffectivelyLocked = (document: SpriteDocument, group: LayerGroup): boolean => group.locked || Boolean(getGroupLockingAncestor(document, group))
 export const isLayerEffectivelyVisible = (document: SpriteDocument, layer: RasterLayer): boolean => {
   if (!layer.visible) return false
   const visited = new Set<string>()

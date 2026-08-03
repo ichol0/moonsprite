@@ -1,9 +1,101 @@
 import { describe, expect, it } from 'vitest'
-import { CanvasInputState, SELECTION_CORNER_RESIZE_HIT_RADIUS, SELECTION_RESIZE_HIT_RADIUS, clampCanvasZoom, constrainedTranslation, resizeSelectionBounds, rotationHandles, selectionInteractionHit, selectionResizeHit, selectionRotationHit, selectionTransformModifiers, shapeBounds, shouldStartCanvasPan, snapSelectionRotation, steppedCanvasZoom, zoomDragModeForModifiers, zoomDragTarget, type CanvasDragState } from './canvas-input'
+import { CanvasInputState, SELECTION_CORNER_RESIZE_HIT_RADIUS, SELECTION_RESIZE_HIT_RADIUS, appendPolygonLassoVertex, canvasGestureForPreview, clampCanvasZoom, constrainedTranslation, createCanvasPanDrag, finalizeMarqueeSelection, polygonLassoClosedPathPoints, polygonLassoPreviewPoints, resizeSelectionBounds, restoreCanvasDragAfterPan, rotationHandles, selectionGestureMoved, selectionInteractionHit, selectionOverlayMaskForDrag, selectionResizeHit, selectionRotationHit, selectionTransformModifiers, shapeBounds, shouldClosePolygonLasso, shouldRestartFloatingSelectionForCopy, shouldStartCanvasPan, snapSelectionRotation, steppedCanvasZoom, zoomDragModeForModifiers, zoomDragTarget, type CanvasDragState } from './canvas-input'
+import { balancedStairLinePoints } from './pixel-line'
 
 const drag = (): CanvasDragState => ({ kind: 'move-content', start: { x: 0, y: 0 }, last: { x: 0, y: 0 } })
 
 describe('canvas input helpers', () => {
+  it('uses the balanced stair algorithm for polygon lasso preview and closed edges when enabled', () => {
+    const path = [{ x: 0, y: 0 }, { x: 8, y: 2 }, { x: 7, y: 7 }]
+    expect(polygonLassoPreviewPoints(path, { x: 2, y: 8 }, false, true)).toEqual([
+      ...balancedStairLinePoints(path[0], path[1]),
+      ...balancedStairLinePoints(path[1], path[2]),
+      ...balancedStairLinePoints(path[2], { x: 2, y: 8 })
+    ])
+    expect(polygonLassoClosedPathPoints(path, true)).toEqual([
+      ...balancedStairLinePoints(path[0], path[1]),
+      ...balancedStairLinePoints(path[1], path[2]),
+      ...balancedStairLinePoints(path[2], path[0])
+    ])
+  })
+
+  it('distinguishes a click from a drag inside one document pixel', () => {
+    expect(selectionGestureMoved({ x: 100, y: 100 }, { x: 102, y: 103 })).toBe(false)
+    expect(selectionGestureMoved({ x: 100, y: 100 }, { x: 104, y: 100 })).toBe(true)
+  })
+
+  it('treats a marquee click as deselect only in replace mode', () => {
+    const before = { x: 2, y: 2, width: 3, height: 3 }
+    expect(finalizeMarqueeSelection(before, before, false, 'replace')).toBeNull()
+    expect(finalizeMarqueeSelection(before, before, false, 'subtract')).toEqual(before)
+    expect(finalizeMarqueeSelection(null, null, false, 'replace')).toBeNull()
+  })
+
+  it('keeps the existing selection outline visible while add or subtract gestures are being created', () => {
+    const before = { x: 2, y: 2, width: 3, height: 3 }
+    const incoming = { x: 8, y: 8, width: 2, height: 2 }
+    const drag: CanvasDragState = {
+      kind: 'marquee',
+      start: { x: 8, y: 8 },
+      last: { x: 9, y: 9 },
+      selectionStart: before,
+      selectionMode: 'add',
+      previewSelection: incoming
+    }
+
+    expect(selectionOverlayMaskForDrag(incoming, drag)).toEqual(before)
+    expect(selectionOverlayMaskForDrag(incoming, { ...drag, selectionMode: 'subtract' })).toEqual(before)
+    expect(finalizeMarqueeSelection(before, incoming, false, 'add')).toEqual(before)
+  })
+
+  it('restores an unfinished polygon lasso after a temporary canvas pan', () => {
+    const polygon: CanvasDragState = {
+      kind: 'polygon-lasso',
+      start: { x: 1, y: 1 },
+      last: { x: 8, y: 4 },
+      path: [{ x: 1, y: 1 }, { x: 8, y: 1 }, { x: 8, y: 4 }],
+      selectionMode: 'add',
+      selectionStart: { x: 0, y: 0, width: 2, height: 2 }
+    }
+    const pan = createCanvasPanDrag({ x: 10, y: 20 }, { x: 200, y: 120 }, polygon)
+    const restored = restoreCanvasDragAfterPan(pan, { x: 6, y: 7 })
+
+    expect(restored).toMatchObject({
+      kind: 'polygon-lasso',
+      last: { x: 6, y: 7 },
+      path: polygon.path,
+      selectionMode: 'add',
+      selectionStart: polygon.selectionStart
+    })
+    expect(canvasGestureForPreview(pan)).toBe(polygon)
+    expect(selectionOverlayMaskForDrag(null, pan)).toEqual(polygon.selectionStart)
+  })
+
+  it('keeps polygon vertices unique and closes when the first vertex is clicked', () => {
+    const path = [{ x: 2, y: 2 }, { x: 8, y: 2 }, { x: 8, y: 7 }]
+    expect(appendPolygonLassoVertex(path, { x: 8, y: 7 })).toEqual(path)
+    expect(appendPolygonLassoVertex(path, { x: 2, y: 7 })).toEqual([...path, { x: 2, y: 7 }])
+    expect(shouldClosePolygonLasso(path, { x: 2, y: 2 }, 1)).toBe(true)
+    expect(shouldClosePolygonLasso(path, { x: 4, y: 6 }, 2)).toBe(true)
+    expect(shouldClosePolygonLasso(path.slice(0, 2), { x: 2, y: 2 }, 2)).toBe(false)
+  })
+
+  it('connects polygon vertices with rasterized straight lines instead of rectangular elbows', () => {
+    const points = polygonLassoPreviewPoints([{ x: 1, y: 1 }, { x: 4, y: 3 }], { x: 6, y: 4 }, false)
+    const pixels = new Set(points.map((point) => `${point.x}:${point.y}`))
+    expect(pixels).toContain('2:2')
+    expect(pixels).toContain('4:3')
+    expect(pixels).not.toContain('4:1')
+    expect(pixels).not.toContain('1:3')
+  })
+
+  it('restarts every floating selection when Ctrl begins another copy drag', () => {
+    expect(shouldRestartFloatingSelectionForCopy(false, true)).toBe(true)
+    expect(shouldRestartFloatingSelectionForCopy(true, true)).toBe(true)
+    expect(shouldRestartFloatingSelectionForCopy(false, false)).toBe(false)
+    expect(shouldRestartFloatingSelectionForCopy(true, false)).toBe(false)
+  })
+
   it('keeps zoom levels within the supported range', () => {
     expect(clampCanvasZoom(100)).toBe(64)
     expect(steppedCanvasZoom(1, true)).toBe(1.25)
@@ -165,6 +257,19 @@ describe('canvas input helpers', () => {
     expect(shapeBounds({ x: 5, y: 5 }, { x: 2, y: 3 }, true)).toEqual({ x: 2, y: 2, width: 4, height: 4 })
   })
 
+  it('keeps a fixed long-axis ratio in horizontal and vertical drags', () => {
+    expect(shapeBounds({ x: 0, y: 0 }, { x: 7, y: 2 }, false, { width: 2, height: 1 })).toEqual({ x: 0, y: 0, width: 8, height: 5 })
+    expect(shapeBounds({ x: 0, y: 0 }, { x: 2, y: 7 }, false, { width: 2, height: 1 })).toEqual({ x: 0, y: 0, width: 15, height: 8 })
+  })
+
+  it('hits the real masked boundary instead of the rectangular bounds', () => {
+    const mask = new Uint8Array(20 * 20)
+    for (let y = 5; y < 15; y += 1) for (let x = 5; x < 15; x += 1) mask[y * 20 + x] = 1
+    const selection = { x: 10, y: 10, width: 20, height: 20, mask }
+    expect(selectionInteractionHit(selection, { x: 10, y: 15 }, 8)).toBe('outside')
+    expect(selectionInteractionHit(selection, { x: 15, y: 15 }, 8)).toBe('edge')
+  })
+
   it('keeps proportional integer scaling inside document bounds', () => {
     expect(resizeSelectionBounds({ x: 2, y: 2, width: 2, height: 2 }, { x: 8, y: 8 }, 'se', { width: 10, height: 10 }, true, true)).toEqual({ x: 2, y: 2, width: 8, height: 8 })
   })
@@ -212,9 +317,11 @@ describe('canvas input helpers', () => {
     input.altHeld = true
     input.ctrlHeld = true
 
-    input.syncModifierKeys({ altKey: false, ctrlKey: false })
+    input.shiftHeld = true
+    input.syncModifierKeys({ altKey: false, ctrlKey: false, shiftKey: false })
 
     expect(input.altHeld).toBe(false)
     expect(input.ctrlHeld).toBe(false)
+    expect(input.shiftHeld).toBe(false)
   })
 })

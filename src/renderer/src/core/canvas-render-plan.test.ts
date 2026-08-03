@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { ViewState } from '@shared/types'
-import { createCanvasRenderPlan } from './canvas-render-plan'
+import { createCanvasRenderPlan, deviceAlignedPixelRect } from './canvas-render-plan'
 
 const view = (overrides: Partial<ViewState> = {}): ViewState => ({
   zoom: 4,
@@ -15,6 +15,14 @@ const view = (overrides: Partial<ViewState> = {}): ViewState => ({
 })
 
 describe('createCanvasRenderPlan', () => {
+  it('shares device-pixel boundaries between adjacent preview pixels', () => {
+    const first = deviceAlignedPixelRect(10.2, 12.4, 3.13, 0, 0, 1.5)
+    const second = deviceAlignedPixelRect(10.2, 12.4, 3.13, 1, 0, 1.5)
+    expect(first.x + first.width).toBe(second.x)
+    expect(first.x * 1.5).toBe(Math.round(first.x * 1.5))
+    expect(second.x * 1.5).toBe(Math.round(second.x * 1.5))
+  })
+
   it('computes the visible document rectangle for an unrotated view', () => {
     const plan = createCanvasRenderPlan(320, 240, { width: 128, height: 128 }, view(), 'view')
     expect(plan.rotated).toBe(false)

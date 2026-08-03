@@ -16,6 +16,7 @@ import type {
   SelectionMask,
   SelectionMode,
   ShapeKind,
+  ShapeRatio,
   SpriteDocument,
   ToolId,
   ViewState
@@ -32,8 +33,7 @@ export interface CanvasResizePreview {
 }
 
 export interface AdjustmentSnapshot {
-  layerId: string
-  pixels: Uint8ClampedArray | Uint32Array
+  layers: Array<{ layerId: string; pixels: Uint8ClampedArray | Uint32Array }>
   palette: SpriteDocument['palette']
   nextColorId: number
 }
@@ -52,6 +52,8 @@ export interface FloatingPaste {
   source: SelectionTransformSource
   target: SelectionMask
   previewEdit: PixelEdit
+  copy: boolean
+  label: string
 }
 
 export interface BrushProfile {
@@ -89,6 +91,7 @@ export interface DocumentSession {
   proceduralAntialias: boolean
   proceduralAntialiasStrength: number
   shapeKind: ShapeKind
+  shapeRatio: ShapeRatio | null
   fillMode: FillMode
   moveAutoSelect: boolean
   selection: SelectionMask | null
@@ -103,10 +106,13 @@ export interface DocumentSession {
   outlinePreview: OutlinePreview | null
   pendingPaste: FloatingPaste | null
   view: ViewState
+  viewportSize: { width: number; height: number }
   paletteSelectionId: number | null
   selectedPaletteIds: number[]
   selectedGroupId: string | null
+  selectedGroupIds: string[]
   selectedLayerIds: string[]
+  layerSelectionAnchorId: string | null
   collapsedGroupIds: string[]
   revision: number
   recoverySuppressed: boolean

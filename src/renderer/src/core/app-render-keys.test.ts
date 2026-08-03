@@ -68,5 +68,10 @@ describe('app render keys', () => {
 
     session.view.showGrid = true
     expect(appCoordinatorRenderKey(state)).not.toBe(before)
+
+    const hiddenOutline = appCoordinatorRenderKey(state)
+    session.view.showSelectionOutline = false
+    expect(appCoordinatorRenderKey(state)).not.toBe(hiddenOutline)
+    expect(appMenuRenderKey(session)).toContain(';0;')
   })
 })

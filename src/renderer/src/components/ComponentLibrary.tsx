@@ -3,6 +3,8 @@ import { Check, ChevronRight, Copy, Eye, EyeOff, FileText, FolderOpen, Info, Lay
 import type { RgbaColor } from '@shared/types'
 import { ColorPicker, type ColorPickerConfig } from './ColorPicker'
 import { ColorValueControl } from './ColorValueControl'
+import { DeleteIconButton } from './DeleteIconButton'
+import { ModalShell } from './ModalShell'
 import { NumberInput } from './NumberInput'
 import { TextAreaInput } from './TextAreaInput'
 import { ThemedSelect, type ThemedSelectGroup } from './ThemedSelect'
@@ -31,6 +33,7 @@ const categoryLabels: Record<ComponentCategory, string> = {
 export const COMPONENT_LIBRARY_ENTRIES: ComponentLibraryEntry[] = [
   { id: 'buttons', name: '按钮组', category: 'controls', description: '主要操作、次要操作和危险操作使用同一组尺寸与状态。', source: '.primary-button / .quiet-button / .danger-button', tags: ['操作', '状态'] },
   { id: 'icon-button', name: '图标按钮', category: 'controls', description: '工具栏和面板标题中的方形图标操作。', source: '.icon-button', tags: ['图标', '工具栏'] },
+  { id: 'delete-icon-button', name: '删除图标按钮', category: 'controls', description: '用于删除预设或列表项目的统一危险图标按钮，提供紧凑、常规和禁用状态。', source: 'DeleteIconButton', tags: ['删除', '危险', '图标'] },
   { id: 'context-menu', name: '上下文菜单', category: 'controls', description: '通过右键或更多操作打开的紧凑菜单，支持图标、禁用和危险操作状态。', source: '.context-menu / .context-menu-item', tags: ['右键', '菜单', '操作'] },
   { id: 'segmented', name: '分段选择', category: 'controls', description: '用于工具模式、视图模式和互斥选项。', source: '.segmented-control', tags: ['模式', '选中'] },
   { id: 'number-input', name: '数值输入', category: 'forms', description: '统一的数字输入、步进按钮和边界限制。', source: 'NumberInput', tags: ['数字', '步进'] },
@@ -43,7 +46,7 @@ export const COMPONENT_LIBRARY_ENTRIES: ComponentLibraryEntry[] = [
   { id: 'panel-header', name: '栏目标题', category: 'panels', description: '停靠栏目标题、拖动入口和右侧操作。', source: '.panel-header', tags: ['栏目', '停靠'] },
   { id: 'layer-row', name: '图层行', category: 'panels', description: '可见性、锁定、组图标、名称、混合模式和拖动状态。', source: 'LayersPanel', tags: ['图层', '拖动'] },
   { id: 'swatches', name: '颜色格', category: 'panels', description: '调色板中的选中、悬浮和多选状态。', source: '.swatch-grid / .swatch', tags: ['颜色', '多选'] },
-  { id: 'modal-shell', name: '弹窗框架', category: 'dialogs', description: '统一标题、内容、底部操作区和关闭行为。', source: '.modal / .modal-backdrop', tags: ['弹窗', '布局'] },
+  { id: 'modal-shell', name: '弹窗框架', category: 'dialogs', description: '统一标题、内容、底部操作、拖动、八向缩放和尺寸位置记忆。', source: 'ModalShell / .modal-backdrop', tags: ['弹窗', '布局', '缩放'] },
   { id: 'status', name: '状态提示', category: 'dialogs', description: '用于操作反馈、模式提示和不可用状态。', source: '.statusbar / .advanced-mode-notice', tags: ['提示', '反馈'] },
   { id: 'tooltip', name: '悬浮提示', category: 'dialogs', description: '用于描述等较长内容的自定义悬浮提示，自动避开视口边缘。', source: 'Tooltip', tags: ['提示', '悬浮', '描述'] },
   { id: 'tool-options', name: '工具属性栏', category: 'editor', description: '工具名称、参数、模式和撤销重做操作。', source: '.tool-options', tags: ['工具', '属性'] },
@@ -75,6 +78,10 @@ function ButtonsPreview() {
 
 function IconButtonPreview() {
   return <div className="component-preview-row"><button className="icon-button" type="button" aria-label="复制"><Copy size={16} /></button><button className="icon-button active" type="button" aria-label="设置"><Settings2 size={16} /></button><button className="icon-button" type="button" aria-label="删除"><Trash2 size={16} /></button></div>
+}
+
+function DeleteIconButtonPreview() {
+  return <div className="component-preview-row"><DeleteIconButton aria-label="删除预设" /><DeleteIconButton aria-label="删除颜色预设" size="regular" /><DeleteIconButton aria-label="删除已禁用" disabled /></div>
 }
 
 function ContextMenuPreview() {
@@ -187,6 +194,7 @@ function DockPreview() {
 const previewRenderers: Record<string, () => ReactElement> = {
   buttons: ButtonsPreview,
   'icon-button': IconButtonPreview,
+  'delete-icon-button': DeleteIconButtonPreview,
   'context-menu': ContextMenuPreview,
   segmented: SegmentedPreview,
   'number-input': NumberInputPreview,
@@ -221,7 +229,7 @@ export function ComponentLibrary({ onClose }: { onClose: () => void }) {
   const Preview = previewRenderers[selectedEntry.id]
 
   return <div className="modal-backdrop component-library-backdrop" role="presentation" onPointerDown={(event) => { if (event.target === event.currentTarget) onClose() }}>
-    <section className="component-library modal" role="dialog" aria-modal="true" aria-labelledby="component-library-title">
+    <ModalShell storageKey="component-library" defaultWidth={920} defaultHeight={680} fitContent={false} className="component-library" role="dialog" aria-modal="true" aria-labelledby="component-library-title">
       <header className="component-library-header"><div><span className="eyebrow">MOONSPRITE UI</span><h2 id="component-library-title">组件库</h2><p>可复用组件与交互状态</p></div><button className="icon-button" type="button" aria-label="关闭组件库" onClick={onClose}><X size={16} /></button></header>
       <div className="component-library-layout">
         <aside className="component-library-sidebar">
@@ -237,6 +245,6 @@ export function ComponentLibrary({ onClose }: { onClose: () => void }) {
         </main>
       </div>
       <footer className="component-library-footer"><span><FileText size={14} />{COMPONENT_LIBRARY_ENTRIES.length} 个已登记组件</span><span className="component-library-footer-note"><Palette size={14} />新建 UI 前先从这里选择</span><button className="primary-button" type="button" onClick={onClose}>完成</button></footer>
-    </section>
+    </ModalShell>
   </div>
 }

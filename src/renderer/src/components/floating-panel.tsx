@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import type { CSSProperties, PointerEvent as ReactPointerEvent } from 'react'
+import type { CSSProperties, PointerEvent as ReactPointerEvent, RefObject } from 'react'
 import { loadFloatingPosition, saveFloatingPosition, type FloatingPosition } from '@/core/panel-preferences'
 
 let floatingZIndex = 40
@@ -8,6 +8,7 @@ let floatingZIndex = 40
 export type PanelDock = 'right' | 'left' | 'bottom' | 'floating'
 export type FixedPanelDock = Exclude<PanelDock, 'floating'>
 export type ResizeDirection = 'n' | 'e' | 's' | 'w' | 'ne' | 'nw' | 'se' | 'sw'
+export interface FloatingSizeConstraints { minWidth?: number; minHeight?: number; maxWidth?: number; maxHeight?: number }
 
 interface PanelDockZone {
   dock: FixedPanelDock
@@ -50,9 +51,21 @@ export function panelDockZoneAt(clientX: number, clientY: number): PanelDockZone
   return null
 }
 
-export function useFloatingPanel(initialPosition: FloatingPosition | null = null, followViewportRight = false, canDock = true, storageKey?: string, responsiveToViewport = false, onDock?: (dock: FixedPanelDock) => void, forceDocked = false) {
+export function useFloatingPanel(initialPosition: FloatingPosition | null = null, followViewportRight = false, canDock = true, storageKey?: string, responsiveToViewport = false, onDock?: (dock: FixedPanelDock) => void, forceDocked = false, constraints: FloatingSizeConstraints = {}) {
+  const minimumWidth = constraints.minWidth ?? 180
+  const minimumHeight = constraints.minHeight ?? 120
+  const maximumWidth = (): number => Math.max(minimumWidth, Math.min(constraints.maxWidth ?? window.innerWidth, window.innerWidth - 6))
+  const maximumHeight = (): number => Math.max(minimumHeight, Math.min(constraints.maxHeight ?? window.innerHeight, window.innerHeight - 6))
   const ref = useRef<HTMLElement>(null)
-  const [position, setPosition] = useState<FloatingPosition | null>(() => loadFloatingPosition(storageKey, initialPosition, { width: window.innerWidth, height: window.innerHeight }, responsiveToViewport, forceDocked))
+  const [position, setPosition] = useState<FloatingPosition | null>(() => {
+    const loaded = loadFloatingPosition(storageKey, initialPosition, { width: window.innerWidth, height: window.innerHeight }, responsiveToViewport, forceDocked)
+    if (!loaded) return null
+    return {
+      ...loaded,
+      width: loaded.width === undefined ? undefined : Math.max(minimumWidth, Math.min(maximumWidth(), loaded.width)),
+      height: loaded.height === undefined ? undefined : Math.max(minimumHeight, Math.min(maximumHeight(), loaded.height))
+    }
+  })
   const [zIndex, setZIndex] = useState(() => ++floatingZIndex)
   const [dockPreview, setDockPreview] = useState<CSSProperties | null>(null)
   const dockTargetRef = useRef<FixedPanelDock | null>(null)
@@ -82,16 +95,14 @@ export function useFloatingPanel(initialPosition: FloatingPosition | null = null
         const start = panelResize.current
         const deltaX = event.clientX - start.startX
         const deltaY = event.clientY - start.startY
-        const minimumWidth = 180
-        const minimumHeight = 120
         let x = start.x
         let y = start.y
         let width = start.width
         let height = start.height
-        if (start.direction.includes('e')) width = Math.max(minimumWidth, Math.min(window.innerWidth - start.x, start.width + deltaX))
-        if (start.direction.includes('s')) height = Math.max(minimumHeight, Math.min(window.innerHeight - start.y, start.height + deltaY))
-        if (start.direction.includes('w')) { width = Math.max(minimumWidth, Math.min(start.x + start.width, start.width - deltaX)); x = start.x + start.width - width }
-        if (start.direction.includes('n')) { height = Math.max(minimumHeight, Math.min(start.y + start.height, start.height - deltaY)); y = start.y + start.height - height }
+        if (start.direction.includes('e')) width = Math.max(minimumWidth, Math.min(maximumWidth(), window.innerWidth - start.x, start.width + deltaX))
+        if (start.direction.includes('s')) height = Math.max(minimumHeight, Math.min(maximumHeight(), window.innerHeight - start.y, start.height + deltaY))
+        if (start.direction.includes('w')) { width = Math.max(minimumWidth, Math.min(maximumWidth(), start.x + start.width, start.width - deltaX)); x = start.x + start.width - width }
+        if (start.direction.includes('n')) { height = Math.max(minimumHeight, Math.min(maximumHeight(), start.y + start.height, start.height - deltaY)); y = start.y + start.height - height }
         updatePosition(() => ({ x, y, width, height }))
         return
       }
@@ -127,8 +138,8 @@ export function useFloatingPanel(initialPosition: FloatingPosition | null = null
         if (!current) return current
         const scaleX = responsiveToViewport ? window.innerWidth / viewportRef.current.width : 1
         const scaleY = responsiveToViewport ? window.innerHeight / viewportRef.current.height : 1
-        const width = Math.max(180, Math.min(window.innerWidth, (current.width ?? 220) * scaleX))
-        const height = Math.max(120, Math.min(window.innerHeight, (current.height ?? 130) * scaleY))
+        const width = Math.max(minimumWidth, Math.min(maximumWidth(), (current.width ?? minimumWidth) * scaleX))
+        const height = Math.max(minimumHeight, Math.min(maximumHeight(), (current.height ?? minimumHeight) * scaleY))
         const x = responsiveToViewport ? current.x * scaleX : followViewportRight && !userPositioned.current ? window.innerWidth - initialRightOffset.current : current.x
         const y = responsiveToViewport ? current.y * scaleY : current.y
         viewportRef.current = { width: window.innerWidth, height: window.innerHeight }
@@ -145,7 +156,7 @@ export function useFloatingPanel(initialPosition: FloatingPosition | null = null
 
   useEffect(() => {
     const panel = ref.current
-    if (!panel || !position) return
+    if (!panel || !position || typeof ResizeObserver === 'undefined') return
     const observer = new ResizeObserver(() => {
       const bounds = panel.getBoundingClientRect()
       updatePosition((current) => {
@@ -198,7 +209,7 @@ export function useFloatingPanel(initialPosition: FloatingPosition | null = null
     let nextPosition: FloatingPosition | null = null
     updatePosition((current) => {
       if (!current) return current
-      nextPosition = { ...current, width: Math.max(180, Math.min(window.innerWidth - current.x, width)), height: Math.max(120, Math.min(window.innerHeight - current.y, height)) }
+      nextPosition = { ...current, width: Math.max(minimumWidth, Math.min(maximumWidth(), window.innerWidth - current.x, width)), height: Math.max(minimumHeight, Math.min(maximumHeight(), window.innerHeight - current.y, height)) }
       return nextPosition
     })
     if (nextPosition) persistPosition(nextPosition)
@@ -209,6 +220,41 @@ export function useFloatingPanel(initialPosition: FloatingPosition | null = null
 
 export function PanelResizeHandles({ onResize }: { onResize: (event: ReactPointerEvent<HTMLElement>, direction: ResizeDirection) => void }) {
   return <>{(['n', 'e', 's', 'w', 'ne', 'nw', 'se', 'sw'] as ResizeDirection[]).map((direction) => <span key={direction} className={`floating-resize-handle resize-${direction}`} aria-hidden="true" onPointerDown={(event) => onResize(event, direction)} />)}</>
+}
+
+interface PortalResizeHandlesProps {
+  onResize: (event: ReactPointerEvent<HTMLElement>, direction: ResizeDirection) => void
+  position: CSSProperties | undefined
+  targetRef: RefObject<HTMLElement | null>
+}
+
+export function PortalResizeHandles({ onResize, position, targetRef }: PortalResizeHandlesProps) {
+  const [bounds, setBounds] = useState<{ left: number; top: number; width: number; height: number } | null>(null)
+
+  useEffect(() => {
+    const target = targetRef.current
+    if (!target) return
+    const sync = (): void => {
+      const next = target.getBoundingClientRect()
+      setBounds((current) => current && current.left === next.left && current.top === next.top && current.width === next.width && current.height === next.height
+        ? current
+        : { left: next.left, top: next.top, width: next.width, height: next.height })
+    }
+    sync()
+    if (typeof ResizeObserver === 'undefined') return
+    const observer = new ResizeObserver(sync)
+    observer.observe(target)
+    return () => observer.disconnect()
+  }, [position?.left, position?.top, position?.width, position?.height, targetRef])
+
+  if (!bounds) return null
+  const zIndex = typeof position?.zIndex === 'number' ? position.zIndex + 1 : 220
+  return createPortal(
+    <div className="floating-resize-portal" style={{ left: bounds.left, top: bounds.top, width: bounds.width, height: bounds.height, zIndex }} aria-hidden="true">
+      <PanelResizeHandles onResize={onResize} />
+    </div>,
+    document.body
+  )
 }
 
 export function FloatingDockPreview({ style }: { style: CSSProperties | null }) {

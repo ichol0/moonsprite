@@ -2,6 +2,7 @@ import { strFromU8, strToU8, unzipSync, zipSync } from 'fflate'
 import { BLEND_MODES, type BlendMode, type ColorMode, type LayerGroup, type PaletteEntry, type ProjectBrush, type RasterLayer, type RgbaColor, type SpriteDocument } from '@shared/types'
 import { compositeDocument, createId } from './document'
 import { createDefaultAnimationTimeline, normalizeAnimationTimeline } from './animation'
+import { normalizeOutlineSettings } from './outline-settings'
 import { encodePng } from './png'
 
 interface ManifestLayer {
@@ -66,6 +67,7 @@ const normalizeLayerGroups = (source: unknown): LayerGroup[] => {
     groups.push({
       id: candidate.id,
       name: typeof candidate.name === 'string' && candidate.name ? candidate.name : '未命名组',
+      ...(Number.isFinite(candidate.panelOrder) ? { panelOrder: Number(candidate.panelOrder) } : {}),
       ...(normalizeDisplayColor(candidate.displayColor) ? { displayColor: normalizeDisplayColor(candidate.displayColor)! } : {}),
       ...(typeof candidate.description === 'string' && candidate.description ? { description: candidate.description } : {}),
       ...(candidate.parentGroupId === undefined ? {} : { parentGroupId: typeof candidate.parentGroupId === 'string' ? candidate.parentGroupId : null }),
@@ -256,6 +258,7 @@ export function decodeProject(input: Uint8Array): SpriteDocument {
     }
     customBrushes.push({ id: metadata.id, name: metadata.name, width: metadata.width, height: metadata.height, coverage: bytes.slice(), colors, sourceX: metadata.sourceX, sourceY: metadata.sourceY })
   }
+  const outlineSettings = normalizeOutlineSettings(source.outlineSettings)
   return {
     schemaVersion: PROJECT_SCHEMA_VERSION,
     id: createId('doc'),
@@ -271,6 +274,7 @@ export function decodeProject(input: Uint8Array): SpriteDocument {
     nextColorId: Math.max(1, source.nextColorId ?? 1),
     customBrushes,
     animation: normalizeAnimationTimeline(source.animation),
+    ...(outlineSettings ? { outlineSettings } : {}),
     filePath: null,
     dirty: false,
     createdAt: source.createdAt || new Date().toISOString(),

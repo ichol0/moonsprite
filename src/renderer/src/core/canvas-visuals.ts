@@ -15,6 +15,9 @@ export const rotationCursors: Record<SelectionRotationHandle, string> = { 'rotat
 export const selectionTransformDragCursor = (kind: string): string | null =>
   kind === 'transform-content' || kind === 'rotate-content' ? canvasCursors.move : null
 
+export const selectionCreationCursor = (showCrosshair: boolean, available = true): string =>
+  available ? showCrosshair ? canvasCursors.crosshair : 'none' : canvasCursors.unavailable
+
 export const colorLuminance = (color: RgbaColor): number => color.r * 0.2126 + color.g * 0.7152 + color.b * 0.0722
 
 export const canvasStatusTextColor = (backgrounds: RgbaColor[]): '#111318' | '#f1f4f8' => {
@@ -22,6 +25,42 @@ export const canvasStatusTextColor = (backgrounds: RgbaColor[]): '#111318' | '#f
     ? backgrounds.reduce((total, color) => total + colorLuminance(color), 0) / backgrounds.length
     : 0
   return luminance > 145 ? '#111318' : '#f1f4f8'
+}
+
+export interface VisualRect { x: number; y: number; width: number; height: number }
+
+export const selectionPathPreviewPixelVisible = (
+  pixel: VisualRect,
+  viewportWidth: number,
+  viewportHeight: number,
+  insideDocument: boolean
+): boolean => insideDocument
+  && pixel.x + pixel.width > 0
+  && pixel.y + pixel.height > 0
+  && pixel.x < viewportWidth
+  && pixel.y < viewportHeight
+
+export const selectionCursorCornerRects = (pixel: VisualRect, devicePixelRatio = 1): VisualRect[] => {
+  const dpr = Number.isFinite(devicePixelRatio) && devicePixelRatio > 0 ? devicePixelRatio : 1
+  const align = (value: number): number => Math.round(value * dpr) / dpr
+  const visualWidth = Math.max(8, pixel.width)
+  const visualHeight = Math.max(8, pixel.height)
+  const left = align(pixel.x + (pixel.width - visualWidth) / 2)
+  const top = align(pixel.y + (pixel.height - visualHeight) / 2)
+  const right = align(left + visualWidth)
+  const bottom = align(top + visualHeight)
+  const arm = Math.max(2, Math.min(4, Math.floor(Math.min(visualWidth, visualHeight) / 4)))
+  const stroke = 1
+  return [
+    { x: left, y: top, width: arm, height: stroke },
+    { x: left, y: top, width: stroke, height: arm },
+    { x: right - arm, y: top, width: arm, height: stroke },
+    { x: right - stroke, y: top, width: stroke, height: arm },
+    { x: left, y: bottom - stroke, width: arm, height: stroke },
+    { x: left, y: bottom - arm, width: stroke, height: arm },
+    { x: right - arm, y: bottom - stroke, width: arm, height: stroke },
+    { x: right - stroke, y: bottom - arm, width: stroke, height: arm }
+  ]
 }
 
 export const transparencyColorAt = (pixelX: number, pixelY: number, checkerboard: CheckerboardPreferences = DEFAULT_CHECKERBOARD_PREFERENCES): RgbaColor =>

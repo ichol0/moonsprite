@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { BRUSH_SHIFT_LINE_ENABLED_KEY, EXPORT_FORMAT_PREFERENCE_KEY, NEW_DOCUMENT_SIZE_PRESETS_KEY, RECOVERY_MINUTES_PREFERENCE_KEY, SAVE_FORMAT_PREFERENCE_KEY, ZOOM_TOOL_DRAG_MODE_PREFERENCE_KEY, imageExportKindForPreference, loadEditorPreferences, parseBrushPreviewMode, parseBrushShiftLineEnabled, parseCheckerSize, parseCursorScale, parseDocumentSizePresets, parseDrawingBrushPreviewEnabled, parseExportScalePresets, parseRelativeLuminanceScope, parseZoomToolDragMode, saveEditorPreferences, saveImageKindForPreference } from './file-preferences'
+import { BRUSH_SHIFT_LINE_ENABLED_KEY, EXPORT_FORMAT_PREFERENCE_KEY, LAYER_DISPLAY_COLOR_PRESETS_KEY, NEW_DOCUMENT_SIZE_PRESETS_KEY, RECOVERY_MINUTES_PREFERENCE_KEY, SAVE_FORMAT_PREFERENCE_KEY, ZOOM_TOOL_DRAG_MODE_PREFERENCE_KEY, imageExportKindForPreference, loadEditorPreferences, parseBrushPreviewMode, parseBrushShiftLineEnabled, parseCheckerSize, parseCursorScale, parseDocumentSizePresets, parseDrawingBrushPreviewEnabled, parseExportScalePresets, parseLayerDisplayColorPresets, parseRelativeLuminanceScope, parseZoomToolDragMode, saveEditorPreferences, saveImageKindForPreference } from './file-preferences'
 
 describe('file format preferences', () => {
   it('maps export formats to encoder kinds', () => {
@@ -25,6 +25,13 @@ describe('file format preferences', () => {
   it('falls back when stored preset lists are invalid or empty', () => {
     expect(parseDocumentSizePresets('[]').length).toBeGreaterThan(0)
     expect(parseExportScalePresets('invalid')).toContain(100)
+  })
+
+  it('validates, deduplicates and limits layer display color presets', () => {
+    const colors = Array.from({ length: 14 }, (_, index) => ({ r: index, g: index + 1, b: index + 2, a: 100 }))
+    expect(parseLayerDisplayColorPresets(JSON.stringify([colors[0], colors[0], { r: -1, g: 0, b: 0 }, ...colors.slice(1)]))).toHaveLength(12)
+    expect(parseLayerDisplayColorPresets(JSON.stringify([colors[0]]))).toEqual([{ r: 0, g: 1, b: 2, a: 255 }])
+    expect(parseLayerDisplayColorPresets('[]').length).toBeGreaterThan(0)
   })
 })
 
@@ -83,6 +90,11 @@ describe('editor preferences persistence boundary', () => {
     expect(defaults.brushPreviewMode).toBe('full-edge')
     expect(defaults.checkerboard.size).toBe(16)
     expect(defaults.wheelZoomEnabled).toBe(true)
+    expect(defaults.lassoPreviewClosed).toBe(false)
+    expect(defaults.eyedropperSwitchToPencil).toBe(false)
+    expect(defaults.selectionCrosshair).toBe(false)
+    expect(defaults.balancedShiftLineEnabled).toBe(true)
+    expect(defaults.layerDisplayColorPresets.length).toBeGreaterThan(0)
 
     storage.set(RECOVERY_MINUTES_PREFERENCE_KEY, '999')
     expect(loadEditorPreferences(adapter).recoveryMinutes).toBe(60)
@@ -110,7 +122,7 @@ describe('editor preferences persistence boundary', () => {
     expect(storage.get(ZOOM_TOOL_DRAG_MODE_PREFERENCE_KEY)).toBe('stepped')
     saveEditorPreferences({ ...loadEditorPreferences(adapter), brushShiftLineEnabled: false }, adapter)
     expect(storage.get(BRUSH_SHIFT_LINE_ENABLED_KEY)).toBe('false')
-    saveEditorPreferences({ ...loadEditorPreferences(adapter), useLocalCursors: false, cursorScale: 1.5, brushPreviewMode: 'edge', checkerboard: { size: 8, lightColor: { r: 1, g: 2, b: 3, a: 255 }, darkColor: { r: 4, g: 5, b: 6, a: 255 } }, wheelZoomEnabled: false, shiftLinePreviewEnabled: false }, adapter)
+    saveEditorPreferences({ ...loadEditorPreferences(adapter), useLocalCursors: false, cursorScale: 1.5, brushPreviewMode: 'edge', checkerboard: { size: 8, lightColor: { r: 1, g: 2, b: 3, a: 255 }, darkColor: { r: 4, g: 5, b: 6, a: 255 } }, wheelZoomEnabled: false, shiftLinePreviewEnabled: false, lassoPreviewClosed: true, eyedropperSwitchToPencil: true, balancedShiftLineEnabled: false, layerDisplayColorPresets: [{ r: 12, g: 34, b: 56, a: 99 }] }, adapter)
     const customized = loadEditorPreferences(adapter)
     expect(customized.useLocalCursors).toBe(false)
     expect(customized.cursorScale).toBe(1.5)
@@ -118,5 +130,10 @@ describe('editor preferences persistence boundary', () => {
     expect(customized.checkerboard).toEqual({ size: 8, lightColor: { r: 1, g: 2, b: 3, a: 255 }, darkColor: { r: 4, g: 5, b: 6, a: 255 } })
     expect(customized.wheelZoomEnabled).toBe(false)
     expect(customized.shiftLinePreviewEnabled).toBe(false)
+    expect(customized.lassoPreviewClosed).toBe(true)
+    expect(customized.eyedropperSwitchToPencil).toBe(true)
+    expect(customized.balancedShiftLineEnabled).toBe(false)
+    expect(customized.layerDisplayColorPresets).toEqual([{ r: 12, g: 34, b: 56, a: 255 }])
+    expect(storage.has(LAYER_DISPLAY_COLOR_PRESETS_KEY)).toBe(true)
   })
 })

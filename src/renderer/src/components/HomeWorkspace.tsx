@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
-import { Eraser, FileImage, FolderOpen, GripVertical, Images, MoreHorizontal, Pin, Plus, RefreshCw, Trash2, TriangleAlert } from 'lucide-react'
+import { Eraser, FileImage, FolderOpen, GripVertical, Images, Pin, Plus, RefreshCw, Trash2, TriangleAlert, X } from 'lucide-react'
 import type { RecoveryRecord } from '@shared/types'
 import { APP_CHANNEL_LABEL } from '@/core/app-meta'
 import { readProjectGalleryMetadata } from '@/core/project-format'
@@ -24,11 +24,29 @@ interface HomeWorkspaceProps {
   onRestoreRecovery(id: string): Promise<boolean>
 }
 
-type HomeSection = 'recent' | 'gallery' | 'recovery' | 'other'
+type HomeSection = 'recent' | 'gallery' | 'recovery'
 const homeSectionStorageKey = 'moonsprite.home-section.v1'
+interface CachedProjectPreview {
+  bytes: Uint8Array
+  width: number
+  height: number
+  colorMode: ProjectCard['colorMode']
+}
+const projectPreviewCache = new Map<string, CachedProjectPreview>()
+const maxCachedProjectPreviews = 48
+const previewCacheKey = (record: RecentProject): string => `${record.filePath}\u0000${record.lastOpened}`
+const cacheProjectPreview = (key: string, preview: CachedProjectPreview): void => {
+  projectPreviewCache.delete(key)
+  projectPreviewCache.set(key, preview)
+  while (projectPreviewCache.size > maxCachedProjectPreviews) projectPreviewCache.delete(projectPreviewCache.keys().next().value!)
+}
+const createPreviewUrl = (bytes: Uint8Array): string => {
+  const buffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer
+  return URL.createObjectURL(new Blob([buffer], { type: 'image/png' }))
+}
 const loadHomeSection = (): HomeSection => {
   const stored = localStorage.getItem(homeSectionStorageKey)
-  return stored === 'gallery' || stored === 'recovery' || stored === 'other' ? stored : 'recent'
+  return stored === 'gallery' || stored === 'recovery' ? stored : 'recent'
 }
 
 const formatTime = (value: number): string => {
@@ -60,21 +78,23 @@ interface ProjectFileRowProps {
   onOpenInBackground(): void
   onPin(): void
   onDelete?(): void
+  onRemoveFromRecent?(): void
   onReorderStart(event: ReactPointerEvent<HTMLButtonElement>, filePath: string): void
   onReorderMove(event: ReactPointerEvent<HTMLButtonElement>): void
   onReorderEnd(event: ReactPointerEvent<HTMLButtonElement>): void
 }
 
-function ProjectFileRow({ project, reorderable, dragging, removePending, onOpen, onOpenInBackground, onPin, onDelete, onReorderStart, onReorderMove, onReorderEnd }: ProjectFileRowProps) {
+function ProjectFileRow({ project, reorderable, dragging, removePending, onOpen, onOpenInBackground, onPin, onDelete, onRemoveFromRecent, onReorderStart, onReorderMove, onReorderEnd }: ProjectFileRowProps) {
   const invalid = Boolean(project.error)
-  return <article className={`recent-file-row ${invalid ? 'invalid' : ''} ${project.pinned ? 'pinned' : ''} ${reorderable ? 'reorderable' : ''} ${onDelete ? 'deletable' : ''} ${dragging ? 'dragging' : ''} ${removePending ? 'remove-pending' : ''}`} data-recent-path={project.filePath}>
-    <button type="button" className="recent-file-open" onPointerDown={(event) => { if (event.button === 1) event.preventDefault() }} onClick={onOpen} onAuxClick={(event) => { if (event.button !== 1) return; event.preventDefault(); event.stopPropagation(); onOpenInBackground() }} title={invalid ? `无法读取：${project.error}。点击移除该项目。` : `打开 ${project.name}`}>
+  return <article className={`recent-file-row ${invalid ? 'invalid' : ''} ${project.pinned ? 'pinned' : ''} ${reorderable ? 'reorderable' : ''} ${onDelete ? 'deletable' : ''} ${onRemoveFromRecent ? 'removable' : ''} ${dragging ? 'dragging' : ''} ${removePending ? 'remove-pending' : ''}`} data-recent-path={project.filePath}>
+    <button type="button" className="recent-file-open" onPointerDown={(event) => { if (event.button === 1) event.preventDefault() }} onClick={onOpen} onAuxClick={(event) => { if (event.button !== 1) return; event.preventDefault(); event.stopPropagation(); onOpenInBackground() }} title={invalid ? `无法读取预览：${project.error}。点击重新尝试打开。` : `打开 ${project.name}`}>
       <span className="recent-file-preview">{project.previewUrl ? <img src={project.previewUrl} alt="" /> : invalid ? <TriangleAlert size={21} /> : <FileImage size={20} />}</span>
-      <span className="recent-file-copy"><strong>{project.name}</strong><small>{invalid ? '无法读取，点击后移除' : `${project.width ?? '-'} x ${project.height ?? '-'} · ${colorModeLabel(project.colorMode)}`}</small><span>{project.filePath}</span></span>
+      <span className="recent-file-copy"><strong>{project.name}</strong><small>{invalid ? '预览读取失败，点击重试打开' : project.width && project.height ? `${project.width} x ${project.height} · ${colorModeLabel(project.colorMode)}` : '正在读取预览'}</small><span>{project.filePath}</span></span>
       <time>{formatTime(project.lastOpened)}</time>
     </button>
     <button className="recent-file-pin" type="button" onClick={onPin} aria-label={project.pinned ? `取消置顶 ${project.name}` : `置顶 ${project.name}`} title={project.pinned ? '取消置顶' : '置顶'}><Pin size={14} /></button>
     {onDelete && <button className="recent-file-delete" type="button" onClick={onDelete} aria-label={`删除工程 ${project.name}`} title="删除工程"><Trash2 size={14} /></button>}
+    {onRemoveFromRecent && <button className="recent-file-remove" type="button" onClick={onRemoveFromRecent} aria-label={`从最近移除 ${project.name}`} title="从最近移除，不删除文件"><X size={15} /></button>}
     {reorderable && <button className="recent-file-reorder" type="button" onPointerDown={(event) => onReorderStart(event, project.filePath)} onPointerMove={onReorderMove} onPointerUp={onReorderEnd} onPointerCancel={onReorderEnd} aria-label={`调整 ${project.name} 的位置`} title="拖动调整位置"><GripVertical size={15} /></button>}
   </article>
 }
@@ -114,31 +134,40 @@ export function HomeWorkspace({ onNew, onOpen, onOpenProject, onRestoreRecovery 
     objectUrls.current = []
   }
 
-  const readCards = async (records: RecentProject[]): Promise<ProjectCard[]> => Promise.all(records.map(async (record): Promise<ProjectCard> => {
+  const readCard = async (record: RecentProject): Promise<ProjectCard> => {
     try {
+      const cacheKey = previewCacheKey(record)
+      const cached = projectPreviewCache.get(cacheKey)
+      if (cached) {
+        projectPreviewCache.delete(cacheKey)
+        projectPreviewCache.set(cacheKey, cached)
+        return { ...record, name: record.fileName, previewUrl: createPreviewUrl(cached.bytes), width: cached.width, height: cached.height, colorMode: cached.colorMode }
+      }
       const bytes = await window.moonSprite.readBinary(record.filePath)
       if (/\.moonsprite$/i.test(record.filePath)) {
         const metadata = readProjectGalleryMetadata(bytes)
-        const buffer = metadata.preview.buffer.slice(metadata.preview.byteOffset, metadata.preview.byteOffset + metadata.preview.byteLength) as ArrayBuffer
-        const previewUrl = URL.createObjectURL(new Blob([buffer], { type: 'image/png' }))
+        const previewBytes = metadata.preview.slice()
+        cacheProjectPreview(cacheKey, { bytes: previewBytes, width: metadata.width, height: metadata.height, colorMode: metadata.colorMode })
+        const previewUrl = createPreviewUrl(previewBytes)
         return { ...record, name: record.fileName, previewUrl, width: metadata.width, height: metadata.height, colorMode: metadata.colorMode }
       }
       const document = await decodeDocumentFileAsync(bytes, record.filePath)
       const preview = await exportDocumentImage(document, 100, 'png-auto')
-      const buffer = preview.bytes.buffer.slice(preview.bytes.byteOffset, preview.bytes.byteOffset + preview.bytes.byteLength) as ArrayBuffer
-      const previewUrl = URL.createObjectURL(new Blob([buffer], { type: 'image/png' }))
+      const previewBytes = preview.bytes.slice()
+      cacheProjectPreview(cacheKey, { bytes: previewBytes, width: document.width, height: document.height, colorMode: document.colorMode })
+      const previewUrl = createPreviewUrl(previewBytes)
       return { ...record, name: record.fileName, previewUrl, width: document.width, height: document.height, colorMode: document.colorMode }
     } catch (error) {
       return { ...record, name: record.fileName, error: error instanceof Error ? error.message : '工程文件无法读取' }
     }
-  }))
+  }
 
   const loadSection = async (target: HomeSection): Promise<void> => {
     const generation = ++loadGeneration.current
     releaseObjectUrls()
     setProjects([])
     setLoadError('')
-    if (target === 'other' || target === 'recovery') { setLoading(false); return }
+    if (target === 'recovery') { setLoading(false); return }
     setLoading(true)
     try {
       let records: RecentProject[]
@@ -149,13 +178,30 @@ export function HomeWorkspace({ onNew, onOpen, onOpenProject, onRestoreRecovery 
         records = listing.projects.map((project) => ({ filePath: project.filePath, fileName: project.fileName, name: project.fileName, lastOpened: project.modifiedAt, pinned: pins.has(project.filePath) }))
           .sort((left, right) => Number(right.pinned) - Number(left.pinned) || right.lastOpened - left.lastOpened)
       } else records = getRecentProjects()
-      const cards = await readCards(records)
-      if (generation !== loadGeneration.current) {
-        for (const card of cards) if (card.previewUrl) URL.revokeObjectURL(card.previewUrl)
-        return
+      if (generation !== loadGeneration.current) return
+      const initialCards = records.map((record): ProjectCard => ({ ...record, name: record.fileName }))
+      projectsRef.current = initialCards
+      setProjects(initialCards)
+      setLoading(false)
+      let nextIndex = 0
+      const loadNext = async (): Promise<void> => {
+        while (nextIndex < records.length) {
+          const index = nextIndex
+          nextIndex += 1
+          const card = await readCard(records[index])
+          if (generation !== loadGeneration.current) {
+            if (card.previewUrl) URL.revokeObjectURL(card.previewUrl)
+            return
+          }
+          if (card.previewUrl) objectUrls.current.push(card.previewUrl)
+          setProjects((items) => {
+            const next = items.map((item) => item.filePath === card.filePath ? card : item)
+            projectsRef.current = next
+            return next
+          })
+        }
       }
-      objectUrls.current = cards.flatMap((card) => card.previewUrl ? [card.previewUrl] : [])
-      setProjects(cards)
+      await Promise.all(Array.from({ length: Math.min(3, records.length) }, () => loadNext()))
     } catch (error) {
       if (generation === loadGeneration.current) setLoadError(error instanceof Error ? error.message : `无法读取${target === 'gallery' ? '画廊' : '最近文件'}`)
     } finally {
@@ -264,31 +310,18 @@ export function HomeWorkspace({ onNew, onOpen, onOpenProject, onRestoreRecovery 
     }
   }
 
-  const discardUnreadableProject = async (project: ProjectCard, reason?: string): Promise<void> => {
-    const detail = reason ?? project.error ?? '工程文件不存在或已损坏。'
-    if (section === 'gallery') {
-      try {
-        const fileName = project.filePath.split(/[\\/]/).pop() ?? project.fileName
-        await window.moonSprite.deleteGalleryProject(fileName)
-        removeGalleryPin(project.filePath)
-        setMessage(`${project.name}：${detail}，已从画廊删除。`)
-      } catch (error) {
-        setMessage(`${project.name}：${detail}，无法删除画廊文件，已从当前列表移除。${error instanceof Error ? ` ${error.message}` : ''}`)
-      }
-    } else {
-      removeRecentProject(project.filePath)
-      setMessage(`${project.name}：${detail}，已从最近记录移除。`)
-    }
+  const removeFromRecent = (project: ProjectCard): void => {
+    removeRecentProject(project.filePath)
     removeProjectFromView(project.filePath)
+    setMessage(`${project.name}：已从最近记录移除，工程文件未删除。`)
   }
 
   const openProject = async (project: ProjectCard, keepHomeOpen = false): Promise<void> => {
-    if (project.error) {
-      await discardUnreadableProject(project)
-      return
-    }
     const opened = await onOpenProject(project.filePath, keepHomeOpen)
-    if (!opened) await discardUnreadableProject(project, '打开时无法读取工程文件。')
+    if (opened) return
+    const error = '打开时无法读取工程文件，原文件仍保留。'
+    setProjects((items) => items.map((item) => item.filePath === project.filePath ? { ...item, error } : item))
+    setMessage(`${project.name}：${error}`)
   }
 
   const startRecentReorder = (event: ReactPointerEvent<HTMLButtonElement>, filePath: string): void => {
@@ -357,8 +390,6 @@ export function HomeWorkspace({ onNew, onOpen, onOpenProject, onRestoreRecovery 
     ? { icon: <Images size={28} />, title: '画廊中没有工程', detail: '工程文件保存在 MoonSprite 根目录的 gallery 文件夹中。' }
     : section === 'recovery'
       ? { icon: <RefreshCw size={28} />, title: '没有待恢复的工程', detail: '非正常关闭的工程会出现在这里。' }
-      : section === 'other'
-      ? { icon: <MoreHorizontal size={28} />, title: '其他栏目', detail: '这个栏目暂时留空。' }
       : { icon: <FileImage size={28} />, title: '没有最近文件', detail: '打开或保存一个工程后，它会显示在这里。' }
 
   return <section className="aseprite-home" aria-label="MoonSprite 启动页">
@@ -375,17 +406,16 @@ export function HomeWorkspace({ onNew, onOpen, onOpenProject, onRestoreRecovery 
           <button className="start-action quiet-button" type="button" onClick={onOpen}><FolderOpen size={20} /><span><strong>打开精灵</strong><small>打开工程或常用图片</small></span></button>
           <div className="start-action-note"><FileImage size={15} /><span>支持：MoonSprite、Aseprite、PNG、JPEG、WebP、BMP、GIF</span></div>
         </aside>
-        <section className="recent-files-panel" aria-label={section === 'recent' ? '最近文件' : section === 'gallery' ? '画廊' : section === 'recovery' ? '恢复' : '其他栏目'}>
+        <section className="recent-files-panel" aria-label={section === 'recent' ? '最近文件' : section === 'gallery' ? '画廊' : '恢复'}>
           <header className="recent-files-header">
             <div className="home-section-tabs" role="tablist" aria-label="首页栏目">
               <button role="tab" aria-selected={section === 'recent'} className={section === 'recent' ? 'selected' : ''} onClick={() => selectSection('recent')}>最近</button>
               <button role="tab" aria-selected={section === 'gallery'} className={section === 'gallery' ? 'selected' : ''} onClick={() => selectSection('gallery')}>画廊</button>
               {recoveryRecords.length > 0 && <button role="tab" aria-selected={section === 'recovery'} className={section === 'recovery' ? 'selected' : ''} onClick={() => selectSection('recovery')}>恢复<span className="recovery-count">{recoveryRecords.length}</span></button>}
-              <button role="tab" aria-selected={section === 'other'} className={section === 'other' ? 'selected' : ''} onClick={() => selectSection('other')}>其他</button>
             </div>
             <div className="recent-file-tools">
               {section === 'gallery' && <button className="icon-button" type="button" onClick={() => void window.moonSprite.openGalleryFolder()} aria-label="打开画廊文件夹" title={galleryDirectory || '打开画廊文件夹'}><FolderOpen size={15} /></button>}
-              <button className="icon-button" type="button" onClick={() => void loadSection(section)} disabled={loading || section === 'other' || section === 'recovery'} aria-label="刷新当前栏目" title="刷新"><RefreshCw size={15} /></button>
+              <button className="icon-button" type="button" onClick={() => void loadSection(section)} disabled={loading || section === 'recovery'} aria-label="刷新当前栏目" title="刷新"><RefreshCw size={15} /></button>
               {section === 'recent' && <button className="icon-button" type="button" onClick={clearRecent} disabled={!projects.some((project) => !project.pinned)} aria-label="清除未置顶记录" title="清除未置顶记录"><Eraser size={15} /></button>}
             </div>
           </header>
@@ -394,7 +424,7 @@ export function HomeWorkspace({ onNew, onOpen, onOpenProject, onRestoreRecovery 
             {!loading && loadError && <div className="start-screen-state error"><TriangleAlert size={22} /><strong>无法读取栏目</strong><span>{loadError}</span><button className="quiet-button" type="button" onClick={() => void loadSection(section)}>重试</button></div>}
             {!loading && !loadError && ((section !== 'recovery' && projects.length === 0) || (section === 'recovery' && recoveryRecords.length === 0)) && <div className="start-screen-state">{emptyState.icon}<strong>{emptyState.title}</strong><span>{emptyState.detail}</span></div>}
             {!loading && !loadError && section === 'recovery' && recoveryRecords.map((record) => <RecoveryFileRow key={record.id} record={record} onRestore={() => void onRestoreRecovery(record.id)} onDiscard={() => void discardRecovery(record.id)} />)}
-            {!loading && !loadError && section !== 'recovery' && projects.map((project) => <ProjectFileRow key={project.filePath} project={project} reorderable={section === 'recent'} dragging={draggingProjectPath === project.filePath} removePending={removePendingProjectPath === project.filePath} onOpen={() => void openProject(project)} onOpenInBackground={() => void openProject(project, true)} onPin={() => pinProject(project.filePath)} onDelete={section === 'gallery' ? () => void deleteGalleryProject(project) : undefined} onReorderStart={startRecentReorder} onReorderMove={moveRecentReorder} onReorderEnd={endRecentReorder} />)}
+            {!loading && !loadError && section !== 'recovery' && projects.map((project) => <ProjectFileRow key={project.filePath} project={project} reorderable={section === 'recent'} dragging={draggingProjectPath === project.filePath} removePending={removePendingProjectPath === project.filePath} onOpen={() => void openProject(project)} onOpenInBackground={() => void openProject(project, true)} onPin={() => pinProject(project.filePath)} onDelete={section === 'gallery' ? () => void deleteGalleryProject(project) : undefined} onRemoveFromRecent={section === 'recent' && project.error ? () => removeFromRecent(project) : undefined} onReorderStart={startRecentReorder} onReorderMove={moveRecentReorder} onReorderEnd={endRecentReorder} />)}
           </div>
         </section>
       </div>

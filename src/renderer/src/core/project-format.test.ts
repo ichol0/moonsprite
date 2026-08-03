@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { PROJECT_SCHEMA_VERSION, migrateProjectManifest } from './project-format'
+import { createDocument } from './document'
+import { decodeProject, encodeProject, PROJECT_SCHEMA_VERSION, migrateProjectManifest } from './project-format'
 
 describe('project manifest migration boundary', () => {
   it('accepts the current schema through the migration entry point', () => {
@@ -14,5 +15,19 @@ describe('project manifest migration boundary', () => {
   it('rejects unknown versions without guessing their fields', () => {
     expect(() => migrateProjectManifest({ app: 'MoonSprite', schemaVersion: 3, document: { schemaVersion: 3 } })).toThrow()
     expect(() => migrateProjectManifest({ app: 'Other', schemaVersion: 1, document: { schemaVersion: 1 } })).toThrow()
+  })
+
+  it('round-trips project-owned outline settings', () => {
+    const document = createDocument('outline settings', 2, 2, 'rgba')
+    document.outlineSettings = {
+      color: { r: 10, g: 20, b: 30, a: 255 },
+      thickness: 3,
+      position: 'inside',
+      kernel: 'square',
+      directions: { nw: true, n: false, ne: true, w: true, e: true, sw: false, s: true, se: false },
+      previewEnabled: false
+    }
+
+    expect(decodeProject(encodeProject(document)).outlineSettings).toEqual(document.outlineSettings)
   })
 })

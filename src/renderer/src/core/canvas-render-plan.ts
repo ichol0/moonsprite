@@ -21,6 +21,18 @@ export interface CanvasRenderPlan {
   toY: number
 }
 
+export interface DeviceAlignedPixelRect { x: number; y: number; width: number; height: number }
+
+export function deviceAlignedPixelRect(originX: number, originY: number, zoom: number, pixelX: number, pixelY: number, devicePixelRatio: number): DeviceAlignedPixelRect {
+  const dpr = Number.isFinite(devicePixelRatio) && devicePixelRatio > 0 ? devicePixelRatio : 1
+  const align = (value: number): number => Math.round(value * dpr) / dpr
+  const left = align(originX + pixelX * zoom)
+  const top = align(originY + pixelY * zoom)
+  const right = align(originX + (pixelX + 1) * zoom)
+  const bottom = align(originY + (pixelY + 1) * zoom)
+  return { x: left, y: top, width: Math.max(1 / dpr, right - left), height: Math.max(1 / dpr, bottom - top) }
+}
+
 export function createCanvasRenderPlan(
   viewportWidth: number,
   viewportHeight: number,
