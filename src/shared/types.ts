@@ -69,7 +69,8 @@ export interface BrushListing {
   directoryPath: string
   brushes: StoredBrush[]
 }
-export type ShapeKind = 'rectangle' | 'ellipse'
+export type ShapeKind = 'rectangle' | 'ellipse' | 'rectangle-outline' | 'ellipse-outline'
+export interface ShapeRatio { width: number; height: number }
 export type FillMode = 'contiguous' | 'global'
 export type BlendMode =
   | 'normal'
@@ -165,6 +166,8 @@ export type RasterLayer = RgbaLayer | IndexedLayer
 export interface LayerGroup {
   id: string
   name: string
+  /** 空组没有子图层可定位时，保存它在统一图层堆栈中的顺序锚点。 */
+  panelOrder?: number
   /** Optional visual marker shown in the layer panel. */
   displayColor?: RgbaColor
   /** Optional user-facing note shown when hovering the group row. */
@@ -214,6 +217,8 @@ export interface SpriteDocument {
   customBrushes?: ProjectBrush[]
   /** Animation metadata is independent from layer ordering and optional for v1 compatibility. */
   animation?: AnimationTimeline
+  /** Project-owned defaults for the selection outline dialog. */
+  outlineSettings?: OutlineSettings
   filePath: string | null
   /** Original path used to open imported images or Aseprite projects. */
   sourceFilePath?: string
@@ -235,11 +240,19 @@ export interface SelectionRect {
 }
 
 export type SelectionMode = 'replace' | 'add' | 'subtract' | 'intersect'
-export type SelectionKind = 'rectangle' | 'ellipse' | 'magic' | 'lasso'
+export type SelectionKind = 'rectangle' | 'ellipse' | 'magic' | 'lasso' | 'polygon-lasso'
 export type OutlinePosition = 'inside' | 'outside' | 'both'
 export type OutlineKernel = 'round' | 'square' | 'horizontal' | 'vertical'
 export type OutlineDirection = 'nw' | 'n' | 'ne' | 'w' | 'e' | 'sw' | 's' | 'se'
 export type OutlineDirections = Record<OutlineDirection, boolean>
+export interface OutlineSettings {
+  color: RgbaColor
+  thickness: number
+  position: OutlinePosition
+  kernel: OutlineKernel
+  directions: OutlineDirections
+  previewEnabled: boolean
+}
 export type CanvasAnchor = 'nw' | 'n' | 'ne' | 'w' | 'center' | 'e' | 'sw' | 's' | 'se'
 
 /** A cropped pixel mask. A missing mask retains legacy rectangular selection semantics. */
@@ -259,6 +272,8 @@ export interface ViewState {
   mirroredVertical: boolean
   showGrid: boolean
   relativeLuminance: boolean
+  /** View-only selection outline visibility. The selection itself remains active. */
+  showSelectionOutline?: boolean
 }
 
 export interface ResourceInfo {

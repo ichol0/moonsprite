@@ -67,6 +67,13 @@ const cursorDefinitions: CursorDefinition[] = [
   { variable: '--cursor-selection-rotate-nw', source: cursorRotateNw, builtinSource: builtinRotateNw, hotspot: [16, 16], fallback: 'crosshair' }
 ]
 
+export type CursorPreferenceSource = 'system' | 'moonsprite'
+
+export const cursorPreferenceSource = (variable: string, useLocalCursors: boolean): CursorPreferenceSource => {
+  const definition = cursorDefinitions.find((item) => item.variable === variable)
+  return useLocalCursors && !definition?.builtinSource ? 'system' : 'moonsprite'
+}
+
 const scaledCursorCache = new Map<string, Promise<string>>()
 let applicationGeneration = 0
 
@@ -96,15 +103,15 @@ const scaledCursorUrl = (source: string, scale: CursorScale): Promise<string> =>
 export async function applyCursorPreferences(useLocalCursors: boolean, scale: CursorScale): Promise<void> {
   const generation = ++applicationGeneration
   const root = document.documentElement.style
-  if (!useLocalCursors) {
-    for (const definition of cursorDefinitions) root.setProperty(definition.variable, definition.fallback)
-    return
-  }
   const values = await Promise.all(cursorDefinitions.map(async (definition) => {
+    if (cursorPreferenceSource(definition.variable, useLocalCursors) === 'system') {
+      return [definition.variable, definition.fallback] as const
+    }
     const builtinSource = definition.builtinSource ?? definition.source
+    const preferredSource = useLocalCursors ? builtinSource : definition.source
     const source = scale === 1
-      ? definition.source
-      : await scaledCursorUrl(definition.source, scale).catch(() => scaledCursorUrl(builtinSource, scale))
+      ? preferredSource
+      : await scaledCursorUrl(preferredSource, scale).catch(() => scaledCursorUrl(builtinSource, scale))
     const builtin = scale === 1 ? builtinSource : await scaledCursorUrl(builtinSource, scale)
     const hotspotX = Math.round(definition.hotspot[0] * scale)
     const hotspotY = Math.round(definition.hotspot[1] * scale)

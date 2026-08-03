@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { X } from 'lucide-react'
 import type { ColorMode } from '@shared/types'
 import { DEFAULT_DOCUMENT_SIZE_PRESETS, type DocumentSizePreset } from '@/core/file-preferences'
+import { ModalShell } from './ModalShell'
 import { NumberInput } from './NumberInput'
 
 export function getWindowsFileNameError(value: string): string | null {
@@ -48,7 +49,7 @@ export function NewDocumentDialog({ open, presets = DEFAULT_DOCUMENT_SIZE_PRESET
     onClose()
   }
   return <div className="modal-backdrop" role="presentation" onPointerDown={(event) => { if (event.target === event.currentTarget) onClose() }}>
-    <form className="modal" onSubmit={submit} aria-label="新建画布">
+    <ModalShell as="form" storageKey="new-document" defaultWidth={400} defaultHeight={520} onSubmit={submit} aria-label="新建画布">
       <header><div><span className="eyebrow">NEW DOCUMENT</span><h2>新建画布</h2></div><button type="button" className="icon-button" aria-label="关闭" onClick={onClose}><X size={16} /></button></header>
       <div className="modal-body"><label>名称<input autoFocus value={name} aria-invalid={Boolean(nameError)} onChange={(event) => { setName(event.target.value); setNameError(getWindowsFileNameError(event.target.value)) }} /></label>{nameError && <p className="field-error" role="alert">{nameError}</p>}
         <div className="form-grid">
@@ -63,6 +64,6 @@ export function NewDocumentDialog({ open, presets = DEFAULT_DOCUMENT_SIZE_PRESET
         <p className="modal-note">画布尺寸没有预设上限。创建前会根据当前设备资源进行安全检查。</p>
       </div>
       <footer><button type="button" className="quiet-button" onClick={onClose}>取消</button><button className="primary-button" type="submit">创建画布</button></footer>
-    </form>
+    </ModalShell>
   </div>
 }

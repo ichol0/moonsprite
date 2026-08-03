@@ -22,6 +22,11 @@ export const CHECKER_LIGHT_COLOR_PREFERENCE_KEY = 'moonsprite.preference.checker
 export const CHECKER_DARK_COLOR_PREFERENCE_KEY = 'moonsprite.preference.checker-dark-color'
 export const WHEEL_ZOOM_ENABLED_PREFERENCE_KEY = 'moonsprite.preference.wheel-zoom-enabled'
 export const SHIFT_LINE_PREVIEW_ENABLED_PREFERENCE_KEY = 'moonsprite.preference.shift-line-preview-enabled'
+export const LASSO_PREVIEW_CLOSED_PREFERENCE_KEY = 'moonsprite.preference.lasso-preview-closed'
+export const EYEDROPPER_SWITCH_TO_PENCIL_PREFERENCE_KEY = 'moonsprite.preference.eyedropper-switch-to-pencil'
+export const SELECTION_CROSSHAIR_PREFERENCE_KEY = 'moonsprite.preference.selection-crosshair'
+export const BALANCED_SHIFT_LINE_ENABLED_PREFERENCE_KEY = 'moonsprite.preference.balanced-shift-line-enabled'
+export const LAYER_DISPLAY_COLOR_PRESETS_KEY = 'moonsprite.preference.layer-display-color-presets'
 
 export type RotationIndicatorPosition = 'view' | 'canvas'
 export type RelativeLuminanceScope = 'canvas' | 'app'
@@ -101,6 +106,15 @@ export const DEFAULT_DOCUMENT_SIZE_PRESETS: DocumentSizePreset[] = [
   { width: 128, height: 128 }, { width: 256, height: 256 }, { width: 320, height: 180 }
 ]
 export const DEFAULT_EXPORT_SCALE_PRESETS = [100, 200, 400, 1000, 2000]
+export const DEFAULT_LAYER_DISPLAY_COLOR_PRESETS: RgbaColor[] = [
+  { r: 239, g: 83, b: 80, a: 255 },
+  { r: 255, g: 167, b: 38, a: 255 },
+  { r: 253, g: 216, b: 53, a: 255 },
+  { r: 102, g: 187, b: 106, a: 255 },
+  { r: 38, g: 198, b: 218, a: 255 },
+  { r: 41, g: 121, b: 255, a: 255 },
+  { r: 171, g: 71, b: 188, a: 255 }
+]
 
 export type SaveFormatPreference = 'moonsprite' | 'png' | 'jpeg' | 'webp' | 'ase' | 'aseprite'
 export type ExportFormatPreference = 'png' | 'jpeg' | 'webp' | 'svg'
@@ -124,6 +138,11 @@ export interface EditorPreferences {
   checkerboard: CheckerboardPreferences
   wheelZoomEnabled: boolean
   shiftLinePreviewEnabled: boolean
+  lassoPreviewClosed: boolean
+  eyedropperSwitchToPencil: boolean
+  selectionCrosshair: boolean
+  balancedShiftLineEnabled: boolean
+  layerDisplayColorPresets: RgbaColor[]
 }
 
 export const DEFAULT_EDITOR_PREFERENCES: EditorPreferences = {
@@ -144,7 +163,12 @@ export const DEFAULT_EDITOR_PREFERENCES: EditorPreferences = {
   brushPreviewMode: 'full-edge',
   checkerboard: DEFAULT_CHECKERBOARD_PREFERENCES,
   wheelZoomEnabled: true,
-  shiftLinePreviewEnabled: true
+  shiftLinePreviewEnabled: true,
+  lassoPreviewClosed: false,
+  eyedropperSwitchToPencil: false,
+  selectionCrosshair: false,
+  balancedShiftLineEnabled: true,
+  layerDisplayColorPresets: DEFAULT_LAYER_DISPLAY_COLOR_PRESETS
 }
 
 const boundedInteger = (value: unknown, max: number): number | null => {
@@ -179,6 +203,31 @@ export function parseExportScalePresets(value: string | null): number[] {
     return presets.length > 0 ? presets : [...DEFAULT_EXPORT_SCALE_PRESETS]
   } catch {
     return [...DEFAULT_EXPORT_SCALE_PRESETS]
+  }
+}
+
+export function parseLayerDisplayColorPresets(value: string | null): RgbaColor[] {
+  const fallback = (): RgbaColor[] => DEFAULT_LAYER_DISPLAY_COLOR_PRESETS.map((color) => ({ ...color }))
+  try {
+    const parsed = JSON.parse(value ?? 'null') as unknown
+    if (!Array.isArray(parsed)) return fallback()
+    const seen = new Set<string>()
+    const colors: RgbaColor[] = []
+    for (const candidate of parsed) {
+      if (!candidate || typeof candidate !== 'object') continue
+      const value = candidate as Partial<RgbaColor>
+      const channels = [value.r, value.g, value.b]
+      if (channels.some((channel) => typeof channel !== 'number' || !Number.isFinite(channel) || channel < 0 || channel > 255)) continue
+      const color = { r: Math.round(value.r!), g: Math.round(value.g!), b: Math.round(value.b!), a: 255 }
+      const key = `${color.r}:${color.g}:${color.b}`
+      if (seen.has(key)) continue
+      seen.add(key)
+      colors.push(color)
+      if (colors.length === 12) break
+    }
+    return colors.length > 0 ? colors : fallback()
+  } catch {
+    return fallback()
   }
 }
 
@@ -237,7 +286,12 @@ export function loadEditorPreferences(storage?: Storage): EditorPreferences {
     brushPreviewMode: parseBrushPreviewMode(get(BRUSH_PREVIEW_MODE_PREFERENCE_KEY)),
     checkerboard: loadCheckerboardPreferences(storage),
     wheelZoomEnabled: get(WHEEL_ZOOM_ENABLED_PREFERENCE_KEY) !== 'false',
-    shiftLinePreviewEnabled: get(SHIFT_LINE_PREVIEW_ENABLED_PREFERENCE_KEY) !== 'false'
+    shiftLinePreviewEnabled: get(SHIFT_LINE_PREVIEW_ENABLED_PREFERENCE_KEY) !== 'false',
+    lassoPreviewClosed: get(LASSO_PREVIEW_CLOSED_PREFERENCE_KEY) === 'true',
+    eyedropperSwitchToPencil: get(EYEDROPPER_SWITCH_TO_PENCIL_PREFERENCE_KEY) === 'true',
+    selectionCrosshair: get(SELECTION_CROSSHAIR_PREFERENCE_KEY) === 'true',
+    balancedShiftLineEnabled: get(BALANCED_SHIFT_LINE_ENABLED_PREFERENCE_KEY) !== 'false',
+    layerDisplayColorPresets: parseLayerDisplayColorPresets(get(LAYER_DISPLAY_COLOR_PRESETS_KEY))
   }
 }
 
@@ -262,7 +316,12 @@ export function saveEditorPreferences(preferences: EditorPreferences, storage?: 
     [CHECKER_LIGHT_COLOR_PREFERENCE_KEY]: colorHex(preferences.checkerboard.lightColor),
     [CHECKER_DARK_COLOR_PREFERENCE_KEY]: colorHex(preferences.checkerboard.darkColor),
     [WHEEL_ZOOM_ENABLED_PREFERENCE_KEY]: String(preferences.wheelZoomEnabled),
-    [SHIFT_LINE_PREVIEW_ENABLED_PREFERENCE_KEY]: String(preferences.shiftLinePreviewEnabled)
+    [SHIFT_LINE_PREVIEW_ENABLED_PREFERENCE_KEY]: String(preferences.shiftLinePreviewEnabled),
+    [LASSO_PREVIEW_CLOSED_PREFERENCE_KEY]: String(preferences.lassoPreviewClosed),
+    [EYEDROPPER_SWITCH_TO_PENCIL_PREFERENCE_KEY]: String(preferences.eyedropperSwitchToPencil),
+    [SELECTION_CROSSHAIR_PREFERENCE_KEY]: String(preferences.selectionCrosshair),
+    [BALANCED_SHIFT_LINE_ENABLED_PREFERENCE_KEY]: String(preferences.balancedShiftLineEnabled),
+    [LAYER_DISPLAY_COLOR_PRESETS_KEY]: JSON.stringify(parseLayerDisplayColorPresets(JSON.stringify(preferences.layerDisplayColorPresets)))
   }
   for (const [key, value] of Object.entries(values)) writeStoredString(key, value, storage)
 }

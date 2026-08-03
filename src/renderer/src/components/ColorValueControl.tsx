@@ -1,9 +1,11 @@
 import { createPortal } from 'react-dom'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { X } from 'lucide-react'
 import type { RgbaColor } from '@shared/types'
 import { clampByte } from '@/core/raster'
 import { colorFromValues, colorToValues, colorValueFields, parseRgbaHex, rgbaHex, type ColorValueMode } from '@/core/color-values'
 import { NumberInput } from './NumberInput'
+import { PanelResizeHandles, type ResizeDirection } from './floating-panel'
 
 interface ColorValueControlProps {
   color: RgbaColor
@@ -11,6 +13,7 @@ interface ColorValueControlProps {
   label: string
   roleLabel?: string
   className?: string
+  storageKey?: string
 }
 
 const modeLabels: Array<{ value: ColorValueMode; label: string }> = [
@@ -19,6 +22,11 @@ const modeLabels: Array<{ value: ColorValueMode; label: string }> = [
   { value: 'hsl', label: 'HSL' },
   { value: 'gray', label: 'Gray' }
 ]
+
+const COLOR_EDITOR_MIN_WIDTH = 420
+const COLOR_EDITOR_MIN_HEIGHT = 240
+const COLOR_EDITOR_MAX_WIDTH = 720
+const COLOR_EDITOR_MAX_HEIGHT = 480
 
 const cssColor = (color: RgbaColor): string => `rgb(${color.r} ${color.g} ${color.b} / ${color.a / 255})`
 const colorGradient = (mode: ColorValueMode, values: Record<string, number>, fallback: RgbaColor, field: ReturnType<typeof colorValueFields>[number]): string => {
@@ -29,13 +37,22 @@ const colorGradient = (mode: ColorValueMode, values: Record<string, number>, fal
   return `linear-gradient(90deg, ${stops.join(', ')})`
 }
 
-export function ColorValueControl({ color, onChange, label, roleLabel, className = '' }: ColorValueControlProps) {
+export function ColorValueControl({ color, onChange, label, roleLabel, className = '', storageKey }: ColorValueControlProps) {
   const [open, setOpen] = useState(false)
   const [mode, setMode] = useState<ColorValueMode>('rgb')
   const [hexText, setHexText] = useState(() => rgbaHex(color))
   const [position, setPosition] = useState({ left: 8, top: 8 })
+  const [size, setSize] = useState({ width: 468, height: 264 })
+  const [resident, setResident] = useState(false)
   const triggerRef = useRef<HTMLButtonElement>(null)
   const popoverRef = useRef<HTMLDivElement>(null)
+  const dragRef = useRef<{ pointerX: number; pointerY: number; left: number; top: number } | null>(null)
+  const resizeRef = useRef<{ direction: ResizeDirection; pointerX: number; pointerY: number; left: number; top: number; width: number; height: number } | null>(null)
+  const positionRef = useRef(position)
+  const sizeRef = useRef(size)
+  const residentRef = useRef(resident)
+  const sizeKey = storageKey ? `moonsprite.color-editor-size.${storageKey}` : null
+  const positionedRef = useRef(false)
 
   useEffect(() => setHexText(rgbaHex(color)), [color.r, color.g, color.b, color.a])
 
@@ -45,26 +62,100 @@ export function ColorValueControl({ color, onChange, label, roleLabel, className
       const trigger = triggerRef.current?.getBoundingClientRect()
       const popover = popoverRef.current?.getBoundingClientRect()
       if (!trigger || !popover) return
-      const left = Math.max(8, Math.min(window.innerWidth - popover.width - 8, trigger.right - popover.width))
-      const top = window.innerHeight - trigger.bottom >= popover.height + 6
+      let nextSize = sizeRef.current
+      if (!positionedRef.current && sizeKey) {
+        try {
+          const stored = JSON.parse(localStorage.getItem(sizeKey) ?? 'null') as { width?: number; height?: number } | null
+          if (stored && Number.isFinite(stored.width) && Number.isFinite(stored.height)) {
+            nextSize = {
+              width: Math.max(COLOR_EDITOR_MIN_WIDTH, Math.min(COLOR_EDITOR_MAX_WIDTH, window.innerWidth - 16, stored.width!)),
+              height: Math.max(COLOR_EDITOR_MIN_HEIGHT, Math.min(COLOR_EDITOR_MAX_HEIGHT, window.innerHeight - 16, stored.height!))
+            }
+            sizeRef.current = nextSize
+            setSize(nextSize)
+          }
+        } catch { localStorage.removeItem(sizeKey) }
+      }
+      const left = Math.max(8, Math.min(window.innerWidth - nextSize.width - 8, trigger.right - nextSize.width))
+      const top = window.innerHeight - trigger.bottom >= nextSize.height + 6
         ? trigger.bottom + 5
-        : Math.max(8, trigger.top - popover.height - 5)
-      setPosition({ left, top })
+        : Math.max(8, trigger.top - nextSize.height - 5)
+      positionRef.current = { left, top }
+      setPosition(positionRef.current)
+      positionedRef.current = true
     }
     place()
     window.addEventListener('resize', place)
     return () => window.removeEventListener('resize', place)
-  }, [open, mode])
+  }, [open, sizeKey])
 
   useEffect(() => {
     if (!open) return
-    const close = (event: PointerEvent): void => {
-      const target = event.target as Node
-      if (!triggerRef.current?.contains(target) && !popoverRef.current?.contains(target)) setOpen(false)
+    const move = (event: PointerEvent): void => {
+      const drag = dragRef.current
+      const popover = popoverRef.current
+      const resize = resizeRef.current
+      if (resize) {
+        const deltaX = event.clientX - resize.pointerX
+        const deltaY = event.clientY - resize.pointerY
+        let left = resize.left
+        let top = resize.top
+        let width = resize.width
+        let height = resize.height
+        if (resize.direction.includes('e')) width = Math.max(COLOR_EDITOR_MIN_WIDTH, Math.min(COLOR_EDITOR_MAX_WIDTH, window.innerWidth - resize.left - 8, resize.width + deltaX))
+        if (resize.direction.includes('s')) height = Math.max(COLOR_EDITOR_MIN_HEIGHT, Math.min(COLOR_EDITOR_MAX_HEIGHT, window.innerHeight - resize.top - 8, resize.height + deltaY))
+        if (resize.direction.includes('w')) { width = Math.max(COLOR_EDITOR_MIN_WIDTH, Math.min(COLOR_EDITOR_MAX_WIDTH, resize.left + resize.width - 8, resize.width - deltaX)); left = resize.left + resize.width - width }
+        if (resize.direction.includes('n')) { height = Math.max(COLOR_EDITOR_MIN_HEIGHT, Math.min(COLOR_EDITOR_MAX_HEIGHT, resize.top + resize.height - 8, resize.height - deltaY)); top = resize.top + resize.height - height }
+        positionRef.current = { left, top }
+        sizeRef.current = { width, height }
+        setPosition(positionRef.current)
+        setSize(sizeRef.current)
+        return
+      }
+      if (!drag || !popover) return
+      const bounds = popover.getBoundingClientRect()
+      if (!residentRef.current && Math.hypot(event.clientX - drag.pointerX, event.clientY - drag.pointerY) >= 3) {
+        residentRef.current = true
+        setResident(true)
+      }
+      const next = {
+        left: Math.max(8, Math.min(window.innerWidth - bounds.width - 8, drag.left + event.clientX - drag.pointerX)),
+        top: Math.max(8, Math.min(window.innerHeight - bounds.height - 8, drag.top + event.clientY - drag.pointerY))
+      }
+      positionRef.current = next
+      setPosition(next)
     }
-    window.addEventListener('pointerdown', close, true)
-    return () => window.removeEventListener('pointerdown', close, true)
-  }, [open])
+    const end = (): void => {
+      if (resizeRef.current && sizeKey) localStorage.setItem(sizeKey, JSON.stringify(sizeRef.current))
+      dragRef.current = null
+      resizeRef.current = null
+    }
+    window.addEventListener('pointermove', move)
+    window.addEventListener('pointerup', end)
+    window.addEventListener('pointercancel', end)
+    return () => {
+      window.removeEventListener('pointermove', move)
+      window.removeEventListener('pointerup', end)
+      window.removeEventListener('pointercancel', end)
+    }
+  }, [open, sizeKey])
+
+  useEffect(() => {
+    residentRef.current = resident
+  }, [resident])
+
+  useEffect(() => {
+    if (!open || resident) return
+    const closeTransient = (event: PointerEvent): void => {
+      const target = event.target as Node
+      if (!popoverRef.current?.contains(target) && !triggerRef.current?.contains(target)) {
+        positionedRef.current = false
+        setOpen(false)
+      }
+    }
+    window.addEventListener('pointerdown', closeTransient, true)
+    return () => window.removeEventListener('pointerdown', closeTransient, true)
+  }, [open, resident])
 
   const commitHex = (): void => {
     const next = parseRgbaHex(hexText, color.a)
@@ -75,13 +166,21 @@ export function ColorValueControl({ color, onChange, label, roleLabel, className
   }
 
   const values = colorToValues(color, mode)
+  const fields = colorValueFields(mode)
   const updateValue = (key: string, value: number): void => {
     const next = colorFromValues(mode, { ...values, [key]: value }, color)
     onChange(next)
     setHexText(rgbaHex(next))
   }
 
-  const editor = open ? <div ref={popoverRef} className="color-editor-popover" role="dialog" aria-label={`${label}颜色编辑`} style={position}>
+  const roleTitle = roleLabel ? (roleLabel.endsWith('色') ? roleLabel : `${roleLabel}色`) : ''
+  const editorLabel = `颜色编辑${roleTitle ? ` ${roleTitle}` : ''}`
+  const editor = open ? <div ref={popoverRef} className={`color-editor-popover ${resident ? 'resident' : 'transient'}`} role="dialog" aria-label={editorLabel} style={{ ...position, ...size }}>
+    <header className="color-editor-titlebar" onPointerDown={(event) => {
+      if (event.button !== 0 || (event.target as HTMLElement).closest('button')) return
+      dragRef.current = { pointerX: event.clientX, pointerY: event.clientY, left: position.left, top: position.top }
+      event.preventDefault()
+    }}><strong>颜色编辑{roleTitle ? ` ${roleTitle}` : ''}</strong><button type="button" className="icon-button" aria-label="关闭颜色编辑" onClick={() => { positionedRef.current = false; setOpen(false) }}><X size={14} /></button></header>
     <div className="color-editor-toolbar">
       <div className="color-editor-tabs" role="tablist" aria-label="颜色模式">
         {modeLabels.map((option) => <button key={option.value} type="button" role="tab" aria-selected={mode === option.value} className={mode === option.value ? 'selected' : ''} onClick={() => setMode(option.value)}>{option.label}</button>)}
@@ -89,17 +188,24 @@ export function ColorValueControl({ color, onChange, label, roleLabel, className
       <label className="color-editor-hex"><span>#</span><input aria-label={`${label} HEX`} value={hexText.replace(/^#/, '')} onChange={(event) => setHexText(`#${event.target.value}`)} onBlur={commitHex} onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); commitHex() } }} /></label>
       <span className="color-editor-current-swatch" aria-label="当前颜色"><i style={{ background: cssColor(color) }} /></span>
     </div>
-    <div className="color-editor-fields">
-      {colorValueFields(mode).map((field) => {
+    <div className="color-editor-fields" style={{ '--color-field-count': fields.length } as React.CSSProperties}>
+      {fields.map((field) => {
         const gradient = colorGradient(mode, values, color, field)
         const background = field.key === 'a' ? `${gradient}, repeating-conic-gradient(#686d76 0 25%, #aeb3bc 0 50%) 50% / 12px 12px` : gradient
         return <label key={field.key} className="color-editor-field"><span className="color-editor-field-label">{field.label}</span><input aria-label={`${label} ${field.label}滑块`} className="color-editor-range" style={{ background }} type="range" min={field.min} max={field.max} step={field.step} value={values[field.key] ?? 0} onChange={(event) => updateValue(field.key, Number(event.target.value))} /><NumberInput aria-label={`${label} ${field.label}`} min={field.min} max={field.max} step={field.step} value={Math.round(values[field.key] ?? 0)} onValueChange={(value) => updateValue(field.key, value)} /></label>
       })}
     </div>
+    <PanelResizeHandles onResize={(event, direction) => {
+      if (event.button !== 0 || !popoverRef.current) return
+      const bounds = popoverRef.current.getBoundingClientRect()
+      resizeRef.current = { direction, pointerX: event.clientX, pointerY: event.clientY, left: bounds.left, top: bounds.top, width: bounds.width, height: bounds.height }
+      event.preventDefault()
+      event.stopPropagation()
+    }} />
   </div> : null
 
   return <>
-    <button ref={triggerRef} type="button" className={`color-value-trigger ${className}`} aria-label={`${label}${roleLabel ? ` ${roleLabel}` : ''}`} aria-expanded={open} onClick={() => { setHexText(rgbaHex(color)); setOpen((value) => !value) }}>
+    <button ref={triggerRef} type="button" className={`color-value-trigger ${className}`} aria-label={`${label}${roleLabel ? ` ${roleLabel}` : ''}`} aria-expanded={open} onClick={() => { setHexText(rgbaHex(color)); if (open) positionedRef.current = false; else { residentRef.current = false; setResident(false) }; setOpen((value) => !value) }}>
       <span className="color-value-swatch"><i style={{ background: `rgba(${color.r}, ${color.g}, ${color.b}, ${clampByte(color.a) / 255})` }} /></span>
       <strong>{rgbaHex(color)}</strong>
       {roleLabel && <small>{roleLabel}</small>}

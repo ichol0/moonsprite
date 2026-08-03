@@ -7,6 +7,7 @@ interface PanelSessionState {
   selectedPaletteIds: number[]
   selectedLayerIds: string[]
   selectedGroupId: string | null
+  selectedGroupIds: string[]
   collapsedGroupIds: string[]
   revision: number
   view: { relativeLuminance: boolean }
@@ -32,6 +33,7 @@ export const layersPanelRenderKey = (session: PanelSessionState): string => [
   session.document.groups.map((group) => `${group.id}:${group.name}:${group.parentGroupId ?? ''}:${group.visible ? 1 : 0}:${group.locked ? 1 : 0}:${group.opacity}:${group.blendMode}`).join('|'),
   session.selectedLayerIds.join(','),
   session.selectedGroupId ?? '',
+  session.selectedGroupIds.join(','),
   session.collapsedGroupIds.join(',')
 ].join(';')
 

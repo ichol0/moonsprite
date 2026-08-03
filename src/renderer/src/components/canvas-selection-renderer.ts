@@ -47,6 +47,7 @@ interface DrawSelectionOptions {
   viewportHeight: number
   rotationIndicatorPosition: RotationIndicatorPosition
   cache: SelectionBoundaryCache | null
+  showOutline?: boolean
   showHandles?: boolean
 }
 
@@ -59,6 +60,7 @@ export function drawSelectionOutline({
   viewportHeight,
   rotationIndicatorPosition,
   cache,
+  showOutline = true,
   showHandles = true
 }: DrawSelectionOptions): SelectionBoundaryCache {
   const phase = Math.floor(performance.now() / 180) % 8
@@ -101,19 +103,21 @@ export function drawSelectionOutline({
     if (nextCache.screenPaths.size > 16) nextCache.screenPaths.delete(nextCache.screenPaths.keys().next().value!)
   }
 
-  context.save()
-  context.translate(Math.round(box.x) + 0.5, Math.round(box.y) + 0.5)
-  context.lineWidth = 1
-  context.lineCap = 'butt'
-  context.lineJoin = 'miter'
-  context.setLineDash([4, 4])
-  context.lineDashOffset = -phase
-  context.strokeStyle = '#111318'
-  context.stroke(screenPath)
-  context.lineDashOffset = -(phase + 4)
-  context.strokeStyle = '#f7f7f7'
-  context.stroke(screenPath)
-  context.restore()
+  if (showOutline) {
+    context.save()
+    context.translate(Math.round(box.x) + 0.5, Math.round(box.y) + 0.5)
+    context.lineWidth = 1
+    context.lineCap = 'butt'
+    context.lineJoin = 'miter'
+    context.setLineDash([4, 4])
+    context.lineDashOffset = -phase
+    context.strokeStyle = '#111318'
+    context.stroke(screenPath)
+    context.lineDashOffset = -(phase + 4)
+    context.strokeStyle = '#f7f7f7'
+    context.stroke(screenPath)
+    context.restore()
+  }
   if (!showHandles) return nextCache
 
   const handles: Array<[SelectionHandle, number, number]> = [

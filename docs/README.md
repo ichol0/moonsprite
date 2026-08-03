@@ -8,7 +8,7 @@
 - [架构概览](architecture/overview.md)：模块职责和依赖方向。
 - [状态与历史](architecture/state-history.md)：会话、dirty、撤销和视图状态。
 - [坐标与渲染](architecture/coordinates-rendering.md)：屏幕、视图、画布和图层坐标。
-- [文件格式](file-format.md)：`.moonsprite` v1 容器。
+- [文件格式](file-format.md)：`.moonsprite` v2 容器。
 
 ## 交互契约
 

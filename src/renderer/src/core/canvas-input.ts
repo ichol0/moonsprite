@@ -1,7 +1,18 @@
-import type { RasterLayer, RgbaColor, SelectionMask, SelectionMode, SelectionRect } from '@shared/types'
+import type { RasterLayer, RgbaColor, SelectionMask, SelectionMode, SelectionRect, ShapeRatio } from '@shared/types'
 import type { PixelEdit } from './history'
 import type { SelectionTransformSource, SelectionTranslationPreview } from './tools'
-import { selectionContains } from './selection'
+import { rasterLinePoints, selectionBoundarySegments, selectionContains } from './selection'
+import { balancedStairLinePoints } from './pixel-line'
+
+const selectionHitBoundaryCache = new WeakMap<SelectionMask, Int32Array>()
+
+const cachedSelectionBoundarySegments = (selection: SelectionMask): Int32Array => {
+  const cached = selectionHitBoundaryCache.get(selection)
+  if (cached) return cached
+  const segments = selectionBoundarySegments(selection)
+  selectionHitBoundaryCache.set(selection, segments)
+  return segments
+}
 
 export interface CanvasPoint {
   x: number
@@ -64,7 +75,7 @@ export const selectionResizeHit = (
 }
 
 export interface CanvasDragState {
-  kind: 'draw' | 'shape' | 'marquee' | 'lasso' | 'magic-preview' | 'sample-color' | 'move-content' | 'move-selection' | 'transform-content' | 'rotate-content' | 'move-layer' | 'brush-size' | 'canvas-resize' | 'canvas-move' | 'zoom-drag' | 'rotate-view' | 'pan'
+  kind: 'draw' | 'shape' | 'marquee' | 'lasso' | 'polygon-lasso' | 'magic-preview' | 'sample-color' | 'move-content' | 'move-selection' | 'transform-content' | 'rotate-content' | 'move-layer' | 'brush-size' | 'canvas-resize' | 'canvas-move' | 'zoom-drag' | 'rotate-view' | 'pan'
   start: CanvasPoint
   last: CanvasPoint
   edit?: PixelEdit
@@ -106,7 +117,91 @@ export interface CanvasDragState {
   axisLock?: 'x' | 'y'
   sampleSecondary?: boolean
   temporarySampling?: boolean
+  moved?: boolean
+  resumeDrag?: CanvasDragState
 }
+
+export const selectionGestureMoved = (start: CanvasPoint | undefined, end: CanvasPoint, threshold = 3): boolean =>
+  Boolean(start && (Math.abs(end.x - start.x) > threshold || Math.abs(end.y - start.y) > threshold))
+
+const selectionCreationKinds = new Set<CanvasDragState['kind']>(['marquee', 'lasso', 'polygon-lasso'])
+const selectionPreviewKinds = new Set<CanvasDragState['kind']>(['magic-preview', 'move-selection', 'move-content', 'transform-content', 'rotate-content'])
+
+export const canvasGestureForPreview = (drag: CanvasDragState | null | undefined): CanvasDragState | null =>
+  drag?.kind === 'pan' && drag.resumeDrag?.kind === 'polygon-lasso' ? drag.resumeDrag : drag ?? null
+
+export const selectionOverlayMaskForDrag = (
+  currentSelection: SelectionMask | null,
+  drag: CanvasDragState | null | undefined
+): SelectionMask | null => {
+  const previewDrag = canvasGestureForPreview(drag)
+  if (!previewDrag) return currentSelection
+  if (selectionCreationKinds.has(previewDrag.kind)) return previewDrag.selectionStart ?? null
+  if (selectionPreviewKinds.has(previewDrag.kind)) return previewDrag.previewSelection ?? currentSelection
+  return currentSelection
+}
+
+export const createCanvasPanDrag = (
+  startPan: CanvasPoint,
+  startClient: CanvasPoint,
+  resumeDrag?: CanvasDragState
+): CanvasDragState => ({
+  kind: 'pan',
+  start: { x: 0, y: 0 },
+  last: { x: 0, y: 0 },
+  startPan: { ...startPan },
+  startClient: { ...startClient },
+  resumeDrag: resumeDrag?.kind === 'polygon-lasso' ? resumeDrag : undefined
+})
+
+export const restoreCanvasDragAfterPan = (
+  panDrag: CanvasDragState,
+  pointer: CanvasPoint
+): CanvasDragState | null => panDrag.kind === 'pan' && panDrag.resumeDrag?.kind === 'polygon-lasso'
+  ? { ...panDrag.resumeDrag, last: { ...pointer } }
+  : null
+
+export const appendPolygonLassoVertex = (path: readonly CanvasPoint[], point: CanvasPoint): CanvasPoint[] => {
+  const last = path.at(-1)
+  return last?.x === point.x && last.y === point.y ? [...path] : [...path, { ...point }]
+}
+
+export const shouldClosePolygonLasso = (path: readonly CanvasPoint[], point: CanvasPoint, clickCount: number): boolean =>
+  path.length >= 3 && (clickCount >= 2 || (path[0].x === point.x && path[0].y === point.y))
+
+export const polygonLassoPreviewPoints = (
+  path: readonly CanvasPoint[],
+  pointer: CanvasPoint,
+  closePreview: boolean,
+  balanced = false
+): CanvasPoint[] => {
+  if (path.length === 0) return []
+  const linePoints = balanced ? balancedStairLinePoints : rasterLinePoints
+  const points: CanvasPoint[] = []
+  for (let index = 1; index < path.length; index += 1) points.push(...linePoints(path[index - 1], path[index]))
+  points.push(...linePoints(path.at(-1)!, pointer))
+  if (closePreview && path.length > 1) points.push(...linePoints(pointer, path[0]))
+  return points
+}
+
+export const polygonLassoClosedPathPoints = (path: readonly CanvasPoint[], balanced = false): CanvasPoint[] => {
+  if (path.length < 2) return path.map((point) => ({ ...point }))
+  const linePoints = balanced ? balancedStairLinePoints : rasterLinePoints
+  const points: CanvasPoint[] = []
+  for (let index = 1; index < path.length; index += 1) points.push(...linePoints(path[index - 1], path[index]))
+  points.push(...linePoints(path.at(-1)!, path[0]))
+  return points
+}
+
+export const shouldRestartFloatingSelectionForCopy = (_floatingCopy: boolean, copyRequested: boolean): boolean =>
+  copyRequested
+
+export const finalizeMarqueeSelection = (
+  before: SelectionMask | null,
+  preview: SelectionMask | null,
+  moved: boolean,
+  mode: SelectionMode
+): SelectionMask | null => moved ? preview : mode === 'replace' ? null : before
 
 export interface CanvasPointerState {
   point: CanvasPoint
@@ -132,6 +227,7 @@ export class CanvasInputState {
   sampling = false
   altHeld = false
   ctrlHeld = false
+  shiftHeld = false
   spaceHeld = false
   shiftLinePreview = false
   modifierBrushSize: { x: number; y: number; size: number } | null = null
@@ -161,9 +257,10 @@ export class CanvasInputState {
     this.modifierBrushSize = null
   }
 
-  syncModifierKeys(event: Pick<PointerEvent, 'altKey' | 'ctrlKey'>): void {
+  syncModifierKeys(event: Pick<PointerEvent, 'altKey' | 'ctrlKey' | 'shiftKey'>): void {
     this.altHeld = event.altKey
     this.ctrlHeld = event.ctrlKey
+    this.shiftHeld = event.shiftKey
   }
 }
 
@@ -261,21 +358,22 @@ export const selectionInteractionHit = (
   )
   if (resizeHit) return resizeHit
 
-  const left = selection.x
-  const top = selection.y
-  const right = selection.x + selection.width
-  const bottom = selection.y + selection.height
   const rotationHit = selectionRotationHit(selection, point, 1 / safeZoom)
   if (rotationHit) return rotationHit
 
-  const edgeOuterRadius = 9 / safeZoom
-  const edgeInnerRadius = 7 / safeZoom
-  const spansHorizontalEdge = point.x >= left - edgeOuterRadius && point.x <= right + edgeOuterRadius
-  const spansVerticalEdge = point.y >= top - edgeOuterRadius && point.y <= bottom + edgeOuterRadius
-  const nearHorizontalEdge = spansHorizontalEdge && ((point.y >= top - edgeOuterRadius && point.y <= top + edgeInnerRadius) || (point.y >= bottom - edgeInnerRadius && point.y <= bottom + edgeOuterRadius))
-  const nearVerticalEdge = spansVerticalEdge && ((point.x >= left - edgeOuterRadius && point.x <= left + edgeInnerRadius) || (point.x >= right - edgeInnerRadius && point.x <= right + edgeOuterRadius))
-  if (nearHorizontalEdge || nearVerticalEdge) return 'edge'
-  if (point.x < left || point.x > right || point.y < top || point.y > bottom) return 'outside'
+  const edgeRadius = 8 / safeZoom
+  const localX = point.x - selection.x
+  const localY = point.y - selection.y
+  const segments = cachedSelectionBoundarySegments(selection)
+  for (let index = 0; index < segments.length; index += 4) {
+    const x1 = segments[index]
+    const y1 = segments[index + 1]
+    const x2 = segments[index + 2]
+    const y2 = segments[index + 3]
+    const closestX = Math.max(Math.min(x1, x2), Math.min(Math.max(x1, x2), localX))
+    const closestY = Math.max(Math.min(y1, y2), Math.min(Math.max(y1, y2), localY))
+    if (Math.hypot(localX - closestX, localY - closestY) <= edgeRadius) return 'edge'
+  }
   return selectionContains(selection, Math.floor(point.x), Math.floor(point.y)) ? 'inside' : 'outside'
 }
 
@@ -292,18 +390,25 @@ export const selectionTransformModifiers = (
 export const snapSelectionRotation = (angle: number, enabled: boolean): number =>
   enabled ? Math.round(angle / 45) * 45 : angle
 
-export const shapeBounds = (start: CanvasPoint, end: CanvasPoint, constrain = false): SelectionRect => {
-  if (!constrain) {
+export const shapeBounds = (start: CanvasPoint, end: CanvasPoint, constrain = false, fixedRatio: ShapeRatio | null = null): SelectionRect => {
+  const ratio = fixedRatio && Number.isFinite(fixedRatio.width) && Number.isFinite(fixedRatio.height)
+    ? Math.max(0.001, fixedRatio.width / fixedRatio.height)
+    : constrain ? 1 : null
+  if (ratio === null) {
     const x = Math.min(start.x, end.x)
     const y = Math.min(start.y, end.y)
     return { x, y, width: Math.abs(end.x - start.x) + 1, height: Math.abs(end.y - start.y) + 1 }
   }
   const deltaX = end.x - start.x
   const deltaY = end.y - start.y
-  const distance = Math.max(Math.abs(deltaX), Math.abs(deltaY))
+  const absoluteX = Math.abs(deltaX)
+  const absoluteY = Math.abs(deltaY)
+  const widthMajor = absoluteX / ratio >= absoluteY
+  const widthDistance = widthMajor ? absoluteX : Math.round(absoluteY * ratio)
+  const heightDistance = widthMajor ? Math.round(absoluteX / ratio) : absoluteY
   return shapeBounds(start, {
-    x: start.x + (deltaX < 0 ? -distance : distance),
-    y: start.y + (deltaY < 0 ? -distance : distance)
+    x: start.x + (deltaX < 0 ? -widthDistance : widthDistance),
+    y: start.y + (deltaY < 0 ? -heightDistance : heightDistance)
   })
 }
 

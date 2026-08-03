@@ -9,6 +9,14 @@ describe('color adjustments', () => {
     expect(next.r).toBeGreaterThan(80)
   })
 
+  it('adjusts HSL lightness independently from RGB brightness', () => {
+    const source = { r: 40, g: 100, b: 180, a: 140 }
+    const lighter = adjustColor(source, { kind: 'hue-saturation', lightness: 100 })
+    const darker = adjustColor(source, { kind: 'hue-saturation', lightness: -100 })
+    expect(lighter).toEqual({ r: 255, g: 255, b: 255, a: 140 })
+    expect(darker).toEqual({ r: 0, g: 0, b: 0, a: 140 })
+  })
+
   it('records only changed active-layer pixels', () => {
     const document = createDocument('adjust', 2, 1, 'rgba')
     const layer = getActiveLayer(document)

@@ -1,15 +1,25 @@
 import { memo, useEffect, useRef, useState } from 'react'
-import { Check, ChevronDown, Redo2, RefreshCw, Trash2, Undo2 } from 'lucide-react'
-import type { ImageBrush, ImageBrushSettings, ProceduralBrushId, ProceduralBrushSettings, RgbaColor } from '@shared/types'
+import { ArrowLeftRight, Check, ChevronDown, Redo2, RefreshCw, Trash2, Undo2 } from 'lucide-react'
+import type { BrushPaintMode, ImageBrush, ImageBrushSettings, ProceduralBrushId, ProceduralBrushSettings, RgbaColor, SelectionMode } from '@shared/types'
 import { NumberInput } from '@/components/NumberInput'
 import { PerformanceProfiler } from '@/components/PerformanceProfiler'
+import { ThemedSelect } from '@/components/ThemedSelect'
 import { toolOptionsRenderKey } from '@/core/app-render-keys'
 import { isProceduralBrushId } from '@/core/brushes'
 import { brushMaskOffsets, brushStampDimensions } from '@/core/tools'
 import { loadEditorPreferences, type CheckerboardPreferences } from '@/core/file-preferences'
 import { useWorkspace } from '@/store/workspace'
 import { useBrushLibrary } from './useBrushLibrary'
-import { PixelAssetIcon, PixelShapeIcon, SELECTION_MODES, TOOL_DEFINITIONS } from './editor-tools'
+import { PixelAssetIcon, PixelShapeIcon, SELECTION_MODES, activeToolPresentation, temporarySelectionModeForModifiers } from './editor-tools'
+
+const brushPaintModeGroups = [{
+  label: '笔刷模式',
+  options: [
+    { value: 'pattern-source' as const, label: '图案与来源对齐', description: '平铺固定在创建笔刷时的来源坐标' },
+    { value: 'pattern-target' as const, label: '图案与目标对齐', description: '平铺从每次第一笔落点开始' },
+    { value: 'paint' as const, label: '油漆笔刷', description: '每个落点重复完整笔刷图案' }
+  ]
+}]
 
 function GrayscaleBrushThumbnail({ brush }: { brush: ImageBrush }) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -63,10 +73,12 @@ function GrayscaleBrushPreview({ brush, settings, color, paintMode, proceduralAn
     const pixelScale = Math.max(1, Math.floor(64 / Math.max(stamp.width, stamp.height)))
     const startX = Math.floor((canvas.width - stamp.width * pixelScale) / 2)
     const startY = Math.floor((canvas.height - stamp.height * pixelScale) / 2)
-    context.fillStyle = `rgb(${color.r} ${color.g} ${color.b})`
-    const previewMode = paintMode === 'pattern-source' ? 'paint' : paintMode
-    for (const point of brushMaskOffsets(stampSize, 'square', 'solid', 1, 0, 0, brush, settings, proceduralAntialiasStrength, previewMode)) {
-      context.globalAlpha = color.a / 255 * point.coverage / 255
+    const originX = paintMode === 'pattern-source' ? brush.sourceX ?? 0 : 0
+    const originY = paintMode === 'pattern-source' ? brush.sourceY ?? 0 : 0
+    for (const point of brushMaskOffsets(stampSize, 'square', 'solid', 1, originX, originY, brush, settings, proceduralAntialiasStrength, paintMode, 0, 0)) {
+      const pointColor = point.color ?? color
+      context.fillStyle = `rgb(${pointColor.r} ${pointColor.g} ${pointColor.b})`
+      context.globalAlpha = pointColor.a / 255 * point.coverage / 255
       context.fillRect(startX + point.x * pixelScale, startY + point.y * pixelScale, pixelScale, pixelScale)
     }
     context.globalAlpha = 1
@@ -154,6 +166,7 @@ export const EditorToolOptions = memo(function EditorToolOptions() {
   ))
   const [brushFlyoutOpen, setBrushFlyoutOpen] = useState(false)
   const [brushSizeFlyoutOpen, setBrushSizeFlyoutOpen] = useState(false)
+  const [temporarySelectionMode, setTemporarySelectionMode] = useState<SelectionMode | null>(null)
   const [brushOutputOpen, setBrushOutputOpen] = useState(false)
   const state = useWorkspace.getState()
   const session = state.sessions.find((item) => item.document.id === state.activeId) ?? null
@@ -177,7 +190,9 @@ export const EditorToolOptions = memo(function EditorToolOptions() {
       if (!event.target.closest('.brush-size-control')) setBrushSizeFlyoutOpen(false)
     }
     const closeOnBlur = (): void => setBrushFlyoutOpen(false)
-    const closeAll = (): void => {
+    const closeAll = (event: Event): void => {
+      const target = (event as CustomEvent<{ target?: string }>).detail?.target
+      if (target && target !== 'popover') return
       setBrushFlyoutOpen(false)
       setBrushSizeFlyoutOpen(false)
       setBrushOutputOpen(false)
@@ -199,12 +214,62 @@ export const EditorToolOptions = memo(function EditorToolOptions() {
     }
   }, [renderKey, session?.tool])
 
+  useEffect(() => {
+    if (session?.tool !== 'selection') {
+      setTemporarySelectionMode(null)
+      return
+    }
+    let shiftHeld = false
+    let secondaryHeld = false
+    const refresh = (): void => setTemporarySelectionMode(temporarySelectionModeForModifiers(shiftHeld, secondaryHeld))
+    const keyDown = (event: KeyboardEvent): void => {
+      if (event.key !== 'Shift') return
+      shiftHeld = true
+      refresh()
+    }
+    const keyUp = (event: KeyboardEvent): void => {
+      if (event.key !== 'Shift') return
+      shiftHeld = false
+      refresh()
+    }
+    const pointerDown = (event: PointerEvent): void => {
+      if (event.button !== 2 || !(event.target instanceof Element) || !event.target.closest('.stage-canvas')) return
+      secondaryHeld = true
+      refresh()
+    }
+    const pointerUp = (event: PointerEvent): void => {
+      if (event.button !== 2) return
+      secondaryHeld = false
+      refresh()
+    }
+    const reset = (): void => {
+      shiftHeld = false
+      secondaryHeld = false
+      refresh()
+    }
+    window.addEventListener('keydown', keyDown, true)
+    window.addEventListener('keyup', keyUp, true)
+    window.addEventListener('pointerdown', pointerDown, true)
+    window.addEventListener('pointerup', pointerUp, true)
+    window.addEventListener('pointercancel', reset, true)
+    window.addEventListener('blur', reset)
+    return () => {
+      window.removeEventListener('keydown', keyDown, true)
+      window.removeEventListener('keyup', keyUp, true)
+      window.removeEventListener('pointerdown', pointerDown, true)
+      window.removeEventListener('pointerup', pointerUp, true)
+      window.removeEventListener('pointercancel', reset, true)
+      window.removeEventListener('blur', reset)
+    }
+  }, [session?.tool])
+
   if (!session) return null
   const workspace = useWorkspace.getState()
   const isBrushTool = session.tool === 'pencil' || session.tool === 'eraser' || session.tool === 'fill'
+  const presentation = activeToolPresentation(session.tool, session.selectionKind, session.shapeKind)
 
   return <PerformanceProfiler id="EditorToolOptions"><div className="tool-options">
-    <span className="tool-label">{TOOL_DEFINITIONS.find((tool) => tool.id === session.tool)?.label}</span>
+    <span className="tool-label" title={presentation.description}>{presentation.label}</span>
     {isBrushTool && <>
       {session.brushImage && <button type="button" className="brush-return-button" title="返回基础笔刷" onClick={() => { workspace.setBrushImage(null); setBrushFlyoutOpen(false) }}>返回</button>}
       <div className="brush-source">
@@ -257,13 +322,14 @@ export const EditorToolOptions = memo(function EditorToolOptions() {
         </>}
       </div>
       {!session.brushImage?.intrinsicSize && <div className="brush-size-control" onPointerDown={() => setBrushSizeFlyoutOpen(true)}><NumberInput aria-label="笔刷尺寸数值" min={1} max={128} suffix="px" value={session.brushSize} onValueChange={workspace.setBrushSize} onFocus={() => setBrushSizeFlyoutOpen(true)} />{brushSizeFlyoutOpen && <div className="brush-size-popover" role="dialog" aria-label="调整笔刷尺寸"><input aria-label="笔刷尺寸滑条" type="range" min="1" max="128" value={session.brushSize} onChange={(event) => workspace.setBrushSize(Number(event.target.value))} /><strong>{session.brushSize}px</strong></div>}</div>}
-      {session.brushImage?.intrinsicSize && <select className="brush-paint-mode-select" aria-label="笔刷模式" title="图案与来源对齐：按笔刷来源位置平铺；图案与目标对齐：按当前落点平铺；油漆笔刷：按画布原点平铺" value={session.brushPaintMode} onChange={(event) => workspace.setBrushPaintMode(event.target.value as typeof session.brushPaintMode)}><option value="pattern-source">图案与来源对齐</option><option value="pattern-target">图案与目标对齐</option><option value="paint">油漆笔刷</option></select>}
+      {session.brushImage?.intrinsicSize && <span className="brush-paint-mode-select" title="图案与来源对齐：固定使用创建笔刷时的来源坐标平铺；图案与目标对齐：以每次第一笔落点作为平铺原点；油漆笔刷：每个落点独立盖章"><ThemedSelect<BrushPaintMode> value={session.brushPaintMode} groups={brushPaintModeGroups} label="笔刷模式" onChange={workspace.setBrushPaintMode} /></span>}
       {(session.tool === 'pencil' || session.tool === 'eraser') && <label className="tool-checkbox"><input type="checkbox" checked={session.perfectPixels} onChange={(event) => workspace.setPerfectPixels(event.target.checked)} />完美像素</label>}
     </>}
     {session.tool === 'selection' && <>
-      <div className="segmented-control selection-mode-control" aria-label="选区模式">{SELECTION_MODES.map((mode) => <button key={mode.id} title={mode.label} aria-label={mode.label} className={session.selectionMode === mode.id ? 'selected' : ''} onClick={() => workspace.setSelectionMode(mode.id)}><PixelAssetIcon src={mode.icon} /></button>)}</div>
+      <div className="segmented-control selection-mode-control" aria-label="选区模式">{SELECTION_MODES.map((mode) => <button key={mode.id} title={mode.label} aria-label={mode.label} className={(temporarySelectionMode ?? session.selectionMode) === mode.id ? 'selected' : ''} onClick={() => workspace.setSelectionMode(mode.id)}><PixelAssetIcon src={mode.icon} /></button>)}</div>
       {session.selectionKind === 'magic' && <><label className="wand-tolerance">容差 <NumberInput aria-label="魔棒容差" min={0} max={255} value={session.wandTolerance} onValueChange={workspace.setWandTolerance} /></label><label className="tool-checkbox"><input aria-label="连续选择" type="checkbox" checked={session.wandContiguous} onChange={(event) => workspace.setWandContiguous(event.target.checked)} />连续</label></>}
     </>}
+    {session.tool === 'shape' && <div className="shape-ratio-control"><label className="tool-checkbox"><input type="checkbox" checked={session.shapeRatio !== null} onChange={(event) => workspace.setShapeRatio(event.target.checked ? { width: 1, height: 1 } : null)} />固定比例</label>{session.shapeRatio !== null && <div className="shape-ratio-inputs"><NumberInput aria-label="形状宽度比例" min={0.1} max={100} step={0.1} value={session.shapeRatio.width} onValueChange={(width) => workspace.setShapeRatio({ ...session.shapeRatio!, width })} /><span>:</span><NumberInput aria-label="形状高度比例" min={0.1} max={100} step={0.1} value={session.shapeRatio.height} onValueChange={(height) => workspace.setShapeRatio({ ...session.shapeRatio!, height })} /><button type="button" className="icon-button shape-ratio-swap" title="交换宽高比例" aria-label="交换宽高比例" onClick={() => workspace.setShapeRatio({ width: session.shapeRatio!.height, height: session.shapeRatio!.width })}><ArrowLeftRight size={13} /></button></div>}</div>}
     {session.tool === 'fill' && <div className="segmented-control fill-mode-control" aria-label="填充范围"><button className={session.fillMode === 'contiguous' ? 'selected' : ''} onClick={() => workspace.setFillMode('contiguous')}>连续</button><button className={session.fillMode === 'global' ? 'selected' : ''} onClick={() => workspace.setFillMode('global')}>不连续</button></div>}
     {session.tool === 'move' && <label className="tool-checkbox"><input type="checkbox" checked={session.moveAutoSelect} onChange={(event) => workspace.setMoveAutoSelect(event.target.checked)} />自动选择图层</label>}
     {session.tool === 'rotate' && <div className="rotate-view-options"><label>旋转度数 <NumberInput aria-label="旋转度数" min={0} max={359.9} step={0.1} value={Math.round(session.view.rotation * 10) / 10} onValueChange={(rotation) => workspace.setView({ rotation: ((rotation % 360) + 360) % 360 })} /></label><button type="button" className="tool-text-button" onClick={() => workspace.setView({ rotation: 0 })}>复位视图</button></div>}

@@ -24,6 +24,7 @@ export interface ColorAdjustment {
   contrast?: number
   hue?: number
   saturation?: number
+  lightness?: number
   /** Curve's midpoint, 0-255. 128 is the identity. */
   curveMidpoint?: number
   curvePoints?: CurvePoint[]
@@ -162,7 +163,11 @@ export function adjustColor(color: RgbaColor, adjustment: ColorAdjustment, prepa
   }
   if (adjustment.kind === 'hue-saturation') {
     const hsl = rgbToHsl(color)
-    return hslToRgb(hsl.h + (adjustment.hue ?? 0), hsl.s * (1 + (adjustment.saturation ?? 0) / 100), hsl.l, color.a)
+    const lightnessDelta = (adjustment.lightness ?? 0) / 100
+    const lightness = lightnessDelta >= 0
+      ? hsl.l + (1 - hsl.l) * lightnessDelta
+      : hsl.l * (1 + lightnessDelta)
+    return hslToRgb(hsl.h + (adjustment.hue ?? 0), hsl.s * (1 + (adjustment.saturation ?? 0) / 100), lightness, color.a)
   }
   if (adjustment.kind === 'color-balance') {
     const luminance = (color.r * 0.2126 + color.g * 0.7152 + color.b * 0.0722) / 255

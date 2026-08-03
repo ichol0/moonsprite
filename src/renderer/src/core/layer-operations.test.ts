@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest'
+import type { LayerGroup } from '@shared/types'
 import { createDocument, createLayer, getActiveLayer } from './document'
 import { HistoryStack } from './history'
-import { assignLayersToGroup, assignLayersToRoot, canMoveGroupInto, createLayerGroup, reorderGroup, reorderLayers, ungroupSelected, type LayerOperationState } from './layer-operations'
+import { assignLayersToGroup, assignLayersToRoot, canMoveGroupInto, createLayerGroup, moveGroupToRootEdge, moveLayersToRootEdge, positionGroupNextToLayer, reorderGroup, reorderLayers, ungroupSelected, type LayerOperationState } from './layer-operations'
+import { buildLayerPanelTree } from './layer-panel-layout'
 
-const group = (id: string, parentGroupId: string | null = null) => ({ id, name: id, parentGroupId, visible: true, locked: false, opacity: 1, blendMode: 'normal' as const })
+const group = (id: string, parentGroupId: string | null = null): LayerGroup => ({ id, name: id, parentGroupId, visible: true, locked: false, opacity: 1, blendMode: 'normal' })
 
 const createState = (): LayerOperationState => {
   const document = createDocument('layer operations', 2, 2, 'rgba')
@@ -104,5 +106,107 @@ describe('layer operations', () => {
     ungroup?.undo()
     expect(state.document.groups.map((item) => item.id)).toEqual(['group-created'])
     expect(layer.groupId).toBe('group-created')
+  })
+
+  it('creates a group at the original position of the highest selected layer', () => {
+    const state = createState()
+    const bottomSelected = getActiveLayer(state.document)
+    const middle = createLayer('middle', 2, 2, 'rgba')
+    const topSelected = createLayer('top selected', 2, 2, 'rgba')
+    const top = createLayer('top', 2, 2, 'rgba')
+    state.document.layers.push(middle, topSelected, top)
+    state.selectedLayerIds = [bottomSelected.id, topSelected.id]
+
+    createLayerGroup(state, 'group-at-selection', 'Grouped')
+
+    expect(state.document.layers.map((layer) => layer.id)).toEqual([middle.id, bottomSelected.id, topSelected.id, top.id])
+    expect(buildLayerPanelTree({ layers: state.document.layers, groups: state.document.groups }).map((node) => `${node.kind}:${node.id}`)).toEqual([
+      `layer:${top.id}`,
+      'group:group-at-selection',
+      `layer:${topSelected.id}`,
+      `layer:${bottomSelected.id}`,
+      `layer:${middle.id}`
+    ])
+  })
+
+  it('moves layers and groups to visible list edges as one reversible operation', () => {
+    const state = createState()
+    const bottom = getActiveLayer(state.document)
+    const top = createLayer('top', 2, 2, 'rgba')
+    state.document.layers.push(top)
+    const layerMove = moveLayersToRootEdge(state, [bottom.id], 'top')
+    expect(state.document.layers.map((layer) => layer.id)).toEqual([top.id, bottom.id])
+    layerMove?.undo()
+    expect(state.document.layers.map((layer) => layer.id)).toEqual([bottom.id, top.id])
+
+    state.document.groups.push(group('first'), group('second'))
+    const groupMove = moveGroupToRootEdge(state, 'first', 'top')
+    expect(state.document.groups.map((item) => item.id)).toEqual(['second', 'first'])
+    groupMove?.undo()
+    expect(state.document.groups.map((item) => item.id)).toEqual(['first', 'second'])
+  })
+
+  it('moves a root layer above a group with a persisted panel anchor', () => {
+    const state = createState()
+    const member = getActiveLayer(state.document)
+    const root = createLayer('root', 2, 2, 'rgba')
+    member.groupId = 'anchored'
+    state.document.layers.push(root)
+    state.document.groups.push({ ...group('anchored'), panelOrder: 2 })
+
+    expect(buildLayerPanelTree(state.document).map((node) => node.id)).toEqual(['anchored', member.id, root.id])
+    const history = moveLayersToRootEdge(state, [root.id], 'top')
+    expect(buildLayerPanelTree(state.document).map((node) => node.id)).toEqual([root.id, 'anchored', member.id])
+
+    history?.undo()
+    expect(buildLayerPanelTree(state.document).map((node) => node.id)).toEqual(['anchored', member.id, root.id])
+    history?.redo()
+    expect(buildLayerPanelTree(state.document).map((node) => node.id)).toEqual([root.id, 'anchored', member.id])
+  })
+
+  it('moves a root layer below a bottom group with a persisted panel anchor', () => {
+    const state = createState()
+    const member = getActiveLayer(state.document)
+    const root = createLayer('root', 2, 2, 'rgba')
+    member.groupId = 'anchored'
+    state.document.layers.push(root)
+    state.document.groups.push({ ...group('anchored'), panelOrder: -1 })
+
+    const history = moveLayersToRootEdge(state, [root.id], 'bottom')
+
+    expect(buildLayerPanelTree(state.document).map((node) => node.id)).toEqual(['anchored', member.id, root.id])
+    history?.undo()
+    history?.redo()
+    expect(buildLayerPanelTree(state.document).map((node) => node.id)).toEqual(['anchored', member.id, root.id])
+  })
+
+  it('persists and restores an empty group position beside a root layer', () => {
+    const state = createState()
+    const target = getActiveLayer(state.document)
+    const empty = group('empty')
+    state.document.groups.push(empty)
+
+    const move = positionGroupNextToLayer(state, empty.id, target.id, true)
+    expect(empty.panelOrder).toBe(0.25)
+    move?.undo()
+    expect(empty.panelOrder).toBeUndefined()
+    move?.redo()
+    expect(empty.panelOrder).toBe(0.25)
+  })
+
+  it('persists a moved non-empty group panel position', () => {
+    const state = createState()
+    const member = getActiveLayer(state.document)
+    state.document.groups.push(group('first'), group('second'))
+    member.groupId = 'first'
+    const other = createLayer('other', 2, 2, 'rgba')
+    other.groupId = 'second'
+    state.document.layers.push(other)
+
+    const move = reorderGroup(state, 'first', 'second', true)
+
+    expect(state.document.groups.find((item) => item.id === 'first')?.panelOrder).toBeTypeOf('number')
+    move?.undo()
+    expect(state.document.groups.find((item) => item.id === 'first')?.panelOrder).toBeUndefined()
   })
 })

@@ -4,6 +4,8 @@ import { packColor, unpackColor } from '@/core/raster'
 export interface SelectionClipboard {
   width: number
   height: number
+  originX?: number
+  originY?: number
   pixels: Uint32Array
   mask: Uint8Array
 }
@@ -18,7 +20,28 @@ export interface LayerClipboard {
   locked: boolean
   opacity: number
   blendMode: RasterLayer['blendMode']
+  displayColor?: RasterLayer['displayColor']
+  description?: string
+  groupKey?: string | null
   pixels: Uint8ClampedArray
+}
+
+export interface LayerGroupClipboard {
+  key: string
+  name: string
+  visible: boolean
+  locked: boolean
+  opacity: number
+  blendMode: RasterLayer['blendMode']
+  displayColor?: RasterLayer['displayColor']
+  description?: string
+  parentKey?: string | null
+}
+
+export interface LayerCollectionClipboard {
+  sourceDocumentId?: string
+  layers: LayerClipboard[]
+  groups: LayerGroupClipboard[]
 }
 
 const MAX_CLIPBOARD_PIXELS = 16 * 1024 * 1024
@@ -26,13 +49,22 @@ const MAX_CLIPBOARD_PIXELS = 16 * 1024 * 1024
 const cloneSelectionClipboard = (clipboard: SelectionClipboard): SelectionClipboard => ({
   width: clipboard.width,
   height: clipboard.height,
+  originX: clipboard.originX,
+  originY: clipboard.originY,
   pixels: clipboard.pixels.slice(),
   mask: clipboard.mask.slice()
 })
 
 const cloneLayerClipboard = (clipboard: LayerClipboard): LayerClipboard => ({
   ...clipboard,
+  displayColor: clipboard.displayColor ? { ...clipboard.displayColor } : undefined,
   pixels: clipboard.pixels.slice()
+})
+
+const cloneLayerCollectionClipboard = (clipboard: LayerCollectionClipboard): LayerCollectionClipboard => ({
+  sourceDocumentId: clipboard.sourceDocumentId,
+  layers: clipboard.layers.map(cloneLayerClipboard),
+  groups: clipboard.groups.map((group) => ({ ...group, displayColor: group.displayColor ? { ...group.displayColor } : undefined }))
 })
 
 export const selectionClipboardFromImage = (image: ClipboardImage): SelectionClipboard | null => {
@@ -69,19 +101,19 @@ export const selectionClipboardImage = (clipboard: SelectionClipboard): Clipboar
 
 export class ClipboardService {
   private selection: SelectionClipboard | null = null
-  private layer: LayerClipboard | null = null
+  private layers: LayerCollectionClipboard | null = null
 
   clearSelection(): void {
     this.selection = null
   }
 
   clearLayer(): void {
-    this.layer = null
+    this.layers = null
   }
 
   setSelection(clipboard: SelectionClipboard): void {
     this.selection = cloneSelectionClipboard(clipboard)
-    this.layer = null
+    this.layers = null
   }
 
   getSelection(): SelectionClipboard | null {
@@ -89,12 +121,20 @@ export class ClipboardService {
   }
 
   setLayer(clipboard: LayerClipboard): void {
-    this.layer = cloneLayerClipboard(clipboard)
+    this.setLayers({ layers: [clipboard], groups: [] })
+  }
+
+  setLayers(clipboard: LayerCollectionClipboard): void {
+    this.layers = cloneLayerCollectionClipboard(clipboard)
     this.selection = null
   }
 
   getLayer(): LayerClipboard | null {
-    return this.layer ? cloneLayerClipboard(this.layer) : null
+    return this.layers?.layers.length === 1 && this.layers.groups.length === 0 ? cloneLayerClipboard(this.layers.layers[0]) : null
+  }
+
+  getLayers(): LayerCollectionClipboard | null {
+    return this.layers ? cloneLayerCollectionClipboard(this.layers) : null
   }
 
   async readSelection(readSystemImage: () => Promise<ClipboardImage | null>): Promise<SelectionClipboard | null> {
@@ -102,6 +142,9 @@ export class ClipboardService {
     try {
       const image = await readSystemImage()
       const system = image ? selectionClipboardFromImage(image) : null
+      if (system && internal && system.width === internal.width && system.height === internal.height
+        && system.pixels.every((value, index) => value === internal.pixels[index])
+        && system.mask.every((value, index) => value === internal.mask[index])) return internal
       return system ?? internal
     } catch {
       return internal

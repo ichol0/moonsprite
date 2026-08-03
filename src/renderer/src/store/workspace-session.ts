@@ -109,6 +109,7 @@ export function persistToolSettings(session: DocumentSession): void {
     proceduralAntialiasPreferenceVersion: 1,
     brushProfiles: profiles,
     shapeKind: session.shapeKind,
+    shapeRatio: session.shapeRatio ? { ...session.shapeRatio } : null,
     fillMode: session.fillMode,
     moveAutoSelect: session.moveAutoSelect,
     selectionKind: session.selectionKind,
@@ -154,6 +155,7 @@ export const sessionFromDocument = (document: SpriteDocument): DocumentSession =
     proceduralAntialias: settings.proceduralAntialias,
     proceduralAntialiasStrength: settings.proceduralAntialiasStrength,
     shapeKind: settings.shapeKind,
+    shapeRatio: typeof settings.shapeRatio === 'number' ? { width: settings.shapeRatio, height: 1 } : settings.shapeRatio ? { ...settings.shapeRatio } : null,
     fillMode: settings.fillMode,
     moveAutoSelect: settings.moveAutoSelect,
     selection: null,
@@ -167,13 +169,16 @@ export const sessionFromDocument = (document: SpriteDocument): DocumentSession =
     canvasResizePreview: null,
     outlinePreview: null,
     pendingPaste: null,
-    view: { zoom: 16, panX: 0, panY: 0, rotation: 0, mirrored: false, mirroredVertical: false, showGrid: false, relativeLuminance: false },
+    view: { zoom: 16, panX: 0, panY: 0, rotation: 0, mirrored: false, mirroredVertical: false, showGrid: false, relativeLuminance: false, showSelectionOutline: true },
+    viewportSize: { width: 0, height: 0 },
     paletteSelectionId: document.palette.find((entry) => entry.id !== 0)?.id ?? document.palette[0]?.id ?? null,
     selectedPaletteIds: document.palette.find((entry) => entry.id !== 0)?.id !== undefined
       ? [document.palette.find((entry) => entry.id !== 0)!.id]
       : document.palette[0] ? [document.palette[0].id] : [],
     selectedGroupId: null,
+    selectedGroupIds: [],
     selectedLayerIds: [document.activeLayerId],
+    layerSelectionAnchorId: document.activeLayerId,
     collapsedGroupIds: [],
     revision: 0,
     recoverySuppressed: false

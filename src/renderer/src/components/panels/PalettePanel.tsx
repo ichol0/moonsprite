@@ -213,6 +213,20 @@ export function PalettePanel({ session, docked = false, onDockDragStart, onPanel
     }
   }, [])
 
+  useEffect(() => {
+    const close = (event: Event): void => {
+      const target = (event as CustomEvent<{ target?: string }>).detail?.target
+      if (target && target !== 'palette') return
+      if (saveOpen) setSaveOpen(false)
+      else if (extractOpen) setExtractOpen(false)
+      else if (paletteContext) setPaletteContext(null)
+      else if (libraryOpen) setLibraryOpen(false)
+      else if (paletteActionsOpen) setPaletteActionsOpen(false)
+    }
+    window.addEventListener('moonsprite:close-dialog', close)
+    return () => window.removeEventListener('moonsprite:close-dialog', close)
+  }, [extractOpen, libraryOpen, paletteActionsOpen, paletteContext, saveOpen])
+
   const upsertPalette = (palette: StoredPalette): void => {
     setPaletteFiles((current) => {
       const existingIndex = current.findIndex((item) => item.id === palette.id)
@@ -326,7 +340,7 @@ export function PalettePanel({ session, docked = false, onDockDragStart, onPanel
     }
   }
 
-  return <><section ref={floating.ref} className={`panel palette-panel ${floating.style ? 'floating-panel' : ''}`} style={floating.style} onPointerDown={floating.bringToFront} onContextMenu={onPanelContextMenu}>
+  return <><section ref={floating.ref} className={`panel palette-panel ${floating.style ? 'floating-panel' : ''}`} data-command-scope="palette" style={floating.style} onPointerDown={floating.bringToFront} onContextMenu={onPanelContextMenu}>
     <header onPointerDown={(event) => floating.style ? floating.startDrag(event) : onDockDragStart?.(event, floating.startDetachedDrag)}><Palette size={15} /><span>调色板</span><small>{ordered.length} 色</small><span className="panel-actions palette-actions">
       <span ref={libraryControlRef} className="palette-library-control"><button ref={libraryButtonRef} className={libraryOpen ? 'active' : ''} title="选择本地色板" aria-label="选择本地色板" aria-expanded={libraryOpen} onClick={() => { setLibraryOpen((open) => !open); setPaletteActionsOpen(false) }}><BookOpen size={14} /></button></span>
       <span ref={paletteActionsControlRef} className="palette-actions-control"><button ref={paletteActionsButtonRef} className={paletteActionsOpen ? 'active' : ''} title="调色板操作" aria-label="调色板操作" aria-expanded={paletteActionsOpen} onClick={() => { setPaletteActionsOpen((open) => !open); setLibraryOpen(false) }}><Settings2 size={14} /></button></span>

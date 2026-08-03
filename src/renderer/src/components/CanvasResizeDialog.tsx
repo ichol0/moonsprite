@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { ArrowDown, ArrowDownLeft, ArrowDownRight, ArrowLeft, ArrowRight, ArrowUp, ArrowUpLeft, ArrowUpRight, CircleDot, Info, X } from 'lucide-react'
 import type { CanvasAnchor } from '@shared/types'
 import type { CanvasResizePreview } from '@/store/workspace'
+import { ModalShell } from './ModalShell'
 import { NumberInput } from './NumberInput'
 
 const anchors: Array<{ id: CanvasAnchor; label: string; icon: typeof ArrowUp }> = [
@@ -94,7 +95,7 @@ export function CanvasResizeDialog({ open, currentWidth, currentHeight, onClose,
   const right = value.width - currentWidth - left; const bottom = value.height - currentHeight - top
 
   return <div className="modal-backdrop" role="presentation">
-    <form className="modal canvas-resize-modal" onSubmit={submit} aria-label="调整画布尺寸">
+    <ModalShell as="form" storageKey="canvas-resize-v3" placement="right" defaultWidth={430} defaultHeight={500} minWidth={390} minHeight={430} maxWidth={580} maxHeight={720} className="canvas-resize-modal" onSubmit={submit} aria-label="调整画布尺寸">
       <header><div><span className="eyebrow">CANVAS SIZE</span><h2>画布大小</h2></div><button type="button" className="icon-button" aria-label="关闭" onClick={onClose}><X size={16} /></button></header>
       <div className="modal-body canvas-resize-body">
         <section><h3>大小</h3><div className="canvas-size-grid"><div className="resize-fields"><label className="component-number-input-row canvas-resize-number-row"><span>宽</span><NumberInput aria-label="画布宽度" min={1} suffix="px" value={value.width} onValueChange={(next) => setDimension('width', next)} /></label><label className="component-number-input-row canvas-resize-number-row"><span>高</span><NumberInput aria-label="画布高度" min={1} suffix="px" value={value.height} onValueChange={(next) => setDimension('height', next)} /></label></div><div className="anchor-grid" aria-label="画布锚点">{anchors.map((item) => { const Icon = item.icon; return <button type="button" key={item.id} aria-label={item.label} title={item.label} className={`icon-button ${anchor === item.id ? 'selected' : ''}`} onClick={() => { setAnchor(item.id); applyAnchor(value.width, value.height, item.id) }}><Icon size={16} /></button> })}</div></div></section>
@@ -102,6 +103,6 @@ export function CanvasResizeDialog({ open, currentWidth, currentHeight, onClose,
         <label className="tool-checkbox trim-canvas-checkbox"><input type="checkbox" checked={trimOutside} onChange={(event) => setTrimOutside(event.target.checked)} /><span>裁掉画布外的内容</span><span className="setting-help" title="缩小画布时，移出新边界的像素将被裁掉。"><Info size={14} aria-label="说明" /></span></label>
       </div>
       <footer><button type="button" className="quiet-button" onClick={onClose}>取消</button><button className="primary-button" type="submit">完成</button></footer>
-    </form>
+    </ModalShell>
   </div>
 }

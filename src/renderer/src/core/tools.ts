@@ -4,6 +4,7 @@ import { beginPixelEdit, recordPixel, type PixelEdit } from './history'
 import { blendOver, isInBounds, packColor, pixelIndex, unpackColor } from './raster'
 import { rotatedSelectionBounds, selectionContains, transformedSelectionSourcePoint } from './selection'
 import { proceduralBrushCoverageAt } from './brushes'
+import { balancedStairLinePoints } from './pixel-line'
 
 const paintLayerValue = (document: SpriteDocument, layer: RasterLayer, edit: PixelEdit, index: number, color: RgbaColor): number => {
   if (color.a === 0) return layer.format === 'rgba' ? packColor(color) : 0
@@ -305,8 +306,20 @@ export function paintLine(
   imageBrushSettings?: ImageBrushSettings,
   proceduralAntialiasStrength = 0,
   brushPaintMode: BrushPaintMode = 'paint',
-  patternOrigin?: { x: number; y: number }
+  patternOrigin?: { x: number; y: number },
+  lineAlgorithm: 'raster' | 'balanced' = 'raster'
 ): void {
+  if (lineAlgorithm === 'balanced') {
+    const points = balancedStairLinePoints({ x: fromX, y: fromY }, { x: toX, y: toY })
+    const stamp = brushStampDimensions(size, imageBrush)
+    const stampSpacing = Math.max(1, Math.floor(Math.max(stamp.width, stamp.height) / 16))
+    for (let index = 0; index < points.length; index += 1) {
+      if (index % stampSpacing !== 0 && index !== points.length - 1) continue
+      const point = points[index]
+      paintBrush(document, layer, edit, point.x, point.y, size, color, shape, selection, texture, textureScale, imageBrush, imageBrushSettings, proceduralAntialiasStrength, brushPaintMode, patternOrigin)
+    }
+    return
+  }
   let x = fromX
   let y = fromY
   const dx = Math.abs(toX - fromX)
@@ -374,27 +387,13 @@ export function paintShape(
   selection?: SelectionMask | null
 ): void {
   if (!ensureLayerCoversCanvas(document, layer)) return
-  const width = Math.max(1, bounds.width)
-  const height = Math.max(1, bounds.height)
-  const centerX = (width - 1) / 2
-  const centerY = (height - 1) / 2
-  const radiusX = Math.max(0.5, width / 2)
-  const radiusY = Math.max(0.5, height / 2)
-  for (let offsetY = 0; offsetY < height; offsetY += 1) {
-    for (let offsetX = 0; offsetX < width; offsetX += 1) {
-      if (kind === 'ellipse') {
-        const dx = (offsetX - centerX) / radiusX
-        const dy = (offsetY - centerY) / radiusY
-        if ((dx * dx) + (dy * dy) > 1) continue
-      }
-      const x = bounds.x + offsetX
-      const y = bounds.y + offsetY
-      if (!isInBounds(document.width, document.height, x, y)) continue
-      if (selection && !insideSelection(selection, x, y)) continue
-      const index = layerIndexAt(layer, x, y)
-      if (index === null) continue
-      recordPixel(document, layer, edit, index, paintLayerValue(document, layer, edit, index, color))
-    }
+  for (const point of shapePixelPoints(bounds, kind)) {
+    const { x, y } = point
+    if (!isInBounds(document.width, document.height, x, y)) continue
+    if (selection && !insideSelection(selection, x, y)) continue
+    const index = layerIndexAt(layer, x, y)
+    if (index === null) continue
+    recordPixel(document, layer, edit, index, paintLayerValue(document, layer, edit, index, color))
   }
 }
 
@@ -519,14 +518,22 @@ export function shapePixelPoints(bounds: SelectionRect, kind: ShapeKind): BrushM
   const centerY = (height - 1) / 2
   const radiusX = Math.max(0.5, width / 2)
   const radiusY = Math.max(0.5, height / 2)
+  const ellipse = kind === 'ellipse' || kind === 'ellipse-outline'
+  const outline = kind === 'rectangle-outline' || kind === 'ellipse-outline'
+  const filled = new Uint8Array(width * height)
+  const contains = (offsetX: number, offsetY: number): boolean => {
+    if (offsetX < 0 || offsetY < 0 || offsetX >= width || offsetY >= height) return false
+    if (!ellipse) return true
+    const dx = (offsetX - centerX) / radiusX
+    const dy = (offsetY - centerY) / radiusY
+    return (dx * dx) + (dy * dy) <= 1
+  }
+  for (let offsetY = 0; offsetY < height; offsetY += 1) for (let offsetX = 0; offsetX < width; offsetX += 1) if (contains(offsetX, offsetY)) filled[offsetY * width + offsetX] = 1
   const points: BrushMaskPoint[] = []
   for (let offsetY = 0; offsetY < height; offsetY += 1) {
     for (let offsetX = 0; offsetX < width; offsetX += 1) {
-      if (kind === 'ellipse') {
-        const dx = (offsetX - centerX) / radiusX
-        const dy = (offsetY - centerY) / radiusY
-        if ((dx * dx) + (dy * dy) > 1) continue
-      }
+      if (!filled[offsetY * width + offsetX]) continue
+      if (outline && contains(offsetX - 1, offsetY) && contains(offsetX + 1, offsetY) && contains(offsetX, offsetY - 1) && contains(offsetX, offsetY + 1)) continue
       points.push({ x: bounds.x + offsetX, y: bounds.y + offsetY, coverage: 255 })
     }
   }
@@ -569,6 +576,7 @@ export function floodFill(document: SpriteDocument, layer: RasterLayer, startX: 
     if (!bounds) return null
     for (let y = bounds.y; y < bounds.y + bounds.height; y += 1) {
       for (let x = bounds.x; x < bounds.x + bounds.width; x += 1) {
+        if (selection && !selectionContains(selection, x, y)) continue
         const index = pixelIndex(document.width, x, y)
         const layerIndex = layerIndexAt(layer, x, y)
         if (layerIndex === null || readLayerPacked(document, layer, layerIndex) !== target) continue

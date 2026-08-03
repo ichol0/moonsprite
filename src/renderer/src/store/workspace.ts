@@ -1,26 +1,28 @@
 import { create } from 'zustand'
-import type { BlendMode, BrushPaintMode, BrushShape, BrushTexture, CanvasAnchor, ColorMode, FillMode, ImageBrush, ImageBrushSettings, ImageResizeInterpolation, OutlineDirections, OutlineKernel, OutlinePosition, ProceduralBrushId, ProceduralBrushSettings, RasterLayer, RecoveryRecord, RgbaColor, SelectionKind, SelectionMask, SelectionMode, SelectionRect, ShapeKind, SpriteDocument, ToolId, ViewState } from '@shared/types'
+import type { BlendMode, BrushPaintMode, BrushShape, BrushTexture, CanvasAnchor, ColorMode, FillMode, ImageBrush, ImageBrushSettings, ImageResizeInterpolation, LayerGroup, OutlineDirections, OutlineKernel, OutlinePosition, ProceduralBrushId, ProceduralBrushSettings, RasterLayer, RecoveryRecord, RgbaColor, SelectionKind, SelectionMask, SelectionMode, SelectionRect, ShapeKind, ShapeRatio, SpriteDocument, ToolId, ViewState } from '@shared/types'
 import { checkResourceLimit } from '@/core/resource-policy'
 import { beginPixelEdit, commitPixelEdit, HistoryStack, recordPixel, revertPixelEdit, type HistoryEntry, type PixelEdit } from '@/core/history'
-import { convertDocumentColorMode, createDocument, createId, createLayer, duplicateLayer, findOrAddPaletteColor, getDescendantGroupIds, getGroup, getLayerIdsInGroup, getLayer, getActiveLayer, isLayerEffectivelyLocked, isLayerEffectivelyVisible, layerContentBounds, readLayerColor, readLayerColorAt, resizeDocumentAt, resizeDocumentImage, writeLayerColor } from '@/core/document'
+import { convertDocumentColorMode, createDocument, createId, createLayer, duplicateLayer, findOrAddPaletteColor, getDescendantGroupIds, getGroup, getGroupLockingAncestor, getLayerIdsInGroup, getLayer, getActiveLayer, getLayerLockingGroup, isGroupEffectivelyLocked, isLayerEffectivelyLocked, isLayerEffectivelyVisible, layerContentBounds, readLayerColor, readLayerColorAt, resizeDocumentAt, resizeDocumentImage, writeLayerColor } from '@/core/document'
 import { decodeProject, encodeProject } from '@/core/project-format'
 import { flushViewPreview } from '@/core/view-preview-lifecycle'
 import { fileNameFromPath } from '@/core/document-files'
 import { createSelectionBrush } from '@/core/brushes'
 import { applySelectionTransform, clampSelection, clearSelection, fillSelectionOrCanvas, flipLayer, flipSelection, moveSelection, outlineSelection, transformSelectionCopy, type SelectionTransformSource } from '@/core/tools'
 import { colorEquals, packColor, pixelIndex, unpackColor } from '@/core/raster'
-import { flipSelectionMask, selectionContains, shiftSelection } from '@/core/selection'
+import { flipSelectionMask, invertSelectionMask, selectionContains, shiftSelection } from '@/core/selection'
 import { recordRecentProject } from '@/core/home-history'
 import { createProceduralBrush, isProceduralBrushId, normalizeProceduralBrushSettings, PROCEDURAL_BRUSH_IDS } from '@/core/brushes'
 import { mergeLayerDown, mergeLayerGroup, mergeRasterLayers, mergeVisibleLayers as mergeVisibleDocumentLayers, type LayerMergeSuccess } from '@/core/layer-merge'
 import { applyColorAdjustment, type ColorAdjustment } from '@/core/adjustments'
-import { assignGroupToGroup as assignGroupToGroupOperation, assignGroupToRoot as assignGroupToRootOperation, assignLayersAboveGroup as assignLayersAboveGroupOperation, assignLayersToGroup as assignLayersToGroupOperation, assignLayersToRoot as assignLayersToRootOperation, canMoveGroupInto, createLayerGroup as createLayerGroupOperation, reorderGroup as reorderGroupOperation, reorderLayers as reorderLayersOperation, ungroupSelected as ungroupSelectedOperation } from '@/core/layer-operations'
-import { SAVE_FORMAT_PREFERENCE_KEY, saveImageKindForPreference } from '@/core/file-preferences'
+import { assignGroupToGroup as assignGroupToGroupOperation, assignGroupToRoot as assignGroupToRootOperation, assignLayersAboveGroup as assignLayersAboveGroupOperation, assignLayersToGroup as assignLayersToGroupOperation, assignLayersToRoot as assignLayersToRootOperation, canMoveGroupInto, createLayerGroup as createLayerGroupOperation, moveGroupToRootEdge as moveGroupToRootEdgeOperation, moveLayersToRootEdge as moveLayersToRootEdgeOperation, positionGroupNextToLayer as positionGroupNextToLayerOperation, reorderGroup as reorderGroupOperation, reorderLayers as reorderLayersOperation, ungroupSelected as ungroupSelectedOperation } from '@/core/layer-operations'
+import { buildLayerPanelTree } from '@/core/layer-panel-layout'
+import { loadEditorPreferences, SAVE_FORMAT_PREFERENCE_KEY, saveImageKindForPreference } from '@/core/file-preferences'
+import { resolveClipboardPlacement } from '@/core/clipboard-placement'
 import { cloneProceduralSettings, defaultToolSettings, loadToolSettings, normalizePersistedBrushProfile, saveToolSettings, type BrushTool, type PersistedBrushProfile, type PersistedToolSettings } from '@/core/tool-preferences'
 import { readStoredString } from '@/core/storage'
 import { exportDocumentFile, openDocumentFile, saveDocumentFile, type ExportOptions, type SaveAsOptions } from './document-file-service'
 import { RecoveryService } from './recovery-service'
-import { ClipboardService, selectionClipboardImage } from './clipboard-service'
+import { ClipboardService, selectionClipboardImage, type LayerClipboard, type LayerCollectionClipboard } from './clipboard-service'
 import { captureAdjustmentSnapshot, captureLayerUi, commitLayerMerge, restoreAdjustmentSnapshot, restoreDocumentSnapshot } from './workspace-history'
 import { applyBrushProfile, brushProfileFromSession, clearSelectionBrushPaintColors, cloneSelectionMask, isBrushTool, persistToolSettings, remapSelectionBrushColors, rememberBrushProfile, sessionFromDocument, touch } from './workspace-session'
 import { addPaletteColor as addPaletteColorCommand, applyPalette as applyPaletteCommand, deletePaletteColors as deletePaletteColorsCommand, movePaletteColor as movePaletteColorCommand, reorderPaletteColors as reorderPaletteColorsCommand, selectPaletteColor as selectPaletteColorCommand } from './workspace-palette'
@@ -32,6 +34,8 @@ export type { AdjustmentSnapshot, AppDialog, CanvasResizePreview, DialogChoice, 
 interface WorkspaceState {
   sessions: DocumentSession[]
   activeId: string | null
+  sharedPrimaryColor: RgbaColor
+  sharedSecondaryColor: RgbaColor
   message: string | null
   saveProgress: { title: string; value: number; label: string } | null
   dialog: AppDialog | null
@@ -54,13 +58,17 @@ interface WorkspaceState {
   setProceduralAntialias(enabled: boolean): void
   setProceduralAntialiasStrength(strength: number): void
   setShapeKind(kind: ShapeKind): void
+  setShapeRatio(ratio: ShapeRatio | null): void
   setFillMode(mode: FillMode): void
   setMoveAutoSelect(enabled: boolean): void
   setPrimaryColor(color: RgbaColor): void
   setSecondaryColor(color: RgbaColor): void
   swapPrimarySecondaryColors(): void
   setView(view: Partial<ViewState>): void
+  setViewportSize(size: { width: number; height: number }): void
   setSelection(selection: SelectionMask | null): void
+  invertSelection(): void
+  toggleSelectionOutline(): void
   beginLayerTransform(): void
   setSelectionKind(kind: SelectionKind): void
   commitSelectionChange(before: SelectionMask | null, after: SelectionMask | null, label: string): void
@@ -88,6 +96,7 @@ interface WorkspaceState {
   duplicateActiveLayer(): void
   duplicateLayers(layerIds: string[]): string[]
   deleteActiveLayer(): void
+  deleteSelectedLayers(): void
   mergeSelectedLayers(): void
   mergeActiveLayerDown(): void
   mergeSelectedGroup(): void
@@ -101,16 +110,20 @@ interface WorkspaceState {
   assignLayersToRoot(layerIds: string[], targetLayerId?: string, insertAfterTarget?: boolean): void
   assignLayersAboveGroup(layerIds: string[], groupId: string): void
   reorderGroup(groupId: string, targetGroupId: string, insertAfterTarget?: boolean): void
+  positionGroupNextToLayer(groupId: string, targetLayerId: string, insertAfterTarget?: boolean): void
   assignGroupToGroup(groupId: string, parentGroupId: string): void
   assignGroupToRoot(groupId: string): void
+  moveLayersToRootEdge(layerIds: string[], edge: 'top' | 'bottom'): void
+  moveGroupToRootEdge(groupId: string, edge: 'top' | 'bottom'): void
   createLayerGroup(): void
   ungroupSelected(): void
-  selectGroup(groupId: string): void
+  selectGroup(groupId: string, mode?: boolean | 'replace' | 'toggle' | 'range'): void
+  clearLayerSelection(): void
   toggleGroupCollapsed(groupId: string): void
   toggleGroupVisibility(groupId: string): void
   setGroupProperties(groupId: string, name: string, opacity: number, blendMode: BlendMode, locked: boolean, displayColor?: RgbaColor | null, description?: string): void
   toggleLayerVisibility(layerId: string): void
-  selectLayer(layerId: string, additive?: boolean): void
+  selectLayer(layerId: string, mode?: boolean | 'replace' | 'toggle' | 'range'): void
   renameLayer(layerId: string, name: string): void
   setLayerOpacity(layerId: string, opacity: number): void
   setLayerProperties(layerId: string, name: string, opacity: number): void
@@ -123,12 +136,17 @@ interface WorkspaceState {
   deleteSelection(): void
   fillForeground(): void
   setOutlinePreview(preview: OutlinePreview | null): void
-  outlineActiveSelection(color: RgbaColor, thickness: number, position: OutlinePosition, directions?: OutlineDirections, kernel?: OutlineKernel): boolean
+  outlineActiveSelection(color: RgbaColor, thickness: number, position: OutlinePosition, directions?: OutlineDirections, kernel?: OutlineKernel, previewEnabled?: boolean): boolean
   copySelection(): void
   copyActiveLayerToClipboard(): void
+  copySelectedLayersToClipboard(): void
   cutSelection(): void
   pasteSelection(): Promise<void>
+  pasteAsNewLayer(): Promise<boolean>
+  pasteAsNewDocument(): Promise<boolean>
   pasteLayerFromClipboard(): boolean
+  pasteLayersFromClipboard(): boolean
+  beginFloatingSelectionTransform(source: SelectionTransformSource, edit: PixelEdit, before: SelectionMask, target: SelectionMask, copy: boolean, label: string): void
   commitFloatingPaste(): void
   cancelFloatingPaste(): void
   updateFloatingPastePreview(edit: PixelEdit, target: SelectionMask): void
@@ -159,12 +177,108 @@ function activeSession(state: WorkspaceState): DocumentSession | null {
   return state.sessions.find((session) => session.document.id === state.activeId) ?? null
 }
 
+type LayerRowSelectionMode = boolean | 'replace' | 'toggle' | 'range'
+
+const selectedGroupRows = (session: DocumentSession): string[] =>
+  session.selectedGroupIds.length > 0 ? [...session.selectedGroupIds] : session.selectedGroupId ? [session.selectedGroupId] : []
+
+const selectedDirectLayerRows = (session: DocumentSession): string[] =>
+  session.selectedGroupId && selectedGroupRows(session).length === 1 ? [] : [...session.selectedLayerIds]
+
+const applyLayerRowSelection = (session: DocumentSession, layerIds: readonly string[], groupIds: readonly string[], focus: { kind: 'layer' | 'group'; id: string }): void => {
+  const selectedLayers = [...new Set(layerIds)].filter((id) => session.document.layers.some((layer) => layer.id === id))
+  const selectedGroups = [...new Set(groupIds)].filter((id) => session.document.groups.some((group) => group.id === id))
+  session.selectedGroupIds = selectedGroups
+  if (selectedGroups.length === 1 && selectedLayers.length === 0) {
+    session.selectedGroupId = selectedGroups[0]
+    session.selectedLayerIds = getLayerIdsInGroup(session.document, selectedGroups[0])
+  } else {
+    session.selectedGroupId = null
+    session.selectedLayerIds = selectedLayers
+  }
+  if (focus.kind === 'layer' && session.document.layers.some((layer) => layer.id === focus.id)) session.document.activeLayerId = focus.id
+  else if (focus.kind === 'group') {
+    const member = session.document.layers.find((layer) => getLayerIdsInGroup(session.document, focus.id).includes(layer.id))
+    if (member) session.document.activeLayerId = member.id
+  }
+}
+
+const applyLayerRowRange = (session: DocumentSession, target: { kind: 'layer' | 'group'; id: string }): void => {
+  const nodes = buildLayerPanelTree({
+    layers: session.document.layers,
+    groups: session.document.groups,
+    collapsedGroupIds: session.collapsedGroupIds
+  })
+  const visibleIds = nodes.map((node) => node.id)
+  const currentRows = [...selectedGroupRows(session), ...selectedDirectLayerRows(session)]
+  const anchorId = session.layerSelectionAnchorId && visibleIds.includes(session.layerSelectionAnchorId)
+    ? session.layerSelectionAnchorId
+    : currentRows.find((id) => visibleIds.includes(id)) ?? target.id
+  const anchorIndex = visibleIds.indexOf(anchorId)
+  const targetIndex = visibleIds.indexOf(target.id)
+  if (anchorIndex < 0 || targetIndex < 0) {
+    applyLayerRowSelection(session, target.kind === 'layer' ? [target.id] : [], target.kind === 'group' ? [target.id] : [], target)
+    return
+  }
+  const selectedNodes = nodes.slice(Math.min(anchorIndex, targetIndex), Math.max(anchorIndex, targetIndex) + 1)
+  applyLayerRowSelection(
+    session,
+    selectedNodes.filter((node) => node.kind === 'layer').map((node) => node.id),
+    selectedNodes.filter((node) => node.kind === 'group').map((node) => node.id),
+    target
+  )
+}
+
+const targetContainerTopIndex = (document: SpriteDocument, groupId: string | null): number => {
+  if (!groupId) return document.layers.length
+  const members = new Set(getLayerIdsInGroup(document, groupId))
+  return document.layers.reduce((last, layer, index) => members.has(layer.id) ? index + 1 : last, 0)
+}
+
+const lockedLayerStructure = (document: SpriteDocument, layerIds: readonly string[]): boolean =>
+  document.layers.some((layer) => layerIds.includes(layer.id) && isLayerEffectivelyLocked(document, layer))
+
+const lockedGroupStructure = (document: SpriteDocument, groupId: string): boolean => {
+  const groupIds = new Set([groupId, ...getDescendantGroupIds(document, groupId)])
+  return document.groups.some((group) => groupIds.has(group.id) && isGroupEffectivelyLocked(document, group))
+    || document.layers.some((layer) => Boolean(layer.groupId && groupIds.has(layer.groupId)) && isLayerEffectivelyLocked(document, layer))
+}
+
 const recoveryService = new RecoveryService()
 const clipboardService = new ClipboardService()
+
+function layerClipboardFromDocument(document: SpriteDocument, layer: RasterLayer, groupKey: string | null = null): LayerClipboard {
+  const pixels = new Uint8ClampedArray(layer.width * layer.height * 4)
+  for (let y = 0; y < layer.height; y += 1) for (let x = 0; x < layer.width; x += 1) {
+    const color = readLayerColorAt(document, layer, layer.offsetX + x, layer.offsetY + y)
+    const offset = (y * layer.width + x) * 4
+    pixels[offset] = color.r
+    pixels[offset + 1] = color.g
+    pixels[offset + 2] = color.b
+    pixels[offset + 3] = color.a
+  }
+  return {
+    name: layer.name,
+    width: layer.width,
+    height: layer.height,
+    offsetX: layer.offsetX,
+    offsetY: layer.offsetY,
+    visible: layer.visible,
+    locked: layer.locked,
+    opacity: layer.opacity,
+    blendMode: layer.blendMode,
+    displayColor: layer.displayColor ? { ...layer.displayColor } : undefined,
+    description: layer.description ?? '',
+    groupKey,
+    pixels
+  }
+}
 
 export const useWorkspace = create<WorkspaceState>((set, get) => ({
   sessions: [],
   activeId: null,
+  sharedPrimaryColor: { r: 41, g: 121, b: 255, a: 255 },
+  sharedSecondaryColor: { r: 241, g: 244, b: 248, a: 255 },
   message: null,
   saveProgress: null,
   dialog: null,
@@ -255,6 +369,8 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     const existing = get().sessions.find((session) => session.document.id === document.id)
     if (existing) return
     const session = sessionFromDocument(document)
+    session.primaryColor = { ...get().sharedPrimaryColor }
+    session.secondaryColor = { ...get().sharedSecondaryColor }
     set((state) => ({ sessions: [...state.sessions, session], activeId: document.id, message: null }))
   },
 
@@ -344,6 +460,15 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
   setProceduralAntialias(enabled) { get().mutateActive((session) => { session.proceduralAntialias = enabled; rememberBrushProfile(session); persistToolSettings(session) }, false) },
   setProceduralAntialiasStrength(strength) { get().mutateActive((session) => { session.proceduralAntialiasStrength = Math.max(1, Math.min(100, Math.round(strength))); rememberBrushProfile(session); persistToolSettings(session) }, false) },
   setShapeKind(kind) { get().mutateActive((session) => { session.shapeKind = kind; persistToolSettings(session) }, false) },
+  setShapeRatio(ratio) {
+    get().mutateActive((session) => {
+      session.shapeRatio = ratio === null ? null : {
+        width: Math.round(Math.max(0.1, Math.min(100, ratio.width)) * 10) / 10,
+        height: Math.round(Math.max(0.1, Math.min(100, ratio.height)) * 10) / 10
+      }
+      persistToolSettings(session)
+    }, false)
+  },
   setFillMode(mode) {
     get().mutateActive((session) => {
       session.fillMode = mode === 'contiguous' && session.fillMode === 'contiguous' ? 'global' : mode
@@ -352,28 +477,57 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
   },
   setMoveAutoSelect(enabled) { get().mutateActive((session) => { session.moveAutoSelect = enabled; persistToolSettings(session) }, false) },
   setPrimaryColor(color) {
-    get().mutateActive((session) => {
+    const state = get()
+    for (const session of state.sessions) {
       session.primaryColor = { ...color }
       if (session.brushImage?.intrinsicSize) session.brushImage = remapSelectionBrushColors(session.brushImage, session.primaryColor, session.secondaryColor)
       const matching = session.document.palette.find((entry) => session.document.paletteOrder.includes(entry.id) && colorEquals(entry.color, color))
       session.paletteSelectionId = matching?.id ?? null
       session.selectedPaletteIds = matching ? [matching.id] : []
-    }, false)
+    }
+    set({ sharedPrimaryColor: { ...color }, sessions: [...state.sessions] })
   },
-  setSecondaryColor(color) { get().mutateActive((session) => { session.secondaryColor = { ...color }; if (session.brushImage?.intrinsicSize) session.brushImage = remapSelectionBrushColors(session.brushImage, session.primaryColor, session.secondaryColor) }, false) },
+  setSecondaryColor(color) {
+    const state = get()
+    for (const session of state.sessions) {
+      session.secondaryColor = { ...color }
+      if (session.brushImage?.intrinsicSize) session.brushImage = remapSelectionBrushColors(session.brushImage, session.primaryColor, session.secondaryColor)
+    }
+    set({ sharedSecondaryColor: { ...color }, sessions: [...state.sessions] })
+  },
   swapPrimarySecondaryColors() {
-    get().mutateActive((session) => {
-      const primary = session.primaryColor
-      session.primaryColor = { ...session.secondaryColor }
+    const state = get()
+    const primary = { ...state.sharedPrimaryColor }
+    const secondary = { ...state.sharedSecondaryColor }
+    for (const session of state.sessions) {
+      session.primaryColor = { ...secondary }
       session.secondaryColor = { ...primary }
       if (session.brushImage?.intrinsicSize) session.brushImage = remapSelectionBrushColors(session.brushImage, session.primaryColor, session.secondaryColor)
       const matching = session.document.palette.find((entry) => session.document.paletteOrder.includes(entry.id) && colorEquals(entry.color, session.primaryColor))
       session.paletteSelectionId = matching?.id ?? null
       session.selectedPaletteIds = matching ? [matching.id] : []
-    }, false)
+    }
+    set({ sharedPrimaryColor: secondary, sharedSecondaryColor: primary, sessions: [...state.sessions] })
   },
   setView(view) { get().mutateActive((session) => { Object.assign(session.view, view) }, false) },
+  setViewportSize(size) {
+    get().mutateActive((session) => {
+      session.viewportSize = { width: Math.max(0, size.width), height: Math.max(0, size.height) }
+    }, false)
+  },
   setSelection(selection) { get().mutateActive((session) => { session.selection = selection ? { ...selection, mask: selection.mask?.slice() } : null }, false) },
+  invertSelection() {
+    const session = activeSession(get())
+    if (!session?.selection) { set({ message: '请先创建选区。' }); return }
+    const before = cloneSelectionMask(session.selection)
+    const after = invertSelectionMask(session.selection, session.document.width, session.document.height)
+    get().commitSelectionChange(before, after, '反选选区')
+  },
+  toggleSelectionOutline() {
+    get().mutateActive((session) => {
+      session.view.showSelectionOutline = session.view.showSelectionOutline === false
+    }, false)
+  },
   beginLayerTransform() {
     get().commitFloatingPaste()
     const session = activeSession(get())
@@ -409,6 +563,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     get().mutateActive((active) => {
       active.document.activeLayerId = layer.id
       active.selectedGroupId = null
+      active.selectedGroupIds = []
       active.selectedLayerIds = [layer.id]
       active.selection = visibleBounds
       active.selectionKind = 'rectangle'
@@ -445,6 +600,8 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
   toggleGrid() { get().mutateActive((session) => { session.view.showGrid = !session.view.showGrid }, false) },
   selectPaletteColor(id, additive = false) {
     get().mutateActive((session) => selectPaletteColorCommand(session, id, additive), false)
+    const session = activeSession(get())
+    if (session && session.paletteSelectionId !== null) get().setPrimaryColor(session.primaryColor)
   },
   addPaletteColor() {
     get().mutateActive(addPaletteColorCommand)
@@ -523,14 +680,18 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     get().mutateActive((session) => {
       const document = session.document
       const layer = createLayer(`图层 ${document.layers.length + 1}`, document.width, document.height, document.colorMode)
-      const targetGroupId = session.selectedGroupId
+      const selectedLayer = session.selectedGroupId
+        ? null
+        : document.layers.find((candidate) => candidate.id === document.activeLayerId && session.selectedLayerIds.includes(candidate.id))
+      const targetGroupId = session.selectedGroupId ?? selectedLayer?.groupId ?? null
       if (targetGroupId) layer.groupId = targetGroupId
       const groupMemberIds = targetGroupId ? new Set(getLayerIdsInGroup(document, targetGroupId)) : null
       const lastGroupMember = groupMemberIds ? document.layers.reduce((last, item, index) => groupMemberIds.has(item.id) ? index : last, -1) : -1
-      const index = lastGroupMember >= 0 ? lastGroupMember + 1 : document.layers.findIndex((item) => item.id === document.activeLayerId) + 1
+      const index = lastGroupMember >= 0 ? lastGroupMember + 1 : document.layers.length
       document.layers.splice(index, 0, layer)
       document.activeLayerId = layer.id
       session.selectedGroupId = null
+      session.selectedGroupIds = []
       session.selectedLayerIds = [layer.id]
       session.history.push({
         label: '新建图层', bytes: layer.pixels.byteLength,
@@ -546,6 +707,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       const priorId = document.activeLayerId
       const copy = duplicateLayer(document, priorId)
       session.selectedGroupId = null
+      session.selectedGroupIds = []
       session.selectedLayerIds = [copy.id]
       const index = document.layers.findIndex((item) => item.id === copy.id)
       session.history.push({
@@ -571,6 +733,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       const placements = copies.map((copy) => ({ copy, index: document.layers.indexOf(copy) }))
       document.activeLayerId = copies.at(-1)!.id
       session.selectedGroupId = null
+      session.selectedGroupIds = []
       session.selectedLayerIds = [...createdIds]
       session.history.push({
         label: '复制图层',
@@ -581,12 +744,14 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
           document.activeLayerId = priorActiveId
           session.selectedLayerIds = priorSelection
           session.selectedGroupId = null
+          session.selectedGroupIds = []
         },
         redo: () => {
           for (const { copy, index } of placements) if (!document.layers.some((layer) => layer.id === copy.id)) document.layers.splice(Math.min(index, document.layers.length), 0, copy)
           document.activeLayerId = copies.at(-1)!.id
           session.selectedLayerIds = [...createdIds]
           session.selectedGroupId = null
+          session.selectedGroupIds = []
         }
       })
     })
@@ -594,20 +759,80 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
   },
 
   deleteActiveLayer() {
+    if ((activeSession(get())?.selectedLayerIds.length ?? 0) > 1) {
+      get().deleteSelectedLayers()
+      return
+    }
     get().mutateActive((session) => {
       const document = session.document
       if (document.layers.length === 1) { set({ message: '至少保留一个图层。' }); return }
       const index = document.layers.findIndex((item) => item.id === document.activeLayerId)
       const removed = document.layers[index]
+      if (!removed || isLayerEffectivelyLocked(document, removed)) { set({ message: '锁定的图层无法删除。' }); return }
       document.layers.splice(index, 1)
       const nextId = document.layers[Math.max(0, index - 1)].id
       document.activeLayerId = nextId
       session.selectedGroupId = null
+      session.selectedGroupIds = []
       session.selectedLayerIds = [nextId]
       session.history.push({
         label: '删除图层', bytes: removed.pixels.byteLength,
         undo: () => { document.layers.splice(index, 0, removed); document.activeLayerId = removed.id },
         redo: () => { document.layers = document.layers.filter((item) => item.id !== removed.id); document.activeLayerId = nextId }
+      })
+    })
+  },
+
+  deleteSelectedLayers() {
+    const current = activeSession(get())
+    if (!current) return
+    const selectedGroupIdSet = new Set<string>()
+    for (const groupId of selectedGroupRows(current)) {
+      selectedGroupIdSet.add(groupId)
+      for (const descendantId of getDescendantGroupIds(current.document, groupId)) selectedGroupIdSet.add(descendantId)
+    }
+    const selectedIds = new Set(selectedDirectLayerRows(current))
+    for (const groupId of selectedGroupIdSet) for (const layerId of getLayerIdsInGroup(current.document, groupId)) selectedIds.add(layerId)
+    const removedGroups = current.document.groups.map((group, index) => ({ group, index })).filter(({ group }) => selectedGroupIdSet.has(group.id))
+    const removed = current.document.layers.map((layer, index) => ({ layer, index })).filter(({ layer }) => selectedIds.has(layer.id))
+    if (removed.length === 0 && removedGroups.length === 0) return
+    const locked = removed.some(({ layer }) => isLayerEffectivelyLocked(current.document, layer))
+      || removedGroups.some(({ group }) => isGroupEffectivelyLocked(current.document, group))
+    if (locked) { set({ message: '锁定的图层或图层组无法删除。' }); return }
+    if (removed.length >= current.document.layers.length) { set({ message: '至少保留一个图层。' }); return }
+    get().mutateActive((session) => {
+      const document = session.document
+      const previousActiveId = document.activeLayerId
+      const previousSelection = [...session.selectedLayerIds]
+      const previousGroupId = session.selectedGroupId
+      const previousGroupIds = [...session.selectedGroupIds]
+      document.layers = document.layers.filter((layer) => !selectedIds.has(layer.id))
+      if (removedGroups.length > 0) document.groups = document.groups.filter((group) => !selectedGroupIdSet.has(group.id))
+      const nearestIndex = removed.length > 0 ? Math.max(0, Math.min(document.layers.length - 1, removed[0].index - 1)) : document.layers.findIndex((layer) => layer.id === previousActiveId)
+      const nextId = document.layers[Math.max(0, nearestIndex)]?.id ?? previousActiveId
+      document.activeLayerId = nextId
+      session.selectedGroupId = null
+      session.selectedGroupIds = []
+      session.selectedLayerIds = [nextId]
+      session.history.push({
+        label: removedGroups.length > 0 ? '删除图层组' : removed.length === 1 ? '删除图层' : '删除所选图层',
+        bytes: removed.reduce((sum, item) => sum + item.layer.pixels.byteLength, 0) + removedGroups.length * 96,
+        undo: () => {
+          for (const item of removedGroups) if (!document.groups.some((group) => group.id === item.group.id)) document.groups.splice(Math.min(item.index, document.groups.length), 0, item.group)
+          for (const item of removed) if (!document.layers.some((layer) => layer.id === item.layer.id)) document.layers.splice(Math.min(item.index, document.layers.length), 0, item.layer)
+          document.activeLayerId = previousActiveId
+          session.selectedLayerIds = previousSelection
+          session.selectedGroupId = previousGroupId
+          session.selectedGroupIds = previousGroupIds
+        },
+        redo: () => {
+          document.layers = document.layers.filter((layer) => !selectedIds.has(layer.id))
+          document.groups = document.groups.filter((group) => !selectedGroupIdSet.has(group.id))
+          document.activeLayerId = nextId
+          session.selectedLayerIds = [nextId]
+          session.selectedGroupId = null
+          session.selectedGroupIds = []
+        }
       })
     })
   },
@@ -701,6 +926,8 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
   },
 
   reorderLayers(layerIds, targetLayerId, insertAfterTarget = true) {
+    const current = activeSession(get())
+    if (current && lockedLayerStructure(current.document, layerIds)) { set({ message: '锁定的图层无法移动。' }); return }
     get().mutateActive((session) => {
       const history = reorderLayersOperation(session, layerIds, targetLayerId, insertAfterTarget)
       if (history) session.history.push(history)
@@ -712,6 +939,8 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
   },
 
   assignLayersToGroup(layerIds, groupId, targetLayerId, insertAfterTarget = true) {
+    const current = activeSession(get())
+    if (current && lockedLayerStructure(current.document, layerIds)) { set({ message: '锁定的图层无法移动。' }); return }
     get().mutateActive((session) => {
       const history = assignLayersToGroupOperation(session, layerIds, groupId, targetLayerId, insertAfterTarget)
       if (history) session.history.push(history)
@@ -719,6 +948,8 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
   },
 
   assignLayersToRoot(layerIds, targetLayerId, insertAfterTarget = true) {
+    const current = activeSession(get())
+    if (current && lockedLayerStructure(current.document, layerIds)) { set({ message: '锁定的图层无法移动。' }); return }
     get().mutateActive((session) => {
       const history = assignLayersToRootOperation(session, layerIds, targetLayerId, insertAfterTarget)
       if (history) session.history.push(history)
@@ -726,6 +957,8 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
   },
 
   assignLayersAboveGroup(layerIds, groupId) {
+    const current = activeSession(get())
+    if (current && lockedLayerStructure(current.document, layerIds)) { set({ message: '锁定的图层无法移动。' }); return }
     get().mutateActive((session) => {
       const history = assignLayersAboveGroupOperation(session, layerIds, groupId)
       if (history) session.history.push(history)
@@ -734,6 +967,8 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
 
   reorderGroup(groupId, targetGroupId, insertAfterTarget = true) {
     if (groupId === targetGroupId) return
+    const current = activeSession(get())
+    if (current && lockedGroupStructure(current.document, groupId)) { set({ message: '锁定的图层组无法移动。' }); return }
     get().mutateActive((session) => {
       if (!canMoveGroupInto(session.document, groupId, targetGroupId)) {
         set({ message: '不能把图层组移动到自己的子组旁。' })
@@ -744,8 +979,19 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     })
   },
 
+  positionGroupNextToLayer(groupId, targetLayerId, insertAfterTarget = true) {
+    const current = activeSession(get())
+    if (current && lockedGroupStructure(current.document, groupId)) { set({ message: '锁定的图层组无法移动。' }); return }
+    get().mutateActive((session) => {
+      const history = positionGroupNextToLayerOperation(session, groupId, targetLayerId, insertAfterTarget)
+      if (history) session.history.push(history)
+    })
+  },
+
   assignGroupToGroup(groupId, parentGroupId) {
     if (groupId === parentGroupId) return
+    const current = activeSession(get())
+    if (current && lockedGroupStructure(current.document, groupId)) { set({ message: '锁定的图层组无法移动。' }); return }
     get().mutateActive((session) => {
       if (!canMoveGroupInto(session.document, groupId, parentGroupId)) { set({ message: '不能把图层组移动到自己的子组中。' }); return }
       const history = assignGroupToGroupOperation(session, groupId, parentGroupId)
@@ -754,8 +1000,28 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
   },
 
   assignGroupToRoot(groupId) {
+    const current = activeSession(get())
+    if (current && lockedGroupStructure(current.document, groupId)) { set({ message: '锁定的图层组无法移动。' }); return }
     get().mutateActive((session) => {
       const history = assignGroupToRootOperation(session, groupId)
+      if (history) session.history.push(history)
+    })
+  },
+
+  moveLayersToRootEdge(layerIds, edge) {
+    const current = activeSession(get())
+    if (current && lockedLayerStructure(current.document, layerIds)) { set({ message: '锁定的图层无法移动。' }); return }
+    get().mutateActive((session) => {
+      const history = moveLayersToRootEdgeOperation(session, layerIds, edge)
+      if (history) session.history.push(history)
+    })
+  },
+
+  moveGroupToRootEdge(groupId, edge) {
+    const current = activeSession(get())
+    if (current && lockedGroupStructure(current.document, groupId)) { set({ message: '锁定的图层组无法移动。' }); return }
+    get().mutateActive((session) => {
+      const history = moveGroupToRootEdgeOperation(session, groupId, edge)
       if (history) session.history.push(history)
     })
   },
@@ -768,6 +1034,9 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
   },
 
   ungroupSelected() {
+    const current = activeSession(get())
+    const groupIds = current?.selectedGroupId ? [current.selectedGroupId] : current?.document.layers.filter((layer) => current.selectedLayerIds.includes(layer.id) && layer.groupId).map((layer) => layer.groupId!) ?? []
+    if (current && groupIds.some((groupId) => lockedGroupStructure(current.document, groupId))) { set({ message: '锁定的图层组无法解组。' }); return }
     get().mutateActive((session) => {
       const history = ungroupSelectedOperation(session)
       if (history) session.history.push(history)
@@ -783,25 +1052,49 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     })
   },
 
-  selectLayer(layerId, additive = false) {
+  selectLayer(layerId, mode = 'replace') {
     get().commitFloatingPaste()
     get().mutateActive((session) => {
-      session.selectedGroupId = null
-      if (!additive) session.selectedLayerIds = [layerId]
-      else if (session.selectedLayerIds.includes(layerId)) session.selectedLayerIds = session.selectedLayerIds.length > 1 ? session.selectedLayerIds.filter((id) => id !== layerId) : session.selectedLayerIds
-      else session.selectedLayerIds = [...session.selectedLayerIds, layerId]
-      session.document.activeLayerId = session.selectedLayerIds.includes(layerId) ? layerId : session.selectedLayerIds.at(-1) ?? layerId
+      const selectionMode: Exclude<LayerRowSelectionMode, boolean> = mode === true ? 'toggle' : mode === false ? 'replace' : mode
+      if (selectionMode === 'range') {
+        applyLayerRowRange(session, { kind: 'layer', id: layerId })
+      } else if (selectionMode === 'toggle') {
+        const layers = selectedDirectLayerRows(session)
+        const nextLayers = layers.includes(layerId) ? layers.filter((id) => id !== layerId) : [...layers, layerId]
+        applyLayerRowSelection(session, nextLayers, selectedGroupRows(session), { kind: 'layer', id: layerId })
+        session.layerSelectionAnchorId = layerId
+      } else {
+        applyLayerRowSelection(session, [layerId], [], { kind: 'layer', id: layerId })
+        session.layerSelectionAnchorId = layerId
+      }
     }, false)
   },
 
-  selectGroup(groupId) {
+  selectGroup(groupId, mode = 'replace') {
     get().commitFloatingPaste()
     get().mutateActive((session) => {
       getGroup(session.document, groupId)
-      session.selectedGroupId = groupId
-      session.selectedLayerIds = getLayerIdsInGroup(session.document, groupId)
-      const member = session.document.layers.find((layer) => session.selectedLayerIds.includes(layer.id))
-      if (member) session.document.activeLayerId = member.id
+      const selectionMode: Exclude<LayerRowSelectionMode, boolean> = mode === true ? 'toggle' : mode === false ? 'replace' : mode
+      if (selectionMode === 'range') applyLayerRowRange(session, { kind: 'group', id: groupId })
+      else if (selectionMode === 'toggle') {
+        const groups = selectedGroupRows(session)
+        const nextGroups = groups.includes(groupId) ? groups.filter((id) => id !== groupId) : [...groups, groupId]
+        applyLayerRowSelection(session, selectedDirectLayerRows(session), nextGroups, { kind: 'group', id: groupId })
+        session.layerSelectionAnchorId = groupId
+      } else {
+        applyLayerRowSelection(session, [], [groupId], { kind: 'group', id: groupId })
+        session.layerSelectionAnchorId = groupId
+      }
+    }, false)
+  },
+
+  clearLayerSelection() {
+    get().commitFloatingPaste()
+    get().mutateActive((session) => {
+      session.selectedGroupId = null
+      session.selectedGroupIds = []
+      session.selectedLayerIds = []
+      session.layerSelectionAnchorId = null
     }, false)
   },
 
@@ -828,8 +1121,14 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     if (!trimmed) return
     get().mutateActive((session) => {
       const group = getGroup(session.document, groupId)
+      const lockingAncestor = getGroupLockingAncestor(session.document, group)
+      if (!locked && lockingAncestor) {
+        set({ message: '父级图层组已锁定，无法解锁。' })
+        return
+      }
       const before = { name: group.name, opacity: group.opacity, blendMode: group.blendMode, locked: group.locked, displayColor: group.displayColor, description: group.description ?? '' }
-      const after = { name: trimmed, opacity: Math.max(0, Math.min(1, opacity)), blendMode, locked, displayColor: displayColor === undefined ? group.displayColor : displayColor ?? undefined, description: description ?? group.description ?? '' }
+      const visualLocked = group.locked || Boolean(lockingAncestor)
+      const after = { name: trimmed, opacity: visualLocked ? group.opacity : Math.max(0, Math.min(1, opacity)), blendMode: visualLocked ? group.blendMode : blendMode, locked: lockingAncestor ? group.locked : locked, displayColor: displayColor === undefined ? group.displayColor : displayColor ?? undefined, description: description ?? group.description ?? '' }
       Object.assign(group, after)
       session.history.push({ label: '修改图层组属性', bytes: 48 + before.name.length + after.name.length, undo: () => Object.assign(group, before), redo: () => Object.assign(group, after) })
     })
@@ -847,10 +1146,15 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
   },
 
   setLayerOpacity(layerId, opacity) {
+    const current = activeSession(get())
+    if (!current) return
+    const currentLayer = getLayer(current.document, layerId)
+    if (isLayerEffectivelyLocked(current.document, currentLayer)) return
+    const after = Math.max(0, Math.min(1, opacity))
+    if (currentLayer.opacity === after) return
     get().mutateActive((session) => {
       const layer = getLayer(session.document, layerId)
       const before = layer.opacity
-      const after = Math.max(0, Math.min(1, opacity))
       layer.opacity = after
       session.history.push({ label: '图层不透明度', bytes: 16, undo: () => { layer.opacity = before }, redo: () => { layer.opacity = after } })
     })
@@ -859,10 +1163,15 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
   setLayerProperties(layerId, name, opacity) {
     const trimmed = name.trim()
     if (!trimmed) return
+    const current = activeSession(get())
+    if (!current) return
+    const currentLayer = getLayer(current.document, layerId)
+    const nextOpacity = isLayerEffectivelyLocked(current.document, currentLayer) ? currentLayer.opacity : Math.max(0, Math.min(1, opacity))
+    if (currentLayer.name === trimmed && currentLayer.opacity === nextOpacity) return
     get().mutateActive((session) => {
       const layer = getLayer(session.document, layerId)
       const before = { name: layer.name, opacity: layer.opacity }
-      const after = { name: trimmed, opacity: Math.max(0, Math.min(1, opacity)) }
+      const after = { name: trimmed, opacity: nextOpacity }
       layer.name = after.name
       layer.opacity = after.opacity
       session.history.push({ label: '修改图层属性', bytes: 32 + before.name.length + after.name.length, undo: () => { layer.name = before.name; layer.opacity = before.opacity }, redo: () => { layer.name = after.name; layer.opacity = after.opacity } })
@@ -874,22 +1183,35 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     if (!trimmed) return
     get().mutateActive((session) => {
       const layer = getLayer(session.document, layerId)
+      const lockingGroup = getLayerLockingGroup(session.document, layer)
+      if (locked === false && lockingGroup) {
+        set({ message: '父级图层组已锁定，无法解锁。' })
+        return
+      }
       const before = { name: layer.name, opacity: layer.opacity, blendMode: layer.blendMode, locked: layer.locked, displayColor: layer.displayColor, description: layer.description ?? '' }
-      const after = { name: trimmed, opacity: Math.max(0, Math.min(1, opacity)), blendMode, locked: locked ?? layer.locked, displayColor: displayColor === undefined ? layer.displayColor : displayColor ?? undefined, description: description ?? layer.description ?? '' }
+      const visualLocked = layer.locked || Boolean(lockingGroup)
+      const after = { name: trimmed, opacity: visualLocked ? layer.opacity : Math.max(0, Math.min(1, opacity)), blendMode: visualLocked ? layer.blendMode : blendMode, locked: lockingGroup ? layer.locked : locked ?? layer.locked, displayColor: displayColor === undefined ? layer.displayColor : displayColor ?? undefined, description: description ?? layer.description ?? '' }
       Object.assign(layer, after)
       session.history.push({ label: '修改图层属性', bytes: 40 + before.name.length + after.name.length, undo: () => Object.assign(layer, before), redo: () => Object.assign(layer, after) })
     })
   },
   applyActiveLayerAdjustment(adjustment) {
     get().mutateActive((session) => {
-      const layer = getActiveLayer(session.document)
-      if (isLayerEffectivelyLocked(session.document, layer)) return
-      const edit = applyColorAdjustment(session.document, layer, adjustment, session.selection)
       const labels: Record<ColorAdjustment['kind'], string> = {
         'color-balance': '色彩平衡', 'brightness-contrast': '亮度/对比度', 'hue-saturation': '色相/饱和度', curves: '曲线'
       }
-      const entry = commitPixelEdit(session.document, edit, labels[adjustment.kind])
-      if (entry) session.history.push(entry)
+      const targetIds = session.selection
+        ? [getActiveLayer(session.document).id]
+        : [...new Set(session.selectedLayerIds.length > 0 ? session.selectedLayerIds : [session.document.activeLayerId])]
+      session.history.beginCompound()
+      for (const layerId of targetIds) {
+        const layer = session.document.layers.find((candidate) => candidate.id === layerId)
+        if (!layer || isLayerEffectivelyLocked(session.document, layer)) continue
+        const edit = applyColorAdjustment(session.document, layer, adjustment, session.selection)
+        const entry = commitPixelEdit(session.document, edit, labels[adjustment.kind])
+        if (entry) session.history.push(entry)
+      }
+      session.history.endCompound(labels[adjustment.kind])
     })
   },
   captureActiveLayerAdjustmentSnapshot() {
@@ -899,8 +1221,10 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
   previewActiveLayerAdjustment(adjustment, baseline) {
     get().mutateActive((session) => {
       restoreAdjustmentSnapshot(session, baseline)
-      const layer = getLayer(session.document, baseline.layerId)
-      if (!isLayerEffectivelyLocked(session.document, layer)) applyColorAdjustment(session.document, layer, adjustment, session.selection)
+      for (const layerSnapshot of baseline.layers) {
+        const layer = session.document.layers.find((candidate) => candidate.id === layerSnapshot.layerId)
+        if (layer && !isLayerEffectivelyLocked(session.document, layer)) applyColorAdjustment(session.document, layer, adjustment, session.selection)
+      }
       session.revision += 1
     }, false)
   },
@@ -914,20 +1238,21 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     get().mutateActive((session) => {
       const before = {
         ...baseline,
-        pixels: baseline.pixels instanceof Uint8ClampedArray ? new Uint8ClampedArray(baseline.pixels) : new Uint32Array(baseline.pixels),
+        layers: baseline.layers.map((layer) => ({ ...layer, pixels: layer.pixels instanceof Uint8ClampedArray ? new Uint8ClampedArray(layer.pixels) : new Uint32Array(layer.pixels) })),
         palette: baseline.palette.map((entry) => ({ ...entry, color: { ...entry.color } }))
       }
       restoreAdjustmentSnapshot(session, before)
-      const layer = getLayer(session.document, before.layerId)
-      if (isLayerEffectivelyLocked(session.document, layer)) return
-      applyColorAdjustment(session.document, layer, adjustment, session.selection)
-      const after = captureAdjustmentSnapshot(session)
+      for (const layerSnapshot of before.layers) {
+        const layer = session.document.layers.find((candidate) => candidate.id === layerSnapshot.layerId)
+        if (layer && !isLayerEffectivelyLocked(session.document, layer)) applyColorAdjustment(session.document, layer, adjustment, session.selection)
+      }
+      const after = captureAdjustmentSnapshot(session, before.layers.map((layer) => layer.layerId))
       const labels: Record<ColorAdjustment['kind'], string> = {
         'color-balance': '色彩平衡', 'brightness-contrast': '亮度/对比度', 'hue-saturation': '色相/饱和度', curves: '曲线'
       }
       session.history.push({
         label: labels[adjustment.kind],
-        bytes: before.pixels.byteLength + after.pixels.byteLength + (before.palette.length + after.palette.length) * 24,
+        bytes: before.layers.reduce((bytes, layer) => bytes + layer.pixels.byteLength, 0) + after.layers.reduce((bytes, layer) => bytes + layer.pixels.byteLength, 0) + (before.palette.length + after.palette.length) * 24,
         undo: () => { restoreAdjustmentSnapshot(session, before); session.revision += 1 },
         redo: () => { restoreAdjustmentSnapshot(session, after); session.revision += 1 }
       })
@@ -959,7 +1284,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     get().commitPixelEdit(edit, session.selection ? '填充选区前景色' : '填充画布前景色')
   },
 
-  outlineActiveSelection(color, thickness, position, directions, kernel = 'round') {
+  outlineActiveSelection(color, thickness, position, directions, kernel = 'round', previewEnabled = true) {
     const session = activeSession(get())
     if (!session?.selection) { set({ message: '请先创建选区。' }); return false }
     const layer = getActiveLayer(session.document)
@@ -967,6 +1292,14 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     try {
       const edit = outlineSelection(session.document, layer, session.selection, color, thickness, position, directions, kernel)
       if (!edit) { set({ message: '选区内没有可描边的内容。' }); return false }
+      session.document.outlineSettings = {
+        color: { ...color },
+        thickness: Math.max(1, Math.min(64, Math.round(thickness))),
+        position,
+        kernel,
+        directions: directions ? { ...directions } : { nw: false, n: true, ne: false, w: true, e: true, sw: false, s: true, se: false },
+        previewEnabled
+      }
       get().commitPixelEdit(edit, position === 'inside' ? '内部描边' : '外部描边')
       set({ message: `已应用 ${Math.max(1, Math.min(64, Math.round(thickness)))} px ${position === 'inside' ? '内部' : '外部'}描边。` })
       return true
@@ -977,60 +1310,132 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
   },
 
   copyActiveLayerToClipboard() {
+    get().copySelectedLayersToClipboard()
+  },
+
+  copySelectedLayersToClipboard() {
     get().commitFloatingPaste()
     const session = activeSession(get())
-    if (!session || session.selectedGroupId || session.selectedLayerIds.length !== 1) {
-      set({ message: '请选择一个图层后再复制图层。' })
+    if (!session) return
+    const document = session.document
+    const selectedGroupIdSet = new Set<string>()
+    for (const groupId of selectedGroupRows(session)) {
+      selectedGroupIdSet.add(groupId)
+      for (const descendantId of getDescendantGroupIds(document, groupId)) selectedGroupIdSet.add(descendantId)
+    }
+    const selectedLayerIdSet = new Set(selectedDirectLayerRows(session))
+    for (const groupId of selectedGroupIdSet) for (const layerId of getLayerIdsInGroup(document, groupId)) selectedLayerIdSet.add(layerId)
+    const layers = document.layers.filter((layer) => selectedLayerIdSet.has(layer.id))
+    if (layers.length === 0) {
+      set({ message: '请先选择要复制的图层或图层组。' })
       return
     }
-    const layer = session.document.layers.find((candidate) => candidate.id === session.selectedLayerIds[0])
-    if (!layer) return
-    const pixels = new Uint8ClampedArray(layer.width * layer.height * 4)
-    for (let y = 0; y < layer.height; y += 1) for (let x = 0; x < layer.width; x += 1) {
-      const color = readLayerColorAt(session.document, layer, layer.offsetX + x, layer.offsetY + y)
-      const offset = (y * layer.width + x) * 4
-      pixels[offset] = color.r
-      pixels[offset + 1] = color.g
-      pixels[offset + 2] = color.b
-      pixels[offset + 3] = color.a
+    const clipboard: LayerCollectionClipboard = {
+      sourceDocumentId: document.id,
+      layers: layers.map((layer) => layerClipboardFromDocument(document, layer, layer.groupId && selectedGroupIdSet.has(layer.groupId) ? layer.groupId : null)),
+      groups: document.groups.filter((group) => selectedGroupIdSet.has(group.id)).map((group) => ({
+        key: group.id,
+        name: group.name,
+        visible: group.visible,
+        locked: group.locked,
+        opacity: group.opacity,
+        blendMode: group.blendMode,
+        displayColor: group.displayColor ? { ...group.displayColor } : undefined,
+        description: group.description ?? '',
+        parentKey: group.parentGroupId ?? null
+      }))
     }
-    clipboardService.setLayer({ name: layer.name, width: layer.width, height: layer.height, offsetX: layer.offsetX, offsetY: layer.offsetY, visible: layer.visible, locked: layer.locked, opacity: layer.opacity, blendMode: layer.blendMode, pixels })
-    set({ message: `已复制图层“${layer.name}”。` })
+    clipboardService.setLayers(clipboard)
+    set({ message: clipboard.groups.length > 0 ? `已复制图层组“${clipboard.groups[0].name}”，共 ${layers.length} 个图层。` : layers.length === 1 ? `已复制图层“${layers[0].name}”。` : `已复制 ${layers.length} 个图层。` })
   },
 
   pasteLayerFromClipboard() {
-    const clipboard = clipboardService.getLayer()
+    return get().pasteLayersFromClipboard()
+  },
+
+  pasteLayersFromClipboard() {
+    const clipboard = clipboardService.getLayers()
     const current = activeSession(get())
-    if (!clipboard || !current) return false
+    if (!clipboard || clipboard.layers.length === 0 || !current) return false
     get().mutateActive((session) => {
       const document = session.document
-      const layer = createLayer(`${clipboard.name} 副本`, clipboard.width, clipboard.height, document.colorMode)
-      layer.offsetX = clipboard.offsetX
-      layer.offsetY = clipboard.offsetY
-      layer.visible = clipboard.visible
-      layer.locked = clipboard.locked
-      layer.opacity = clipboard.opacity
-      layer.blendMode = clipboard.blendMode
-      if (layer.format === 'rgba') layer.pixels.set(clipboard.pixels)
-      else for (let index = 0; index < clipboard.width * clipboard.height; index += 1) {
-        const offset = index * 4
-        layer.pixels[index] = findOrAddPaletteColor(document, { r: clipboard.pixels[offset], g: clipboard.pixels[offset + 1], b: clipboard.pixels[offset + 2], a: clipboard.pixels[offset + 3] })
+      const selectedGroup = session.selectedGroupId ? document.groups.find((group) => group.id === session.selectedGroupId) : null
+      const selectedLayer = session.selectedGroupId ? null : document.layers.find((layer) => layer.id === document.activeLayerId && session.selectedLayerIds.includes(layer.id))
+      const targetGroupId = clipboard.groups.length > 0
+        ? selectedGroup?.parentGroupId ?? selectedLayer?.groupId ?? null
+        : selectedGroup?.id ?? selectedLayer?.groupId ?? null
+      const groupIdByKey = new Map(clipboard.groups.map((group) => [group.key, createId('group')]))
+      const resolveGroupParent = (parentKey?: string | null): string | null => {
+        if (!parentKey) return targetGroupId
+        const pastedParent = groupIdByKey.get(parentKey)
+        if (pastedParent) return pastedParent
+        return targetGroupId
       }
-      if (session.selectedGroupId) layer.groupId = session.selectedGroupId
-      const index = document.layers.findIndex((candidate) => candidate.id === document.activeLayerId) + 1
-      document.layers.splice(Math.max(0, index), 0, layer)
+      const groups: LayerGroup[] = clipboard.groups.map((group) => ({
+        id: groupIdByKey.get(group.key)!,
+        name: `${group.name} 副本`,
+        description: group.description ?? '',
+        displayColor: group.displayColor ? { ...group.displayColor } : undefined,
+        parentGroupId: resolveGroupParent(group.parentKey),
+        visible: group.visible,
+        locked: group.locked,
+        opacity: group.opacity,
+        blendMode: group.blendMode
+      }))
+      const layers = clipboard.layers.map((source) => {
+        const layer = createLayer(`${source.name} 副本`, source.width, source.height, document.colorMode)
+        layer.offsetX = source.offsetX
+        layer.offsetY = source.offsetY
+        layer.visible = source.visible
+        layer.locked = source.locked
+        layer.opacity = source.opacity
+        layer.blendMode = source.blendMode
+        layer.description = source.description ?? ''
+        if (source.displayColor) layer.displayColor = { ...source.displayColor }
+        layer.groupId = source.groupKey ? groupIdByKey.get(source.groupKey) ?? targetGroupId : targetGroupId
+        if (layer.format === 'rgba') layer.pixels.set(source.pixels)
+        else for (let index = 0; index < source.width * source.height; index += 1) {
+          const offset = index * 4
+          layer.pixels[index] = findOrAddPaletteColor(document, { r: source.pixels[offset], g: source.pixels[offset + 1], b: source.pixels[offset + 2], a: source.pixels[offset + 3] })
+        }
+        return layer
+      })
+      const index = targetContainerTopIndex(document, targetGroupId)
       const previousActiveId = document.activeLayerId
       const previousSelection = [...session.selectedLayerIds]
-      document.activeLayerId = layer.id
+      const previousGroupId = session.selectedGroupId
+      const previousGroupIds = [...session.selectedGroupIds]
+      document.groups.push(...groups)
+      document.layers.splice(index, 0, ...layers)
+      const pastedIds = layers.map((layer) => layer.id)
+      const pastedGroupIds = new Set(groups.map((group) => group.id))
+      document.activeLayerId = layers.at(-1)!.id
       session.selectedGroupId = null
-      session.selectedLayerIds = [layer.id]
+      session.selectedGroupIds = groups.map((group) => group.id)
+      session.selectedLayerIds = pastedIds
       session.history.push({
-        label: '粘贴图层', bytes: layer.pixels.byteLength,
-        undo: () => { document.layers = document.layers.filter((candidate) => candidate.id !== layer.id); document.activeLayerId = previousActiveId; session.selectedLayerIds = previousSelection },
-        redo: () => { if (!document.layers.some((candidate) => candidate.id === layer.id)) document.layers.splice(Math.min(index, document.layers.length), 0, layer); document.activeLayerId = layer.id; session.selectedGroupId = null; session.selectedLayerIds = [layer.id] }
+        label: layers.length === 1 && groups.length === 0 ? '粘贴图层' : '粘贴图层集合',
+        bytes: layers.reduce((sum, layer) => sum + layer.pixels.byteLength, 0) + groups.length * 96,
+        undo: () => {
+          document.layers = document.layers.filter((candidate) => !pastedIds.includes(candidate.id))
+          document.groups = document.groups.filter((candidate) => !pastedGroupIds.has(candidate.id))
+          document.activeLayerId = previousActiveId
+          session.selectedLayerIds = previousSelection
+          session.selectedGroupId = previousGroupId
+          session.selectedGroupIds = previousGroupIds
+        },
+        redo: () => {
+          for (const group of groups) if (!document.groups.some((candidate) => candidate.id === group.id)) document.groups.push(group)
+          const missingLayers = layers.filter((layer) => !document.layers.some((candidate) => candidate.id === layer.id))
+          if (missingLayers.length > 0) document.layers.splice(Math.min(index, document.layers.length), 0, ...missingLayers)
+          document.activeLayerId = layers.at(-1)!.id
+          session.selectedGroupId = null
+          session.selectedGroupIds = groups.map((group) => group.id)
+          session.selectedLayerIds = pastedIds
+        }
       })
     })
-    set({ message: `已粘贴图层“${clipboard.name}”。` })
+    set({ message: clipboard.groups.length > 0 ? `已粘贴图层组，共 ${clipboard.layers.length} 个图层。` : clipboard.layers.length === 1 ? `已粘贴图层“${clipboard.layers[0].name}”。` : `已粘贴 ${clipboard.layers.length} 个图层。` })
     return true
   },
 
@@ -1055,7 +1460,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       copied += 1
     }
     if (copied === 0) { clipboardService.clearSelection(); set({ message: '选区内没有可复制的非透明像素。' }); return }
-    clipboardService.setSelection({ width: selection.width, height: selection.height, pixels, mask })
+    clipboardService.setSelection({ width: selection.width, height: selection.height, originX: selection.x, originY: selection.y, pixels, mask })
     const clipboard = clipboardService.getSelection()
     if (!clipboard) return
     void window.moonSprite.writeClipboardImage(selectionClipboardImage(clipboard)).catch(() => {
@@ -1082,8 +1487,18 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       // Keep the entire clipboard image, even when it is larger than the
       // document. The floating selection can then be moved until any part of
       // it reaches the canvas instead of losing off-canvas pixels on paste.
-      const x = Math.floor((document.width - clipboard.width) / 2)
-      const y = Math.floor((document.height - clipboard.height) / 2)
+      const { x, y } = resolveClipboardPlacement({
+        width: clipboard.width,
+        height: clipboard.height,
+        originX: clipboard.originX,
+        originY: clipboard.originY,
+        documentWidth: document.width,
+        documentHeight: document.height,
+        viewportWidth: session.viewportSize.width || document.width * session.view.zoom,
+        viewportHeight: session.viewportSize.height || document.height * session.view.zoom,
+        view: session.view,
+        rotationIndicatorPosition: loadEditorPreferences().rotationIndicatorPosition
+      })
       const width = clipboard.width
       const height = clipboard.height
       const pastedMask = clipboard.mask.slice()
@@ -1113,13 +1528,81 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       }
       const edit = applySelectionTransform(document, source, target, 0, true) ?? beginPixelEdit(layer.id)
       session.selection = cloneSelectionMask(target)
-      session.pendingPaste = { layerId: layer.id, beforeSelection, source, target: cloneSelectionMask(target)!, previewEdit: edit }
+      session.pendingPaste = { layerId: layer.id, beforeSelection, source, target: cloneSelectionMask(target)!, previewEdit: edit, copy: true, label: '粘贴到当前图层' }
       // A paste remains floating until confirmed, so its first drag should move
       // the pasted pixels instead of beginning a new pencil stroke.
       session.tool = 'selection'
       session.revision += 1
       set({ message: `已粘贴 ${pasted} 个非透明像素，可移动后按 Enter 确认。` })
     }, false)
+  },
+
+  async pasteAsNewLayer() {
+    if (clipboardService.getLayers()) return get().pasteLayersFromClipboard()
+    const clipboard = await clipboardService.readSelection(() => window.moonSprite.readClipboardImage())
+    const current = activeSession(get())
+    if (!clipboard || !current) { set({ message: '剪贴板中没有可粘贴的内容。' }); return false }
+    get().mutateActive((session) => {
+      const document = session.document
+      const placement = resolveClipboardPlacement({
+        width: clipboard.width,
+        height: clipboard.height,
+        originX: clipboard.originX,
+        originY: clipboard.originY,
+        documentWidth: document.width,
+        documentHeight: document.height,
+        viewportWidth: session.viewportSize.width || document.width * session.view.zoom,
+        viewportHeight: session.viewportSize.height || document.height * session.view.zoom,
+        view: session.view,
+        rotationIndicatorPosition: loadEditorPreferences().rotationIndicatorPosition
+      })
+      const layer = createLayer('粘贴图层', clipboard.width, clipboard.height, document.colorMode)
+      layer.offsetX = placement.x
+      layer.offsetY = placement.y
+      for (let index = 0; index < clipboard.mask.length; index += 1) {
+        if (clipboard.mask[index] !== 1) continue
+        writeLayerColor(document, layer, index, unpackColor(clipboard.pixels[index]))
+      }
+      const insertionIndex = document.layers.length
+      const previousActiveId = document.activeLayerId
+      const previousSelection = [...session.selectedLayerIds]
+      document.layers.push(layer)
+      document.activeLayerId = layer.id
+      session.selectedGroupId = null
+      session.selectedGroupIds = []
+      session.selectedLayerIds = [layer.id]
+      session.layerSelectionAnchorId = layer.id
+      session.history.push({
+        label: '粘贴为新图层',
+        bytes: layer.pixels.byteLength + 64,
+        undo: () => {
+          document.layers = document.layers.filter((candidate) => candidate.id !== layer.id)
+          document.activeLayerId = previousActiveId
+          session.selectedLayerIds = previousSelection
+        },
+        redo: () => {
+          if (!document.layers.some((candidate) => candidate.id === layer.id)) document.layers.splice(Math.min(insertionIndex, document.layers.length), 0, layer)
+          document.activeLayerId = layer.id
+          session.selectedLayerIds = [layer.id]
+        }
+      })
+    })
+    set({ message: '已粘贴为新图层。' })
+    return true
+  },
+
+  async pasteAsNewDocument() {
+    const clipboard = await clipboardService.readSelection(() => window.moonSprite.readClipboardImage())
+    if (!clipboard) { set({ message: '剪贴板中没有可粘贴的图片。' }); return false }
+    const document = createDocument('粘贴的图像', clipboard.width, clipboard.height, 'rgba')
+    const layer = getActiveLayer(document)
+    for (let index = 0; index < clipboard.mask.length; index += 1) {
+      if (clipboard.mask[index] === 1) writeLayerColor(document, layer, index, unpackColor(clipboard.pixels[index]))
+    }
+    document.dirty = true
+    get().addSession(document)
+    set({ message: '已将剪贴板图片粘贴为新项目。' })
+    return true
   },
 
   updateFloatingPastePreview(edit, target) {
@@ -1132,13 +1615,30 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     }, false)
   },
 
+  beginFloatingSelectionTransform(source, edit, before, target, copy, label) {
+    get().mutateActive((session) => {
+      const layer = getActiveLayer(session.document)
+      session.pendingPaste = {
+        layerId: layer.id,
+        beforeSelection: cloneSelectionMask(before),
+        source,
+        target: cloneSelectionMask(target)!,
+        previewEdit: edit,
+        copy,
+        label
+      }
+      session.selection = cloneSelectionMask(target)
+      session.revision += 1
+    }, false)
+  },
+
   commitFloatingPaste() {
     const current = activeSession(get())
     if (!current?.pendingPaste) return
     get().mutateActive((session) => {
       const pending = session.pendingPaste
       if (!pending) return
-      const pixelEntry = commitPixelEdit(session.document, pending.previewEdit, '粘贴到当前图层')
+      const pixelEntry = commitPixelEdit(session.document, pending.previewEdit, pending.label)
       const beforeSelection = cloneSelectionMask(pending.beforeSelection)
       const afterSelection = cloneSelectionMask(pending.target)
       session.pendingPaste = null

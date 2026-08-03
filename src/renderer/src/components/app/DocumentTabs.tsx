@@ -47,7 +47,10 @@ export const DocumentTabs = memo(function DocumentTabs({ homeOpen, onNew, onActi
     const closeOutside = (event: PointerEvent): void => {
       if (event.target instanceof Element && !event.target.closest('.document-tab, .document-tab-context-menu')) setContextMenu(null)
     }
-    const close = (): void => setContextMenu(null)
+    const close = (event?: Event): void => {
+      const target = (event as CustomEvent<{ target?: string }> | undefined)?.detail?.target
+      if (!target || target === 'popover') setContextMenu(null)
+    }
     window.addEventListener('pointerdown', closeOutside, true)
     window.addEventListener('blur', close)
     window.addEventListener('moonsprite:close-dialog', close)

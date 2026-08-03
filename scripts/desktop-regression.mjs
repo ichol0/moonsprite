@@ -76,9 +76,9 @@ try {
     }, label)
   }
 
-  await selectTool('B', '铅笔')
-  await selectTool('V', '移动')
-  await selectTool('R', '旋转视图')
+  await selectTool('B', '铅笔工具')
+  await selectTool('V', '移动工具')
+  await selectTool('R', '旋转视图工具')
 
   const rotationInput = page.locator('input[aria-label="旋转度数"]')
   await rotationInput.waitFor({ state: 'visible' })
@@ -113,10 +113,10 @@ try {
   assert(await relativeLuminanceItem.isEnabled(), 'Relative luminance menu command is unexpectedly disabled.')
   await windowMenuButton.click()
 
-  const selectionToolButton = page.locator('.tool-rail button[aria-label="选区"]')
+  const selectionToolButton = page.locator('.tool-rail button[aria-label="矩形框选工具"]')
   await selectionToolButton.click()
   await page.locator('.selection-flyout[aria-label="选择选区方式"]').waitFor({ state: 'visible' })
-  assert(await page.locator('.selection-flyout button').count() === 4, 'Selection tool menu is incomplete.')
+  assert(await page.locator('.selection-flyout button').count() === 5, 'Selection tool menu is incomplete.')
 
   console.log('MoonSprite desktop regression test passed.')
 } finally {

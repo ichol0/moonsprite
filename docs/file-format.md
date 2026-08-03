@@ -2,7 +2,7 @@
 
 `.moonsprite` 是 ZIP 容器，包含：
 
-- `manifest.json`：文档元数据、调色板、图层顺序、动画时间轴和格式版本。
+- `manifest.json`：文档元数据、调色板、图层顺序、动画时间轴、选区描边设置和格式版本。
 - `layers/<id>.rgba`：小端序 RGBA 字节，每像素四字节。
 - `layers/<id>.idx32`：小端序无符号 32 位稳定调色板 ID。
 - `preview.png`：可见图层合成后的预览图。

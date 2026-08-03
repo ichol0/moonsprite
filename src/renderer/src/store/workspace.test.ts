@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { MoonSpriteApi } from '@shared/types'
 import { compositeDocument, createDocument, createLayer, getActiveLayer, isLayerEffectivelyLocked, isLayerEffectivelyVisible, readLayerColor, readLayerColorAt, writeLayerColor } from '@/core/document'
 import { revertPixelEdit } from '@/core/history'
-import { applySelectionTransform } from '@/core/tools'
+import { applySelectionTransform, applySelectionTranslationPreview, captureSelectionTransform, selectionTranslationPreviewEdit } from '@/core/tools'
 import { builtInPalettes } from '@/core/built-in-palettes'
 import { createProceduralBrush } from '@/core/brushes'
 import { registerViewPreviewFlusher } from '@/core/view-preview-lifecycle'
@@ -31,6 +31,14 @@ beforeEach(() => {
   useWorkspace.setState({ sessions: [], activeId: null, message: null, saveProgress: null, dialog: null })
 })
 
+it('stores shape ratios with at most one decimal place', () => {
+  useWorkspace.getState().addSession(createDocument('shape ratio', 8, 8, 'rgba'))
+
+  useWorkspace.getState().setShapeRatio({ width: 1.26, height: 3.94 })
+
+  expect(useWorkspace.getState().sessions[0].shapeRatio).toEqual({ width: 1.3, height: 3.9 })
+})
+
 describe('layer properties', () => {
   it('clears an optional display color and restores it with one undo', () => {
     const document = createDocument('layer marker', 2, 2, 'rgba')
@@ -44,6 +52,105 @@ describe('layer properties', () => {
     expect(layer.description).toBe('说明')
     useWorkspace.getState().undo()
     expect(layer.displayColor).toEqual(red)
+  })
+})
+
+describe('cross-document layer clipboard', () => {
+  it('pastes multiple selected layers with their properties as one undo step', () => {
+    const source = createDocument('source', 4, 4, 'rgba')
+    const bottom = getActiveLayer(source)
+    bottom.name = 'Bottom'
+    bottom.offsetX = -2
+    bottom.opacity = 0.5
+    bottom.description = 'base note'
+    const top = createLayer('Top', 2, 3, 'rgba')
+    top.offsetX = 5
+    top.offsetY = 6
+    top.blendMode = 'multiply'
+    top.displayColor = { ...blue }
+    source.layers.push(top)
+    source.activeLayerId = top.id
+    useWorkspace.getState().addSession(source)
+    useWorkspace.getState().selectLayer(bottom.id)
+    useWorkspace.getState().selectLayer(top.id, true)
+
+    useWorkspace.getState().copySelectedLayersToClipboard()
+    const target = createDocument('target', 4, 4, 'indexed')
+    useWorkspace.getState().addSession(target)
+    useWorkspace.getState().pasteLayersFromClipboard()
+
+    const pasted = target.layers.slice(1)
+    expect(pasted.map((layer) => layer.name)).toEqual(['Bottom 副本', 'Top 副本'])
+    expect(pasted[0]).toMatchObject({ offsetX: -2, opacity: 0.5, description: 'base note' })
+    expect(pasted[1]).toMatchObject({ offsetX: 5, offsetY: 6, blendMode: 'multiply', displayColor: blue })
+    useWorkspace.getState().undo()
+    expect(target.layers).toHaveLength(1)
+  })
+
+  it('preserves nested group structure and removes the whole paste with one undo', () => {
+    const source = createDocument('group source', 3, 3, 'rgba')
+    const childLayer = getActiveLayer(source)
+    const parentLayer = createLayer('Parent layer', 3, 3, 'rgba')
+    source.layers.push(parentLayer)
+    source.groups.push(
+      { id: 'parent', name: 'Parent', parentGroupId: null, visible: true, locked: false, opacity: 0.75, blendMode: 'multiply', description: 'parent note' },
+      { id: 'child', name: 'Child', parentGroupId: 'parent', visible: false, locked: true, opacity: 0.5, blendMode: 'screen', displayColor: { ...red } }
+    )
+    childLayer.groupId = 'child'
+    parentLayer.groupId = 'parent'
+    useWorkspace.getState().addSession(source)
+    useWorkspace.getState().selectGroup('parent')
+    useWorkspace.getState().copySelectedLayersToClipboard()
+
+    const target = createDocument('group target', 3, 3, 'rgba')
+    useWorkspace.getState().addSession(target)
+    expect(useWorkspace.getState().pasteLayersFromClipboard()).toBe(true)
+
+    const parent = target.groups.find((group) => group.name === 'Parent 副本')
+    const child = target.groups.find((group) => group.name === 'Child 副本')
+    expect(parent).toMatchObject({ opacity: 0.75, blendMode: 'multiply', description: 'parent note' })
+    expect(child).toMatchObject({ parentGroupId: parent?.id, visible: false, locked: true, opacity: 0.5, blendMode: 'screen', displayColor: red })
+    expect(target.layers.find((layer) => layer.name === `${childLayer.name} 副本`)?.groupId).toBe(child?.id)
+    expect(target.layers.find((layer) => layer.name === 'Parent layer 副本')?.groupId).toBe(parent?.id)
+
+    useWorkspace.getState().undo()
+    expect(target.groups).toHaveLength(0)
+    expect(target.layers).toHaveLength(1)
+  })
+})
+
+describe('multi-layer deletion', () => {
+  it('deletes a selected nested group as one structural history entry', () => {
+    const document = createDocument('delete nested group', 2, 2, 'rgba')
+    const childLayer = getActiveLayer(document)
+    childLayer.groupId = 'child'
+    const rootLayer = createLayer('Root', 2, 2, 'rgba')
+    document.layers.push(rootLayer)
+    document.groups.push(
+      { id: 'parent', name: 'Parent', parentGroupId: null, visible: true, locked: false, opacity: 1, blendMode: 'normal' },
+      { id: 'child', name: 'Child', parentGroupId: 'parent', visible: true, locked: false, opacity: 1, blendMode: 'normal' }
+    )
+    useWorkspace.getState().addSession(document)
+    useWorkspace.getState().selectGroup('parent')
+
+    useWorkspace.getState().deleteSelectedLayers()
+
+    expect(document.layers).toEqual([rootLayer])
+    expect(document.groups).toEqual([])
+    useWorkspace.getState().undo()
+    expect(document.layers).toContain(childLayer)
+    expect(document.groups.map((group) => group.id)).toEqual(['parent', 'child'])
+    expect(useWorkspace.getState().sessions[0].selectedGroupId).toBe('parent')
+  })
+
+  it('does not dirty the document when deletion would remove every layer', () => {
+    const document = createDocument('keep one layer', 2, 2, 'rgba')
+    useWorkspace.getState().addSession(document)
+
+    useWorkspace.getState().deleteSelectedLayers()
+
+    expect(document.dirty).toBe(false)
+    expect(useWorkspace.getState().sessions[0].history.canUndo).toBe(false)
   })
 })
 
@@ -218,6 +325,40 @@ describe('workspace history', () => {
 })
 
 describe('foreground fill command', () => {
+  it('shares foreground and background colors across open documents', () => {
+    const first = createDocument('first colors', 1, 1, 'rgba')
+    const second = createDocument('second colors', 1, 1, 'rgba')
+    useWorkspace.getState().addSession(first)
+    useWorkspace.getState().addSession(second)
+
+    useWorkspace.getState().setPrimaryColor(red)
+    useWorkspace.getState().setSecondaryColor(blue)
+    useWorkspace.getState().setActive(first.id)
+
+    for (const session of useWorkspace.getState().sessions) {
+      expect(session.primaryColor).toEqual(red)
+      expect(session.secondaryColor).toEqual(blue)
+    }
+  })
+
+  it('shares a palette swatch selection with every open document', () => {
+    const first = createDocument('first palette', 1, 1, 'rgba')
+    const second = createDocument('second palette', 1, 1, 'rgba')
+    useWorkspace.getState().addSession(first)
+    useWorkspace.getState().addSession(second)
+    useWorkspace.getState().setActive(first.id)
+    let redId = first.palette.find((entry) => entry.color.r === red.r && entry.color.g === red.g && entry.color.b === red.b)?.id
+    if (redId === undefined) {
+      redId = 9001
+      first.palette.push({ id: redId, name: 'Red', color: red })
+    }
+    if (!first.paletteOrder.includes(redId)) first.paletteOrder.push(redId)
+
+    useWorkspace.getState().selectPaletteColor(redId)
+
+    expect(useWorkspace.getState().sessions.every((session) => session.primaryColor.r === red.r && session.primaryColor.g === red.g && session.primaryColor.b === red.b)).toBe(true)
+  })
+
   it('swaps foreground and background colors as one state update', () => {
     const document = createDocument('swap colors', 1, 1, 'rgba')
     useWorkspace.getState().addSession(document)
@@ -336,7 +477,63 @@ describe('selection clipboard', () => {
     expect(session.selection).toEqual(after)
   })
 
-  it('keeps pasted pixels floating until confirmation and preserves transparent destinations', async () => {
+  it('keeps the original destination background across repeated floating moves', () => {
+    const document = createDocument('floating selection background', 4, 1, 'rgba')
+    const layer = getActiveLayer(document)
+    const darkBlue = { r: 12, g: 38, b: 86, a: 255 }
+    writeLayerColor(document, layer, 0, red)
+    writeLayerColor(document, layer, 2, darkBlue)
+    useWorkspace.getState().addSession(document)
+    const before = { x: 0, y: 0, width: 1, height: 1 }
+    const firstTarget = { x: 2, y: 0, width: 1, height: 1 }
+    const source = captureSelectionTransform(document, before)!
+    const firstPreview = applySelectionTranslationPreview(document, source, firstTarget, false)
+    const firstEdit = selectionTranslationPreviewEdit(document, firstPreview)!
+
+    useWorkspace.getState().beginFloatingSelectionTransform(source, firstEdit, before, firstTarget, false, '移动选区内容')
+    expect(readLayerColorAt(document, layer, 2, 0)).toEqual(red)
+
+    const pending = useWorkspace.getState().sessions[0].pendingPaste!
+    revertPixelEdit(document, pending.previewEdit)
+    const secondTarget = { x: 3, y: 0, width: 1, height: 1 }
+    const secondPreview = applySelectionTranslationPreview(document, pending.source, secondTarget, pending.copy)
+    const secondEdit = selectionTranslationPreviewEdit(document, secondPreview)!
+    useWorkspace.getState().updateFloatingPastePreview(secondEdit, secondTarget)
+
+    expect(readLayerColorAt(document, layer, 2, 0)).toEqual(darkBlue)
+    expect(readLayerColorAt(document, layer, 3, 0)).toEqual(red)
+    useWorkspace.getState().commitFloatingPaste()
+    useWorkspace.getState().undo()
+    expect(readLayerColorAt(document, layer, 0, 0)).toEqual(red)
+    expect(readLayerColorAt(document, layer, 2, 0)).toEqual(darkBlue)
+  })
+
+  it('commits each repeated Ctrl copy from the current floating selection position', () => {
+    const document = createDocument('repeated floating copies', 4, 1, 'rgba')
+    const layer = getActiveLayer(document)
+    writeLayerColor(document, layer, 0, red)
+    useWorkspace.getState().addSession(document)
+
+    const copySelectionTo = (before: { x: number; y: number; width: number; height: number }, targetX: number): void => {
+      const target = { ...before, x: targetX }
+      const source = captureSelectionTransform(document, before)!
+      const preview = applySelectionTranslationPreview(document, source, target, true)
+      const edit = selectionTranslationPreviewEdit(document, preview)!
+      useWorkspace.getState().beginFloatingSelectionTransform(source, edit, before, target, true, '复制选区内容')
+      useWorkspace.getState().commitFloatingPaste()
+    }
+
+    copySelectionTo({ x: 0, y: 0, width: 1, height: 1 }, 1)
+    copySelectionTo({ x: 1, y: 0, width: 1, height: 1 }, 2)
+
+    expect([0, 1, 2].map((x) => readLayerColorAt(document, layer, x, 0))).toEqual([red, red, red])
+    useWorkspace.getState().undo()
+    expect(readLayerColorAt(document, layer, 0, 0)).toEqual(red)
+    expect(readLayerColorAt(document, layer, 1, 0)).toEqual(red)
+    expect(readLayerColorAt(document, layer, 2, 0)).toEqual(transparent)
+  })
+
+  it('keeps an original visible paste position floating until confirmation', async () => {
     const document = createDocument('clipboard', 4, 2, 'rgba')
     const source = getActiveLayer(document)
     if (source.format !== 'rgba') throw new Error('wrong layer mode')
@@ -354,7 +551,7 @@ describe('selection clipboard', () => {
     const pasted = getActiveLayer(document)
     expect(pasted.id).toBe(source.id)
     expect(readLayerColor(document, pasted, 0)).toEqual(red)
-    expect(readLayerColor(document, pasted, 1)).toEqual(red)
+    expect(readLayerColor(document, pasted, 1)).toEqual(transparent)
     expect(readLayerColor(document, pasted, 2)).toEqual(blue)
     expect(readLayerColor(document, source, 0)).toEqual(red)
     expect(useWorkspace.getState().sessions[0].selection?.mask).toEqual(Uint8Array.from([1, 0]))
@@ -372,9 +569,27 @@ describe('selection clipboard', () => {
 
     useWorkspace.getState().redo()
     expect(document.layers).toHaveLength(1)
-    expect(readLayerColor(document, getActiveLayer(document), 1)).toEqual(red)
+    expect(readLayerColor(document, getActiveLayer(document), 1)).toEqual(transparent)
     expect(readLayerColor(document, source, 0)).toEqual(red)
     expect(readLayerColor(document, source, 2)).toEqual(blue)
+  })
+
+  it('pastes a copied selection as an undoable new layer at its visible origin', async () => {
+    const document = createDocument('paste layer', 8, 8, 'rgba')
+    const source = getActiveLayer(document)
+    writeLayerColor(document, source, 3 * document.width + 2, red)
+    useWorkspace.getState().addSession(document)
+    useWorkspace.getState().setSelection({ x: 2, y: 3, width: 1, height: 1 })
+    useWorkspace.getState().copySelection()
+
+    expect(await useWorkspace.getState().pasteAsNewLayer()).toBe(true)
+
+    const pasted = getActiveLayer(document)
+    expect(document.layers).toHaveLength(2)
+    expect(pasted).toMatchObject({ offsetX: 2, offsetY: 3, width: 1, height: 1 })
+    expect(readLayerColor(document, pasted, 0)).toEqual(red)
+    useWorkspace.getState().undo()
+    expect(document.layers).toHaveLength(1)
   })
 
   it('moves a floating paste without clearing its old destination and cancels cleanly', async () => {
@@ -536,6 +751,132 @@ describe('visible palette independence', () => {
 })
 
 describe('nested layer groups', () => {
+  it('creates an empty group when the layer panel has no selection', () => {
+    const document = createDocument('empty group', 2, 2, 'rgba')
+    const layer = getActiveLayer(document)
+    useWorkspace.getState().addSession(document)
+    useWorkspace.getState().clearLayerSelection()
+
+    useWorkspace.getState().createLayerGroup()
+
+    expect(document.groups).toHaveLength(1)
+    expect(layer.groupId ?? null).toBeNull()
+  })
+
+  it('creates a new layer in the selected group or selected layer container', async () => {
+    const document = createDocument('grouped new layer', 2, 2, 'rgba')
+    const member = getActiveLayer(document)
+    document.groups.push({ id: 'group', name: '组', parentGroupId: null, visible: true, locked: false, opacity: 1, blendMode: 'normal' })
+    member.groupId = 'group'
+    useWorkspace.getState().addSession(document)
+
+    useWorkspace.getState().selectLayer(member.id)
+    await useWorkspace.getState().addLayer()
+    expect(getActiveLayer(document).groupId).toBe('group')
+
+    useWorkspace.getState().selectGroup('group')
+    await useWorkspace.getState().addLayer()
+    expect(getActiveLayer(document).groupId).toBe('group')
+  })
+
+  it('blocks deleting a parent group when any descendant is explicitly locked', () => {
+    const document = createDocument('descendant lock deletion', 2, 2, 'rgba')
+    const layer = getActiveLayer(document)
+    document.groups.push(
+      { id: 'parent', name: '父组', parentGroupId: null, visible: true, locked: false, opacity: 1, blendMode: 'normal' },
+      { id: 'child', name: '子组', parentGroupId: 'parent', visible: true, locked: true, opacity: 1, blendMode: 'normal' }
+    )
+    layer.groupId = 'child'
+    useWorkspace.getState().addSession(document)
+    useWorkspace.getState().selectGroup('parent')
+
+    useWorkspace.getState().deleteSelectedLayers()
+
+    expect(document.groups.map((group) => group.id)).toEqual(['parent', 'child'])
+  })
+
+  it('does not allow a child layer to unlock while an ancestor group is locked', () => {
+    const document = createDocument('ancestor lock editing', 2, 2, 'rgba')
+    const layer = getActiveLayer(document)
+    layer.locked = true
+    document.groups.push({ id: 'parent', name: '父组', parentGroupId: null, visible: true, locked: true, opacity: 1, blendMode: 'normal' })
+    layer.groupId = 'parent'
+    useWorkspace.getState().addSession(document)
+
+    useWorkspace.getState().setLayerPropertiesWithBlend(layer.id, layer.name, layer.opacity, layer.blendMode, false)
+
+    expect(layer.locked).toBe(true)
+  })
+  it('deletes an empty selected group and restores it with one undo', () => {
+    const document = createDocument('empty group deletion', 2, 2, 'rgba')
+    document.groups.push({ id: 'empty', name: '空组', parentGroupId: null, visible: true, locked: false, opacity: 1, blendMode: 'normal' })
+    useWorkspace.getState().addSession(document)
+    useWorkspace.getState().selectGroup('empty')
+
+    useWorkspace.getState().deleteSelectedLayers()
+    expect(document.groups).toHaveLength(0)
+    useWorkspace.getState().undo()
+    expect(document.groups.map((group) => group.id)).toEqual(['empty'])
+  })
+
+  it('rejects deleting or moving locked layers and groups', () => {
+    const document = createDocument('locked structure', 2, 2, 'rgba')
+    const layer = getActiveLayer(document)
+    document.groups.push({ id: 'locked-group', name: '锁定组', parentGroupId: null, visible: true, locked: true, opacity: 1, blendMode: 'normal' })
+    layer.groupId = 'locked-group'
+    useWorkspace.getState().addSession(document)
+    useWorkspace.getState().selectGroup('locked-group')
+
+    useWorkspace.getState().deleteSelectedLayers()
+    expect(document.groups.map((group) => group.id)).toEqual(['locked-group'])
+    expect(document.layers.map((candidate) => candidate.id)).toEqual([layer.id])
+    useWorkspace.getState().moveGroupToRootEdge('locked-group', 'bottom')
+    expect(useWorkspace.getState().sessions[0].history.canUndo).toBe(false)
+  })
+
+  it('uses Ctrl for discrete selection and Shift for the visible layer range', () => {
+    const document = createDocument('layer range selection', 2, 2, 'rgba')
+    const bottom = getActiveLayer(document)
+    const middle = createLayer('Middle', 2, 2, 'rgba')
+    const top = createLayer('Top', 2, 2, 'rgba')
+    document.layers.push(middle, top)
+    useWorkspace.getState().addSession(document)
+
+    useWorkspace.getState().selectLayer(top.id)
+    useWorkspace.getState().selectLayer(bottom.id, 'range')
+    expect(useWorkspace.getState().sessions[0].selectedLayerIds).toEqual([top.id, middle.id, bottom.id])
+
+    useWorkspace.getState().selectLayer(middle.id, 'toggle')
+    expect(useWorkspace.getState().sessions[0].selectedLayerIds).toEqual([top.id, bottom.id])
+  })
+
+  it('includes groups in a Shift range and deletes the mixed selection in one step', () => {
+    const document = createDocument('mixed layer range', 2, 2, 'rgba')
+    const bottom = getActiveLayer(document)
+    bottom.name = 'Bottom'
+    const member = createLayer('Member', 2, 2, 'rgba')
+    member.groupId = 'group'
+    const outside = createLayer('Outside', 2, 2, 'rgba')
+    document.layers.push(member, outside)
+    document.groups.push({ id: 'group', name: 'Group', parentGroupId: null, visible: true, locked: false, opacity: 1, blendMode: 'normal' })
+    useWorkspace.getState().addSession(document)
+
+    useWorkspace.getState().selectGroup('group')
+    useWorkspace.getState().selectLayer(bottom.id, 'range')
+    const selected = useWorkspace.getState().sessions[0]
+    expect(selected.selectedGroupIds).toEqual(['group'])
+    expect(selected.selectedLayerIds).toEqual([member.id, bottom.id])
+
+    useWorkspace.getState().deleteSelectedLayers()
+    expect(document.groups).toHaveLength(0)
+    expect(document.layers.map((layer) => layer.id)).toEqual([outside.id])
+
+    useWorkspace.getState().undo()
+    expect(document.groups.map((group) => group.id)).toEqual(['group'])
+    expect(document.layers.map((layer) => layer.id)).toEqual([bottom.id, member.id, outside.id])
+    expect(useWorkspace.getState().sessions[0].selectedGroupIds).toEqual(['group'])
+  })
+
   it('selects descendant layers and prevents moving a parent into its child', () => {
     const document = createDocument('nested groups', 2, 2, 'rgba')
     const layer = getActiveLayer(document)
@@ -611,6 +952,20 @@ describe('nested layer groups', () => {
     expect(second.groupId).toBe('group')
   })
 
+  it('creates every new root layer at the visible top', async () => {
+    const document = createDocument('new layers on top', 2, 2, 'rgba')
+    const original = getActiveLayer(document)
+    useWorkspace.getState().addSession(document)
+
+    await useWorkspace.getState().addLayer()
+    const firstCreated = getActiveLayer(document)
+    useWorkspace.getState().selectLayer(original.id)
+    await useWorkspace.getState().addLayer()
+    const latestCreated = getActiveLayer(document)
+
+    expect(document.layers.map((layer) => layer.id)).toEqual([original.id, firstCreated.id, latestCreated.id])
+  })
+
   it('reorders a complete group relative to another group and restores it on undo', async () => {
     const document = createDocument('reorder groups', 2, 2, 'rgba')
     const first = getActiveLayer(document)
@@ -631,6 +986,174 @@ describe('nested layer groups', () => {
     useWorkspace.getState().undo()
     expect(document.layers.map((layer) => layer.id)).toEqual([first.id, second.id])
     expect(document.groups.map((group) => group.id)).toEqual(['group-a', 'group-b'])
+  })
+
+  it('pastes a copied group beside the currently selected object', () => {
+    const document = createDocument('nested group paste', 2, 2, 'rgba')
+    const layer = getActiveLayer(document)
+    layer.groupId = 'child'
+    document.groups.push(
+      { id: 'parent', name: 'Parent', parentGroupId: null, visible: true, locked: false, opacity: 1, blendMode: 'normal' },
+      { id: 'child', name: 'Child', parentGroupId: 'parent', visible: true, locked: false, opacity: 1, blendMode: 'normal' },
+      { id: 'sibling', name: 'Sibling', parentGroupId: 'parent', visible: true, locked: false, opacity: 1, blendMode: 'normal' }
+    )
+    useWorkspace.getState().addSession(document)
+    useWorkspace.getState().selectGroup('child')
+
+    useWorkspace.getState().copySelectedLayersToClipboard()
+    useWorkspace.getState().selectGroup('sibling')
+    expect(useWorkspace.getState().pasteLayersFromClipboard()).toBe(true)
+
+    const copy = document.groups.find((group) => group.name === 'Child 副本')
+    expect(copy?.parentGroupId).toBe('parent')
+  })
+
+  it('pastes plain layers into the selected container and always places them at its top', () => {
+    const source = createDocument('plain layer source', 2, 2, 'rgba')
+    getActiveLayer(source).name = 'Source'
+    useWorkspace.getState().addSession(source)
+    useWorkspace.getState().copySelectedLayersToClipboard()
+
+    const target = createDocument('plain layer target', 2, 2, 'rgba')
+    const member = getActiveLayer(target)
+    member.name = 'Member'
+    member.groupId = 'target-group'
+    const rootBottom = createLayer('Root Bottom', 2, 2, 'rgba')
+    const rootTop = createLayer('Root Top', 2, 2, 'rgba')
+    target.layers.push(rootBottom, rootTop)
+    target.groups.push({ id: 'target-group', name: 'Target Group', parentGroupId: null, visible: true, locked: false, opacity: 1, blendMode: 'normal' })
+    useWorkspace.getState().addSession(target)
+    useWorkspace.getState().setActive(target.id)
+
+    useWorkspace.getState().selectGroup('target-group')
+    expect(useWorkspace.getState().pasteLayersFromClipboard()).toBe(true)
+    const groupedCopy = target.layers.find((layer) => layer.name === 'Source 副本' && layer.groupId === 'target-group')!
+    expect(groupedCopy).toBeDefined()
+    expect(target.layers.indexOf(groupedCopy)).toBeGreaterThan(target.layers.indexOf(member))
+
+    useWorkspace.getState().selectLayer(rootBottom.id)
+    expect(useWorkspace.getState().pasteLayersFromClipboard()).toBe(true)
+    const rootCopies = target.layers.filter((layer) => layer.name === 'Source 副本' && !layer.groupId)
+    expect(target.layers.indexOf(rootCopies.at(-1)!)).toBeGreaterThan(target.layers.indexOf(rootTop))
+
+    useWorkspace.getState().clearLayerSelection()
+    expect(useWorkspace.getState().pasteLayersFromClipboard()).toBe(true)
+    const latestRootCopy = target.layers.filter((layer) => layer.name === 'Source 副本' && !layer.groupId).at(-1)!
+    expect(target.layers.indexOf(latestRootCopy)).toBe(Math.max(...target.layers.filter((layer) => !layer.groupId).map((layer) => target.layers.indexOf(layer))))
+  })
+
+  it('pastes a copied group into the selected objects parent at the top of that level', () => {
+    const source = createDocument('group source', 2, 2, 'rgba')
+    getActiveLayer(source).groupId = 'source-group'
+    source.groups.push({ id: 'source-group', name: 'Source Group', parentGroupId: null, visible: true, locked: false, opacity: 1, blendMode: 'normal' })
+    useWorkspace.getState().addSession(source)
+    useWorkspace.getState().selectGroup('source-group')
+    useWorkspace.getState().copySelectedLayersToClipboard()
+
+    const target = createDocument('group target', 2, 2, 'rgba')
+    const childAMember = getActiveLayer(target)
+    childAMember.groupId = 'child-a'
+    const childBMember = createLayer('Child B member', 2, 2, 'rgba')
+    childBMember.groupId = 'child-b'
+    target.layers.push(childBMember)
+    target.groups.push(
+      { id: 'parent', name: 'Parent', parentGroupId: null, visible: true, locked: false, opacity: 1, blendMode: 'normal' },
+      { id: 'child-a', name: 'Child A', parentGroupId: 'parent', visible: true, locked: false, opacity: 1, blendMode: 'normal' },
+      { id: 'child-b', name: 'Child B', parentGroupId: 'parent', visible: true, locked: false, opacity: 1, blendMode: 'normal' }
+    )
+    useWorkspace.getState().addSession(target)
+    useWorkspace.getState().setActive(target.id)
+    useWorkspace.getState().selectGroup('child-a')
+
+    expect(useWorkspace.getState().pasteLayersFromClipboard()).toBe(true)
+    const copiedGroup = target.groups.find((group) => group.name === 'Source Group 副本')!
+    const copiedMember = target.layers.find((layer) => layer.groupId === copiedGroup.id)!
+    expect(copiedGroup.parentGroupId).toBe('parent')
+    expect(target.layers.indexOf(copiedMember)).toBeGreaterThan(target.layers.indexOf(childBMember))
+    expect(useWorkspace.getState().sessions.at(-1)?.selectedGroupId).toBeNull()
+    expect(useWorkspace.getState().sessions.at(-1)?.selectedGroupIds).toEqual([copiedGroup.id])
+    expect(useWorkspace.getState().sessions.at(-1)?.selectedLayerIds).toEqual([copiedMember.id])
+
+    useWorkspace.getState().undo()
+    expect(useWorkspace.getState().sessions.at(-1)?.selectedGroupId).toBe('child-a')
+    useWorkspace.getState().redo()
+    expect(useWorkspace.getState().sessions.at(-1)?.selectedGroupIds).toEqual([copiedGroup.id])
+    expect(useWorkspace.getState().sessions.at(-1)?.selectedLayerIds).toEqual([copiedMember.id])
+  })
+
+  it('allows locked layer metadata edits but preserves opacity and blend mode', () => {
+    const document = createDocument('locked metadata', 1, 1, 'rgba')
+    const layer = getActiveLayer(document)
+    layer.locked = true
+    layer.opacity = 0.5
+    layer.blendMode = 'multiply'
+    useWorkspace.getState().addSession(document)
+
+    useWorkspace.getState().setLayerPropertiesWithBlend(layer.id, '已重命名', 0.9, 'screen', true, red, '可编辑描述')
+
+    expect(layer).toMatchObject({ name: '已重命名', opacity: 0.5, blendMode: 'multiply', description: '可编辑描述' })
+    expect(layer.displayColor).toEqual(red)
+  })
+
+  it('preserves locked opacity through compatibility property setters', () => {
+    const document = createDocument('locked compatibility setters', 1, 1, 'rgba')
+    const layer = getActiveLayer(document)
+    layer.locked = true
+    layer.opacity = 0.5
+    useWorkspace.getState().addSession(document)
+
+    useWorkspace.getState().setLayerOpacity(layer.id, 0.9)
+    expect(document.dirty).toBe(false)
+    expect(useWorkspace.getState().sessions[0].history.canUndo).toBe(false)
+
+    useWorkspace.getState().setLayerProperties(layer.id, '已重命名', 0.8)
+
+    expect(layer.name).toBe('已重命名')
+    expect(layer.opacity).toBe(0.5)
+  })
+})
+
+describe('selection view commands', () => {
+  it('inverts the active mask with undo while outline visibility stays view-only', () => {
+    const document = createDocument('selection commands', 3, 2, 'rgba')
+    useWorkspace.getState().addSession(document)
+    useWorkspace.getState().setSelection({ x: 0, y: 0, width: 1, height: 1 })
+
+    useWorkspace.getState().invertSelection()
+    const session = useWorkspace.getState().sessions[0]
+    expect(session.selection?.mask?.reduce((total, value) => total + value, 0)).toBe(5)
+    expect(document.dirty).toBe(false)
+
+    const undoBeforeToggle = session.history.canUndo
+    useWorkspace.getState().toggleSelectionOutline()
+    expect(session.view.showSelectionOutline).toBe(false)
+    expect(session.history.canUndo).toBe(undoBeforeToggle)
+
+    useWorkspace.getState().undo()
+    expect(session.selection).toEqual({ x: 0, y: 0, width: 1, height: 1 })
+  })
+})
+
+describe('multi-layer adjustments', () => {
+  it('adjusts every selected layer without a selection and undoes them together', () => {
+    const document = createDocument('multi adjustment', 1, 1, 'rgba')
+    const first = getActiveLayer(document)
+    const second = createLayer('Second', 1, 1, 'rgba')
+    writeLayerColor(document, first, 0, { r: 20, g: 20, b: 20, a: 255 })
+    writeLayerColor(document, second, 0, { r: 40, g: 40, b: 40, a: 255 })
+    document.layers.push(second)
+    document.activeLayerId = second.id
+    useWorkspace.getState().addSession(document)
+    useWorkspace.getState().selectLayer(first.id)
+    useWorkspace.getState().selectLayer(second.id, true)
+
+    useWorkspace.getState().applyActiveLayerAdjustment({ kind: 'brightness-contrast', brightness: 20, contrast: 0 })
+
+    expect(readLayerColor(document, first, 0).r).toBeGreaterThan(20)
+    expect(readLayerColor(document, second, 0).r).toBeGreaterThan(40)
+    useWorkspace.getState().undo()
+    expect(readLayerColor(document, first, 0).r).toBe(20)
+    expect(readLayerColor(document, second, 0).r).toBe(40)
   })
 })
 

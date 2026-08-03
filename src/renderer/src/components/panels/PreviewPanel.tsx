@@ -3,7 +3,7 @@ import { Minus, Plus, X } from 'lucide-react'
 import { FloatingDockPreview, PanelResizeHandles, useFloatingPanel } from '@/components/floating-panel'
 import type { DockDragProps } from '@/components/workspace-panel-types'
 import { createCompositeSampler } from '@/core/document'
-import { anchoredPreviewPan } from '@/core/preview-geometry'
+import { anchoredPreviewPan, previewCheckerCellSize } from '@/core/preview-geometry'
 import { relativeLuminanceColor } from '@/core/raster'
 import { loadEditorPreferences, type CheckerboardPreferences } from '@/core/file-preferences'
 import type { DocumentSession } from '@/store/workspace'
@@ -16,12 +16,11 @@ export function PreviewPanel({ session, onClose, docked = false, onDockDragStart
   const [pan, setPan] = useState({ x: 0, y: 0 })
   const [checkerboard, setCheckerboard] = useState<CheckerboardPreferences>(() => loadEditorPreferences().checkerboard)
   const panDrag = useRef<{ x: number; y: number; panX: number; panY: number } | null>(null)
-  const sourceRef = useRef<{ documentId: string; revision: number; relativeLuminance: boolean; checkerboardKey: string; canvas: OffscreenCanvas } | null>(null)
+  const sourceRef = useRef<{ documentId: string; revision: number; relativeLuminance: boolean; canvas: OffscreenCanvas } | null>(null)
   const baseFitRef = useRef<{ documentId: string; width: number; height: number; viewportWidth: number; viewportHeight: number; scale: number } | null>(null)
   const panFrameRef = useRef<number | null>(null)
   const pendingPanRef = useRef<{ x: number; y: number } | null>(null)
   const showRelativeLuminance = session.view.relativeLuminance && relativeLuminanceInPreview
-  const checkerboardKey = `${checkerboard.size}:${checkerboard.lightColor.r}:${checkerboard.lightColor.g}:${checkerboard.lightColor.b}:${checkerboard.darkColor.r}:${checkerboard.darkColor.g}:${checkerboard.darkColor.b}`
 
   useEffect(() => {
     const syncPreferences = (): void => setCheckerboard(loadEditorPreferences().checkerboard)
@@ -33,7 +32,7 @@ export function PreviewPanel({ session, onClose, docked = false, onDockDragStart
     const canvas = canvasRef.current
     if (!canvas) return
     let source = sourceRef.current
-    if (!source || source.documentId !== session.document.id || source.revision !== session.revision || source.relativeLuminance !== showRelativeLuminance || source.checkerboardKey !== checkerboardKey) {
+    if (!source || source.documentId !== session.document.id || source.revision !== session.revision || source.relativeLuminance !== showRelativeLuminance) {
       const documentWidth = session.document.width
       const documentHeight = session.document.height
       const sourceScale = Math.min(1, 512 / Math.max(documentWidth, documentHeight))
@@ -49,16 +48,14 @@ export function PreviewPanel({ session, onClose, docked = false, onDockDragStart
         const sourceY = Math.min(documentHeight - 1, Math.floor(previewY / sourceScale))
         const sampled = sampleComposite(sourceY * documentWidth + sourceX)
         const color = showRelativeLuminance ? relativeLuminanceColor(sampled) : sampled
-        const checker = (Math.floor(sourceX / checkerboard.size) + Math.floor(sourceY / checkerboard.size)) % 2 === 0 ? checkerboard.lightColor : checkerboard.darkColor
-        const alpha = color.a / 255
-        pixels[offset] = Math.round(color.r * alpha + checker.r * (1 - alpha))
-        pixels[offset + 1] = Math.round(color.g * alpha + checker.g * (1 - alpha))
-        pixels[offset + 2] = Math.round(color.b * alpha + checker.b * (1 - alpha))
-        pixels[offset + 3] = 255
+        pixels[offset] = color.r
+        pixels[offset + 1] = color.g
+        pixels[offset + 2] = color.b
+        pixels[offset + 3] = color.a
       }
       const sourceCanvas = new OffscreenCanvas(width, height)
       sourceCanvas.getContext('2d')?.putImageData(new ImageData(pixels, width, height), 0, 0)
-      source = { documentId: session.document.id, revision: session.revision, relativeLuminance: showRelativeLuminance, checkerboardKey, canvas: sourceCanvas }
+      source = { documentId: session.document.id, revision: session.revision, relativeLuminance: showRelativeLuminance, canvas: sourceCanvas }
       sourceRef.current = source
     }
     const draw = (): void => {
@@ -85,14 +82,35 @@ export function PreviewPanel({ session, onClose, docked = false, onDockDragStart
       const originY = (displayHeight - drawHeight) / 2 + pan.y
       context.fillStyle = '#4a4a51'
       context.fillRect(0, 0, displayWidth, displayHeight)
+      context.save()
+      context.beginPath()
+      context.rect(originX, originY, drawWidth, drawHeight)
+      context.clip()
+      context.fillStyle = `rgb(${checkerboard.lightColor.r} ${checkerboard.lightColor.g} ${checkerboard.lightColor.b})`
+      context.fillRect(originX, originY, drawWidth, drawHeight)
+      const checkerCell = previewCheckerCellSize(checkerboard.size, scale)
+      if (checkerCell >= 2) {
+        const columnCount = Math.ceil(session.document.width / checkerboard.size)
+        const rowCount = Math.ceil(session.document.height / checkerboard.size)
+        const firstColumn = Math.max(0, Math.floor((0 - originX) / checkerCell))
+        const firstRow = Math.max(0, Math.floor((0 - originY) / checkerCell))
+        const lastColumn = Math.min(columnCount, Math.ceil((displayWidth - originX) / checkerCell))
+        const lastRow = Math.min(rowCount, Math.ceil((displayHeight - originY) / checkerCell))
+        context.fillStyle = `rgb(${checkerboard.darkColor.r} ${checkerboard.darkColor.g} ${checkerboard.darkColor.b})`
+        for (let row = firstRow; row < lastRow; row += 1) for (let column = firstColumn; column < lastColumn; column += 1) {
+          if ((column + row) % 2 === 0) continue
+          context.fillRect(originX + column * checkerCell, originY + row * checkerCell, checkerCell, checkerCell)
+        }
+      }
       context.imageSmoothingEnabled = false
       context.drawImage(source.canvas, originX, originY, drawWidth, drawHeight)
+      context.restore()
     }
     draw()
     const observer = new ResizeObserver(draw)
     observer.observe(canvas)
     return () => observer.disconnect()
-  }, [session.document, session.revision, showRelativeLuminance, checkerboard, checkerboardKey, zoom, pan])
+  }, [session.document, session.revision, showRelativeLuminance, checkerboard, zoom, pan])
 
   useEffect(() => () => {
     if (panFrameRef.current !== null) window.cancelAnimationFrame(panFrameRef.current)

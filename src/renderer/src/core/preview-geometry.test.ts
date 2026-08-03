@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { anchoredPreviewPan } from './preview-geometry'
+import { anchoredPreviewPan, previewCheckerCellSize } from './preview-geometry'
 
 describe('preview zoom geometry', () => {
   it('keeps the document point under the pointer while zooming', () => {
@@ -22,5 +22,11 @@ describe('preview zoom geometry', () => {
       zoom: 1,
       nextZoom: 2
     })).toEqual({ x: 0, y: 20 })
+  })
+
+  it('matches the main canvas checkerboard rule at the final display scale', () => {
+    expect(previewCheckerCellSize(8, 1)).toBe(8)
+    expect(previewCheckerCellSize(8, 0.25)).toBe(2)
+    expect(previewCheckerCellSize(8, 0.01)).toBeCloseTo(0.08)
   })
 })

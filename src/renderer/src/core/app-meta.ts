@@ -1,1 +1,1 @@
-export const APP_CHANNEL_LABEL = 'DEV.1'
+export const APP_CHANNEL_LABEL = 'DEV.2'

@@ -6,6 +6,7 @@ export interface LayerPanelLayerRef {
 export interface LayerPanelGroupRef {
   id: string
   parentGroupId?: string | null
+  panelOrder?: number
 }
 
 export type LayerPanelNode =
@@ -16,7 +17,14 @@ export type LayerPanelDropTarget =
   | { kind: 'layer'; id: string; insertAfter: boolean; depth: number }
   | { kind: 'group'; id: string; depth: number }
   | { kind: 'above-group'; id: string; insertAfter: boolean; depth: number }
-  | { kind: 'root' }
+
+export type LayerPanelEdgeDropTarget = { kind: 'edge'; edge: 'top' | 'bottom' }
+
+export const resolveLayerPanelEdgeDropTarget = (clientY: number, top: number, bottom: number, inset = 10): LayerPanelEdgeDropTarget | null => {
+  if (clientY <= top + inset) return { kind: 'edge', edge: 'top' }
+  if (clientY >= bottom - inset) return { kind: 'edge', edge: 'bottom' }
+  return null
+}
 
 export interface LayerPanelRowHit {
   kind: 'layer' | 'group'
@@ -72,11 +80,20 @@ export const buildLayerPanelTree = ({ layers, groups, collapsedGroupIds = [] }: 
   const groupAnchor = (groupId: string, visiting = new Set<string>()): number => {
     const cached = anchorCache.get(groupId)
     if (cached !== undefined) return cached
+    const savedOrder = groupById.get(groupId)?.panelOrder
+    if (typeof savedOrder === 'number' && Number.isFinite(savedOrder)) {
+      anchorCache.set(groupId, savedOrder)
+      return savedOrder
+    }
     if (visiting.has(groupId)) return Number.NEGATIVE_INFINITY
     const nextVisiting = new Set(visiting).add(groupId)
     let anchor = Number.NEGATIVE_INFINITY
     for (const layer of layers) if ((layer.groupId ?? null) === groupId) anchor = Math.max(anchor, layerOrder.get(layer.id) ?? anchor)
     for (const group of groups) if (normalizedParent(group, groupById) === groupId) anchor = Math.max(anchor, groupAnchor(group.id, nextVisiting))
+    // 旧工程的空组没有排序锚点时，仍按组数组顺序置于容器顶部。
+    if (anchor === Number.NEGATIVE_INFINITY) {
+      anchor = Number.POSITIVE_INFINITY
+    }
     anchorCache.set(groupId, anchor)
     return anchor
   }

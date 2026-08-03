@@ -1,4 +1,4 @@
-import type { BrushPaintMode, BrushShape, BrushTexture, FillMode, ImageBrushSettings, ProceduralBrushId, ProceduralBrushSettings, SelectionKind, SelectionMode, ShapeKind, ToolId } from '@shared/types'
+import type { BrushPaintMode, BrushShape, BrushTexture, FillMode, ImageBrushSettings, ProceduralBrushId, ProceduralBrushSettings, SelectionKind, SelectionMode, ShapeKind, ShapeRatio, ToolId } from '@shared/types'
 import { normalizeProceduralBrushSettings, PROCEDURAL_BRUSH_IDS } from './brushes'
 import { readStoredJson, writeStoredJson } from './storage'
 
@@ -23,6 +23,7 @@ export interface PersistedToolSettings extends PersistedBrushProfile {
   proceduralAntialiasPreferenceVersion: number
   brushProfiles?: Partial<Record<BrushTool, PersistedBrushProfile>>
   shapeKind: ShapeKind
+  shapeRatio: ShapeRatio | number | null
   fillMode: FillMode
   moveAutoSelect: boolean
   selectionKind: SelectionKind
@@ -51,6 +52,7 @@ export const defaultToolSettings: PersistedToolSettings = {
   proceduralAntialiasStrength: 20,
   brushProfiles: undefined,
   shapeKind: 'rectangle',
+  shapeRatio: null,
   fillMode: 'contiguous',
   moveAutoSelect: true,
   selectionKind: 'rectangle',
@@ -63,6 +65,15 @@ export const defaultToolSettings: PersistedToolSettings = {
 export const cloneProceduralSettings = (settings: Record<ProceduralBrushId, ProceduralBrushSettings>): Record<ProceduralBrushId, ProceduralBrushSettings> => Object.fromEntries(
   PROCEDURAL_BRUSH_IDS.map((id) => [id, { ...settings[id] }])
 ) as Record<ProceduralBrushId, ProceduralBrushSettings>
+
+const normalizeShapeRatio = (value: ShapeRatio | number | null | undefined): ShapeRatio | null => {
+  if (typeof value === 'number' && Number.isFinite(value)) return { width: Math.max(0.1, Math.min(100, value)), height: 1 }
+  if (!value || typeof value !== 'object' || !Number.isFinite(value.width) || !Number.isFinite(value.height)) return null
+  return {
+    width: Math.max(0.1, Math.min(100, value.width)),
+    height: Math.max(0.1, Math.min(100, value.height))
+  }
+}
 
 export function normalizePersistedBrushProfile(stored: Partial<PersistedBrushProfile> | undefined, fallback: PersistedBrushProfile): PersistedBrushProfile {
   const proceduralBrushSettings = Object.fromEntries(PROCEDURAL_BRUSH_IDS.map((id) => [
@@ -106,10 +117,11 @@ export function loadToolSettings(storage?: Storage): PersistedToolSettings {
       brushPaintModePreferenceVersion: 1,
       proceduralAntialiasPreferenceVersion: 1,
       brushProfiles,
-      shapeKind: stored.shapeKind === 'ellipse' || stored.shapeKind === 'rectangle' ? stored.shapeKind : defaultToolSettings.shapeKind,
+      shapeKind: stored.shapeKind === 'ellipse' || stored.shapeKind === 'rectangle' || stored.shapeKind === 'ellipse-outline' || stored.shapeKind === 'rectangle-outline' ? stored.shapeKind : defaultToolSettings.shapeKind,
+      shapeRatio: normalizeShapeRatio(stored.shapeRatio),
       fillMode: stored.fillMode === 'global' || stored.fillMode === 'contiguous' ? stored.fillMode : defaultToolSettings.fillMode,
       moveAutoSelect: typeof stored.moveAutoSelect === 'boolean' ? stored.moveAutoSelect : defaultToolSettings.moveAutoSelect,
-      selectionKind: stored.selectionKind === 'magic' || stored.selectionKind === 'lasso' || stored.selectionKind === 'ellipse' || stored.selectionKind === 'rectangle' ? stored.selectionKind : defaultToolSettings.selectionKind,
+      selectionKind: stored.selectionKind === 'magic' || stored.selectionKind === 'lasso' || stored.selectionKind === 'polygon-lasso' || stored.selectionKind === 'ellipse' || stored.selectionKind === 'rectangle' ? stored.selectionKind : defaultToolSettings.selectionKind,
       selectionMode: stored.selectionMode === 'add' || stored.selectionMode === 'subtract' || stored.selectionMode === 'intersect' || stored.selectionMode === 'replace' ? stored.selectionMode : defaultToolSettings.selectionMode,
       wandTolerance: Number.isFinite(stored.wandTolerance) ? Math.max(0, Math.min(255, Math.round(stored.wandTolerance!))) : defaultToolSettings.wandTolerance,
       wandContiguous: typeof stored.wandContiguous === 'boolean' ? stored.wandContiguous : defaultToolSettings.wandContiguous,

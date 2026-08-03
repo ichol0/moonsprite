@@ -2,6 +2,25 @@ import type { RasterLayer, SelectionMask, SelectionMode, SelectionRect, SpriteDo
 import { getPaletteEntry } from './document'
 import { isInBounds, packColor, pixelIndex } from './raster'
 
+export const rasterLinePoints = (from: { x: number; y: number }, to: { x: number; y: number }): Array<{ x: number; y: number }> => {
+  const points: Array<{ x: number; y: number }> = []
+  let x = from.x
+  let y = from.y
+  const dx = Math.abs(to.x - from.x)
+  const dy = Math.abs(to.y - from.y)
+  const stepX = from.x < to.x ? 1 : -1
+  const stepY = from.y < to.y ? 1 : -1
+  let error = dx - dy
+  while (true) {
+    points.push({ x, y })
+    if (x === to.x && y === to.y) break
+    const doubled = error * 2
+    if (doubled > -dy) { error -= dy; x += stepX }
+    if (doubled < dx) { error += dx; y += stepY }
+  }
+  return points
+}
+
 export const selectionContains = (selection: SelectionMask | null | undefined, x: number, y: number): boolean => {
   if (!selection || x < selection.x || y < selection.y || x >= selection.x + selection.width || y >= selection.y + selection.height) return false
   return !selection.mask || selection.mask[(y - selection.y) * selection.width + x - selection.x] === 1
@@ -15,6 +34,18 @@ export const selectionPixelCount = (selection: SelectionMask | null): number => 
 
 export const cloneSelection = (selection: SelectionMask | null | undefined): SelectionMask | null =>
   selection ? { ...selection, mask: selection.mask?.slice() } : null
+
+export const invertSelectionMask = (selection: SelectionMask | null, canvasWidth: number, canvasHeight: number): SelectionMask | null => {
+  if (!selection || canvasWidth < 1 || canvasHeight < 1) return null
+  const mask = new Uint8Array(canvasWidth * canvasHeight)
+  let selected = 0
+  for (let y = 0; y < canvasHeight; y += 1) for (let x = 0; x < canvasWidth; x += 1) {
+    if (selectionContains(selection, x, y)) continue
+    mask[y * canvasWidth + x] = 1
+    selected += 1
+  }
+  return selected > 0 ? { x: 0, y: 0, width: canvasWidth, height: canvasHeight, mask } : null
+}
 
 export type SelectionFlipAxis = 'horizontal' | 'vertical'
 
