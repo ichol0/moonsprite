@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { ALL_EDITOR_TOOL_ICONS, SELECTION_KIND_DEFINITIONS, SHAPE_KIND_DEFINITIONS, TOOL_DEFINITIONS, activeToolPresentation, temporarySelectionModeForModifiers } from './editor-tools'
+import { ALL_EDITOR_TOOL_ICONS, FILL_KIND_ICONS, SELECTION_KIND_DEFINITIONS, SHAPE_KIND_DEFINITIONS, TOOL_DEFINITIONS, activeToolPresentation, fillKindDefinitions, temporarySelectionModeForModifiers } from './editor-tools'
 
 describe('editor tool flyout definitions', () => {
   it('gives every main tool complete custom-tooltip metadata', () => {
@@ -36,9 +36,17 @@ describe('editor tool flyout definitions', () => {
     )
   })
 
+  it('keeps gradient as a paint bucket child tool with its own presentation', () => {
+    expect(fillKindDefinitions('en-US').map((item) => item.id)).toEqual(['bucket', 'gradient'])
+    const gradient = activeToolPresentation('fill', 'rectangle', 'rectangle', 'en-US', 'gradient')
+    expect(gradient.label).toBe('Gradient Tool')
+    expect(gradient.icon).toBe(FILL_KIND_ICONS.gradient)
+  })
+
   it('exposes every tool image for eager decoding before a flyout opens', () => {
     expect(ALL_EDITOR_TOOL_ICONS).toContain(SHAPE_KIND_DEFINITIONS.find((item) => item.id === 'rectangle')?.icon)
     expect(ALL_EDITOR_TOOL_ICONS).toContain(SHAPE_KIND_DEFINITIONS.find((item) => item.id === 'ellipse-outline')?.icon)
+    expect(ALL_EDITOR_TOOL_ICONS).toContain(FILL_KIND_ICONS.gradient)
   })
 
   it('shows temporary add and subtract modes without replacing the persisted mode', () => {

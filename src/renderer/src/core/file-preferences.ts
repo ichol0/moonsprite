@@ -1,6 +1,8 @@
 import type { ImageExportKind, SaveImageKind } from './png'
+import { DEFAULT_APP_LOCALE, LANGUAGE_PREFERENCE_KEY as APP_LANGUAGE_PREFERENCE_KEY, parseAppLocale, type AppLocale } from './localization'
 import { readStoredString, writeStoredString } from './storage'
 import type { RgbaColor } from '@shared/types'
+import type { ColorValueMode } from './color-values'
 
 export const SAVE_FORMAT_PREFERENCE_KEY = 'moonsprite.preference.save-format'
 export const EXPORT_FORMAT_PREFERENCE_KEY = 'moonsprite.preference.export-format'
@@ -9,7 +11,7 @@ export const EXPORT_SCALE_PRESETS_KEY = 'moonsprite.preference.export-scale-pres
 export const ROTATION_INDICATOR_POSITION_KEY = 'moonsprite.preference.rotation-indicator-position'
 export const DRAWING_BRUSH_PREVIEW_ENABLED_KEY = 'moonsprite.preference.drawing-brush-preview-enabled'
 export const RELATIVE_LUMINANCE_SCOPE_KEY = 'moonsprite.preference.relative-luminance-scope'
-export const LANGUAGE_PREFERENCE_KEY = 'moonsprite.preference.language'
+export const LANGUAGE_PREFERENCE_KEY = APP_LANGUAGE_PREFERENCE_KEY
 export const RECOVERY_PREFERENCE_KEY = 'moonsprite.preference.recovery'
 export const RECOVERY_MINUTES_PREFERENCE_KEY = 'moonsprite.preference.recovery-minutes'
 export const ZOOM_TOOL_DRAG_MODE_PREFERENCE_KEY = 'moonsprite.preference.zoom-tool-drag-mode'
@@ -20,20 +22,27 @@ export const BRUSH_PREVIEW_MODE_PREFERENCE_KEY = 'moonsprite.preference.brush-pr
 export const CHECKER_SIZE_PREFERENCE_KEY = 'moonsprite.preference.checker-size'
 export const CHECKER_LIGHT_COLOR_PREFERENCE_KEY = 'moonsprite.preference.checker-light-color'
 export const CHECKER_DARK_COLOR_PREFERENCE_KEY = 'moonsprite.preference.checker-dark-color'
+export const PIXEL_GRID_COLOR_PREFERENCE_KEY = 'moonsprite.preference.pixel-grid-color'
+export const GRID_COLOR_PREFERENCE_KEY = 'moonsprite.preference.grid-color'
 export const WHEEL_ZOOM_ENABLED_PREFERENCE_KEY = 'moonsprite.preference.wheel-zoom-enabled'
 export const SHIFT_LINE_PREVIEW_ENABLED_PREFERENCE_KEY = 'moonsprite.preference.shift-line-preview-enabled'
 export const LASSO_PREVIEW_CLOSED_PREFERENCE_KEY = 'moonsprite.preference.lasso-preview-closed'
 export const EYEDROPPER_SWITCH_TO_PENCIL_PREFERENCE_KEY = 'moonsprite.preference.eyedropper-switch-to-pencil'
 export const SELECTION_CROSSHAIR_PREFERENCE_KEY = 'moonsprite.preference.selection-crosshair'
 export const BALANCED_SHIFT_LINE_ENABLED_PREFERENCE_KEY = 'moonsprite.preference.balanced-shift-line-enabled'
+export const LINE_DIRECTION_STEP_PREFERENCE_KEY = 'moonsprite.preference.line-direction-step'
 export const LAYER_DISPLAY_COLOR_PRESETS_KEY = 'moonsprite.preference.layer-display-color-presets'
+export const COLOR_EDITOR_MODES_PREFERENCE_KEY = 'moonsprite.preference.color-editor-modes'
+export const ONION_SKIN_PREFERENCE_KEY = 'moonsprite.preference.onion-skin'
+export const SYMMETRY_AXIS_PREFERENCE_KEY = 'moonsprite.preference.symmetry-axis'
+export const TIMELAPSE_RECORDING_ENABLED_PREFERENCE_KEY = 'moonsprite.preference.timelapse-recording-enabled'
 
 export type RotationIndicatorPosition = 'view' | 'canvas'
 export type RelativeLuminanceScope = 'canvas' | 'app'
 export type ZoomToolDragMode = 'smooth' | 'stepped'
 export type CursorScale = 1 | 1.25 | 1.5 | 2
 export type BrushPreviewMode = 'none' | 'edge' | 'full' | 'full-edge'
-export type CheckerSize = 4 | 8 | 16 | 32
+export type CheckerSize = number
 
 export interface CheckerboardPreferences {
   size: CheckerSize
@@ -46,6 +55,9 @@ export const DEFAULT_CHECKERBOARD_PREFERENCES: CheckerboardPreferences = {
   lightColor: { r: 215, g: 215, b: 217, a: 255 },
   darkColor: { r: 155, g: 155, b: 159, a: 255 }
 }
+
+export const DEFAULT_PIXEL_GRID_COLOR: RgbaColor = { r: 69, g: 77, b: 92, a: 143 }
+export const DEFAULT_GRID_COLOR: RgbaColor = { r: 0, g: 0, b: 255, a: 255 }
 
 export function parseRotationIndicatorPosition(value: string | null): RotationIndicatorPosition {
   return value === 'canvas' ? 'canvas' : 'view'
@@ -73,12 +85,18 @@ export function parseCursorScale(value: string | null): CursorScale {
 }
 
 export function parseBrushPreviewMode(value: string | null): BrushPreviewMode {
-  return value === 'none' || value === 'edge' || value === 'full' ? value : 'full-edge'
+  return value === 'none' || value === 'edge' || value === 'full' || value === 'full-edge' ? value : 'full'
 }
 
 export function parseCheckerSize(value: string | null): CheckerSize {
+  if (value === null || value.trim() === '') return DEFAULT_CHECKERBOARD_PREFERENCES.size
   const parsed = Number(value)
-  return parsed === 4 || parsed === 8 || parsed === 32 ? parsed : 16
+  return Number.isFinite(parsed) ? Math.max(1, Math.min(256, Math.round(parsed))) : DEFAULT_CHECKERBOARD_PREFERENCES.size
+}
+
+export function parseLineDirectionStep(value: string | null): number {
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? Math.max(1, Math.min(16, Math.round(parsed))) : 1
 }
 
 const parseHexColor = (value: string | null, fallback: RgbaColor): RgbaColor => {
@@ -99,6 +117,19 @@ export function loadCheckerboardPreferences(storage?: Storage): CheckerboardPref
   }
 }
 
+export interface GridColorPreferences {
+  pixelGridColor: RgbaColor
+  gridColor: RgbaColor
+}
+
+export function loadGridColorPreferences(storage?: Storage): GridColorPreferences {
+  const get = (key: string): string | null => readStoredString(key, storage)
+  return {
+    pixelGridColor: parseHexColor(get(PIXEL_GRID_COLOR_PREFERENCE_KEY), DEFAULT_PIXEL_GRID_COLOR),
+    gridColor: parseHexColor(get(GRID_COLOR_PREFERENCE_KEY), DEFAULT_GRID_COLOR)
+  }
+}
+
 export interface DocumentSizePreset { width: number; height: number }
 
 export const DEFAULT_DOCUMENT_SIZE_PRESETS: DocumentSizePreset[] = [
@@ -115,12 +146,47 @@ export const DEFAULT_LAYER_DISPLAY_COLOR_PRESETS: RgbaColor[] = [
   { r: 41, g: 121, b: 255, a: 255 },
   { r: 171, g: 71, b: 188, a: 255 }
 ]
+export interface ColorEditorModePreference { mode: ColorValueMode; enabled: boolean }
+export const DEFAULT_COLOR_EDITOR_MODES: ColorEditorModePreference[] = (['rgb', 'hsv', 'hsl', 'gray', 'lab', 'cmyk'] as ColorValueMode[]).map((mode) => ({ mode, enabled: true }))
+export interface OnionSkinPreferences {
+  enabled: boolean
+  previousFrames: number
+  nextFrames: number
+  previousOpacity: number
+  nextOpacity: number
+  previousColor: RgbaColor
+  nextColor: RgbaColor
+}
+export const DEFAULT_ONION_SKIN_PREFERENCES: OnionSkinPreferences = {
+  enabled: false,
+  previousFrames: 1,
+  nextFrames: 1,
+  previousOpacity: 35,
+  nextOpacity: 35,
+  previousColor: { r: 239, g: 83, b: 80, a: 255 },
+  nextColor: { r: 41, g: 121, b: 255, a: 255 }
+}
+
+export interface SymmetryAxisPreferences {
+  locked: boolean
+  color: RgbaColor
+  thickness: number
+}
+
+export const MIN_SYMMETRY_AXIS_THICKNESS = 1
+export const MAX_SYMMETRY_AXIS_THICKNESS = 8
+
+export const DEFAULT_SYMMETRY_AXIS_PREFERENCES: SymmetryAxisPreferences = {
+  locked: false,
+  color: { r: 41, g: 121, b: 255, a: 242 },
+  thickness: 1
+}
 
 export type SaveFormatPreference = 'moonsprite' | 'png' | 'jpeg' | 'webp' | 'ase' | 'aseprite'
-export type ExportFormatPreference = 'png' | 'jpeg' | 'webp' | 'svg'
+export type ExportFormatPreference = 'png' | 'jpeg' | 'webp' | 'svg' | 'gif'
 
 export interface EditorPreferences {
-  language: 'zh-CN' | 'en-US'
+  language: AppLocale
   saveFormat: SaveFormatPreference
   exportFormat: ExportFormatPreference
   recovery: boolean
@@ -136,17 +202,24 @@ export interface EditorPreferences {
   cursorScale: CursorScale
   brushPreviewMode: BrushPreviewMode
   checkerboard: CheckerboardPreferences
+  pixelGridColor: RgbaColor
+  gridColor: RgbaColor
   wheelZoomEnabled: boolean
   shiftLinePreviewEnabled: boolean
   lassoPreviewClosed: boolean
   eyedropperSwitchToPencil: boolean
   selectionCrosshair: boolean
   balancedShiftLineEnabled: boolean
+  lineDirectionStep: number
   layerDisplayColorPresets: RgbaColor[]
+  colorEditorModes: ColorEditorModePreference[]
+  onionSkin: OnionSkinPreferences
+  symmetryAxis: SymmetryAxisPreferences
+  timelapseRecordingEnabled: boolean
 }
 
 export const DEFAULT_EDITOR_PREFERENCES: EditorPreferences = {
-  language: 'zh-CN',
+  language: DEFAULT_APP_LOCALE,
   saveFormat: 'moonsprite',
   exportFormat: 'png',
   recovery: true,
@@ -158,17 +231,24 @@ export const DEFAULT_EDITOR_PREFERENCES: EditorPreferences = {
   relativeLuminanceScope: 'canvas',
   zoomToolDragMode: 'smooth',
   brushShiftLineEnabled: true,
-  useLocalCursors: true,
+  useLocalCursors: false,
   cursorScale: 1,
-  brushPreviewMode: 'full-edge',
+  brushPreviewMode: 'full',
   checkerboard: DEFAULT_CHECKERBOARD_PREFERENCES,
+  pixelGridColor: DEFAULT_PIXEL_GRID_COLOR,
+  gridColor: DEFAULT_GRID_COLOR,
   wheelZoomEnabled: true,
   shiftLinePreviewEnabled: true,
   lassoPreviewClosed: false,
   eyedropperSwitchToPencil: false,
   selectionCrosshair: false,
   balancedShiftLineEnabled: true,
-  layerDisplayColorPresets: DEFAULT_LAYER_DISPLAY_COLOR_PRESETS
+  lineDirectionStep: 1,
+  layerDisplayColorPresets: DEFAULT_LAYER_DISPLAY_COLOR_PRESETS,
+  colorEditorModes: DEFAULT_COLOR_EDITOR_MODES,
+  onionSkin: DEFAULT_ONION_SKIN_PREFERENCES,
+  symmetryAxis: DEFAULT_SYMMETRY_AXIS_PREFERENCES,
+  timelapseRecordingEnabled: true
 }
 
 const boundedInteger = (value: unknown, max: number): number | null => {
@@ -231,7 +311,80 @@ export function parseLayerDisplayColorPresets(value: string | null): RgbaColor[]
   }
 }
 
+export function parseColorEditorModes(value: string | null): ColorEditorModePreference[] {
+  const supported = DEFAULT_COLOR_EDITOR_MODES.map(({ mode }) => mode)
+  try {
+    const parsed = JSON.parse(value ?? 'null') as unknown
+    if (!Array.isArray(parsed)) return DEFAULT_COLOR_EDITOR_MODES.map((item) => ({ ...item }))
+    const seen = new Set<ColorValueMode>()
+    const result: ColorEditorModePreference[] = []
+    for (const candidate of parsed) {
+      if (!candidate || typeof candidate !== 'object') continue
+      const item = candidate as Partial<ColorEditorModePreference>
+      if (!supported.includes(item.mode as ColorValueMode) || seen.has(item.mode as ColorValueMode)) continue
+      seen.add(item.mode as ColorValueMode)
+      result.push({ mode: item.mode as ColorValueMode, enabled: item.enabled !== false })
+    }
+    for (const mode of supported) if (!seen.has(mode)) result.push({ mode, enabled: true })
+    if (!result.some((item) => item.enabled)) result[0].enabled = true
+    return result
+  } catch {
+    return DEFAULT_COLOR_EDITOR_MODES.map((item) => ({ ...item }))
+  }
+}
+
+export function parseOnionSkinPreferences(value: string | null): OnionSkinPreferences {
+  try {
+    const parsed = JSON.parse(value ?? 'null') as Partial<OnionSkinPreferences> | null
+    if (!parsed || typeof parsed !== 'object') throw new Error('invalid onion skin preferences')
+    const count = (candidate: unknown, fallback: number): number => typeof candidate === 'number' && Number.isFinite(candidate) ? Math.max(0, Math.min(8, Math.round(candidate))) : fallback
+    const opacity = (candidate: unknown, fallback: number): number => typeof candidate === 'number' && Number.isFinite(candidate) ? Math.max(0, Math.min(100, Math.round(candidate))) : fallback
+    return {
+      enabled: parsed.enabled === true,
+      previousFrames: count(parsed.previousFrames, DEFAULT_ONION_SKIN_PREFERENCES.previousFrames),
+      nextFrames: count(parsed.nextFrames, DEFAULT_ONION_SKIN_PREFERENCES.nextFrames),
+      previousOpacity: opacity(parsed.previousOpacity, DEFAULT_ONION_SKIN_PREFERENCES.previousOpacity),
+      nextOpacity: opacity(parsed.nextOpacity, DEFAULT_ONION_SKIN_PREFERENCES.nextOpacity),
+      previousColor: parseHexColor(typeof parsed.previousColor === 'object' ? colorHex(parsed.previousColor as RgbaColor) : null, DEFAULT_ONION_SKIN_PREFERENCES.previousColor),
+      nextColor: parseHexColor(typeof parsed.nextColor === 'object' ? colorHex(parsed.nextColor as RgbaColor) : null, DEFAULT_ONION_SKIN_PREFERENCES.nextColor)
+    }
+  } catch {
+    return { ...DEFAULT_ONION_SKIN_PREFERENCES, previousColor: { ...DEFAULT_ONION_SKIN_PREFERENCES.previousColor }, nextColor: { ...DEFAULT_ONION_SKIN_PREFERENCES.nextColor } }
+  }
+}
+
+export function parseSymmetryAxisPreferences(value: string | null): SymmetryAxisPreferences {
+  const fallback = (): SymmetryAxisPreferences => ({
+    ...DEFAULT_SYMMETRY_AXIS_PREFERENCES,
+    color: { ...DEFAULT_SYMMETRY_AXIS_PREFERENCES.color }
+  })
+  try {
+    const parsed = JSON.parse(value ?? 'null') as (Partial<SymmetryAxisPreferences> & { opacity?: unknown }) | null
+    if (!parsed || typeof parsed !== 'object') return fallback()
+    const storedColor = parsed.color && typeof parsed.color === 'object' ? parsed.color as Partial<RgbaColor> : null
+    const channels = storedColor ? [storedColor.r, storedColor.g, storedColor.b] : []
+    const legacyOpacity = typeof parsed.opacity === 'number' && Number.isFinite(parsed.opacity)
+      ? Math.max(0, Math.min(100, parsed.opacity))
+      : null
+    const alpha = legacyOpacity !== null
+      ? Math.round(legacyOpacity * 255 / 100)
+      : typeof storedColor?.a === 'number' && Number.isFinite(storedColor.a) && storedColor.a >= 0 && storedColor.a <= 255
+        ? Math.round(storedColor.a)
+        : DEFAULT_SYMMETRY_AXIS_PREFERENCES.color.a
+    const color = channels.length === 3 && channels.every((channel) => typeof channel === 'number' && Number.isFinite(channel) && channel >= 0 && channel <= 255)
+      ? { r: Math.round(storedColor!.r!), g: Math.round(storedColor!.g!), b: Math.round(storedColor!.b!), a: alpha }
+      : { ...DEFAULT_SYMMETRY_AXIS_PREFERENCES.color, a: alpha }
+    const thickness = typeof parsed.thickness === 'number' && Number.isFinite(parsed.thickness)
+      ? Math.max(MIN_SYMMETRY_AXIS_THICKNESS, Math.min(MAX_SYMMETRY_AXIS_THICKNESS, Math.round(parsed.thickness)))
+      : DEFAULT_SYMMETRY_AXIS_PREFERENCES.thickness
+    return { locked: parsed.locked === true, color, thickness }
+  } catch {
+    return fallback()
+  }
+}
+
 export function imageExportKindForPreference(value: string | null): ImageExportKind {
+  if (value === 'gif') return 'gif'
   if (value === 'jpeg') return 'jpeg'
   if (value === 'webp') return 'webp'
   if (value === 'svg') return 'svg'
@@ -253,11 +406,7 @@ function parseSaveFormat(value: string | null): SaveFormatPreference {
 }
 
 function parseExportFormat(value: string | null): ExportFormatPreference {
-  return value === 'jpeg' || value === 'webp' || value === 'svg' ? value : 'png'
-}
-
-function parseLanguage(value: string | null): EditorPreferences['language'] {
-  return value === 'en-US' ? 'en-US' : 'zh-CN'
+  return value === 'jpeg' || value === 'webp' || value === 'svg' || value === 'gif' ? value : 'png'
 }
 
 export function parseRecoveryMinutes(value: string | null): number {
@@ -269,7 +418,7 @@ export function parseRecoveryMinutes(value: string | null): number {
 export function loadEditorPreferences(storage?: Storage): EditorPreferences {
   const get = (key: string): string | null => readStoredString(key, storage)
   return {
-    language: parseLanguage(get(LANGUAGE_PREFERENCE_KEY)),
+    language: parseAppLocale(get(LANGUAGE_PREFERENCE_KEY)),
     saveFormat: parseSaveFormat(get(SAVE_FORMAT_PREFERENCE_KEY)),
     exportFormat: parseExportFormat(get(EXPORT_FORMAT_PREFERENCE_KEY)),
     recovery: get(RECOVERY_PREFERENCE_KEY) !== 'false',
@@ -281,17 +430,23 @@ export function loadEditorPreferences(storage?: Storage): EditorPreferences {
     relativeLuminanceScope: parseRelativeLuminanceScope(get(RELATIVE_LUMINANCE_SCOPE_KEY)),
     zoomToolDragMode: parseZoomToolDragMode(get(ZOOM_TOOL_DRAG_MODE_PREFERENCE_KEY)),
     brushShiftLineEnabled: parseBrushShiftLineEnabled(get(BRUSH_SHIFT_LINE_ENABLED_KEY)),
-    useLocalCursors: get(USE_LOCAL_CURSORS_PREFERENCE_KEY) !== 'false',
+    useLocalCursors: get(USE_LOCAL_CURSORS_PREFERENCE_KEY) === 'true',
     cursorScale: parseCursorScale(get(CURSOR_SCALE_PREFERENCE_KEY)),
     brushPreviewMode: parseBrushPreviewMode(get(BRUSH_PREVIEW_MODE_PREFERENCE_KEY)),
     checkerboard: loadCheckerboardPreferences(storage),
+    ...loadGridColorPreferences(storage),
     wheelZoomEnabled: get(WHEEL_ZOOM_ENABLED_PREFERENCE_KEY) !== 'false',
     shiftLinePreviewEnabled: get(SHIFT_LINE_PREVIEW_ENABLED_PREFERENCE_KEY) !== 'false',
     lassoPreviewClosed: get(LASSO_PREVIEW_CLOSED_PREFERENCE_KEY) === 'true',
     eyedropperSwitchToPencil: get(EYEDROPPER_SWITCH_TO_PENCIL_PREFERENCE_KEY) === 'true',
     selectionCrosshair: get(SELECTION_CROSSHAIR_PREFERENCE_KEY) === 'true',
     balancedShiftLineEnabled: get(BALANCED_SHIFT_LINE_ENABLED_PREFERENCE_KEY) !== 'false',
-    layerDisplayColorPresets: parseLayerDisplayColorPresets(get(LAYER_DISPLAY_COLOR_PRESETS_KEY))
+    lineDirectionStep: parseLineDirectionStep(get(LINE_DIRECTION_STEP_PREFERENCE_KEY)),
+    layerDisplayColorPresets: parseLayerDisplayColorPresets(get(LAYER_DISPLAY_COLOR_PRESETS_KEY)),
+    colorEditorModes: parseColorEditorModes(get(COLOR_EDITOR_MODES_PREFERENCE_KEY)),
+    onionSkin: parseOnionSkinPreferences(get(ONION_SKIN_PREFERENCE_KEY)),
+    symmetryAxis: parseSymmetryAxisPreferences(get(SYMMETRY_AXIS_PREFERENCE_KEY)),
+    timelapseRecordingEnabled: get(TIMELAPSE_RECORDING_ENABLED_PREFERENCE_KEY) !== 'false'
   }
 }
 
@@ -315,13 +470,20 @@ export function saveEditorPreferences(preferences: EditorPreferences, storage?: 
     [CHECKER_SIZE_PREFERENCE_KEY]: String(preferences.checkerboard.size),
     [CHECKER_LIGHT_COLOR_PREFERENCE_KEY]: colorHex(preferences.checkerboard.lightColor),
     [CHECKER_DARK_COLOR_PREFERENCE_KEY]: colorHex(preferences.checkerboard.darkColor),
+    [PIXEL_GRID_COLOR_PREFERENCE_KEY]: colorHex(preferences.pixelGridColor),
+    [GRID_COLOR_PREFERENCE_KEY]: colorHex(preferences.gridColor),
     [WHEEL_ZOOM_ENABLED_PREFERENCE_KEY]: String(preferences.wheelZoomEnabled),
     [SHIFT_LINE_PREVIEW_ENABLED_PREFERENCE_KEY]: String(preferences.shiftLinePreviewEnabled),
     [LASSO_PREVIEW_CLOSED_PREFERENCE_KEY]: String(preferences.lassoPreviewClosed),
     [EYEDROPPER_SWITCH_TO_PENCIL_PREFERENCE_KEY]: String(preferences.eyedropperSwitchToPencil),
     [SELECTION_CROSSHAIR_PREFERENCE_KEY]: String(preferences.selectionCrosshair),
     [BALANCED_SHIFT_LINE_ENABLED_PREFERENCE_KEY]: String(preferences.balancedShiftLineEnabled),
-    [LAYER_DISPLAY_COLOR_PRESETS_KEY]: JSON.stringify(parseLayerDisplayColorPresets(JSON.stringify(preferences.layerDisplayColorPresets)))
+    [LINE_DIRECTION_STEP_PREFERENCE_KEY]: String(parseLineDirectionStep(String(preferences.lineDirectionStep))),
+    [LAYER_DISPLAY_COLOR_PRESETS_KEY]: JSON.stringify(parseLayerDisplayColorPresets(JSON.stringify(preferences.layerDisplayColorPresets))),
+    [COLOR_EDITOR_MODES_PREFERENCE_KEY]: JSON.stringify(parseColorEditorModes(JSON.stringify(preferences.colorEditorModes))),
+    [ONION_SKIN_PREFERENCE_KEY]: JSON.stringify(parseOnionSkinPreferences(JSON.stringify(preferences.onionSkin))),
+    [SYMMETRY_AXIS_PREFERENCE_KEY]: JSON.stringify(parseSymmetryAxisPreferences(JSON.stringify(preferences.symmetryAxis))),
+    [TIMELAPSE_RECORDING_ENABLED_PREFERENCE_KEY]: String(preferences.timelapseRecordingEnabled)
   }
   for (const [key, value] of Object.entries(values)) writeStoredString(key, value, storage)
 }

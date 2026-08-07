@@ -40,6 +40,22 @@ export function clearStoredValues(storage?: Storage): boolean {
   }
 }
 
+export function clearStoredValuesExcept(preservedKeys: readonly string[], storage?: Storage): boolean {
+  try {
+    const target = getStorage(storage)
+    if (!target) return false
+    const preserved = new Map(preservedKeys.flatMap((key) => {
+      const value = target.getItem(key)
+      return value === null ? [] : [[key, value] as const]
+    }))
+    target.clear()
+    for (const [key, value] of preserved) target.setItem(key, value)
+    return true
+  } catch {
+    return false
+  }
+}
+
 export function readStoredJson<T>(key: string, fallback: T, storage?: Storage): T {
   const value = readStoredString(key, storage)
   if (!value) return fallback

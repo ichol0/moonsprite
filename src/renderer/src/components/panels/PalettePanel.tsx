@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { BookOpen, FileImage, Folder, FolderOpen, LockKeyhole, Palette, Plus, Save, ScanSearch, Settings2, Trash2, X } from 'lucide-react'
+import { BookOpen, FileImage, Folder, FolderOpen, LockKeyhole, Palette, Save, ScanSearch, Settings2, Trash2, UnlockKeyhole, X } from 'lucide-react'
 import type { PaletteEntry, StoredPalette } from '@shared/types'
 import { colorCss, rgbaHex } from '@/components/ColorPicker'
 import { FloatingDockPreview, PanelResizeHandles, useFloatingPanel } from '@/components/floating-panel'
@@ -10,9 +10,14 @@ import { encodePalettePng, extractPaletteColors, mergePaletteColors } from '@/co
 import { PALETTE_SWATCH_PIXELS, paletteColorRoles, paletteColorsEqual, paletteMarkerColor, paletteReorderTarget, reorderPalettePreview, type PaletteSwatchSize } from '@/core/palette-layout'
 import { readStoredString, removeStoredValue, writeStoredString } from '@/core/panel-preferences'
 import { colorEquals } from '@/core/raster'
+import { builtInPaletteNameKeys } from '@/core/built-in-palettes'
 import { useWorkspace, type DocumentSession } from '@/store/workspace'
+import { useI18n } from '@/components/I18nProvider'
+
+const PALETTE_SWATCH_SIZE_STORAGE_KEY = 'moonsprite.palette-swatch-size'
 
 export function PalettePanel({ session, docked = false, onDockDragStart, onPanelContextMenu, onFloatingDock }: { session: DocumentSession } & DockDragProps) {
+  const { t } = useI18n()
   const store = useWorkspace.getState()
   const floating = useFloatingPanel(null, false, true, 'moonsprite.palette-panel.v1', false, onFloatingDock, docked)
   const extractFloating = useFloatingPanel({ x: Math.max(24, window.innerWidth / 2 - 210), y: Math.max(72, window.innerHeight / 2 - 170), width: 420 }, false, false)
@@ -27,8 +32,8 @@ export function PalettePanel({ session, docked = false, onDockDragStart, onPanel
   const [activePaletteId, setActivePaletteId] = useState<string | null>(() => readStoredString('moonsprite.active-palette-id'))
   const [extractMode, setExtractMode] = useState<'create' | 'replace' | 'append'>('create')
   const [extractLimit, setExtractLimit] = useState(32)
-  const [extractName, setExtractName] = useState(`${session.document.name} 色板`)
-  const [saveName, setSaveName] = useState(`${session.document.name} 色板`)
+  const [extractName, setExtractName] = useState(() => t('palette.defaultName', { name: session.document.name }))
+  const [saveName, setSaveName] = useState(() => t('palette.defaultName', { name: session.document.name }))
   const [operationBusy, setOperationBusy] = useState(false)
   const [paletteContext, setPaletteContext] = useState<{ id: string; x: number; y: number } | null>(null)
   const paletteActionsControlRef = useRef<HTMLSpanElement>(null)
@@ -44,15 +49,20 @@ export function PalettePanel({ session, docked = false, onDockDragStart, onPanel
   const dragRef = useRef<{ ids: number[]; baseOrder: number[]; previewOrder: number[]; clickedId: number; anchorOffset: number; pointerId: number; element: HTMLButtonElement; startX: number; startY: number; moved: boolean; collapseOnClick: boolean; target: { id: number; insertAfter: boolean } | null } | null>(null)
   const [draggingIds, setDraggingIds] = useState<number[]>([])
   const [focusedSwatchId, setFocusedSwatchId] = useState<number | null>(null)
+  const [paletteEditLocked, setPaletteEditLocked] = useState(() => readStoredString('moonsprite.palette-edit-locked') !== 'false')
   const [palettePreviewOrder, setPalettePreviewOrder] = useState<number[] | null>(null)
   const [swatchSize, setSwatchSize] = useState<PaletteSwatchSize>(() => {
-    const stored = readStoredString('moonsprite.palette-swatch-size')
+    const stored = readStoredString(PALETTE_SWATCH_SIZE_STORAGE_KEY)
     return stored === 'small' || stored === 'large' ? stored : 'medium'
   })
   const ordered = session.document.paletteOrder.map((id) => session.document.palette.find((entry) => entry.id === id)).filter((entry): entry is PaletteEntry => Boolean(entry))
   const displayedOrdered = (palettePreviewOrder ?? session.document.paletteOrder).map((id) => session.document.palette.find((entry) => entry.id === id)).filter((entry): entry is PaletteEntry => Boolean(entry))
   const orderedColors = ordered.map((entry) => ({ ...entry.color }))
   const activePalette = paletteFiles.find((palette) => palette.id === activePaletteId) ?? null
+  const paletteDisplayName = (palette: StoredPalette): string => {
+    const nameKey = palette.builtIn ? builtInPaletteNameKeys[palette.id] : undefined
+    return nameKey ? t(nameKey) : palette.name
+  }
 
   useLayoutEffect(() => {
     const grid = swatchGridRef.current
@@ -74,11 +84,11 @@ export function PalettePanel({ session, docked = false, onDockDragStart, onPanel
       const nextId = candidate && listing.palettes.some((palette) => palette.id === candidate) ? candidate : null
       setActivePaletteId(nextId)
       const nextPalette = listing.palettes.find((palette) => palette.id === nextId)
-      if (nextPalette) setSaveName(nextPalette.name)
+      if (nextPalette) setSaveName(paletteDisplayName(nextPalette))
       if (nextId) writeStoredString('moonsprite.active-palette-id', nextId)
       else removeStoredValue('moonsprite.active-palette-id')
     } catch (error) {
-      store.setMessage(error instanceof Error ? error.message : '无法读取本地色板。')
+      store.setMessage(error instanceof Error ? error.message : t('palette.readFailed'))
     } finally {
       setPaletteLoading(false)
     }
@@ -122,8 +132,15 @@ export function PalettePanel({ session, docked = false, onDockDragStart, onPanel
 
   const chooseSwatchSize = (value: PaletteSwatchSize): void => {
     setSwatchSize(value)
-    writeStoredString('moonsprite.palette-swatch-size', value)
+    writeStoredString(PALETTE_SWATCH_SIZE_STORAGE_KEY, value)
     setPaletteActionsOpen(false)
+  }
+  const togglePaletteEditLock = (): void => {
+    setPaletteEditLocked((current) => {
+      const next = !current
+      writeStoredString('moonsprite.palette-edit-locked', String(next))
+      return next
+    })
   }
   const resolvePaletteSlot = (clientX: number, clientY: number): number | null => {
     const grid = swatchGridRef.current
@@ -143,7 +160,7 @@ export function PalettePanel({ session, docked = false, onDockDragStart, onPanel
       if (color) {
         event.currentTarget.focus({ preventScroll: true })
         setFocusedSwatchId(id)
-        store.setSecondaryColor(color)
+        store.selectSecondaryPaletteColor(id)
       }
       return
     }
@@ -242,14 +259,14 @@ export function PalettePanel({ session, docked = false, onDockDragStart, onPanel
   const applyStoredPalette = (palette: StoredPalette): void => {
     store.applyPalette(palette.colors)
     setActivePaletteId(palette.id)
-    setSaveName(palette.name)
+    setSaveName(paletteDisplayName(palette))
     writeStoredString('moonsprite.active-palette-id', palette.id)
     setLibraryOpen(false)
   }
 
   const deleteStoredPalette = async (id: string): Promise<void> => {
     const palette = paletteFiles.find((item) => item.id === id)
-    if (!palette || palette.builtIn) { store.setMessage('内置色板不能删除。'); return }
+    if (!palette || palette.builtIn) { store.setMessage(t('palette.builtInDeleteBlocked')); return }
     try {
       await window.moonSprite.deletePalette(id)
       setPaletteFiles((current) => current.filter((item) => item.id !== id))
@@ -258,14 +275,14 @@ export function PalettePanel({ session, docked = false, onDockDragStart, onPanel
         removeStoredValue('moonsprite.active-palette-id')
       }
       setPaletteContext(null)
-      store.setMessage(`已删除色板“${palette.name}”。`)
+      store.setMessage(t('palette.deleted', { name: palette.name }))
     } catch (error) {
-      store.setMessage(error instanceof Error ? error.message : '无法删除色板。')
+      store.setMessage(error instanceof Error ? error.message : t('palette.deleteFailed'))
     }
   }
 
   const openExtractDialog = (): void => {
-    setExtractName(`${session.document.name} 色板`)
+    setExtractName(t('palette.defaultName', { name: session.document.name }))
     setExtractMode('create')
     setExtractOpen(true)
     setLibraryOpen(false)
@@ -276,84 +293,84 @@ export function PalettePanel({ session, docked = false, onDockDragStart, onPanel
     setOperationBusy(true)
     try {
       const colors = extractPaletteColors(session.document, extractLimit)
-      if (colors.length === 0) throw new Error('当前图像没有可提取的非透明颜色。')
+      if (colors.length === 0) throw new Error(t('palette.noOpaqueColors'))
       if (extractMode === 'create') {
         store.applyPalette(colors)
         setActivePaletteId(null)
         removeStoredValue('moonsprite.active-palette-id')
-        const name = extractName.trim() || `${session.document.name} 色板`
+        const name = extractName.trim() || t('palette.defaultName', { name: session.document.name })
         setSaveName(name)
-        store.setMessage(`已从图像创建临时色板“${name}”，共 ${colors.length} 色。`)
+        store.setMessage(t('palette.createdTemporary', { name, count: colors.length }))
       } else if (extractMode === 'replace') {
         store.applyPalette(colors)
-        store.setMessage(`已替换当前文档调色板，共 ${colors.length} 色。`)
+        store.setMessage(t('palette.replaced', { count: colors.length }))
       } else {
         const merged = mergePaletteColors(orderedColors, colors)
         store.applyPalette(merged)
-        store.setMessage(`已新增 ${merged.length - orderedColors.length} 种颜色。`)
+        store.setMessage(t('palette.appended', { count: merged.length - orderedColors.length }))
       }
       setExtractOpen(false)
     } catch (error) {
-      store.setMessage(error instanceof Error ? error.message : '无法从图像提取颜色。')
+      store.setMessage(error instanceof Error ? error.message : t('palette.extractFailed'))
     } finally {
       setOperationBusy(false)
     }
   }
 
   const openSaveDialog = (): void => {
-    setSaveName(activePalette?.name ?? (saveName || `${session.document.name} 色板`))
+    setSaveName(activePalette ? paletteDisplayName(activePalette) : (saveName || t('palette.defaultName', { name: session.document.name })))
     setSaveOpen(true)
     setLibraryOpen(false)
     setPaletteActionsOpen(false)
   }
 
   const savePaletteLocally = async (): Promise<void> => {
-    if (orderedColors.length === 0) { store.setMessage('当前调色板没有可保存的颜色。'); return }
+    if (orderedColors.length === 0) { store.setMessage(t('palette.noColorsToSave')); return }
     setOperationBusy(true)
     try {
-      const saved = await window.moonSprite.savePalette(activePalette && !activePalette.builtIn ? activePalette.id : null, saveName.trim() || `${session.document.name} 色板`, orderedColors)
+      const saved = await window.moonSprite.savePalette(activePalette && !activePalette.builtIn ? activePalette.id : null, saveName.trim() || t('palette.defaultName', { name: session.document.name }), orderedColors)
       upsertPalette(saved)
       setSaveOpen(false)
-      store.setMessage(`色板“${saved.name}”已保存到 ${paletteDirectory}`)
+      store.setMessage(t('palette.saved', { name: saved.name, directory: paletteDirectory }))
     } catch (error) {
-      store.setMessage(error instanceof Error ? error.message : '无法保存色板。')
+      store.setMessage(error instanceof Error ? error.message : t('palette.saveFailed'))
     } finally {
       setOperationBusy(false)
     }
   }
 
   const savePaletteAsImage = async (): Promise<void> => {
-    if (orderedColors.length === 0) { store.setMessage('当前调色板没有可保存的颜色。'); return }
+    if (orderedColors.length === 0) { store.setMessage(t('palette.noColorsToSave')); return }
     setOperationBusy(true)
     try {
-      const safeName = (saveName.trim() || `${session.document.name} 色板`).replace(/[<>:"/\\|?*]/g, '_')
+      const safeName = (saveName.trim() || t('palette.defaultName', { name: session.document.name })).replace(/[<>:"/\\|?*]/g, '_')
       const result = await window.moonSprite.savePaletteImage(`${safeName}.png`)
       if (result.canceled || !result.filePath) return
       const encoded = encodePalettePng(orderedColors)
       await window.moonSprite.writeBinaryAtomic(result.filePath, encoded.bytes)
       setSaveOpen(false)
-      store.setMessage(`色板图像已保存：${result.filePath}`)
+      store.setMessage(t('palette.imageSaved', { path: result.filePath }))
     } catch (error) {
-      store.setMessage(error instanceof Error ? error.message : '无法保存色板图像。')
+      store.setMessage(error instanceof Error ? error.message : t('palette.imageSaveFailed'))
     } finally {
       setOperationBusy(false)
     }
   }
 
   return <><section ref={floating.ref} className={`panel palette-panel ${floating.style ? 'floating-panel' : ''}`} data-command-scope="palette" style={floating.style} onPointerDown={floating.bringToFront} onContextMenu={onPanelContextMenu}>
-    <header onPointerDown={(event) => floating.style ? floating.startDrag(event) : onDockDragStart?.(event, floating.startDetachedDrag)}><Palette size={15} /><span>调色板</span><small>{ordered.length} 色</small><span className="panel-actions palette-actions">
-      <span ref={libraryControlRef} className="palette-library-control"><button ref={libraryButtonRef} className={libraryOpen ? 'active' : ''} title="选择本地色板" aria-label="选择本地色板" aria-expanded={libraryOpen} onClick={() => { setLibraryOpen((open) => !open); setPaletteActionsOpen(false) }}><BookOpen size={14} /></button></span>
-      <span ref={paletteActionsControlRef} className="palette-actions-control"><button ref={paletteActionsButtonRef} className={paletteActionsOpen ? 'active' : ''} title="调色板操作" aria-label="调色板操作" aria-expanded={paletteActionsOpen} onClick={() => { setPaletteActionsOpen((open) => !open); setLibraryOpen(false) }}><Settings2 size={14} /></button></span>
-      <button title="手动加入当前颜色" aria-label="手动加入当前颜色" onClick={() => store.addPaletteColor()}><Plus size={14} /></button><button title="移除选中的调色板颜色" aria-label="移除选中的调色板颜色" disabled={session.selectedPaletteIds.length === 0} onClick={() => store.deletePaletteColors(session.selectedPaletteIds)}><Trash2 size={14} /></button>
+    <header onPointerDown={(event) => floating.style ? floating.startDrag(event) : onDockDragStart?.(event, floating.startDetachedDrag)}><Palette size={15} /><span>{t('panel.palette')}</span><small>{t('palette.colorCount', { count: ordered.length })}</small><span className="panel-actions palette-actions">
+      <span ref={libraryControlRef} className="palette-library-control"><button ref={libraryButtonRef} className={libraryOpen ? 'active' : ''} title={t('palette.chooseLocal')} aria-label={t('palette.chooseLocal')} aria-expanded={libraryOpen} onClick={() => { setLibraryOpen((open) => !open); setPaletteActionsOpen(false) }}><BookOpen size={14} /></button></span>
+      <span ref={paletteActionsControlRef} className="palette-actions-control"><button ref={paletteActionsButtonRef} className={paletteActionsOpen ? 'active' : ''} title={t('palette.actions')} aria-label={t('palette.actions')} aria-expanded={paletteActionsOpen} onClick={() => { setPaletteActionsOpen((open) => !open); setLibraryOpen(false) }}><Settings2 size={14} /></button></span>
+      <button className={paletteEditLocked ? '' : 'active'} title={t(paletteEditLocked ? 'palette.unlockEditing' : 'palette.lockEditing')} aria-label={t(paletteEditLocked ? 'palette.unlockEditing' : 'palette.lockEditing')} aria-pressed={!paletteEditLocked} onClick={togglePaletteEditLock}>{paletteEditLocked ? <LockKeyhole size={14} /> : <UnlockKeyhole size={14} />}</button>
     </span></header>
-    <div ref={swatchGridRef} className="swatch-grid" style={{ '--swatch-size': `${PALETTE_SWATCH_PIXELS[swatchSize]}px` } as React.CSSProperties}>{displayedOrdered.map((entry) => { const roles = paletteColorRoles(entry.color, session.primaryColor, session.secondaryColor); const active = session.selectedPaletteIds.includes(entry.id) || roles.primary || roles.secondary; const roleLabel = [roles.primary ? '前景色' : '', roles.secondary ? '背景色' : ''].filter(Boolean).join('、'); return <button key={entry.id} data-palette-id={entry.id} className={`swatch ${focusedSwatchId === entry.id ? 'focused' : ''} ${roles.primary ? 'primary' : ''} ${roles.secondary ? 'secondary' : ''} ${entry.color.a === 0 ? 'transparent' : ''} ${draggingIds.includes(entry.id) ? 'dragging' : ''}`} title={`${entry.name} ${rgbaHex(entry.color)}${roleLabel ? ` · ${roleLabel}` : ''}`} aria-label={`${entry.name} ${rgbaHex(entry.color)}${roleLabel ? ` ${roleLabel}` : ''}`} aria-pressed={session.selectedPaletteIds.includes(entry.id)} style={{ '--swatch-color': colorCss(entry.color) } as React.CSSProperties} onContextMenu={(event) => event.preventDefault()} onPointerDown={(event) => beginPaletteDrag(event, entry.id)} onBlur={() => setFocusedSwatchId((current) => current === entry.id ? null : current)} onPointerMove={movePaletteDrag} onPointerUp={finishPaletteDrag} onPointerCancel={finishPaletteDrag}>{active && <span className="swatch-drag-edges" aria-hidden="true"><i className="swatch-drag-edge edge-n" /><i className="swatch-drag-edge edge-e" /><i className="swatch-drag-edge edge-s" /><i className="swatch-drag-edge edge-w" /></span>}</button> })}</div>
+    <div ref={swatchGridRef} className="swatch-grid" style={{ '--swatch-size': `${PALETTE_SWATCH_PIXELS[swatchSize]}px` } as React.CSSProperties}>{displayedOrdered.map((entry) => { const roles = paletteColorRoles(entry.color, session.primaryColor, session.secondaryColor); const active = session.selectedPaletteIds.includes(entry.id) || roles.primary || roles.secondary; const roleLabel = [roles.primary ? t('palette.foreground') : '', roles.secondary ? t('palette.background') : ''].filter(Boolean).join(t('palette.roleSeparator')); return <span key={entry.id} className="palette-swatch-wrap"><button data-palette-id={entry.id} className={`swatch ${focusedSwatchId === entry.id ? 'focused' : ''} ${roles.primary ? 'primary' : ''} ${roles.secondary ? 'secondary' : ''} ${entry.color.a === 0 ? 'transparent' : ''} ${draggingIds.includes(entry.id) ? 'dragging' : ''}`} title={`${entry.name} ${rgbaHex(entry.color)}${roleLabel ? ` · ${roleLabel}` : ''}`} aria-label={`${entry.name} ${rgbaHex(entry.color)}${roleLabel ? ` ${roleLabel}` : ''}`} aria-pressed={session.selectedPaletteIds.includes(entry.id)} style={{ '--swatch-color': colorCss(entry.color) } as React.CSSProperties} onContextMenu={(event) => event.preventDefault()} onPointerDown={(event) => beginPaletteDrag(event, entry.id)} onBlur={() => setFocusedSwatchId((current) => current === entry.id ? null : current)} onPointerMove={movePaletteDrag} onPointerUp={finishPaletteDrag} onPointerCancel={finishPaletteDrag}>{active && <span className="swatch-drag-edges" aria-hidden="true"><i className="swatch-drag-edge edge-n" /><i className="swatch-drag-edge edge-e" /><i className="swatch-drag-edge edge-s" /><i className="swatch-drag-edge edge-w" /></span>}</button></span> })}</div>
     {floating.style && <PanelResizeHandles onResize={floating.startResize} />}
   </section>
   <FloatingDockPreview style={floating.dockPreview} />
-  {libraryOpen && createPortal(<span ref={libraryPopoverRef} className="palette-library-popover" role="menu" aria-label="本地像素色板" style={libraryPopoverPosition}>{paletteLoading ? <span className="palette-library-state">正在读取色板...</span> : paletteFiles.length === 0 ? <span className="palette-library-state">暂无色板</span> : paletteFiles.map((palette) => <button key={palette.id} type="button" role="menuitem" className={activePaletteId === palette.id ? 'selected' : ''} title={palette.builtIn ? '内置色板，不会写入用户色板文件夹' : '右键删除用户色板'} onClick={() => applyStoredPalette(palette)} onContextMenu={(event) => { event.preventDefault(); if (palette.builtIn) { store.setMessage('内置色板不能删除。'); setPaletteContext(null); return } setPaletteContext({ id: palette.id, x: Math.min(event.clientX, window.innerWidth - 150), y: Math.min(event.clientY, window.innerHeight - 42) }) }}><span className="palette-library-name">{palette.name}{palette.builtIn && <LockKeyhole size={11} aria-label="内置" />}</span><span className="palette-library-swatches" aria-hidden="true">{palette.colors.map((color, index) => <i key={index} style={{ background: colorCss(color) }} />)}</span></button>)}<button type="button" role="menuitem" className="palette-folder-action" onClick={() => { void window.moonSprite.openPaletteFolder(); setLibraryOpen(false) }}><FolderOpen size={14} /><span>打开用户色板文件夹</span></button></span>, document.body)}
-  {paletteActionsOpen && createPortal(<span ref={paletteActionsPopoverRef} className="palette-actions-popover" role="menu" aria-label="调色板操作" style={paletteActionsPopoverPosition}><button type="button" role="menuitem" onClick={openExtractDialog}><ScanSearch size={14} /><span>提取颜色</span></button><span className="palette-actions-divider" /><section aria-label="颜色尺寸"><span>颜色尺寸</span><div>{(['small', 'medium', 'large'] as PaletteSwatchSize[]).map((size) => <button key={size} type="button" role="menuitemradio" aria-checked={swatchSize === size} className={swatchSize === size ? 'selected' : ''} title={`${PALETTE_SWATCH_PIXELS[size]} 像素`} onClick={() => chooseSwatchSize(size)}><i style={{ width: Math.round(PALETTE_SWATCH_PIXELS[size] * .45), height: Math.round(PALETTE_SWATCH_PIXELS[size] * .45) }} /><span>{size === 'small' ? '小' : size === 'medium' ? '中' : '大'}</span></button>)}</div></section><span className="palette-actions-divider" /><button type="button" role="menuitem" onClick={openSaveDialog}><Save size={14} /><span>保存色板</span></button></span>, document.body)}
-  {paletteContext && createPortal(<span ref={paletteContextRef} className="palette-library-context" role="menu" style={{ left: paletteContext.x, top: paletteContext.y }}><button type="button" role="menuitem" onClick={() => void deleteStoredPalette(paletteContext.id)}><Trash2 size={14} /><span>删除色板</span></button></span>, document.body)}
-  {extractOpen && createPortal(<form ref={extractFloating.ref as React.RefObject<HTMLFormElement>} className="palette-operation-dialog" style={extractFloating.style} role="dialog" aria-labelledby="palette-extract-title" onSubmit={(event) => { event.preventDefault(); void extractFromImage() }} onPointerDown={extractFloating.bringToFront}><header onPointerDown={extractFloating.startDrag}><div><span className="eyebrow">PALETTE</span><h2 id="palette-extract-title">从当前图像中提取颜色</h2></div><button type="button" className="icon-button" aria-label="关闭" onClick={() => setExtractOpen(false)}><X size={16} /></button></header><div className="palette-dialog-body"><fieldset><legend>提取方式</legend><label><input type="radio" name="extract-mode" checked={extractMode === 'create'} onChange={() => setExtractMode('create')} /><span><strong>创建新的调色板</strong><small>仅应用到当前文档，不会自动保存到软件</small></span></label><label><input type="radio" name="extract-mode" checked={extractMode === 'replace'} onChange={() => setExtractMode('replace')} /><span><strong>替换当前调色板{activePalette ? `“${activePalette.name}”` : ''}</strong><small>仅替换当前文档，点击保存后才写入文件</small></span></label><label><input type="radio" name="extract-mode" checked={extractMode === 'append'} onChange={() => setExtractMode('append')} /><span><strong>在当前调色板新增颜色</strong><small>保留现有颜色和排列顺序</small></span></label></fieldset><div className="palette-form-grid"><label>数量限制<NumberInput min={1} max={4096} value={extractLimit} onValueChange={setExtractLimit} /></label>{extractMode === 'create' && <label>色板名称<input value={extractName} onChange={(event) => setExtractName(event.target.value)} /></label>}</div></div><footer><button type="button" className="quiet-button" onClick={() => setExtractOpen(false)}>取消</button><button type="submit" className="primary-button" disabled={operationBusy}>{operationBusy ? '正在提取...' : '提取颜色'}</button></footer></form>, document.body)}
-  {saveOpen && createPortal(<section ref={saveFloating.ref} className="palette-operation-dialog palette-save-dialog" style={saveFloating.style} role="dialog" aria-labelledby="palette-save-title" onPointerDown={saveFloating.bringToFront}><header onPointerDown={saveFloating.startDrag}><div><span className="eyebrow">PALETTE</span><h2 id="palette-save-title">保存当前调色板</h2></div><button type="button" className="icon-button" aria-label="关闭" onClick={() => setSaveOpen(false)}><X size={16} /></button></header><div className="palette-dialog-body"><label className="palette-name-field">色板名称<input autoFocus value={saveName} onChange={(event) => setSaveName(event.target.value)} /></label><div className="palette-save-summary"><span className="palette-library-swatches" aria-hidden="true">{orderedColors.slice(0, 24).map((color, index) => <i key={index} style={{ background: colorCss(color) }} />)}</span><strong>{orderedColors.length} 色</strong></div><p>软件色板目录：{paletteDirectory}</p></div><footer><button type="button" className="quiet-button" disabled={operationBusy} onClick={() => void savePaletteAsImage()}><FileImage size={15} />保存为 PNG</button><button type="button" className="primary-button" disabled={operationBusy} onClick={() => void savePaletteLocally()}><Save size={15} />保存到软件</button></footer></section>, document.body)}
+  {libraryOpen && createPortal(<span ref={libraryPopoverRef} className="palette-library-popover" role="menu" aria-label={t('palette.localPalettes')} style={libraryPopoverPosition}>{paletteLoading ? <span className="palette-library-state">{t('palette.loading')}</span> : paletteFiles.length === 0 ? <span className="palette-library-state">{t('palette.empty')}</span> : paletteFiles.map((palette) => <button key={palette.id} type="button" role="menuitem" className={activePaletteId === palette.id ? 'selected' : ''} title={t(palette.builtIn ? 'palette.builtInHint' : 'palette.userDeleteHint')} onClick={() => applyStoredPalette(palette)} onContextMenu={(event) => { event.preventDefault(); if (palette.builtIn) { store.setMessage(t('palette.builtInDeleteBlocked')); setPaletteContext(null); return } setPaletteContext({ id: palette.id, x: Math.min(event.clientX, window.innerWidth - 150), y: Math.min(event.clientY, window.innerHeight - 42) }) }}><span className="palette-library-name">{paletteDisplayName(palette)}{palette.builtIn && <LockKeyhole size={11} aria-label={t('palette.builtIn')} />}</span><span className="palette-library-swatches" aria-hidden="true">{palette.colors.map((color, index) => <i key={index} style={{ background: colorCss(color) }} />)}</span></button>)}<button type="button" role="menuitem" className="palette-folder-action" onClick={() => { void window.moonSprite.openPaletteFolder(); setLibraryOpen(false) }}><FolderOpen size={14} /><span>{t('palette.openUserFolder')}</span></button></span>, document.body)}
+  {paletteActionsOpen && createPortal(<span ref={paletteActionsPopoverRef} className="palette-actions-popover" role="menu" aria-label={t('palette.actions')} style={paletteActionsPopoverPosition}><button type="button" role="menuitem" onClick={openExtractDialog}><ScanSearch size={14} /><span>{t('palette.extractColors')}</span></button><span className="palette-actions-divider" /><section aria-label={t('palette.swatchSize')}><span>{t('palette.swatchSize')}</span><div>{(['small', 'medium', 'large'] as PaletteSwatchSize[]).map((size) => <button key={size} type="button" role="menuitemradio" aria-checked={swatchSize === size} className={swatchSize === size ? 'selected' : ''} title={t('palette.pixels', { count: PALETTE_SWATCH_PIXELS[size] })} onClick={() => chooseSwatchSize(size)}><i style={{ width: Math.round(PALETTE_SWATCH_PIXELS[size] * .45), height: Math.round(PALETTE_SWATCH_PIXELS[size] * .45) }} /><span>{t(size === 'small' ? 'palette.size.small' : size === 'medium' ? 'palette.size.medium' : 'palette.size.large')}</span></button>)}</div></section><span className="palette-actions-divider" /><button type="button" role="menuitem" onClick={openSaveDialog}><Save size={14} /><span>{t('palette.savePalette')}</span></button></span>, document.body)}
+  {paletteContext && createPortal(<span ref={paletteContextRef} className="palette-library-context" role="menu" style={{ left: paletteContext.x, top: paletteContext.y }}><button type="button" role="menuitem" onClick={() => void deleteStoredPalette(paletteContext.id)}><Trash2 size={14} /><span>{t('palette.deletePalette')}</span></button></span>, document.body)}
+  {extractOpen && createPortal(<form ref={extractFloating.ref as React.RefObject<HTMLFormElement>} className="palette-operation-dialog" style={extractFloating.style} role="dialog" aria-labelledby="palette-extract-title" onSubmit={(event) => { event.preventDefault(); void extractFromImage() }} onPointerDown={extractFloating.bringToFront}><header onPointerDown={extractFloating.startDrag}><div><span className="eyebrow">PALETTE</span><h2 id="palette-extract-title">{t('palette.extractTitle')}</h2></div><button type="button" className="icon-button" aria-label={t('common.close')} onClick={() => setExtractOpen(false)}><X size={16} /></button></header><div className="palette-dialog-body"><fieldset><legend>{t('palette.extractMethod')}</legend><label><input type="radio" name="extract-mode" checked={extractMode === 'create'} onChange={() => setExtractMode('create')} /><span><strong>{t('palette.extract.create')}</strong><small>{t('palette.extract.createHint')}</small></span></label><label><input type="radio" name="extract-mode" checked={extractMode === 'replace'} onChange={() => setExtractMode('replace')} /><span><strong>{t('palette.extract.replace', { name: activePalette ? `“${paletteDisplayName(activePalette)}”` : '' })}</strong><small>{t('palette.extract.replaceHint')}</small></span></label><label><input type="radio" name="extract-mode" checked={extractMode === 'append'} onChange={() => setExtractMode('append')} /><span><strong>{t('palette.extract.append')}</strong><small>{t('palette.extract.appendHint')}</small></span></label></fieldset><div className="palette-form-grid"><label>{t('palette.extract.limit')}<NumberInput min={1} max={4096} value={extractLimit} onValueChange={setExtractLimit} /></label>{extractMode === 'create' && <label>{t('palette.name')}<input value={extractName} onChange={(event) => setExtractName(event.target.value)} /></label>}</div></div><footer><button type="button" className="quiet-button" onClick={() => setExtractOpen(false)}>{t('common.cancel')}</button><button type="submit" className="primary-button" disabled={operationBusy}>{operationBusy ? t('palette.extracting') : t('palette.extractColors')}</button></footer></form>, document.body)}
+  {saveOpen && createPortal(<section ref={saveFloating.ref} className="palette-operation-dialog palette-save-dialog" style={saveFloating.style} role="dialog" aria-labelledby="palette-save-title" onPointerDown={saveFloating.bringToFront}><header onPointerDown={saveFloating.startDrag}><div><span className="eyebrow">PALETTE</span><h2 id="palette-save-title">{t('palette.saveTitle')}</h2></div><button type="button" className="icon-button" aria-label={t('common.close')} onClick={() => setSaveOpen(false)}><X size={16} /></button></header><div className="palette-dialog-body"><label className="palette-name-field">{t('palette.name')}<input autoFocus value={saveName} onChange={(event) => setSaveName(event.target.value)} /></label><div className="palette-save-summary"><span className="palette-library-swatches" aria-hidden="true">{orderedColors.slice(0, 24).map((color, index) => <i key={index} style={{ background: colorCss(color) }} />)}</span><strong>{t('palette.colorCount', { count: orderedColors.length })}</strong></div><p>{t('palette.directory', { directory: paletteDirectory })}</p></div><footer><button type="button" className="quiet-button" disabled={operationBusy} onClick={() => void savePaletteAsImage()}><FileImage size={15} />{t('palette.savePng')}</button><button type="button" className="primary-button" disabled={operationBusy} onClick={() => void savePaletteLocally()}><Save size={15} />{t('palette.saveToApp')}</button></footer></section>, document.body)}
   </>
 }

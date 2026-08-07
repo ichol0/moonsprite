@@ -1,6 +1,7 @@
 import type { RgbaColor, SpriteDocument } from '@shared/types'
 import { compositeDocument } from './document'
 import { encodePng } from './png'
+import { translateCurrent as tr } from './localization'
 
 interface WeightedColor extends RgbaColor { count: number }
 
@@ -119,7 +120,7 @@ export function mergePaletteColors(current: RgbaColor[], incoming: RgbaColor[]):
 }
 
 export function encodePalettePng(colors: RgbaColor[], tileSize = 16, maximumColumns = 8): { bytes: Uint8Array; width: number; height: number } {
-  if (colors.length === 0) throw new Error('当前调色板没有可保存的颜色。')
+  if (colors.length === 0) throw new Error(tr('core.palette.empty'))
   const size = Math.max(1, Math.min(64, Math.round(tileSize)))
   const columns = Math.max(1, Math.min(Math.round(maximumColumns), colors.length))
   const rows = Math.ceil(colors.length / columns)

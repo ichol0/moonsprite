@@ -3,6 +3,7 @@ import { getActiveLayer, readLayerColor, readLayerColorAt } from './document'
 import { decodePng, encodePng } from './png'
 import { selectionContains } from './selection'
 import { packColor, unpackColor } from './raster'
+import { translateCurrent as tr, type TranslationKey } from './localization'
 
 const MAX_SOURCE_PIXELS = 16 * 1024 * 1024
 const MAX_BRUSH_DIMENSION = 256
@@ -55,7 +56,7 @@ export function encodeBrushPng(brush: ImageBrush): Uint8Array {
 
 export function decodeImageBrush(stored: StoredBrush, bytes: Uint8Array): ImageBrush {
   const document = decodePng(bytes, stored.name)
-  if (document.width * document.height > MAX_SOURCE_PIXELS) throw new Error(`笔刷 ${stored.name} 的源图过大。`)
+  if (document.width * document.height > MAX_SOURCE_PIXELS) throw new Error(tr('core.brush.sourceTooLarge', { name: stored.name }))
   const layer = getActiveLayer(document)
   const scale = Math.min(1, MAX_BRUSH_DIMENSION / Math.max(document.width, document.height))
   const width = Math.max(1, Math.round(document.width * scale))
@@ -89,11 +90,11 @@ export const proceduralBrushDefaults: Record<ProceduralBrushId, ProceduralBrushS
   'procedural:fibers': { seed: 103, scale: 9, detail: 35, variation: 28, angle: 90 }
 }
 
-const proceduralBrushNames: Record<ProceduralBrushId, string> = {
-  'procedural:noise': '程序噪声',
-  'procedural:clouds': '程序云纹',
-  'procedural:cells': '程序晶格',
-  'procedural:fibers': '程序纤维'
+const proceduralBrushNameKeys: Record<ProceduralBrushId, TranslationKey> = {
+  'procedural:noise': 'core.brush.proceduralNoise',
+  'procedural:clouds': 'core.brush.proceduralClouds',
+  'procedural:cells': 'core.brush.proceduralCells',
+  'procedural:fibers': 'core.brush.proceduralFibers'
 }
 
 export const isProceduralBrushId = (id: string): id is ProceduralBrushId => PROCEDURAL_BRUSH_IDS.includes(id as ProceduralBrushId)
@@ -204,7 +205,7 @@ export function createProceduralBrush(brushId: ProceduralBrushId, settings?: Par
   const height = 64
   const coverage = new Uint8Array(width * height)
   for (let y = 0; y < height; y += 1) for (let x = 0; x < width; x += 1) coverage[y * width + x] = proceduralCoverage(brushId, x, y, normalized)
-  return { id: brushId, name: proceduralBrushNames[brushId], width, height, coverage, proceduralSettings: normalized }
+  return { id: brushId, name: tr(proceduralBrushNameKeys[brushId]), width, height, coverage, proceduralSettings: normalized }
 }
 
 export function createProceduralBrushes(settingsByBrush: Partial<Record<ProceduralBrushId, Partial<ProceduralBrushSettings>>> = {}): ImageBrush[] {

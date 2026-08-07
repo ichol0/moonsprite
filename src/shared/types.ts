@@ -72,6 +72,8 @@ export interface BrushListing {
 export type ShapeKind = 'rectangle' | 'ellipse' | 'rectangle-outline' | 'ellipse-outline'
 export interface ShapeRatio { width: number; height: number }
 export type FillMode = 'contiguous' | 'global'
+export type FillKind = 'bucket' | 'gradient'
+export type GradientDither = 'none' | 'checker' | 'diagonal' | 'diagonal-reverse' | 'horizontal' | 'vertical' | 'bayer-2' | 'bayer-4' | 'bayer-8'
 export type BlendMode =
   | 'normal'
   | 'darken'
@@ -103,7 +105,7 @@ export const BLEND_MODES: readonly BlendMode[] = [
   'overlay', 'soft-light', 'hard-light', 'vivid-light', 'linear-light', 'pin-light', 'hard-mix', 'difference',
   'exclusion', 'subtract', 'divide', 'hue', 'saturation', 'color', 'luminosity'
 ]
-export type ImageExportFormat = 'png' | 'jpeg' | 'webp' | 'svg' | 'aseprite'
+export type ImageExportFormat = 'png' | 'jpeg' | 'webp' | 'svg' | 'gif' | 'mp4' | 'webm' | 'aseprite'
 export type SaveDialogFormat = 'moonsprite' | 'png' | 'jpeg' | 'webp' | 'ase' | 'aseprite'
 
 export interface RgbaColor {
@@ -186,11 +188,36 @@ export interface AnimationFrame {
 }
 
 /** cel 与图层、帧的稳定关联。像素存储会在实际动画编辑器落地时加入独立数据文件。 */
+export type AnimationCelSurface =
+  | {
+      format: 'rgba'
+      width: number
+      height: number
+      offsetX: number
+      offsetY: number
+      storageOriginX?: number
+      storageOriginY?: number
+      pixels: Uint8ClampedArray
+    }
+  | {
+      format: 'indexed'
+      width: number
+      height: number
+      offsetX: number
+      offsetY: number
+      storageOriginX?: number
+      storageOriginY?: number
+      pixels: Uint32Array
+    }
+
 export interface AnimationCel {
   id: string
   layerId: string
   frameId: string
   linkedCelId?: string | null
+  /** Cel 独立的不透明度，未设置时沿用图层不透明度。 */
+  opacity?: number
+  surface?: AnimationCelSurface
 }
 
 export interface AnimationTimeline {
@@ -198,6 +225,38 @@ export interface AnimationTimeline {
   cels: AnimationCel[]
   activeFrameId: string
   loop: boolean
+}
+
+export interface ProjectDisplaySettings {
+  showPixelGrid: boolean
+  showGrid: boolean
+  grid: GridSettings
+}
+
+export interface ProjectStatistics {
+  strokeCount: number
+  operationCount: number
+  drawingTimeMs: number
+}
+
+export type TimelapseQuality = 'low' | 'medium' | 'high'
+export type TimelapseVideoFormat = 'mp4' | 'webm'
+
+export interface TimelapseSnapshot {
+  id: string
+  capturedAt: number
+  elapsedMs: number
+  width: number
+  height: number
+  data: Uint8Array
+}
+
+export interface TimelapseSettings {
+  enabled: boolean
+  quality: TimelapseQuality
+  fps: number
+  speed: number
+  snapshots: TimelapseSnapshot[]
 }
 
 export interface SpriteDocument {
@@ -219,6 +278,12 @@ export interface SpriteDocument {
   animation?: AnimationTimeline
   /** Project-owned defaults for the selection outline dialog. */
   outlineSettings?: OutlineSettings
+  /** Project-owned display toggles. View navigation remains session-only. */
+  displaySettings?: ProjectDisplaySettings
+  /** Persisted editing statistics used by the project information view. */
+  statistics?: ProjectStatistics
+  /** Optional bounded history of drawing snapshots for timelapse export. */
+  timelapse?: TimelapseSettings
   filePath: string | null
   /** Original path used to open imported images or Aseprite projects. */
   sourceFilePath?: string
@@ -270,10 +335,21 @@ export interface ViewState {
   mirrored: boolean
   /** View-only vertical mirror. Never changes document pixels. */
   mirroredVertical: boolean
+  /** View-only one-pixel grid visibility. Optional for hot-reloaded legacy sessions. */
+  showPixelGrid?: boolean
   showGrid: boolean
+  /** View-only configurable grid origin and cell size. */
+  grid?: GridSettings
   relativeLuminance: boolean
   /** View-only selection outline visibility. The selection itself remains active. */
   showSelectionOutline?: boolean
+}
+
+export interface GridSettings {
+  x: number
+  y: number
+  width: number
+  height: number
 }
 
 export interface ResourceInfo {
@@ -373,6 +449,8 @@ export interface MoonSpriteApi {
   saveProject(defaultPath?: string, format?: SaveDialogFormat): Promise<SaveDialogResult>
   exportImage(defaultPath: string | undefined, format: ImageExportFormat): Promise<SaveDialogResult>
   savePaletteImage(defaultPath?: string): Promise<SaveDialogResult>
+  saveShortcutFile(defaultPath?: string): Promise<SaveDialogResult>
+  fileExists(filePath: string): Promise<boolean>
   readBinary(filePath: string): Promise<Uint8Array>
   writeBinaryAtomic(filePath: string, data: Uint8Array): Promise<void>
   writeClipboardImage(image: ClipboardImage): Promise<void>

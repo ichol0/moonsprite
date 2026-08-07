@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { CanvasInputState, SELECTION_CORNER_RESIZE_HIT_RADIUS, SELECTION_RESIZE_HIT_RADIUS, appendPolygonLassoVertex, canvasGestureForPreview, clampCanvasZoom, constrainedTranslation, createCanvasPanDrag, finalizeMarqueeSelection, polygonLassoClosedPathPoints, polygonLassoPreviewPoints, resizeSelectionBounds, restoreCanvasDragAfterPan, rotationHandles, selectionGestureMoved, selectionInteractionHit, selectionOverlayMaskForDrag, selectionResizeHit, selectionRotationHit, selectionTransformModifiers, shapeBounds, shouldClosePolygonLasso, shouldRestartFloatingSelectionForCopy, shouldStartCanvasPan, snapSelectionRotation, steppedCanvasZoom, zoomDragModeForModifiers, zoomDragTarget, type CanvasDragState } from './canvas-input'
+import { CanvasInputState, SELECTION_CORNER_RESIZE_HIT_RADIUS, SELECTION_RESIZE_HIT_RADIUS, appendPolygonLassoVertex, canvasGestureForPreview, clampCanvasZoom, constrainedTranslation, createCanvasPanDrag, finalizeMarqueeSelection, polygonLassoClosedPathPoints, polygonLassoPreviewPoints, resizeSelectionBounds, restoreCanvasDragAfterPan, rotationHandles, selectionGestureMoved, selectionInteractionHit, selectionMarqueeUsesConstraint, selectionOverlayMaskForDrag, selectionResizeHit, selectionRotationHit, selectionShapeUsesConstraint, selectionShearHit, selectionTransformModifiers, shapeBounds, shouldClosePolygonLasso, shouldRestartFloatingSelectionForCopy, shouldStartCanvasPan, snapSelectionRotation, steppedCanvasZoom, zoomDragModeForModifiers, zoomDragTarget, type CanvasDragState } from './canvas-input'
 import { balancedStairLinePoints } from './pixel-line'
 
 const drag = (): CanvasDragState => ({ kind: 'move-content', start: { x: 0, y: 0 }, last: { x: 0, y: 0 } })
@@ -126,6 +126,16 @@ describe('canvas input helpers', () => {
     expect(selectionRotationHit(box, { x: 110, y: 110 })).toBeNull()
   })
 
+  it('hits compact shear bands immediately outside each midpoint resize handle', () => {
+    const selection = { x: 100, y: 100, width: 80, height: 60 }
+    expect(selectionShearHit(selection, { x: 140, y: 87 })).toBe('shear-n')
+    expect(selectionShearHit(selection, { x: 140, y: 173 })).toBe('shear-s')
+    expect(selectionShearHit(selection, { x: 87, y: 130 })).toBe('shear-w')
+    expect(selectionShearHit(selection, { x: 193, y: 130 })).toBe('shear-e')
+    expect(selectionInteractionHit(selection, { x: 140, y: 87 }, 1)).toBe('shear-n')
+    expect(selectionInteractionHit(selection, { x: 140, y: 71 }, 1)).toBe('outside')
+  })
+
   it('prioritizes resize corners and keeps edge handles out of the corner zones', () => {
     const box = { x: 100, y: 100, width: 80, height: 60 }
     expect(selectionResizeHit(box, { x: 100, y: 100 }, 8)).toBe('nw')
@@ -232,6 +242,18 @@ describe('canvas input helpers', () => {
     expect(selectionInteractionHit(selection, { x: 155, y: 90 }, 1)).toBe('outside')
     expect(selectionInteractionHit(selection, { x: 205, y: 225 }, 1)).toBe('edge')
     expect(selectionInteractionHit(selection, { x: 245, y: 239 }, 1)).toBe('rotate-se')
+  })
+
+  it('uses Ctrl for proportional shape selection constraints, not Shift', () => {
+    expect(selectionShapeUsesConstraint({ ctrlKey: true, metaKey: false })).toBe(true)
+    expect(selectionShapeUsesConstraint({ ctrlKey: false, metaKey: false })).toBe(false)
+  })
+
+  it('uses Shift for a new square marquee but keeps Shift-add freeform unless Ctrl is also held', () => {
+    expect(selectionMarqueeUsesConstraint({ ctrlKey: false, shiftKey: true }, false, 'replace')).toBe(true)
+    expect(selectionMarqueeUsesConstraint({ ctrlKey: false, shiftKey: true }, true, 'add')).toBe(false)
+    expect(selectionMarqueeUsesConstraint({ ctrlKey: true, shiftKey: true }, true, 'add')).toBe(true)
+    expect(selectionMarqueeUsesConstraint({ ctrlKey: true, shiftKey: false }, true, 'replace')).toBe(true)
   })
 
   it('uses Shift for proportional transform and Ctrl for integer scaling without copying', () => {

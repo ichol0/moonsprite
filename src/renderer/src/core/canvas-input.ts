@@ -21,7 +21,8 @@ export interface CanvasPoint {
 
 export type SelectionHandle = 'nw' | 'n' | 'ne' | 'w' | 'e' | 'sw' | 's' | 'se'
 export type SelectionRotationHandle = 'rotate-ne' | 'rotate-se' | 'rotate-sw' | 'rotate-nw'
-export type SelectionHit = 'inside' | 'edge' | 'outside' | SelectionRotationHandle | SelectionHandle
+export type SelectionShearHandle = 'shear-n' | 'shear-e' | 'shear-s' | 'shear-w'
+export type SelectionHit = 'inside' | 'edge' | 'outside' | SelectionRotationHandle | SelectionShearHandle | SelectionHandle
 export const SELECTION_RESIZE_HIT_RADIUS = 12
 export const SELECTION_CORNER_RESIZE_HIT_RADIUS = 18
 export const SELECTION_CORNER_OUTWARD_RESIZE_HIT_RADIUS = 5
@@ -75,7 +76,7 @@ export const selectionResizeHit = (
 }
 
 export interface CanvasDragState {
-  kind: 'draw' | 'shape' | 'marquee' | 'lasso' | 'polygon-lasso' | 'magic-preview' | 'sample-color' | 'move-content' | 'move-selection' | 'transform-content' | 'rotate-content' | 'move-layer' | 'brush-size' | 'canvas-resize' | 'canvas-move' | 'zoom-drag' | 'rotate-view' | 'pan'
+  kind: 'draw' | 'shape' | 'gradient' | 'marquee' | 'lasso' | 'polygon-lasso' | 'magic-preview' | 'sample-color' | 'move-content' | 'move-selection' | 'transform-content' | 'rotate-content' | 'shear-content' | 'move-layer' | 'brush-size' | 'canvas-resize' | 'canvas-move' | 'zoom-drag' | 'rotate-view' | 'pan'
   start: CanvasPoint
   last: CanvasPoint
   edit?: PixelEdit
@@ -83,6 +84,7 @@ export interface CanvasDragState {
   selectionMode?: SelectionMode
   startPan?: CanvasPoint
   handle?: SelectionHandle
+  shearHandle?: SelectionShearHandle
   angle?: number
   selectionSource?: SelectionTransformSource
   previewEdit?: PixelEdit | null
@@ -102,6 +104,7 @@ export interface CanvasDragState {
   appliedSelection?: SelectionMask | null
   previewTarget?: SelectionRect
   previewAngle?: number
+  previewShear?: { axis: 'x' | 'y'; edge: 'n' | 'e' | 's' | 'w'; amount: number }
   previewPending?: boolean
   translationPreview?: SelectionTranslationPreview | null
   layerId?: string
@@ -114,18 +117,22 @@ export interface CanvasDragState {
   duplicatedLayerIndex?: number
   originalSelectedLayerIds?: string[]
   color?: RgbaColor
+  gradientEndColor?: RgbaColor
   axisLock?: 'x' | 'y'
   sampleSecondary?: boolean
   temporarySampling?: boolean
   moved?: boolean
+  startedAt?: number
   resumeDrag?: CanvasDragState
+  /** Raw pointer endpoint retained while a gradient is direction-constrained. */
+  rawLast?: CanvasPoint
 }
 
 export const selectionGestureMoved = (start: CanvasPoint | undefined, end: CanvasPoint, threshold = 3): boolean =>
   Boolean(start && (Math.abs(end.x - start.x) > threshold || Math.abs(end.y - start.y) > threshold))
 
 const selectionCreationKinds = new Set<CanvasDragState['kind']>(['marquee', 'lasso', 'polygon-lasso'])
-const selectionPreviewKinds = new Set<CanvasDragState['kind']>(['magic-preview', 'move-selection', 'move-content', 'transform-content', 'rotate-content'])
+const selectionPreviewKinds = new Set<CanvasDragState['kind']>(['magic-preview', 'move-selection', 'move-content', 'transform-content', 'rotate-content', 'shear-content'])
 
 export const canvasGestureForPreview = (drag: CanvasDragState | null | undefined): CanvasDragState | null =>
   drag?.kind === 'pan' && drag.resumeDrag?.kind === 'polygon-lasso' ? drag.resumeDrag : drag ?? null
@@ -307,6 +314,25 @@ export const rotationHandles = (box: { x: number; y: number; width: number; heig
 // 旋转只占用角点附近的紧凑区域，避免阻挡套索继续选择周边像素。
 export const ROTATION_HANDLE_HIT_RADIUS = 28
 
+export const selectionShearHit = (
+  box: { x: number; y: number; width: number; height: number },
+  point: CanvasPoint,
+  scale = 1
+): SelectionShearHandle | null => {
+  const safeScale = Math.max(0.0001, scale)
+  const inner = SELECTION_RESIZE_HIT_RADIUS * safeScale
+  const outer = ROTATION_HANDLE_HIT_RADIUS * safeScale
+  const centerX = box.x + box.width / 2
+  const centerY = box.y + box.height / 2
+  const right = box.x + box.width
+  const bottom = box.y + box.height
+  if (point.y < box.y - inner && point.y >= box.y - outer && Math.abs(point.x - centerX) <= outer) return 'shear-n'
+  if (point.y > bottom + inner && point.y <= bottom + outer && Math.abs(point.x - centerX) <= outer) return 'shear-s'
+  if (point.x < box.x - inner && point.x >= box.x - outer && Math.abs(point.y - centerY) <= outer) return 'shear-w'
+  if (point.x > right + inner && point.x <= right + outer && Math.abs(point.y - centerY) <= outer) return 'shear-e'
+  return null
+}
+
 export const selectionRotationHit = (
   box: { x: number; y: number; width: number; height: number },
   point: CanvasPoint,
@@ -358,6 +384,9 @@ export const selectionInteractionHit = (
   )
   if (resizeHit) return resizeHit
 
+  const shearHit = selectionShearHit(selection, point, 1 / safeZoom)
+  if (shearHit) return shearHit
+
   const rotationHit = selectionRotationHit(selection, point, 1 / safeZoom)
   if (rotationHit) return rotationHit
 
@@ -385,6 +414,18 @@ export const selectionTransformModifiers = (
     integerScale: Boolean(modifiers.ctrlKey || modifiers.metaKey),
     copy: false
   }
+}
+
+export const selectionShapeUsesConstraint = (modifiers: { ctrlKey: boolean; metaKey?: boolean }): boolean =>
+  Boolean(modifiers.ctrlKey || modifiers.metaKey)
+
+export const selectionMarqueeUsesConstraint = (
+  modifiers: { ctrlKey: boolean; metaKey?: boolean; shiftKey: boolean },
+  hasSelection: boolean,
+  mode: SelectionMode
+): boolean => {
+  if (modifiers.ctrlKey || modifiers.metaKey) return true
+  return modifiers.shiftKey && (!hasSelection || mode !== 'add')
 }
 
 export const snapSelectionRotation = (angle: number, enabled: boolean): number =>

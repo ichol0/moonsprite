@@ -41,6 +41,7 @@ describe('canvas visual rules', () => {
   it('uses the move cursor while dragging a selection transform', () => {
     expect(selectionTransformDragCursor('transform-content')).toBe(canvasCursors.move)
     expect(selectionTransformDragCursor('rotate-content')).toBe(canvasCursors.move)
+    expect(selectionTransformDragCursor('shear-content')).toBe(canvasCursors.move)
     expect(selectionTransformDragCursor('marquee')).toBeNull()
   })
 

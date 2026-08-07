@@ -1,7 +1,9 @@
 import { unzlibSync, zlibSync } from 'fflate'
-import type { BlendMode, LayerGroup, PaletteEntry, RasterLayer, SpriteDocument } from '@shared/types'
+import type { AnimationCel, BlendMode, LayerGroup, PaletteEntry, RasterLayer, SpriteDocument } from '@shared/types'
 import { createDocument, createId, createLayer, getPaletteEntry, readLayerPacked } from './document'
 import { TRANSPARENT, unpackColor } from './raster'
+import { translateCurrent as tr } from './localization'
+import { animationLayerAtFrame, ensureAnimationDocument, refreshActiveAnimationFrame, syncActiveAnimationFrame } from './animation'
 
 const ASE_MAGIC = 0xa5e0
 const FRAME_MAGIC = 0xf1fa
@@ -10,6 +12,8 @@ const CEL_CHUNK = 0x2005
 const PALETTE_CHUNK = 0x2019
 const GROUP_LAYER = 1
 const TILEMAP_LAYER = 2
+const LAYER_OPACITY_VALID = 1
+const GROUP_BLEND_OPACITY_VALID = 2
 const MAX_DIMENSION = 16384
 const MAX_ASE_DIMENSION = 65535
 
@@ -52,11 +56,11 @@ const blendMode = (value: number): BlendMode => {
 }
 
 const readString = (view: DataView, offset: number, end: number): { value: string; next: number } => {
-  if (offset + 2 > end) throw new Error('Aseprite 图层名称数据损坏。')
+  if (offset + 2 > end) throw new Error(tr('core.aseprite.layerNameCorrupt'))
   const length = view.getUint16(offset, true)
   const start = offset + 2
   const finish = start + length
-  if (finish > end) throw new Error('Aseprite 图层名称数据损坏。')
+  if (finish > end) throw new Error(tr('core.aseprite.layerNameCorrupt'))
   return { value: new TextDecoder().decode(new Uint8Array(view.buffer, view.byteOffset + start, length)), next: finish }
 }
 
@@ -73,9 +77,9 @@ const readPalette = (view: DataView, start: number, end: number, previous: Array
     const flags = view.getUint16(offset, true)
     const color = { r: view.getUint8(offset + 2), g: view.getUint8(offset + 3), b: view.getUint8(offset + 4), a: view.getUint8(offset + 5) }
     offset += 6
-    const name = (flags & 1) !== 0 && offset + 2 <= end ? readString(view, offset, end) : { value: `颜色 ${index}`, next: offset }
+    const name = (flags & 1) !== 0 && offset + 2 <= end ? readString(view, offset, end) : { value: tr('core.document.colorName', { id: index }), next: offset }
     offset = name.next
-    entries[index] = { id: index, name: name.value || `颜色 ${index}`, color }
+    entries[index] = { id: index, name: name.value || tr('core.document.colorName', { id: index }), color }
   }
   return entries
 }
@@ -92,7 +96,7 @@ const readOldPalette = (view: DataView, start: number, end: number, previous: Ar
     offset += 2
     if (colors === 0) colors = 256
     for (let color = 0; color < colors && offset + 3 <= end; color += 1, index += 1) {
-      entries[index] = { id: index, name: `颜色 ${index}`, color: { r: view.getUint8(offset), g: view.getUint8(offset + 1), b: view.getUint8(offset + 2), a: 255 } }
+      entries[index] = { id: index, name: tr('core.document.colorName', { id: index }), color: { r: view.getUint8(offset), g: view.getUint8(offset + 1), b: view.getUint8(offset + 2), a: 255 } }
       offset += 3
     }
   }
@@ -102,12 +106,12 @@ const readOldPalette = (view: DataView, start: number, end: number, previous: Ar
 const decodePixelData = (bytes: Uint8Array, width: number, height: number, colorDepth: number, palette: Array<PaletteEntry | undefined>, transparentIndex: number): Uint8ClampedArray => {
   const pixels = new Uint8ClampedArray(width * height * 4)
   if (colorDepth === 32) {
-    if (bytes.byteLength < pixels.byteLength) throw new Error('Aseprite RGBA Cel 数据不完整。')
+    if (bytes.byteLength < pixels.byteLength) throw new Error(tr('core.aseprite.rgbaCelIncomplete'))
     pixels.set(bytes.subarray(0, pixels.length))
     return pixels
   }
   if (colorDepth === 16) {
-    if (bytes.byteLength < width * height * 2) throw new Error('Aseprite 灰度 Cel 数据不完整。')
+    if (bytes.byteLength < width * height * 2) throw new Error(tr('core.aseprite.grayCelIncomplete'))
     for (let index = 0; index < width * height; index += 1) {
       const value = index * 2
       pixels[index * 4] = bytes[value]
@@ -117,7 +121,7 @@ const decodePixelData = (bytes: Uint8Array, width: number, height: number, color
     }
     return pixels
   }
-  if (colorDepth !== 8) throw new Error(`暂不支持 Aseprite ${colorDepth} 位颜色。`)
+  if (colorDepth !== 8) throw new Error(tr('core.aseprite.unsupportedColorDepth', { depth: colorDepth }))
   for (let index = 0; index < width * height; index += 1) {
     const color = palette[bytes[index]]?.color ?? TRANSPARENT
     const alpha = bytes[index] === transparentIndex ? 0 : color.a
@@ -126,32 +130,35 @@ const decodePixelData = (bytes: Uint8Array, width: number, height: number, color
   return pixels
 }
 
-export function decodeAseprite(input: Uint8Array, fallbackName = '导入的 Aseprite 工程'): SpriteDocument {
-  if (input.byteLength < 128) throw new Error('Aseprite 文件过小或已损坏。')
+export function decodeAseprite(input: Uint8Array, fallbackName = tr('core.document.importedAseprite')): SpriteDocument {
+  if (input.byteLength < 128) throw new Error(tr('core.aseprite.fileCorrupt'))
   const view = new DataView(input.buffer, input.byteOffset, input.byteLength)
-  if (view.getUint16(4, true) !== ASE_MAGIC) throw new Error('不是有效的 Aseprite 工程文件。')
+  if (view.getUint16(4, true) !== ASE_MAGIC) throw new Error(tr('core.aseprite.invalidFile'))
   const frameCount = view.getUint16(6, true)
   const width = view.getUint16(8, true)
   const height = view.getUint16(10, true)
   const colorDepth = view.getUint16(12, true)
+  const headerFlags = view.getUint32(14, true)
   // The header reserves bytes 20-27; the transparent palette entry is byte 28.
   const transparentIndex = view.getUint8(28)
-  if (!frameCount || width < 1 || height < 1 || width > MAX_DIMENSION || height > MAX_DIMENSION) throw new Error('Aseprite 画布尺寸无效。')
-  if (![8, 16, 32].includes(colorDepth)) throw new Error(`暂不支持 Aseprite ${colorDepth} 位颜色。`)
+  if (!frameCount || width < 1 || height < 1 || width > MAX_DIMENSION || height > MAX_DIMENSION) throw new Error(tr('core.aseprite.invalidCanvas'))
+  if (![8, 16, 32].includes(colorDepth)) throw new Error(tr('core.aseprite.unsupportedColorDepth', { depth: colorDepth }))
 
   const layers: LayerSpec[] = []
   const cels = new Map<number, Cel[]>()
+  const frameDurations: number[] = []
   let palette: Array<PaletteEntry | undefined> = []
   const groupStack: string[] = []
   let offset = 128
   for (let frame = 0; frame < frameCount; frame += 1) {
-    if (offset + 16 > input.byteLength) throw new Error('Aseprite 帧数据不完整。')
+    if (offset + 16 > input.byteLength) throw new Error(tr('core.aseprite.frameIncomplete'))
     const frameStart = offset
     const frameSize = view.getUint32(offset, true)
     const frameEnd = frameStart + frameSize
-    if (frameSize < 16 || frameEnd > input.byteLength || view.getUint16(offset + 4, true) !== FRAME_MAGIC) throw new Error('Aseprite 帧数据无效。')
+    if (frameSize < 16 || frameEnd > input.byteLength || view.getUint16(offset + 4, true) !== FRAME_MAGIC) throw new Error(tr('core.aseprite.invalidFrame'))
     const legacyChunkCount = view.getUint16(offset + 6, true)
     const chunkCount = legacyChunkCount === 0xffff ? view.getUint32(offset + 12, true) : legacyChunkCount
+    frameDurations.push(Math.max(1, view.getUint16(offset + 8, true) || 100))
     offset += 16
     const frameCels: Cel[] = []
     for (let chunkIndex = 0; chunkIndex < chunkCount && offset + 6 <= frameEnd; chunkIndex += 1) {
@@ -159,24 +166,27 @@ export function decodeAseprite(input: Uint8Array, fallbackName = '导入的 Asep
       const chunkSize = view.getUint32(offset, true)
       const chunkEnd = chunkStart + chunkSize
       const type = view.getUint16(offset + 4, true)
-      if (chunkSize < 6 || chunkEnd > frameEnd) throw new Error('Aseprite Chunk 数据无效。')
+      if (chunkSize < 6 || chunkEnd > frameEnd) throw new Error(tr('core.aseprite.invalidChunk'))
       const payload = chunkStart + 6
       if (type === LAYER_CHUNK && frame === 0 && payload + 18 <= chunkEnd) {
         const flags = view.getUint16(payload, true)
         const layerType = view.getUint16(payload + 2, true)
         const childLevel = view.getUint16(payload + 4, true)
-        if (layerType > TILEMAP_LAYER) throw new Error('Aseprite 图层类型无效。')
+        if (layerType > TILEMAP_LAYER) throw new Error(tr('core.aseprite.invalidLayerType'))
         const name = readString(view, payload + 16, chunkEnd)
         const id = createId(layerType === GROUP_LAYER ? 'group' : 'layer')
         groupStack.length = Math.min(groupStack.length, childLevel)
         const parent = childLevel > 0 ? groupStack[childLevel - 1] ?? null : null
-        const spec: LayerSpec = { index: layers.length, id, name: name.value || (layerType === GROUP_LAYER ? '图层组' : '图层'), group: layerType === GROUP_LAYER, tilemap: layerType === TILEMAP_LAYER, parentGroupId: parent, visible: (flags & 1) !== 0, locked: (flags & 2) === 0, opacity: view.getUint8(payload + 12) / 255, blendMode: blendMode(view.getUint16(payload + 10, true)), childLevel }
+        const group = layerType === GROUP_LAYER
+        const opacityValid = group ? (headerFlags & GROUP_BLEND_OPACITY_VALID) !== 0 : (headerFlags & LAYER_OPACITY_VALID) !== 0
+        const groupPropertiesValid = !group || (headerFlags & GROUP_BLEND_OPACITY_VALID) !== 0
+        const spec: LayerSpec = { index: layers.length, id, name: name.value || tr(group ? 'core.document.group' : 'core.document.layer'), group, tilemap: layerType === TILEMAP_LAYER, parentGroupId: parent, visible: (flags & 1) !== 0, locked: (flags & 2) === 0, opacity: opacityValid ? view.getUint8(payload + 12) / 255 : 1, blendMode: groupPropertiesValid ? blendMode(view.getUint16(payload + 10, true)) : 'normal', childLevel }
         layers.push(spec)
         if (spec.group) groupStack[childLevel] = spec.id
       } else if (type === CEL_CHUNK && payload + 16 <= chunkEnd) {
         const cel: Cel = { layerIndex: view.getUint16(payload, true), x: view.getInt16(payload + 2, true), y: view.getInt16(payload + 4, true), opacity: view.getUint8(payload + 6) / 255, type: view.getUint16(payload + 7, true) }
         if (cel.type === 0 || cel.type === 2) {
-          if (payload + 20 > chunkEnd) throw new Error('Aseprite Cel 数据不完整。')
+          if (payload + 20 > chunkEnd) throw new Error(tr('core.aseprite.celIncomplete'))
           cel.width = view.getUint16(payload + 16, true)
           cel.height = view.getUint16(payload + 18, true)
           const data = new Uint8Array(input.buffer, input.byteOffset + payload + 20, chunkEnd - payload - 20)
@@ -204,7 +214,7 @@ export function decodeAseprite(input: Uint8Array, fallbackName = '导入的 Asep
     cels.set(frame, frameCels)
     offset = frameEnd
   }
-  if (!layers.length) throw new Error('Aseprite 工程不包含可导入的图层。')
+  if (!layers.length) throw new Error(tr('core.aseprite.noImportableLayers'))
 
   const document = createDocument(fallbackName, width, height, 'rgba')
   document.layers = []
@@ -230,6 +240,7 @@ export function decodeAseprite(input: Uint8Array, fallbackName = '导入的 Asep
     resolved.set(key, result)
     return result
   }
+  const documentLayerBySpecIndex = new Map<number, RasterLayer>()
   for (const spec of layers) {
     if (groupIds.has(spec.id) || spec.tilemap) continue
     const layer = createLayer(spec.name, width, height, 'rgba')
@@ -250,8 +261,9 @@ export function decodeAseprite(input: Uint8Array, fallbackName = '导入的 Asep
       layer.pixels[target] = source[0]; layer.pixels[target + 1] = source[1]; layer.pixels[target + 2] = source[2]; layer.pixels[target + 3] = Math.round(source[3] * cel.opacity)
     }
     document.layers.push(layer)
+    documentLayerBySpecIndex.set(spec.index, layer)
   }
-  if (!document.layers.length) throw new Error('Aseprite 工程不包含像素图层。')
+  if (!document.layers.length) throw new Error(tr('core.aseprite.noPixelLayers'))
   document.activeLayerId = document.layers[document.layers.length - 1].id
   const importedPalette = palette.filter((entry): entry is PaletteEntry => Boolean(entry))
   if (importedPalette.length) {
@@ -260,11 +272,34 @@ export function decodeAseprite(input: Uint8Array, fallbackName = '导入的 Asep
     document.nextColorId = Math.max(...importedPalette.map((entry) => entry.id), 0) + 1
   }
   document.name = fallbackName
+  const frames = frameDurations.map((duration, index) => ({ id: `frame-${index + 1}`, duration }))
+  const animationCels: AnimationCel[] = []
+  let celSequence = 0
+  for (const spec of layers) {
+    const layer = documentLayerBySpecIndex.get(spec.index)
+    if (!layer) continue
+    for (let frameIndex = 0; frameIndex < frames.length; frameIndex += 1) {
+      const cel = resolveCel(frameIndex, spec.index)
+      const surface = cel
+        ? {
+            format: 'rgba' as const,
+            width: cel.width,
+            height: cel.height,
+            offsetX: cel.x,
+            offsetY: cel.y,
+            pixels: cel.opacity === 1 ? cel.pixels.slice() : new Uint8ClampedArray(cel.pixels.map((value, index) => index % 4 === 3 ? Math.round(value * cel.opacity) : value))
+          }
+        : { format: 'rgba' as const, width: 1, height: 1, offsetX: 0, offsetY: 0, pixels: new Uint8ClampedArray(4) }
+      animationCels.push({ id: `cel-${++celSequence}`, layerId: layer.id, frameId: frames[frameIndex].id, surface })
+    }
+  }
+  document.animation = { frames, cels: animationCels, activeFrameId: frames[0].id, loop: true }
+  refreshActiveAnimationFrame(document)
   return document
 }
 
 const awaitUnzip = (data: Uint8Array): Uint8Array => {
-  try { return unzlibSync(data) } catch { throw new Error('Aseprite 压缩 Cel 数据无法解压。') }
+  try { return unzlibSync(data) } catch { throw new Error(tr('core.aseprite.compressedCelError')) }
 }
 
 const aseEncoder = new TextEncoder()
@@ -340,8 +375,8 @@ const aseLayerChunk = (layer: RasterLayer | LayerGroup, level: number, group: bo
 }
 
 const aseCelChunk = (layerIndex: number, raster: ReturnType<typeof scaledLayerPixels>): Uint8Array => {
-  if (raster.offsetX < -32768 || raster.offsetX > 32767 || raster.offsetY < -32768 || raster.offsetY > 32767) throw new Error('Aseprite 图层偏移超出格式支持范围。')
-  if (raster.width > MAX_ASE_DIMENSION || raster.height > MAX_ASE_DIMENSION) throw new Error('Aseprite 图层尺寸超出格式支持范围。')
+  if (raster.offsetX < -32768 || raster.offsetX > 32767 || raster.offsetY < -32768 || raster.offsetY > 32767) throw new Error(tr('core.aseprite.layerOffsetRange'))
+  if (raster.width > MAX_ASE_DIMENSION || raster.height > MAX_ASE_DIMENSION) throw new Error(tr('core.aseprite.layerSizeRange'))
   const compressed = zlibSync(raster.pixels)
   const payload = new Uint8Array(20 + compressed.length)
   const view = new DataView(payload.buffer)
@@ -395,43 +430,56 @@ const orderedAseItems = (document: SpriteDocument): AseExportItem[] => {
 }
 
 export function encodeAseprite(document: SpriteDocument, scalePercent = 100): Uint8Array {
+  syncActiveAnimationFrame(document)
+  const timeline = ensureAnimationDocument(document)
   const scale = Math.max(0.01, Math.min(64, Math.round(scalePercent) / 100))
   const width = Math.max(1, Math.round(document.width * scale))
   const height = Math.max(1, Math.round(document.height * scale))
-  if (width > MAX_ASE_DIMENSION || height > MAX_ASE_DIMENSION) throw new Error('Aseprite 画布尺寸超出格式支持范围。')
+  if (width > MAX_ASE_DIMENSION || height > MAX_ASE_DIMENSION) throw new Error(tr('core.aseprite.canvasSizeRange'))
   const layerChunks: Uint8Array[] = []
-  const celChunks: Uint8Array[] = []
+  const rasterLayerIndices: Array<{ index: number; layer: RasterLayer }> = []
   let layerIndex = 0
   for (const item of orderedAseItems(document)) {
     layerChunks.push(aseLayerChunk(item.kind === 'group' ? item.group : item.layer, item.level, item.kind === 'group'))
-    if (item.kind === 'layer') celChunks.push(aseCelChunk(layerIndex, scaledLayerPixels(document, item.layer, scale)))
+    if (item.kind === 'layer') rasterLayerIndices.push({ index: layerIndex, layer: item.layer })
     layerIndex += 1
   }
-  if (layerIndex === 0) throw new Error('工程不包含可导出的图层。')
-  const chunks = [...layerChunks, ...celChunks]
-  const chunkData = concatBytes(chunks)
-  const frameSize = 16 + chunkData.length
-  const output = new Uint8Array(128 + frameSize)
+  if (layerIndex === 0) throw new Error(tr('core.aseprite.noExportableLayers'))
+  const framePayloads = timeline.frames.map((frame, frameIndex) => {
+    const celChunks = rasterLayerIndices.map(({ index, layer }) => {
+      const frameLayer = animationLayerAtFrame(document, layer.id, frame.id) ?? layer
+      return aseCelChunk(index, scaledLayerPixels(document, frameLayer, scale))
+    })
+    const chunks = frameIndex === 0 ? [...layerChunks, ...celChunks] : celChunks
+    return { duration: frame.duration, chunks, data: concatBytes(chunks) }
+  })
+  const totalFrameBytes = framePayloads.reduce((total, frame) => total + 16 + frame.data.length, 0)
+  const output = new Uint8Array(128 + totalFrameBytes)
   const view = new DataView(output.buffer)
   view.setUint32(0, output.length, true)
   view.setUint16(4, ASE_MAGIC, true)
-  view.setUint16(6, 1, true)
+  view.setUint16(6, framePayloads.length, true)
   view.setUint16(8, width, true)
   view.setUint16(10, height, true)
   view.setUint16(12, 32, true)
-  view.setUint32(16, 1, true)
-  view.setUint16(20, 100, true)
+  view.setUint32(14, LAYER_OPACITY_VALID | GROUP_BLEND_OPACITY_VALID, true)
+  view.setUint16(18, Math.min(65_535, framePayloads[0]?.duration ?? 100), true)
   view.setUint8(28, 0)
   view.setUint16(32, 0, true)
   view.setUint8(34, 1)
   view.setUint8(35, 1)
   view.setUint16(40, 16, true)
   view.setUint16(42, 16, true)
-  view.setUint32(128, frameSize, true)
-  view.setUint16(132, FRAME_MAGIC, true)
-  if (chunks.length < 0xffff) view.setUint16(134, chunks.length, true)
-  else { view.setUint16(134, 0xffff, true); view.setUint32(140, chunks.length, true) }
-  view.setUint16(136, 100, true)
-  output.set(chunkData, 144)
+  let offset = 128
+  for (const frame of framePayloads) {
+    const frameSize = 16 + frame.data.length
+    view.setUint32(offset, frameSize, true)
+    view.setUint16(offset + 4, FRAME_MAGIC, true)
+    if (frame.chunks.length < 0xffff) view.setUint16(offset + 6, frame.chunks.length, true)
+    else { view.setUint16(offset + 6, 0xffff, true); view.setUint32(offset + 12, frame.chunks.length, true) }
+    view.setUint16(offset + 8, Math.min(65_535, Math.max(1, frame.duration)), true)
+    output.set(frame.data, offset + 16)
+    offset += frameSize
+  }
   return output
 }

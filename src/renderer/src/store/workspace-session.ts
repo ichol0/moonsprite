@@ -13,6 +13,9 @@ import {
   type PersistedToolSettings
 } from '@/core/tool-preferences'
 import type { BrushProfile, DocumentSession } from './workspace-types'
+import { defaultSymmetryCenter } from '@/core/symmetry'
+import { ensureAnimationDocument, refreshActiveAnimationFrame } from '@/core/animation'
+import { normalizeProjectDisplaySettings, normalizeProjectStatistics, normalizeTimelapseSettings } from '@/core/project-metadata'
 
 const defaultColor: RgbaColor = { r: 41, g: 121, b: 255, a: 255 }
 const defaultSecondary: RgbaColor = { r: 241, g: 244, b: 248, a: 255 }
@@ -111,12 +114,15 @@ export function persistToolSettings(session: DocumentSession): void {
     shapeKind: session.shapeKind,
     shapeRatio: session.shapeRatio ? { ...session.shapeRatio } : null,
     fillMode: session.fillMode,
+    fillKind: session.fillKind ?? 'bucket',
+    gradientDither: session.gradientDither ?? 'none',
     moveAutoSelect: session.moveAutoSelect,
     selectionKind: session.selectionKind,
     selectionMode: session.selectionMode,
     wandTolerance: session.wandTolerance,
     wandContiguous: session.wandContiguous,
-    perfectPixels: session.perfectPixels
+    perfectPixels: session.perfectPixels,
+    symmetryAxes: { ...session.symmetryAxes }
   }
   try {
     if (toolSettingsPersistTimer !== null) window.clearTimeout(toolSettingsPersistTimer)
@@ -128,6 +134,11 @@ export function persistToolSettings(session: DocumentSession): void {
 }
 
 export const sessionFromDocument = (document: SpriteDocument): DocumentSession => {
+  ensureAnimationDocument(document)
+  refreshActiveAnimationFrame(document)
+  document.displaySettings = normalizeProjectDisplaySettings(document.displaySettings)
+  document.statistics = normalizeProjectStatistics(document.statistics)
+  document.timelapse = normalizeTimelapseSettings(document.timelapse, document.timelapse?.snapshots ?? [])
   const settings = loadToolSettings()
   const fallbackProfile = normalizePersistedBrushProfile(settings, defaultToolSettings)
   const persistedProfiles = settings.brushProfiles ?? Object.fromEntries((['pencil', 'eraser', 'fill'] as BrushTool[]).map((tool) => [tool, fallbackProfile])) as Record<BrushTool, PersistedBrushProfile>
@@ -157,6 +168,8 @@ export const sessionFromDocument = (document: SpriteDocument): DocumentSession =
     shapeKind: settings.shapeKind,
     shapeRatio: typeof settings.shapeRatio === 'number' ? { width: settings.shapeRatio, height: 1 } : settings.shapeRatio ? { ...settings.shapeRatio } : null,
     fillMode: settings.fillMode,
+    fillKind: settings.fillKind,
+    gradientDither: settings.gradientDither,
     moveAutoSelect: settings.moveAutoSelect,
     selection: null,
     selectionKind: settings.selectionKind,
@@ -164,14 +177,29 @@ export const sessionFromDocument = (document: SpriteDocument): DocumentSession =
     wandTolerance: settings.wandTolerance,
     wandContiguous: settings.wandContiguous,
     perfectPixels: settings.perfectPixels,
+    symmetryAxes: { ...settings.symmetryAxes },
+    symmetryCenter: defaultSymmetryCenter(document.width, document.height),
     lastPencilPoint: null,
     lastEraserPoint: null,
     canvasResizePreview: null,
     outlinePreview: null,
     pendingPaste: null,
-    view: { zoom: 16, panX: 0, panY: 0, rotation: 0, mirrored: false, mirroredVertical: false, showGrid: false, relativeLuminance: false, showSelectionOutline: true },
+    view: {
+      zoom: 16,
+      panX: 0,
+      panY: 0,
+      rotation: 0,
+      mirrored: false,
+      mirroredVertical: false,
+      showPixelGrid: document.displaySettings.showPixelGrid,
+      showGrid: document.displaySettings.showGrid,
+      relativeLuminance: false,
+      showSelectionOutline: true,
+      grid: { ...document.displaySettings.grid }
+    },
     viewportSize: { width: 0, height: 0 },
     paletteSelectionId: document.palette.find((entry) => entry.id !== 0)?.id ?? document.palette[0]?.id ?? null,
+    paletteSecondarySelectionId: null,
     selectedPaletteIds: document.palette.find((entry) => entry.id !== 0)?.id !== undefined
       ? [document.palette.find((entry) => entry.id !== 0)!.id]
       : document.palette[0] ? [document.palette[0].id] : [],
@@ -180,6 +208,17 @@ export const sessionFromDocument = (document: SpriteDocument): DocumentSession =
     selectedLayerIds: [document.activeLayerId],
     layerSelectionAnchorId: document.activeLayerId,
     collapsedGroupIds: [],
+    animationPlaying: false,
+    animationPlaybackRate: 1,
+    animationPlaybackStartFrameId: null,
+    animationReturnToStart: false,
+    selectedAnimationFrameIds: [],
+    animationFrameSelectionAnchorId: null,
+    selectedAnimationCellKeys: [],
+    animationCellSelectionAnchorKey: null,
+    animationCellClipboard: [],
+    animationCellClipboardAnchorKey: null,
+    animationFrameClipboard: [],
     revision: 0,
     recoverySuppressed: false
   } as DocumentSession

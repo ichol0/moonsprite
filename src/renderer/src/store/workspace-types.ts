@@ -1,8 +1,11 @@
 import type {
+  AnimationCel,
   BrushPaintMode,
   BrushShape,
   BrushTexture,
+  FillKind,
   FillMode,
+  GradientDither,
   ImageBrush,
   ImageBrushSettings,
   OutlineDirections,
@@ -23,6 +26,7 @@ import type {
 } from '@shared/types'
 import type { HistoryStack, PixelEdit } from '@/core/history'
 import type { SelectionTransformSource } from '@/core/tools'
+import type { SymmetryAxes, SymmetryCenter } from '@/core/symmetry'
 import type { BrushTool } from '@/core/tool-preferences'
 
 export interface CanvasResizePreview {
@@ -33,7 +37,17 @@ export interface CanvasResizePreview {
 }
 
 export interface AdjustmentSnapshot {
-  layers: Array<{ layerId: string; pixels: Uint8ClampedArray | Uint32Array }>
+  layers: Array<{
+    layerId: string
+    frameId?: string
+    width: number
+    height: number
+    offsetX: number
+    offsetY: number
+    storageOriginX: number
+    storageOriginY: number
+    pixels: Uint8ClampedArray | Uint32Array
+  }>
   palette: SpriteDocument['palette']
   nextColorId: number
 }
@@ -44,6 +58,12 @@ export interface OutlinePreview {
   position: OutlinePosition
   directions: OutlineDirections
   kernel: OutlineKernel
+}
+
+export interface AnimationFrameClipboardItem {
+  frameId: string
+  duration: number
+  cels: AnimationCel[]
 }
 
 export interface FloatingPaste {
@@ -93,6 +113,8 @@ export interface DocumentSession {
   shapeKind: ShapeKind
   shapeRatio: ShapeRatio | null
   fillMode: FillMode
+  fillKind: FillKind
+  gradientDither: GradientDither
   moveAutoSelect: boolean
   selection: SelectionMask | null
   selectionKind: SelectionKind
@@ -100,6 +122,8 @@ export interface DocumentSession {
   wandTolerance: number
   wandContiguous: boolean
   perfectPixels: boolean
+  symmetryAxes: SymmetryAxes
+  symmetryCenter: SymmetryCenter
   lastPencilPoint: { x: number; y: number } | null
   lastEraserPoint: { x: number; y: number } | null
   canvasResizePreview: CanvasResizePreview | null
@@ -108,12 +132,24 @@ export interface DocumentSession {
   view: ViewState
   viewportSize: { width: number; height: number }
   paletteSelectionId: number | null
+  paletteSecondarySelectionId: number | null
   selectedPaletteIds: number[]
   selectedGroupId: string | null
   selectedGroupIds: string[]
   selectedLayerIds: string[]
   layerSelectionAnchorId: string | null
   collapsedGroupIds: string[]
+  animationPlaying: boolean
+  animationPlaybackRate: number
+  animationPlaybackStartFrameId: string | null
+  animationReturnToStart: boolean
+  selectedAnimationFrameIds: string[]
+  animationFrameSelectionAnchorId: string | null
+  selectedAnimationCellKeys: string[]
+  animationCellSelectionAnchorKey: string | null
+  animationCellClipboard: AnimationCel[]
+  animationCellClipboardAnchorKey: string | null
+  animationFrameClipboard: AnimationFrameClipboardItem[]
   revision: number
   recoverySuppressed: boolean
 }

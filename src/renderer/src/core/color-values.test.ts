@@ -2,11 +2,13 @@ import { describe, expect, it } from 'vitest'
 import { colorFromValues, colorToValues, hslToRgb, parseRgbaHex, rgbToHsl, rgbaHex } from './color-values'
 
 describe('color value models', () => {
-  it('round-trips RGB, HSV and HSL values', () => {
+  it('round-trips RGB, HSV, HSL, LAB and CMYK values', () => {
     const color = { r: 41, g: 121, b: 255, a: 128 }
     expect(colorFromValues('rgb', colorToValues(color, 'rgb'), color)).toEqual(color)
     expect(colorFromValues('hsv', colorToValues(color, 'hsv'), color)).toEqual(color)
     expect(colorFromValues('hsl', colorToValues(color, 'hsl'), color)).toEqual(color)
+    expect(colorFromValues('lab', colorToValues(color, 'lab'), color)).toEqual(color)
+    expect(colorFromValues('cmyk', colorToValues(color, 'cmyk'), color)).toEqual(color)
   })
 
   it('supports grayscale and alpha values', () => {

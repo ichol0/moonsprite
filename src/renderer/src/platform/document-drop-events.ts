@@ -1,5 +1,6 @@
 import type { Event, UnlistenFn } from '@tauri-apps/api/event'
 import type { DragDropEvent } from '@tauri-apps/api/window'
+import { translateCurrent as tr } from '@/core/localization'
 
 export interface NativeDocumentDropSource {
   onDragDropEvent(handler: (event: Event<DragDropEvent>) => void): Promise<UnlistenFn>
@@ -16,6 +17,6 @@ export const subscribeToNativeDocumentDropSources = async (
 ): Promise<() => void> => {
   const subscriptions = await Promise.allSettled(sources.map((source) => subscribeToNativeDocumentDrops(source, onDrop)))
   const cleanups = subscriptions.flatMap((subscription) => subscription.status === 'fulfilled' ? [subscription.value] : [])
-  if (cleanups.length === 0) throw new Error('无法订阅原生文件拖入事件。')
+  if (cleanups.length === 0) throw new Error(tr('core.drop.subscribeFailed'))
   return () => cleanups.forEach((cleanup) => cleanup())
 }

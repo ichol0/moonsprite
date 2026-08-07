@@ -1,18 +1,31 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { Check, ChevronDown } from 'lucide-react'
+import { Tooltip } from '@/components/Tooltip'
 
 export interface ThemedSelectGroup<T extends string> {
   label: string
-  options: Array<{ value: T; label: string; description?: string }>
+  options: Array<ThemedSelectOption<T>>
 }
 
-export function ThemedSelect<T extends string>({ value, groups, label, onChange, disabled = false }: {
+export interface ThemedSelectOption<T extends string> {
+  value: T
+  label: string
+  description?: string
+}
+
+export function ThemedSelect<T extends string>({ value, groups, label, onChange, disabled = false, renderSelected, renderOption, showCheck = true, showOptionTooltips = true, popoverClassName = '', popoverWidth }: {
   value: T
   groups: Array<ThemedSelectGroup<T>>
   label: string
   onChange: (value: T) => void
   disabled?: boolean
+  renderSelected?: (option: ThemedSelectOption<T>) => ReactNode
+  renderOption?: (option: ThemedSelectOption<T>) => ReactNode
+  showCheck?: boolean
+  showOptionTooltips?: boolean
+  popoverClassName?: string
+  popoverWidth?: number
 }) {
   const [open, setOpen] = useState(false)
   const [position, setPosition] = useState({ left: 8, top: 8, width: 220 })
@@ -27,7 +40,8 @@ export function ThemedSelect<T extends string>({ value, groups, label, onChange,
       const trigger = triggerRef.current?.getBoundingClientRect()
       const menu = menuRef.current?.getBoundingClientRect()
       if (!trigger || !menu) return
-      const width = Math.max(trigger.width, Math.min(280, menu.width))
+      const requestedWidth = popoverWidth ?? Math.min(280, menu.width)
+      const width = Math.min(Math.max(trigger.width, requestedWidth), Math.max(1, window.innerWidth - 16))
       const left = Math.max(8, Math.min(window.innerWidth - width - 8, trigger.left))
       const top = window.innerHeight - trigger.bottom >= Math.min(menu.height, 320) + 5
         ? trigger.bottom + 4
@@ -66,7 +80,7 @@ export function ThemedSelect<T extends string>({ value, groups, label, onChange,
         moveSelection(event.key === 'ArrowDown' ? 1 : -1)
       }
       if (event.key === 'Escape') setOpen(false)
-    }}><span>{selected?.label ?? value}</span><ChevronDown size={14} /></button>
-    {open && createPortal(<div ref={menuRef} className="themed-select-popover" role="listbox" aria-label={label} style={position}>{groups.map((group) => <section key={group.label} className="themed-select-group"><span>{group.label}</span>{group.options.map((option) => <button key={option.value} type="button" role="option" aria-selected={option.value === value} onClick={() => select(option.value)}><span className="themed-select-option-copy"><strong>{option.label}</strong>{option.description && <small>{option.description}</small>}</span>{option.value === value && <Check size={13} />}</button>)}</section>)}</div>, document.body)}
+    }}><span className="themed-select-selected-copy">{selected ? renderSelected?.(selected) ?? selected.label : value}</span><ChevronDown size={14} /></button>
+    {open && createPortal(<div ref={menuRef} className={`themed-select-popover ${popoverClassName}`.trim()} data-hide-check={!showCheck ? 'true' : undefined} role="listbox" aria-label={label} style={position}>{groups.map((group) => <section key={group.label} className="themed-select-group"><span>{group.label}</span>{group.options.map((option) => { const optionCopy = <span className="themed-select-option-copy">{renderOption?.(option) ?? <strong>{option.label}</strong>}</span>; return <button key={option.value} type="button" role="option" aria-selected={option.value === value} onClick={() => select(option.value)}>{showOptionTooltips ? <Tooltip content={option.description}>{optionCopy}</Tooltip> : optionCopy}{showCheck && option.value === value && <Check size={13} />}</button> })}</section>)}</div>, document.body)}
   </span>
 }

@@ -167,12 +167,25 @@ export const rotatedSelectionBounds = (target: SelectionRect, angle = 0): Select
   return { x, y, width: right - x, height: bottom - y }
 }
 
+export interface SelectionShearTransform {
+  axis: 'x' | 'y'
+  edge: 'n' | 'e' | 's' | 'w'
+  amount: number
+}
+
+export const transformedSelectionBounds = (target: SelectionRect, angle = 0, shear?: SelectionShearTransform): SelectionRect => {
+  if (!shear || shear.amount === 0) return rotatedSelectionBounds(target, angle)
+  if (shear.axis === 'x') return { ...target, x: target.x + Math.min(0, shear.amount), width: target.width + Math.abs(shear.amount) }
+  return { ...target, y: target.y + Math.min(0, shear.amount), height: target.height + Math.abs(shear.amount) }
+}
+
 export const transformedSelectionSourcePoint = (
   source: SelectionMask,
   target: SelectionRect,
   x: number,
   y: number,
-  angle = 0
+  angle = 0,
+  shear?: SelectionShearTransform
 ): { x: number; y: number } | null => {
   if (target.width < 1 || target.height < 1) return null
   const radians = angle * Math.PI / 180
@@ -184,8 +197,17 @@ export const transformedSelectionSourcePoint = (
   const offsetY = y + 0.5 - centerY
   const unrotatedX = centerX + offsetX * cosine - offsetY * sine
   const unrotatedY = centerY + offsetX * sine + offsetY * cosine
-  const normalizedX = (unrotatedX - target.x) / target.width
-  const normalizedY = (unrotatedY - target.y) / target.height
+  let mappedDestinationX = unrotatedX
+  let mappedDestinationY = unrotatedY
+  if (shear?.axis === 'x') {
+    const axisPosition = (mappedDestinationY - target.y) / target.height
+    mappedDestinationX -= shear.amount * (shear.edge === 'n' ? 1 - axisPosition : axisPosition)
+  } else if (shear?.axis === 'y') {
+    const axisPosition = (mappedDestinationX - target.x) / target.width
+    mappedDestinationY -= shear.amount * (shear.edge === 'w' ? 1 - axisPosition : axisPosition)
+  }
+  const normalizedX = (mappedDestinationX - target.x) / target.width
+  const normalizedY = (mappedDestinationY - target.y) / target.height
   if (normalizedX < -1e-9 || normalizedX > 1 + 1e-9 || normalizedY < -1e-9 || normalizedY > 1 + 1e-9) return null
   // Cross-boundary resizing uses the dragged edge/point as the mirror axis.
   // For a left/top axis the source direction stays forward; for a right/bottom
@@ -207,9 +229,10 @@ export const transformSelectionMask = (
   target: SelectionRect,
   canvasWidth: number,
   canvasHeight: number,
-  angle = 0
+  angle = 0,
+  shear?: SelectionShearTransform
 ): SelectionMask | null => {
-  const bounds = rotatedSelectionBounds(target, angle)
+  const bounds = transformedSelectionBounds(target, angle, shear)
   const x = Math.max(0, bounds.x)
   const y = Math.max(0, bounds.y)
   const right = Math.min(canvasWidth, bounds.x + bounds.width)
@@ -217,13 +240,13 @@ export const transformSelectionMask = (
   if (right <= x || bottom <= y) return null
   const width = right - x
   const height = bottom - y
-  if (!source.mask && angle === 0) return { x, y, width, height }
+  if (!source.mask && angle === 0 && !shear) return { x, y, width, height }
 
   const mask = new Uint8Array(width * height)
   let selected = 0
   for (let destinationY = y; destinationY < bottom; destinationY += 1) {
     for (let destinationX = x; destinationX < right; destinationX += 1) {
-      if (!transformedSelectionSourcePoint(source, target, destinationX, destinationY, angle)) continue
+      if (!transformedSelectionSourcePoint(source, target, destinationX, destinationY, angle, shear)) continue
       mask[(destinationY - y) * width + destinationX - x] = 1
       selected += 1
     }

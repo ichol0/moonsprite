@@ -37,4 +37,24 @@ describe('NumberInput', () => {
     fireEvent.keyDown(input, { key: 'Enter' })
     await waitFor(() => expect(submitted).toEqual([16]))
   })
+
+  it('filters non-numeric characters while preserving arithmetic expressions', () => {
+    render(<NumberInput aria-label="尺寸" value={7} onValueChange={vi.fn()} />)
+    const input = screen.getByRole('spinbutton', { name: '尺寸' })
+    fireEvent.change(input, { target: { value: '宽12像素 + (3*2)abc#' } })
+    expect(input).toHaveValue('12 + (3*2)')
+    fireEvent.change(input, { target: { value: 'height1e2' } })
+    expect(input).toHaveValue('1e2')
+  })
+
+  it('notifies the owner after committing on blur', () => {
+    const onBlur = vi.fn()
+    const onValueChange = vi.fn()
+    render(<NumberInput aria-label="尺寸" value={7} onValueChange={onValueChange} onBlur={onBlur} />)
+    const input = screen.getByRole('spinbutton', { name: '尺寸' })
+    fireEvent.change(input, { target: { value: '12' } })
+    fireEvent.blur(input)
+    expect(onValueChange).toHaveBeenCalledWith(12)
+    expect(onBlur).toHaveBeenCalledOnce()
+  })
 })

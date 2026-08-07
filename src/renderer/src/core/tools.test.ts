@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { createDocument, getActiveLayer, readLayerColor, readLayerColorAt, resizeDocumentAt, writeLayerColor } from './document'
 import { beginPixelEdit, commitPixelEdit, HistoryStack } from './history'
-import { appendPerfectPixelSegment, applySelectionTransform, applySelectionTranslationPreview, brushMaskOffsets, brushStampAnchor, brushStampDimensions, captureSelectionTransform, clearSelection, fillSelectionOrCanvas, flipLayer, flipSelection, floodFill, moveSelection, outlinePixelIndices, outlineSelection, paintBrush, paintLine, paintShape, selectionTranslationPreviewEdit } from './tools'
-import { combineSelection, ellipseSelection, lassoSelection, magicWandSelection, rotatedSelectionBounds, selectionBoundarySegments, selectionContains, transformSelectionMask } from './selection'
+import { appendPerfectPixelSegment, applySelectionTransform, applySelectionTranslationPreview, brushMaskOffsets, brushStampAnchor, brushStampDimensions, captureSelectionTransform, clearSelection, fillSelectionOrCanvas, flipLayer, flipSelection, floodFill, floodFillSymmetric, moveSelection, outlinePixelIndices, outlineSelection, paintBrush, paintLine, paintShape, selectionTranslationPreviewEdit } from './tools'
+import { combineSelection, ellipseSelection, lassoSelection, magicWandSelection, rotatedSelectionBounds, selectionBoundarySegments, selectionContains, transformedSelectionBounds, transformSelectionMask } from './selection'
 import { resizeDocument } from './document'
 import { createProceduralBrush, createProceduralBrushes, createSelectionBrush, proceduralBrushCoverageAt } from './brushes'
 import { packColor, unpackColor } from './raster'
@@ -173,6 +173,17 @@ describe('pixel tools', () => {
       [0, 0, 0, 1, 1, 1, 0, 0, 0],
       [0, 0, 0, 0, 0, 0, 1, 1, 1]
     ])
+  })
+
+  it('keeps an already painted anchor inside the first six-pixel stair', () => {
+    const document = createDocument('anchored six-pixel stair', 18, 3, 'rgba')
+    const layer = getActiveLayer(document)
+    paintBrush(document, layer, beginPixelEdit(layer.id), 0, 0, 1, blue, 'square', null)
+
+    paintLine(document, layer, beginPixelEdit(layer.id), 0, 0, 17, 2, 1, blue, null, 'square', 'solid', 1, null, undefined, 0, 'paint', undefined, 'balanced')
+
+    const runs = Array.from({ length: 3 }, (_, y) => Array.from({ length: 18 }, (_, x) => readLayerColorAt(document, layer, x, y).a > 0).filter(Boolean).length)
+    expect(runs).toEqual([6, 6, 6])
   })
 
   it('fills only the contiguous matching area', () => {
@@ -867,6 +878,35 @@ describe('pixel tools', () => {
     expect(selectionContains(rotated, 2, 1)).toBe(false)
   })
 
+  it('shears horizontal and vertical edges without changing the untouched dimension', () => {
+    const source = { x: 2, y: 2, width: 3, height: 3 }
+    const horizontal = { axis: 'x' as const, edge: 'n' as const, amount: 2 }
+    const vertical = { axis: 'y' as const, edge: 'e' as const, amount: -2 }
+
+    expect(transformedSelectionBounds(source, 0, horizontal)).toEqual({ x: 2, y: 2, width: 5, height: 3 })
+    expect(transformedSelectionBounds(source, 0, vertical)).toEqual({ x: 2, y: 0, width: 3, height: 5 })
+    const sheared = transformSelectionMask(source, source, 10, 10, 0, horizontal)
+    expect(selectionContains(sheared, 4, 2)).toBe(true)
+    expect(selectionContains(sheared, 2, 2)).toBe(false)
+    expect(selectionContains(sheared, 2, 4)).toBe(true)
+  })
+
+  it('moves selected pixels through the same shear mapping used by the selection mask', () => {
+    const document = createDocument('shear selection', 10, 10, 'rgba')
+    const layer = getActiveLayer(document)
+    const selection = { x: 2, y: 2, width: 3, height: 3 }
+    const edit = beginPixelEdit(layer.id)
+    paintLine(document, layer, edit, 2, 2, 4, 2, 1, blue)
+    paintLine(document, layer, edit, 2, 4, 4, 4, 1, red)
+    const source = captureSelectionTransform(document, selection)!
+    const shear = { axis: 'x' as const, edge: 'n' as const, amount: 2 }
+
+    applySelectionTransform(document, source, selection, 0, false, shear)
+
+    expect(readLayerColorAt(document, layer, 4, 2)).toEqual(blue)
+    expect(readLayerColorAt(document, layer, 2, 4)).toEqual(red)
+  })
+
   it('preserves an irregular mask when capturing transform pixels', () => {
     const document = createDocument('capture mask', 5, 5, 'rgba')
     const selection = { x: 1, y: 1, width: 3, height: 3, mask: Uint8Array.from([0, 1, 0, 1, 1, 1, 0, 1, 0]) }
@@ -987,5 +1027,68 @@ describe('pixel tools', () => {
     expect(readLayerColor(document, layer, 0)).toEqual(blue)
     expect(layer.offsetX).toBe(2)
     expect(layer.offsetY).toBe(1)
+  })
+
+  it('paints every enabled symmetry result in one pixel edit', () => {
+    const document = createDocument('symmetric brush', 5, 5, 'rgba')
+    const layer = getActiveLayer(document)
+    const edit = beginPixelEdit(layer.id)
+    paintBrush(document, layer, edit, 0, 1, 1, blue, 'square', null, 'solid', 1, null, undefined, 0, 'paint', undefined, { horizontal: true, vertical: true, diagonalUp: false, diagonalDown: true })
+
+    expect(edit.after.size).toBe(8)
+    expect([[0, 1], [0, 3], [4, 1], [1, 0], [4, 3], [3, 0], [1, 4], [3, 4]].every(([x, y]) => readLayerColorAt(document, layer, x, y).a === 255)).toBe(true)
+  })
+
+  it('fills distinct mirrored regions as one edit', () => {
+    const document = createDocument('symmetric fill', 5, 1, 'rgba')
+    const layer = getActiveLayer(document)
+    writeLayerColor(document, layer, 1, blue)
+    writeLayerColor(document, layer, 3, blue)
+
+    const edit = floodFillSymmetric(document, layer, 0, 0, red, null, true, null, 1, undefined, 'solid', 1, 0, 'paint', { horizontal: false, vertical: true, diagonalUp: false, diagonalDown: false })!
+
+    expect([...edit.after.keys()].sort((left, right) => left - right)).toEqual([0, 4])
+    expect(readLayerColorAt(document, layer, 0, 0)).toEqual(red)
+    expect(readLayerColorAt(document, layer, 4, 0)).toEqual(red)
+  })
+
+  it('moves an already symmetric selection once without duplicating its orbit', () => {
+    const document = createDocument('symmetric selection transform', 5, 3, 'rgba')
+    const layer = getActiveLayer(document)
+    writeLayerColor(document, layer, 5, blue)
+    writeLayerColor(document, layer, 9, blue)
+    const selection = { x: 0, y: 1, width: 5, height: 1, mask: Uint8Array.from([1, 0, 0, 0, 1]) }
+    const source = captureSelectionTransform(document, selection)!
+
+    const edit = applySelectionTransform(document, source, { ...selection, y: 0 }, 0, false, undefined, { horizontal: false, vertical: true, diagonalUp: false, diagonalDown: false }, { x: 2.5, y: 1.5 })!
+
+    expect(edit.after.size).toBe(4)
+    expect(readLayerColorAt(document, layer, 0, 0)).toEqual(blue)
+    expect(readLayerColorAt(document, layer, 4, 0)).toEqual(blue)
+    expect(readLayerColorAt(document, layer, 0, 1).a).toBe(0)
+    expect(readLayerColorAt(document, layer, 4, 1).a).toBe(0)
+  })
+
+  it.each([
+    ['resize', { x: 0, y: 1, width: 7, height: 3 }, 0, undefined],
+    ['rotate', { x: 1, y: 2, width: 5, height: 1 }, 90, undefined],
+    ['shear', { x: 1, y: 2, width: 5, height: 1 }, 0, { axis: 'x' as const, edge: 'n' as const, amount: 2 }]
+  ])('keeps a symmetric selection mirrored after %s', (_operation, target, angle, shear) => {
+    const document = createDocument('symmetric selection transform', 7, 7, 'rgba')
+    const layer = getActiveLayer(document)
+    writeLayerColor(document, layer, 2 * document.width + 1, blue)
+    writeLayerColor(document, layer, 2 * document.width + 5, blue)
+    const selection = { x: 1, y: 2, width: 5, height: 1, mask: Uint8Array.from([1, 0, 0, 0, 1]) }
+    const source = captureSelectionTransform(document, selection)!
+
+    const edit = applySelectionTransform(document, source, target, angle, false, shear, { horizontal: false, vertical: true, diagonalUp: false, diagonalDown: false }, { x: 3.5, y: 3.5 })
+    const painted: Array<[number, number]> = []
+    for (let y = 0; y < document.height; y += 1) for (let x = 0; x < document.width; x += 1) {
+      if (readLayerColorAt(document, layer, x, y).a > 0) painted.push([x, y])
+    }
+
+    expect(edit).not.toBeNull()
+    expect(painted.length).toBeGreaterThan(0)
+    expect(painted.every(([x, y]) => readLayerColorAt(document, layer, document.width - x - 1, y).a > 0)).toBe(true)
   })
 })

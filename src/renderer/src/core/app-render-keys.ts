@@ -33,7 +33,9 @@ export const appCoordinatorRenderKey = (state: AppCoordinatorState): string => {
     state.sessions.map((item) => item.document.id).join(','),
     session?.document.width ?? 0,
     session?.document.height ?? 0,
+    session?.view.showPixelGrid ? 1 : 0,
     session?.view.showGrid ? 1 : 0,
+    session?.view.grid ? `${session.view.grid.x}:${session.view.grid.y}:${session.view.grid.width}:${session.view.grid.height}` : '',
     session?.view.relativeLuminance ? 1 : 0,
     session?.view.showSelectionOutline === false ? 0 : 1,
     preview ? `${preview.width}:${preview.height}:${preview.offsetX}:${preview.offsetY}` : '',
@@ -43,7 +45,7 @@ export const appCoordinatorRenderKey = (state: AppCoordinatorState): string => {
 }
 
 export const toolRailRenderKey = (session: DocumentSession | null): string => session
-  ? `${session.document.id}:${session.tool}:${session.selectionKind}:${session.shapeKind}`
+  ? `${session.document.id}:${session.tool}:${session.selectionKind}:${session.shapeKind}:${session.fillKind ?? 'bucket'}`
   : ''
 
 export const appMenuRenderKey = (session: DocumentSession | null): string => session
@@ -59,7 +61,9 @@ export const appMenuRenderKey = (session: DocumentSession | null): string => ses
       session.selectedGroupId ?? '',
       session.selectedGroupIds.join(','),
       session.selectedLayerIds.join(','),
+      session.view.showPixelGrid ? 1 : 0,
       session.view.showGrid ? 1 : 0,
+      session.view.grid ? `${session.view.grid.x}:${session.view.grid.y}:${session.view.grid.width}:${session.view.grid.height}` : '',
       session.view.relativeLuminance ? 1 : 0,
       session.view.showSelectionOutline === false ? 0 : 1,
       session.view.mirrored ? 1 : 0,
@@ -93,16 +97,25 @@ export const toolOptionsRenderKey = (session: DocumentSession | null): string =>
     session.shapeRatio?.width ?? '',
     session.shapeRatio?.height ?? '',
     session.fillMode,
+    session.fillKind ?? 'bucket',
+    session.gradientDither ?? 'none',
     session.moveAutoSelect ? 1 : 0,
     session.selectionKind,
     session.selectionMode,
     session.wandTolerance,
     session.wandContiguous ? 1 : 0,
     session.perfectPixels ? 1 : 0,
+    session.symmetryAxes?.horizontal ? 1 : 0,
+    session.symmetryAxes?.vertical ? 1 : 0,
+    session.symmetryAxes?.diagonalUp ? 1 : 0,
+    session.symmetryAxes?.diagonalDown ? 1 : 0,
+    session.symmetryCenter?.x ?? '',
+    session.symmetryCenter?.y ?? '',
     Math.round(session.view.rotation * 10),
     session.history.canUndo ? 1 : 0,
     session.history.canRedo ? 1 : 0,
     colorKey(session.primaryColor),
+    colorKey(session.secondaryColor),
     (session.document.customBrushes ?? []).map((item) => `${item.id}:${item.name}:${item.width}:${item.height}`).join('|')
   ].join(';')
 }

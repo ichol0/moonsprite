@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { clearStoredValues, readStoredJson, readStoredString, removeStoredValue, writeStoredJson, writeStoredString } from './storage'
+import { clearStoredValues, clearStoredValuesExcept, readStoredJson, readStoredString, removeStoredValue, writeStoredJson, writeStoredString } from './storage'
 
 function createStorage(): Storage {
   const values = new Map<string, string>()
@@ -31,5 +31,17 @@ describe('safe renderer storage', () => {
     writeStoredString('remaining', 'value', storage)
     expect(clearStoredValues(storage)).toBe(true)
     expect(storage.length).toBe(0)
+  })
+
+  it('clears settings without removing explicitly preserved records', () => {
+    const storage = createStorage()
+    storage.setItem('moonsprite.recent-projects.v1', '[{"filePath":"demo.moonsprite"}]')
+    storage.setItem('moonsprite.gallery-pins.v1', '["demo.moonsprite"]')
+    storage.setItem('moonsprite.preference.brush-preview-mode', 'edge')
+
+    expect(clearStoredValuesExcept(['moonsprite.recent-projects.v1', 'moonsprite.gallery-pins.v1'], storage)).toBe(true)
+    expect(storage.getItem('moonsprite.recent-projects.v1')).toContain('demo.moonsprite')
+    expect(storage.getItem('moonsprite.gallery-pins.v1')).toContain('demo.moonsprite')
+    expect(storage.getItem('moonsprite.preference.brush-preview-mode')).toBeNull()
   })
 })

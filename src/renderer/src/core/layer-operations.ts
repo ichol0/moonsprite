@@ -2,6 +2,7 @@ import type { LayerGroup, SpriteDocument } from '@shared/types'
 import { getActiveLayer, getDescendantGroupIds, getGroup, getLayerIdsInGroup } from './document'
 import type { HistoryEntry } from './history'
 import { buildLayerPanelTree, type LayerPanelNode } from './layer-panel-layout'
+import { translateCurrent as tr } from './localization'
 
 export interface LayerOperationState {
   document: SpriteDocument
@@ -9,6 +10,20 @@ export interface LayerOperationState {
   selectedGroupId: string | null
   selectedGroupIds?: string[]
   collapsedGroupIds?: string[]
+}
+
+export interface LayerPanelRowMoveTarget {
+  kind: 'edge' | 'group' | 'row'
+  edge?: 'top' | 'bottom'
+  id?: string
+  rowKind?: 'layer' | 'group'
+  position?: 'above' | 'below'
+}
+
+interface LayerPanelTreeItem {
+  kind: 'layer' | 'group'
+  id: string
+  children: LayerPanelTreeItem[]
 }
 
 const uniqueLayerIds = (layerIds: readonly string[]): string[] => [...new Set(layerIds)]
@@ -80,6 +95,137 @@ const applyGroupPlacement = (group: LayerGroup, parentGroupId: string | null, pa
   group.panelOrder = panelOrder
 }
 
+const buildMutableLayerPanelTree = (document: SpriteDocument): LayerPanelTreeItem[] => {
+  const root: LayerPanelTreeItem[] = []
+  const stack: Array<{ depth: number; children: LayerPanelTreeItem[] }> = [{ depth: -1, children: root }]
+  for (const node of buildLayerPanelTree({ layers: document.layers, groups: document.groups })) {
+    while (stack.at(-1)!.depth >= node.depth) stack.pop()
+    const item: LayerPanelTreeItem = { kind: node.kind, id: node.id, children: [] }
+    stack.at(-1)!.children.push(item)
+    if (node.kind === 'group') stack.push({ depth: node.depth, children: item.children })
+  }
+  return root
+}
+
+const findLayerPanelContainer = (items: LayerPanelTreeItem[], kind: LayerPanelTreeItem['kind'], id: string): { items: LayerPanelTreeItem[]; index: number } | null => {
+  const index = items.findIndex((item) => item.kind === kind && item.id === id)
+  if (index >= 0) return { items, index }
+  for (const item of items) {
+    if (item.kind !== 'group') continue
+    const nested = findLayerPanelContainer(item.children, kind, id)
+    if (nested) return nested
+  }
+  return null
+}
+
+const applyLayerPanelTree = (document: SpriteDocument, root: LayerPanelTreeItem[]): void => {
+  const layerById = new Map(document.layers.map((layer) => [layer.id, layer]))
+  const topToBottomLayers: string[] = []
+  const visit = (items: LayerPanelTreeItem[], parentGroupId: string | null): void => {
+    for (const item of items) {
+      if (item.kind === 'layer') {
+        const layer = layerById.get(item.id)
+        if (layer) {
+          layer.groupId = parentGroupId
+          topToBottomLayers.push(item.id)
+        }
+      } else {
+        const group = document.groups.find((candidate) => candidate.id === item.id)
+        if (group) group.parentGroupId = parentGroupId
+        visit(item.children, item.id)
+      }
+    }
+  }
+  visit(root, null)
+  document.layers = [...topToBottomLayers].reverse().map((id) => layerById.get(id)).filter((layer): layer is SpriteDocument['layers'][number] => Boolean(layer))
+  const layerOrder = new Map(document.layers.map((layer, index) => [layer.id, index]))
+  const assignGroupOrders = (items: LayerPanelTreeItem[]): void => {
+    let index = 0
+    while (index < items.length) {
+      if (items[index].kind === 'layer') { index += 1; continue }
+      const start = index
+      while (index < items.length && items[index].kind === 'group') index += 1
+      const run = items.slice(start, index)
+      const above = start > 0 && items[start - 1].kind === 'layer' ? layerOrder.get(items[start - 1].id) : undefined
+      const below = index < items.length && items[index].kind === 'layer' ? layerOrder.get(items[index].id) : undefined
+      for (let offset = 0; offset < run.length; offset += 1) {
+        const group = document.groups.find((candidate) => candidate.id === run[offset].id)
+        if (!group) continue
+        if (above !== undefined && below !== undefined) group.panelOrder = above - ((above - below) * (offset + 1)) / (run.length + 1)
+        else if (below !== undefined) group.panelOrder = below + run.length - offset
+        else if (above !== undefined) group.panelOrder = above - offset - 1
+        else group.panelOrder = run.length - offset - 1
+      }
+    }
+    for (const item of items) if (item.kind === 'group') assignGroupOrders(item.children)
+  }
+  assignGroupOrders(root)
+}
+
+/** 一次移动混合选择中的图层与图层组，保持它们在图层栏中的相对顺序。 */
+export const moveLayerPanelRows = (state: LayerOperationState, layerIds: readonly string[], groupIds: readonly string[], target: LayerPanelRowMoveTarget): HistoryEntry | null => {
+  const selectedLayers = new Set(uniqueLayerIds(layerIds))
+  const selectedGroups = new Set(uniqueLayerIds(groupIds))
+  if (selectedLayers.size === 0 && selectedGroups.size === 0) return null
+  const { document } = state
+  const root = buildMutableLayerPanelTree(document)
+  const moving: LayerPanelTreeItem[] = []
+  const extract = (items: LayerPanelTreeItem[]): void => {
+    for (let index = 0; index < items.length;) {
+      const item = items[index]
+      if ((item.kind === 'layer' ? selectedLayers : selectedGroups).has(item.id)) {
+        moving.push(item)
+        items.splice(index, 1)
+        continue
+      }
+      if (item.kind === 'group') extract(item.children)
+      index += 1
+    }
+  }
+  extract(root)
+  if (moving.length === 0) return null
+
+  if (target.kind === 'edge') {
+    if (target.edge === 'top') root.unshift(...moving)
+    else if (target.edge === 'bottom') root.push(...moving)
+    else return null
+  } else if (target.kind === 'group' && target.id) {
+    const destination = findLayerPanelContainer(root, 'group', target.id)
+    if (!destination) return null
+    destination.items[destination.index].children.unshift(...moving)
+  } else if (target.kind === 'row' && target.id && target.rowKind && target.position) {
+    const destination = findLayerPanelContainer(root, target.rowKind, target.id)
+    if (!destination) return null
+    destination.items.splice(destination.index + (target.position === 'below' ? 1 : 0), 0, ...moving)
+  } else return null
+
+  const beforeLayerOrder = document.layers.map((layer) => layer.id)
+  const beforeLayerGroups = new Map(document.layers.map((layer) => [layer.id, layer.groupId ?? null]))
+  const beforeGroupParents = new Map(document.groups.map((group) => [group.id, group.parentGroupId ?? null]))
+  const beforeGroupOrders = new Map(document.groups.map((group) => [group.id, group.panelOrder]))
+  const activeLayerId = document.activeLayerId
+  const layerById = new Map(document.layers.map((layer) => [layer.id, layer]))
+  applyLayerPanelTree(document, root)
+  const afterLayerOrder = document.layers.map((layer) => layer.id)
+  const afterLayerGroups = new Map(document.layers.map((layer) => [layer.id, layer.groupId ?? null]))
+  const afterGroupParents = new Map(document.groups.map((group) => [group.id, group.parentGroupId ?? null]))
+  const afterGroupOrders = new Map(document.groups.map((group) => [group.id, group.panelOrder]))
+  const apply = (order: string[], layerGroups: ReadonlyMap<string, string | null>, groupParents: ReadonlyMap<string, string | null>, groupOrders: ReadonlyMap<string, number | undefined>): void => {
+    applyLayerOrder(document, layerById, order, activeLayerId)
+    applyLayerGroups(document.layers, new Map(layerGroups))
+    for (const group of document.groups) {
+      group.parentGroupId = groupParents.get(group.id) ?? null
+      group.panelOrder = groupOrders.get(group.id)
+    }
+  }
+  return {
+    label: tr('core.layerOperations.moveLayer'),
+    bytes: (beforeLayerOrder.length + afterLayerOrder.length) * 8 + document.layers.length * 16 + document.groups.length * 32,
+    undo: () => apply(beforeLayerOrder, beforeLayerGroups, beforeGroupParents, beforeGroupOrders),
+    redo: () => apply(afterLayerOrder, afterLayerGroups, afterGroupParents, afterGroupOrders)
+  }
+}
+
 export const canMoveGroupInto = (document: SpriteDocument, groupId: string, parentGroupId: string): boolean =>
   groupId !== parentGroupId && !getDescendantGroupIds(document, groupId).includes(parentGroupId)
 
@@ -103,7 +249,7 @@ export const reorderLayers = (state: LayerOperationState, layerIds: readonly str
   selectLayers(state, selected, null)
   const afterOrder = document.layers.map((layer) => layer.id)
   return {
-    label: '拖动图层',
+    label: tr('core.layerOperations.reorderLayers'),
     bytes: (beforeOrder.length + afterOrder.length) * 8,
     undo: () => applyLayerOrder(document, layerById, beforeOrder, activeLayerId),
     redo: () => applyLayerOrder(document, layerById, afterOrder, activeLayerId)
@@ -133,7 +279,7 @@ export const assignLayersToGroup = (state: LayerOperationState, layerIds: readon
     applyLayerOrder(document, layerById, order, activeLayerId)
     applyLayerGroups(selectedLayers, groupIds)
   }
-  return { label: '移动到图层组', bytes: (beforeOrder.length + afterOrder.length) * 8, undo: () => apply(beforeOrder, beforeGroupIds), redo: () => apply(afterOrder, afterGroupIds) }
+  return { label: tr('core.layerOperations.assignGroup'), bytes: (beforeOrder.length + afterOrder.length) * 8, undo: () => apply(beforeOrder, beforeGroupIds), redo: () => apply(afterOrder, afterGroupIds) }
 }
 
 export const assignLayersToRoot = (state: LayerOperationState, layerIds: readonly string[], targetLayerId?: string, insertAfterTarget = true): HistoryEntry | null => {
@@ -157,7 +303,7 @@ export const assignLayersToRoot = (state: LayerOperationState, layerIds: readonl
     applyLayerOrder(document, layerById, order, activeLayerId)
     applyLayerGroups(selectedLayers, groupIds)
   }
-  return { label: '移到最外层', bytes: (beforeOrder.length + afterOrder.length) * 8 + selectedLayers.length * 16, undo: () => apply(beforeOrder, beforeGroupIds), redo: () => apply(afterOrder, rootGroupIds) }
+  return { label: tr('core.layerOperations.assignRoot'), bytes: (beforeOrder.length + afterOrder.length) * 8 + selectedLayers.length * 16, undo: () => apply(beforeOrder, beforeGroupIds), redo: () => apply(afterOrder, rootGroupIds) }
 }
 
 export const assignLayersAboveGroup = (state: LayerOperationState, layerIds: readonly string[], groupId: string): HistoryEntry | null => {
@@ -186,7 +332,7 @@ export const assignLayersAboveGroup = (state: LayerOperationState, layerIds: rea
     applyLayerOrder(document, layerById, order, activeLayerId)
     applyLayerGroups(selectedLayers, groupIds)
   }
-  return { label: '移动到图层组上方', bytes: (beforeOrder.length + afterOrder.length) * 8 + selectedLayers.length * 16, undo: () => apply(beforeOrder, beforeGroupIds), redo: () => apply(afterOrder, afterGroupIds) }
+  return { label: tr('core.layerOperations.aboveGroup'), bytes: (beforeOrder.length + afterOrder.length) * 8 + selectedLayers.length * 16, undo: () => apply(beforeOrder, beforeGroupIds), redo: () => apply(afterOrder, afterGroupIds) }
 }
 
 export const reorderGroup = (state: LayerOperationState, groupId: string, targetGroupId: string, insertAfterTarget = true): HistoryEntry | null => {
@@ -231,7 +377,7 @@ export const reorderGroup = (state: LayerOperationState, groupId: string, target
     document.groups = groupOrder.map((id) => groupById.get(id)).filter((item): item is SpriteDocument['groups'][number] => Boolean(item))
     applyGroupPlacement(group, parentGroupId, panelOrder)
   }
-  return { label: '移动图层组', bytes: (beforeLayerOrder.length + afterLayerOrder.length + beforeGroupOrder.length + afterGroupOrder.length) * 8 + 56, undo: () => apply(beforeLayerOrder, beforeGroupOrder, beforeParent, beforePanelOrder), redo: () => apply(afterLayerOrder, afterGroupOrder, afterParent, afterPanelOrder) }
+  return { label: tr('core.layerOperations.moveGroup'), bytes: (beforeLayerOrder.length + afterLayerOrder.length + beforeGroupOrder.length + afterGroupOrder.length) * 8 + 56, undo: () => apply(beforeLayerOrder, beforeGroupOrder, beforeParent, beforePanelOrder), redo: () => apply(afterLayerOrder, afterGroupOrder, afterParent, afterPanelOrder) }
 }
 
 export const positionGroupNextToLayer = (state: LayerOperationState, groupId: string, targetLayerId: string, insertAfterTarget = true): HistoryEntry | null => {
@@ -251,7 +397,7 @@ export const positionGroupNextToLayer = (state: LayerOperationState, groupId: st
   state.selectedGroupIds = [group.id]
   state.selectedLayerIds = getLayerIdsInGroup(document, group.id)
   return {
-    label: '移动图层组',
+    label: tr('core.layerOperations.moveGroup'),
     bytes: 56,
     undo: () => applyGroupPlacement(group, beforeParent, beforePanelOrder),
     redo: () => applyGroupPlacement(group, parentGroupId, afterPanelOrder)
@@ -268,7 +414,7 @@ export const assignGroupToGroup = (state: LayerOperationState, groupId: string, 
   state.selectedGroupId = group.id
   state.selectedGroupIds = [group.id]
   state.selectedLayerIds = getLayerIdsInGroup(state.document, group.id)
-  return { label: '移动图层组', bytes: 48, undo: () => { group.parentGroupId = before }, redo: () => { group.parentGroupId = parentGroupId } }
+  return { label: tr('core.layerOperations.moveGroup'), bytes: 48, undo: () => { group.parentGroupId = before }, redo: () => { group.parentGroupId = parentGroupId } }
 }
 
 export const assignGroupToRoot = (state: LayerOperationState, groupId: string): HistoryEntry | null => {
@@ -279,7 +425,7 @@ export const assignGroupToRoot = (state: LayerOperationState, groupId: string): 
   state.selectedGroupId = group.id
   state.selectedGroupIds = [group.id]
   state.selectedLayerIds = getLayerIdsInGroup(state.document, group.id)
-  return { label: '移到最外层', bytes: 48, undo: () => { group.parentGroupId = before }, redo: () => { group.parentGroupId = null } }
+  return { label: tr('core.layerOperations.assignRoot'), bytes: 48, undo: () => { group.parentGroupId = before }, redo: () => { group.parentGroupId = null } }
 }
 
 export const moveLayersToRootEdge = (state: LayerOperationState, layerIds: readonly string[], edge: 'top' | 'bottom'): HistoryEntry | null => {
@@ -310,7 +456,7 @@ export const moveLayersToRootEdge = (state: LayerOperationState, layerIds: reado
     applyLayerGroups(moving, groupIds)
     applyGroupPanelOrders(document.groups, panelOrders)
   }
-  return { label: '移动图层', bytes: (beforeOrder.length + afterOrder.length) * 8 + moving.length * 16 + document.groups.length * 16, undo: () => apply(beforeOrder, beforeGroupIds, beforePanelOrders), redo: () => apply(afterOrder, rootIds, afterPanelOrders) }
+  return { label: tr('core.layerOperations.moveLayer'), bytes: (beforeOrder.length + afterOrder.length) * 8 + moving.length * 16 + document.groups.length * 16, undo: () => apply(beforeOrder, beforeGroupIds, beforePanelOrders), redo: () => apply(afterOrder, rootIds, afterPanelOrders) }
 }
 
 export const moveGroupToRootEdge = (state: LayerOperationState, groupId: string, edge: 'top' | 'bottom'): HistoryEntry | null => {
@@ -345,7 +491,7 @@ export const moveGroupToRootEdge = (state: LayerOperationState, groupId: string,
     applyGroupOrder(document, groupById, groupOrder)
     applyGroupPlacement(group, parentGroupId, panelOrder)
   }
-  return { label: '移动图层组', bytes: (beforeLayerOrder.length + afterLayerOrder.length + beforeGroupOrder.length + afterGroupOrder.length) * 8 + 56, undo: () => apply(beforeLayerOrder, beforeGroupOrder, beforeParent, beforePanelOrder), redo: () => apply(afterLayerOrder, afterGroupOrder, null, afterPanelOrder) }
+  return { label: tr('core.layerOperations.moveGroup'), bytes: (beforeLayerOrder.length + afterLayerOrder.length + beforeGroupOrder.length + afterGroupOrder.length) * 8 + 56, undo: () => apply(beforeLayerOrder, beforeGroupOrder, beforeParent, beforePanelOrder), redo: () => apply(afterLayerOrder, afterGroupOrder, null, afterPanelOrder) }
 }
 
 export const createLayerGroup = (state: LayerOperationState, id: string, name: string): HistoryEntry | null => {
@@ -353,7 +499,8 @@ export const createLayerGroup = (state: LayerOperationState, id: string, name: s
   if (document.groups.some((group) => group.id === id)) return null
   const selected = state.selectedGroupId ? [] : document.layers.filter((layer) => state.selectedLayerIds.includes(layer.id))
   const layers = selected
-  const commonParent = state.selectedGroupId ?? (layers.length > 0 && layers.every((layer) => (layer.groupId ?? null) === (layers[0].groupId ?? null)) ? layers[0].groupId ?? null : null)
+  const selectedGroupParent = state.selectedGroupId ? getGroup(document, state.selectedGroupId).parentGroupId ?? null : null
+  const commonParent = state.selectedGroupId ? selectedGroupParent : (layers.length > 0 && layers.every((layer) => (layer.groupId ?? null) === (layers[0].groupId ?? null)) ? layers[0].groupId ?? null : null)
   const highestSelectedIndex = layers.reduce((highest, layer) => Math.max(highest, document.layers.indexOf(layer)), -1)
   const group: LayerGroup = { id, name, description: '', parentGroupId: commonParent, panelOrder: document.layers.length + document.groups.length + 1, visible: true, locked: false, opacity: 1, blendMode: 'normal' }
   const beforeGroupIds = new Map(layers.map((layer) => [layer.id, layer.groupId ?? null]))
@@ -380,7 +527,7 @@ export const createLayerGroup = (state: LayerOperationState, id: string, name: s
     state.selectedGroupIds = [group.id]
   }
   return {
-    label: '新建图层组',
+    label: tr('core.layerOperations.newGroup'),
     bytes: 96 + layers.length * 16,
     undo: () => {
       document.groups = document.groups.filter((item) => item.id !== group.id)
@@ -427,7 +574,7 @@ export const ungroupSelected = (state: LayerOperationState): HistoryEntry | null
   }).map((layer) => layer.id)
   if (state.collapsedGroupIds) state.collapsedGroupIds = state.collapsedGroupIds.filter((id) => !groupIds.has(id))
   return {
-    label: '解组图层',
+    label: tr('core.layerOperations.ungroup'),
     bytes: 96 + document.layers.length * 20 + document.groups.length * 16,
     undo: () => {
       document.groups = [...beforeGroups]

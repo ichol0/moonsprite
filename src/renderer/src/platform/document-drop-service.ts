@@ -2,6 +2,8 @@ import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { getCurrentWebview } from '@tauri-apps/api/webview'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { normalizeDroppedDocumentPaths } from '@/core/document-drop'
+import { loadEditorPreferences } from '@/core/file-preferences'
+import { translate } from '@/core/localization'
 import { subscribeToNativeDocumentDrops, type NativeDocumentDropSource } from './document-drop-events'
 
 type RustDropSubscriber = (onDrop: (paths: string[]) => void) => Promise<UnlistenFn>
@@ -46,7 +48,7 @@ export function startDocumentDropService(options: DocumentDropServiceOptions): (
       recentlyOpened.set(key, timestamp)
       void Promise.resolve(options.openPath(path)).then((opened) => {
         if (active && opened) options.onOpened?.()
-      }).catch((error) => warn(`无法打开拖入文件：${path}`, error))
+      }).catch((error) => warn(translate(loadEditorPreferences().language, 'platform.drop.openError', { path }), error))
     }
   }
 
@@ -59,7 +61,7 @@ export function startDocumentDropService(options: DocumentDropServiceOptions): (
       cleanups.set(key, cleanup)
     }).catch((error) => {
       pending.delete(key)
-      if (active) warn(`文件拖入通道订阅失败：${key}`, error)
+      if (active) warn(translate(loadEditorPreferences().language, 'platform.drop.subscribeError', { key }), error)
     })
   }
 

@@ -1,9 +1,11 @@
 import type { SpriteDocument } from '@shared/types'
-import { getActiveLayer } from '@/core/document'
+import { getActiveLayer, getLayerStorageOrigin, setLayerStorageOrigin } from '@/core/document'
+import { animationCelAt, ensureAnimationDocument } from '@/core/animation'
 import { decodeProject, encodeProject } from '@/core/project-format'
 import type { LayerMergeSuccess } from '@/core/layer-merge'
 import type { AdjustmentSnapshot, DocumentSession } from './workspace-types'
 import { touch } from './workspace-session'
+import { translateCurrent as tr } from '@/core/localization'
 
 const adjustmentTargetLayerIds = (session: DocumentSession): string[] => {
   if (session.selection) return [getActiveLayer(session.document).id]
@@ -12,10 +14,23 @@ const adjustmentTargetLayerIds = (session: DocumentSession): string[] => {
 }
 
 export function captureAdjustmentSnapshot(session: DocumentSession, targetLayerIds = adjustmentTargetLayerIds(session)): AdjustmentSnapshot {
+  const timeline = ensureAnimationDocument(session.document)
   return {
     layers: targetLayerIds.flatMap((layerId) => {
       const layer = session.document.layers.find((candidate) => candidate.id === layerId)
-      return layer ? [{ layerId, pixels: layer.format === 'rgba' ? new Uint8ClampedArray(layer.pixels) : new Uint32Array(layer.pixels) }] : []
+      if (!layer) return []
+      const storageOrigin = getLayerStorageOrigin(layer)
+      return [{
+        layerId,
+        frameId: timeline.activeFrameId,
+        width: layer.width,
+        height: layer.height,
+        offsetX: layer.offsetX,
+        offsetY: layer.offsetY,
+        storageOriginX: storageOrigin.x,
+        storageOriginY: storageOrigin.y,
+        pixels: layer.format === 'rgba' ? new Uint8ClampedArray(layer.pixels) : new Uint32Array(layer.pixels)
+      }]
     }),
     palette: session.document.palette.map((entry) => ({ ...entry, color: { ...entry.color } })),
     nextColorId: session.document.nextColorId
@@ -23,12 +38,28 @@ export function captureAdjustmentSnapshot(session: DocumentSession, targetLayerI
 }
 
 export function restoreAdjustmentSnapshot(session: DocumentSession, snapshot: AdjustmentSnapshot): void {
+  const timeline = ensureAnimationDocument(session.document)
   for (const layerSnapshot of snapshot.layers) {
     const layer = session.document.layers.find((candidate) => candidate.id === layerSnapshot.layerId)
     if (!layer) continue
-    if (layer.format === 'rgba' && layerSnapshot.pixels instanceof Uint8ClampedArray) layer.pixels = new Uint8ClampedArray(layerSnapshot.pixels)
-    else if (layer.format === 'indexed' && layerSnapshot.pixels instanceof Uint32Array) layer.pixels = new Uint32Array(layerSnapshot.pixels)
-    else throw new Error('调整预览的图层格式已发生变化。')
+    const pixels = layerSnapshot.pixels instanceof Uint8ClampedArray ? new Uint8ClampedArray(layerSnapshot.pixels) : new Uint32Array(layerSnapshot.pixels)
+    if ((layer.format === 'rgba') !== (pixels instanceof Uint8ClampedArray)) throw new Error(tr('core.history.adjustmentFormatChanged'))
+    const frameId = layerSnapshot.frameId ?? timeline.activeFrameId
+    const cel = animationCelAt(timeline, layerSnapshot.layerId, frameId)
+    if (cel) cel.surface = layer.format === 'rgba' && pixels instanceof Uint8ClampedArray
+      ? { format: 'rgba', width: layerSnapshot.width, height: layerSnapshot.height, offsetX: layerSnapshot.offsetX, offsetY: layerSnapshot.offsetY, storageOriginX: layerSnapshot.storageOriginX, storageOriginY: layerSnapshot.storageOriginY, pixels }
+      : layer.format === 'indexed' && pixels instanceof Uint32Array
+        ? { format: 'indexed', width: layerSnapshot.width, height: layerSnapshot.height, offsetX: layerSnapshot.offsetX, offsetY: layerSnapshot.offsetY, storageOriginX: layerSnapshot.storageOriginX, storageOriginY: layerSnapshot.storageOriginY, pixels }
+        : undefined
+    if (timeline.activeFrameId === frameId) {
+      layer.width = layerSnapshot.width
+      layer.height = layerSnapshot.height
+      layer.offsetX = layerSnapshot.offsetX
+      layer.offsetY = layerSnapshot.offsetY
+      layer.pixels = pixels
+      setLayerStorageOrigin(layer, { x: layerSnapshot.storageOriginX, y: layerSnapshot.storageOriginY })
+      if (cel?.surface) cel.surface.pixels = layer.pixels
+    }
   }
   session.document.palette = snapshot.palette.map((entry) => ({ ...entry, color: { ...entry.color } }))
   session.document.nextColorId = snapshot.nextColorId

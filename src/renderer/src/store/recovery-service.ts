@@ -1,5 +1,6 @@
 import type { MoonSpriteApi, RecoveryRecord, SpriteDocument } from '@shared/types'
 import { decodeProject, encodeProject } from '@/core/project-format'
+import { translateCurrent as tr } from '@/core/localization'
 
 export class RecoveryService {
   private queue: Promise<void> = Promise.resolve()
@@ -16,7 +17,7 @@ export class RecoveryService {
 
   async restore(api: MoonSpriteApi, record: RecoveryRecord): Promise<SpriteDocument> {
     const document = decodeProject(await api.readRecovery(record.id))
-    document.name = `${record.name}（恢复）`
+    document.name = tr('core.recovery.restoredName', { name: record.name })
     document.dirty = true
     return document
   }

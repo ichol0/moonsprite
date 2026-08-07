@@ -11,18 +11,22 @@ const session = () => ({
   selectedGroupId: null as string | null,
   selectedGroupIds: [] as string[],
   collapsedGroupIds: [] as string[],
+  animationPlaying: false,
+  animationPlaybackRate: 1,
+  animationReturnToStart: false,
   revision: 0,
   view: { relativeLuminance: false }
 })
 
 describe('panel render keys', () => {
-  it('keeps color, palette and layer panels stable for pixel-only edits', () => {
+  it('keeps color and palette stable while refreshing layer cel thumbnails after pixel edits', () => {
     const current = session()
     const before = [colorPanelRenderKey(current), palettePanelRenderKey(current), layersPanelRenderKey(current)]
     current.document.layers[0].pixels[0] = 0xff00ffff
     current.revision += 1
-    expect([colorPanelRenderKey(current), palettePanelRenderKey(current), layersPanelRenderKey(current)]).toEqual(before)
-    expect(previewPanelRenderKey(current)).toBe(`${current.document.id}:1:0`)
+    expect([colorPanelRenderKey(current), palettePanelRenderKey(current)]).toEqual(before.slice(0, 2))
+    expect(layersPanelRenderKey(current)).not.toBe(before[2])
+    expect(previewPanelRenderKey(current)).toBe(`${current.document.id}:1:0:0:1:0:1`)
   })
 
   it('invalidates only keys whose visible panel data changed', () => {
@@ -45,6 +49,13 @@ describe('panel render keys', () => {
     const panned = { ...current, view: { ...current.view, panX: 24, panY: -12 } }
     expect(previewPanelRenderKey(panned)).toBe(before)
     current.view.relativeLuminance = true
+    expect(previewPanelRenderKey(current)).not.toBe(before)
+  })
+
+  it('invalidates the preview controls when animation playback state changes', () => {
+    const current = session()
+    const before = previewPanelRenderKey(current)
+    current.animationPlaying = true
     expect(previewPanelRenderKey(current)).not.toBe(before)
   })
 })

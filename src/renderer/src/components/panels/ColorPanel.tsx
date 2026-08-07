@@ -6,27 +6,30 @@ import { FloatingDockPreview, PanelResizeHandles, useFloatingPanel } from '@/com
 import type { DockDragProps } from '@/components/workspace-panel-types'
 import { parseColorPickerConfig, readStoredString, saveColorPickerConfig } from '@/core/panel-preferences'
 import { useWorkspace, type DocumentSession } from '@/store/workspace'
+import { useI18n } from '@/components/I18nProvider'
 
 export function ColorPanel({ session, docked = false, onDockDragStart, onPanelContextMenu, onFloatingDock, onRestoreSquare }: { session: DocumentSession } & DockDragProps) {
+  const { t } = useI18n()
   const setPrimary = useWorkspace((state) => state.setPrimaryColor)
   const setSecondary = useWorkspace((state) => state.setSecondaryColor)
+  const addPaletteColor = useWorkspace((state) => state.addPaletteColor)
   const floating = useFloatingPanel(null, false, true, 'moonsprite.color-panel.v1', false, onFloatingDock, docked)
   const schemeButtonRef = useRef<HTMLButtonElement>(null)
   const schemeMenuRef = useRef<HTMLSpanElement>(null)
   const [schemeMenuOpen, setSchemeMenuOpen] = useState(false)
   const [schemeMenuPosition, setSchemeMenuPosition] = useState({ left: 8, top: 8 })
   const hueStepPresets = [
-    { value: 0, label: '连续' },
-    { value: 6, label: '6 段' },
-    { value: 12, label: '12 段' },
-    { value: 24, label: '24 段' },
-    { value: 36, label: '36 段' }
+    { value: 0, label: t('color.continuous') },
+    { value: 6, label: t('color.segments', { count: 6 }) },
+    { value: 12, label: t('color.segments', { count: 12 }) },
+    { value: 24, label: t('color.segments', { count: 24 }) },
+    { value: 36, label: t('color.segments', { count: 36 }) }
   ]
   const colorStepPresets = [
-    { value: 0, label: '连续' },
-    { value: 5, label: '5 级' },
-    { value: 9, label: '9 级' },
-    { value: 15, label: '15 级' }
+    { value: 0, label: t('color.continuous') },
+    { value: 5, label: t('color.levels', { count: 5 }) },
+    { value: 9, label: t('color.levels', { count: 9 }) },
+    { value: 15, label: t('color.levels', { count: 15 }) }
   ]
   const hueStepValues = hueStepPresets.map((preset) => preset.value)
   const colorStepValues = colorStepPresets.map((preset) => preset.value)
@@ -34,10 +37,10 @@ export function ColorPanel({ session, docked = false, onDockDragStart, onPanelCo
     return parseColorPickerConfig(readStoredString('moonsprite.color-picker-config'), readStoredString('moonsprite.color-picker-scheme'), hueStepValues, colorStepValues)
   })
   const schemeOptions: Array<{ value: ColorPickerScheme; label: string }> = [
-    { value: 'moon-ring', label: '月环调色盘' },
-    { value: 'sv-square', label: '饱和度 / 明度' },
-    { value: 'hs-square', label: '色相 / 饱和度' },
-    { value: 'wheel', label: '色轮' }
+    { value: 'moon-ring', label: t('color.scheme.moonRing') },
+    { value: 'sv-square', label: t('color.scheme.svSquare') },
+    { value: 'hs-square', label: t('color.scheme.hsSquare') },
+    { value: 'wheel', label: t('color.scheme.wheel') }
   ]
 
   useLayoutEffect(() => {
@@ -96,10 +99,10 @@ export function ColorPanel({ session, docked = false, onDockDragStart, onPanelCo
   }
 
   return <><section ref={floating.ref} className={`panel color-panel ${floating.style ? 'floating-panel' : ''}`} style={floating.style} onPointerDown={floating.bringToFront} onContextMenu={onPanelContextMenu}>
-    <header onPointerDown={(event) => floating.style ? floating.startDrag(event) : onDockDragStart?.(event, floating.startDetachedDrag)}><Palette size={15} /><span>颜色</span><span className="panel-actions color-scheme-control" onPointerDown={(event) => event.stopPropagation()}><button type="button" title="将调色盘恢复为正方形" aria-label="将调色盘恢复为正方形" onClick={restoreSquare}><Square size={14} /></button><button ref={schemeButtonRef} type="button" className={schemeMenuOpen ? 'active' : ''} title="更换调色盘样式" aria-label="更换调色盘样式" aria-expanded={schemeMenuOpen} onClick={() => setSchemeMenuOpen((open) => !open)}><Grid2X2 size={14} /></button></span></header>
-    <ColorPicker color={session.primaryColor} secondaryColor={session.secondaryColor} onChange={setPrimary} onSecondaryChange={setSecondary} config={pickerConfig} />
+    <header onPointerDown={(event) => floating.style ? floating.startDrag(event) : onDockDragStart?.(event, floating.startDetachedDrag)}><Palette size={15} /><span>{t('panel.color')}</span><span className="panel-actions color-scheme-control" onPointerDown={(event) => event.stopPropagation()}><button type="button" title={t('color.restoreSquare')} aria-label={t('color.restoreSquare')} onClick={restoreSquare}><Square size={14} /></button><button ref={schemeButtonRef} type="button" className={schemeMenuOpen ? 'active' : ''} title={t('color.changeScheme')} aria-label={t('color.changeScheme')} aria-expanded={schemeMenuOpen} onClick={() => setSchemeMenuOpen((open) => !open)}><Grid2X2 size={14} /></button></span></header>
+    <ColorPicker color={session.primaryColor} secondaryColor={session.secondaryColor} onChange={setPrimary} onSecondaryChange={setSecondary} paletteColors={session.document.palette.map((entry) => entry.color)} onAddPaletteColor={addPaletteColor} config={pickerConfig} />
     {floating.style && <PanelResizeHandles onResize={floating.startResize} />}
   </section><FloatingDockPreview style={floating.dockPreview} />
-  {schemeMenuOpen && createPortal(<span ref={schemeMenuRef} className="color-scheme-popover" role="menu" aria-label="调色盘样式" style={schemeMenuPosition}><span className="color-scheme-options">{schemeOptions.map((option) => <button key={option.value} type="button" role="menuitemradio" aria-checked={pickerConfig.scheme === option.value} className={pickerConfig.scheme === option.value ? 'selected' : ''} onClick={() => updatePickerConfig({ scheme: option.value })}><i className={`color-scheme-preview preview-${option.value}`} aria-hidden="true" /><span>{option.label}</span>{pickerConfig.scheme === option.value && <Check size={13} />}</button>)}</span>{pickerConfig.scheme === 'moon-ring' && <span className="color-scheme-settings"><span className="color-preset-group"><span className="color-preset-label">月环中心</span><span className="color-preset-options"><button type="button" className={pickerConfig.moonField !== 'hsl-triangle' ? 'selected' : ''} onClick={() => updatePickerConfig({ moonField: 'hsv-square' })}>HSV 方形</button><button type="button" className={pickerConfig.moonField === 'hsl-triangle' ? 'selected' : ''} onClick={() => updatePickerConfig({ moonField: 'hsl-triangle' })}>HSL 三角形</button></span></span></span>}<span className="color-scheme-settings"><span className="color-preset-group"><span className="color-preset-label color-setting-tooltip" data-tip="将色相限制到固定分段；连续表示不吸附。">色相吸附</span><span className="color-preset-options">{hueStepPresets.map((preset) => <button key={preset.value} type="button" className={pickerConfig.hueSteps === preset.value ? 'selected' : ''} aria-pressed={pickerConfig.hueSteps === preset.value} onClick={() => updatePickerConfig({ hueSteps: preset.value })}>{preset.label}</button>)}</span></span><span className="color-preset-group"><span className="color-preset-label color-setting-tooltip" data-tip="限制饱和度、明度和透明度的可选级数；栏目缩放后仍可选择同一批颜色。">颜色级数</span><span className="color-preset-options">{colorStepPresets.map((preset) => <button key={preset.value} type="button" className={pickerConfig.colorSteps === preset.value ? 'selected' : ''} aria-pressed={pickerConfig.colorSteps === preset.value} onClick={() => updatePickerConfig({ colorSteps: preset.value })}>{preset.label}</button>)}</span></span></span></span>, document.body)}
+  {schemeMenuOpen && createPortal(<span ref={schemeMenuRef} className="color-scheme-popover" role="menu" aria-label={t('color.schemeAria')} style={schemeMenuPosition}><span className="color-scheme-options">{schemeOptions.map((option) => <button key={option.value} type="button" role="menuitemradio" aria-checked={pickerConfig.scheme === option.value} className={pickerConfig.scheme === option.value ? 'selected' : ''} onClick={() => updatePickerConfig({ scheme: option.value })}><i className={`color-scheme-preview preview-${option.value}`} aria-hidden="true" /><span>{option.label}</span>{pickerConfig.scheme === option.value && <Check size={13} />}</button>)}</span>{pickerConfig.scheme === 'moon-ring' && <span className="color-scheme-settings"><span className="color-preset-group"><span className="color-preset-label">{t('color.moonCenter')}</span><span className="color-preset-options"><button type="button" className={pickerConfig.moonField !== 'hsl-triangle' ? 'selected' : ''} onClick={() => updatePickerConfig({ moonField: 'hsv-square' })}>{t('color.hsvSquare')}</button><button type="button" className={pickerConfig.moonField === 'hsl-triangle' ? 'selected' : ''} onClick={() => updatePickerConfig({ moonField: 'hsl-triangle' })}>{t('color.hslTriangle')}</button></span></span></span>}<span className="color-scheme-settings"><span className="color-preset-group"><span className="color-preset-label color-setting-tooltip" data-tip={t('color.hueSnapHint')}>{t('color.hueSnap')}</span><span className="color-preset-options">{hueStepPresets.map((preset) => <button key={preset.value} type="button" className={pickerConfig.hueSteps === preset.value ? 'selected' : ''} aria-pressed={pickerConfig.hueSteps === preset.value} onClick={() => updatePickerConfig({ hueSteps: preset.value })}>{preset.label}</button>)}</span></span><span className="color-preset-group"><span className="color-preset-label color-setting-tooltip" data-tip={t('color.colorLevelsHint')}>{t('color.colorLevels')}</span><span className="color-preset-options">{colorStepPresets.map((preset) => <button key={preset.value} type="button" className={pickerConfig.colorSteps === preset.value ? 'selected' : ''} aria-pressed={pickerConfig.colorSteps === preset.value} onClick={() => updatePickerConfig({ colorSteps: preset.value })}>{preset.label}</button>)}</span></span></span></span>, document.body)}
   </>
 }

@@ -2,7 +2,12 @@ import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import type { ClipboardImage, ClipboardImageSize, MoonSpriteApi, RgbaColor, SaveDialogFormat, StoredBrush, StoredPalette, StoredWorkspace } from '@shared/types'
 import { builtInPalettes } from '@/core/built-in-palettes'
+import { loadEditorPreferences } from '@/core/file-preferences'
+import { translate, type TranslationKey, type TranslationParams } from '@/core/localization'
 import { createResourceInfoReader } from './resource-info-cache'
+
+const tr = (key: TranslationKey, params?: TranslationParams): string => translate(loadEditorPreferences().language, key, params)
+const dialogLanguage = (): string => loadEditorPreferences().language
 
 const browserRecoveries = new Map<string, { name: string; data: Uint8Array; updatedAt: string }>()
 const browserBrushes = new Map<string, { stored: StoredBrush; data: Uint8Array }>()
@@ -13,7 +18,7 @@ const browserPalettes = new Map<string, StoredPalette>(builtInPalettes.map((pale
   colors: palette.colors.map((color) => ({ ...color }))
 }]))
 const browserWorkspaces = new Map<string, StoredWorkspace>([['builtin-default', {
-  id: 'builtin-default', name: '默认工作区', filePath: '', updatedAt: '', builtIn: true,
+  id: 'builtin-default', name: tr('app.workspace.default'), filePath: '', updatedAt: '', builtIn: true,
   layout: { panelDocks: { color: 'left', palette: 'left', layers: 'right', preview: 'right' }, panelVisibility: { color: true, palette: true, layers: true, preview: true }, inspectorWidth: 300, leftDockWidth: 280, bottomDockHeight: 180, toolRailSide: 'left', previewOpen: true, inspectorLayout: '{"order":["palette","color","layers","preview"],"sizes":{"color":330,"palette":620,"layers":560,"preview":220},"bottomWidths":{"color":280,"palette":280,"layers":320,"preview":280}}', colorSquareDock: 'left', colorSquareAnchor: 'end', floatingPanels: { color: null, palette: null, layers: null, preview: null }, mainWindow: null },
   initialLayout: { panelDocks: { color: 'left', palette: 'left', layers: 'right', preview: 'right' }, panelVisibility: { color: true, palette: true, layers: true, preview: true }, inspectorWidth: 300, leftDockWidth: 280, bottomDockHeight: 180, toolRailSide: 'left', previewOpen: true, inspectorLayout: '{"order":["palette","color","layers","preview"],"sizes":{"color":330,"palette":620,"layers":560,"preview":220},"bottomWidths":{"color":280,"palette":280,"layers":320,"preview":280}}', colorSquareDock: 'left', colorSquareAnchor: 'end', floatingPanels: { color: null, palette: null, layers: null, preview: null }, mainWindow: null }
 } as StoredWorkspace]])
@@ -37,12 +42,14 @@ const createBrowserApi = (): MoonSpriteApi => ({
   saveProject: async (_defaultPath?: string, _format?: SaveDialogFormat) => ({ canceled: true }),
   exportImage: async () => ({ canceled: true }),
   savePaletteImage: async () => ({ canceled: true }),
+  saveShortcutFile: async () => ({ canceled: true }),
+  fileExists: async () => false,
   readBinary: async (filePath) => {
     const brush = [...browserBrushes.values()].find((item) => item.stored.filePath === filePath)
     if (brush) return brush.data.slice()
-    throw new Error('浏览器预览不支持读取此本地文件。')
+    throw new Error(tr('platform.browser.readUnsupported'))
   },
-  writeBinaryAtomic: async () => { throw new Error('浏览器预览不支持写入本地文件。') },
+  writeBinaryAtomic: async () => { throw new Error(tr('platform.browser.writeUnsupported')) },
   writeClipboardImage: async () => {},
   readClipboardImage: async () => null,
   readClipboardImageSize: async () => null,
@@ -54,7 +61,7 @@ const createBrowserApi = (): MoonSpriteApi => ({
     return { ...palette, colors: palette.colors.map((color) => ({ ...color })) }
   },
   deletePalette: async (id) => {
-    if (browserPalettes.get(id)?.builtIn) throw new Error('内置色板不能删除。')
+    if (browserPalettes.get(id)?.builtIn) throw new Error(tr('platform.palette.builtInDelete'))
     browserPalettes.delete(id)
   },
   openPaletteFolder: async () => {},
@@ -62,16 +69,16 @@ const createBrowserApi = (): MoonSpriteApi => ({
   saveWorkspace: async (requestedId, name, layout) => {
     const id = requestedId ?? browserPaletteId(name)
     const existing = browserWorkspaces.get(id)
-    const stored: StoredWorkspace = { id, name: name.trim() || '未命名工作区', filePath: id === 'builtin-default' ? 'workspaces/default.workspace.json' : `workspaces/${id}.workspace.json`, updatedAt: String(Date.now()), builtIn: existing?.builtIn === true || id === 'builtin-default', layout: structuredClone(layout), initialLayout: existing ? structuredClone(existing.initialLayout) : structuredClone(layout) }
+    const stored: StoredWorkspace = { id, name: name.trim() || tr('app.workspace.default'), filePath: id === 'builtin-default' ? 'workspaces/default.workspace.json' : `workspaces/${id}.workspace.json`, updatedAt: String(Date.now()), builtIn: existing?.builtIn === true || id === 'builtin-default', layout: structuredClone(layout), initialLayout: existing ? structuredClone(existing.initialLayout) : structuredClone(layout) }
     browserWorkspaces.set(id, stored)
     return { ...stored, layout: structuredClone(stored.layout), initialLayout: structuredClone(stored.initialLayout) }
   },
-  deleteWorkspace: async (id) => { if (browserWorkspaces.get(id)?.builtIn) throw new Error('内置工作区不能删除。'); browserWorkspaces.delete(id) },
+  deleteWorkspace: async (id) => { if (browserWorkspaces.get(id)?.builtIn) throw new Error(tr('app.workspace.builtInDelete')); browserWorkspaces.delete(id) },
   openWorkspaceFolder: async () => {},
   listBrushes: async () => ({ directoryPath: 'brushes', brushes: [...browserBrushes.values()].map((item) => ({ ...item.stored })) }),
   saveBrush: async (name, data, intrinsicSize = false, sourceX, sourceY) => {
-    const id = `${name.trim() || '选区笔刷'}-${Date.now()}.png`
-    const stored = { id, name: name.trim() || '选区笔刷', filePath: `brushes/${id}`, intrinsicSize, sourceX, sourceY }
+    const id = `${name.trim() || tr('brush.defaultName')}-${Date.now()}.png`
+    const stored = { id, name: name.trim() || tr('brush.defaultName'), filePath: `brushes/${id}`, intrinsicSize, sourceX, sourceY }
     browserBrushes.set(id, { stored, data: data.slice() })
     return { ...stored }
   },
@@ -80,7 +87,7 @@ const createBrowserApi = (): MoonSpriteApi => ({
   listRecoveries: async () => [...browserRecoveries].map(([id, item]) => ({ id, name: item.name, updatedAt: item.updatedAt })),
   readRecovery: async (id) => {
     const recovery = browserRecoveries.get(id)
-    if (!recovery) throw new Error('恢复文件不存在。')
+    if (!recovery) throw new Error(tr('platform.recovery.notFound'))
     return recovery.data.slice()
   },
   writeRecovery: async (id, name, data) => { browserRecoveries.set(id, { name, data: data.slice(), updatedAt: new Date().toISOString() }) },
@@ -105,11 +112,13 @@ const invokeBytes = async (command: string, args?: Record<string, unknown>): Pro
 }
 
 export const createTauriApi = (): MoonSpriteApi => ({
-  openFiles: () => invoke('open_files'),
+  openFiles: () => invoke('open_files', { language: dialogLanguage() }),
   takeStartupFiles: () => invoke('take_startup_files'),
-  saveProject: (defaultPath, format) => invoke('save_project', { defaultPath, format }),
-  exportImage: (defaultPath, format) => invoke('export_image', { defaultPath, format }),
-  savePaletteImage: (defaultPath) => invoke('save_palette_image', { defaultPath }),
+  saveProject: (defaultPath, format) => invoke('save_project', { defaultPath, format, language: dialogLanguage() }),
+  exportImage: (defaultPath, format) => invoke('export_image', { defaultPath, format, language: dialogLanguage() }),
+  savePaletteImage: (defaultPath) => invoke('save_palette_image', { defaultPath, language: dialogLanguage() }),
+  saveShortcutFile: (defaultPath) => invoke('save_shortcut_file', { defaultPath, language: dialogLanguage() }),
+  fileExists: (filePath) => invoke('file_exists', { filePath }),
   readBinary: (filePath) => invokeBytes('read_binary', { filePath }),
   writeBinaryAtomic: (filePath, data) => invoke('write_binary_atomic', { filePath, data: Array.from(data) }),
   writeClipboardImage: (image) => invoke('write_clipboard_image', { width: image.width, height: image.height, data: Array.from(image.data) }),

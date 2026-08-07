@@ -102,6 +102,8 @@ pub fn run() {
             platform_dialogs::save_project,
             platform_dialogs::export_image,
             platform_dialogs::save_palette_image,
+            platform_dialogs::save_shortcut_file,
+            platform_files::file_exists,
             platform_files::read_binary,
             platform_files::write_binary_atomic,
             platform_clipboard::write_clipboard_image,

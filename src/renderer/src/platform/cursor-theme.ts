@@ -1,4 +1,5 @@
 import type { CursorScale } from '@/core/file-preferences'
+import { translateCurrent as tr } from '@/core/localization'
 import cursorDefault from '@/assets/pixel-icons/01-Slice-1.png'
 import cursorBlack from '@/assets/pixel-icons/02-Slice-2.png'
 import cursorWhite from '@/assets/pixel-icons/03-Slice-3.png'
@@ -24,6 +25,8 @@ import builtinRotateNe from '@/assets/pixel-icons/cursor-selection-rotate-ne.png
 import builtinRotateSe from '@/assets/pixel-icons/cursor-selection-rotate-se.png'
 import builtinRotateSw from '@/assets/pixel-icons/cursor-selection-rotate-sw.png'
 import builtinRotateNw from '@/assets/pixel-icons/cursor-selection-rotate-nw.png'
+import cursorShearHorizontal from '@/assets/pixel-icons/cursor-selection-shear-horizontal.png'
+import cursorShearVertical from '@/assets/pixel-icons/cursor-selection-shear-vertical.png'
 
 interface CursorDefinition {
   variable: string
@@ -64,7 +67,9 @@ const cursorDefinitions: CursorDefinition[] = [
   { variable: '--cursor-selection-rotate-ne', source: cursorRotateNe, builtinSource: builtinRotateNe, hotspot: [16, 16], fallback: 'crosshair' },
   { variable: '--cursor-selection-rotate-se', source: cursorRotateSe, builtinSource: builtinRotateSe, hotspot: [16, 16], fallback: 'crosshair' },
   { variable: '--cursor-selection-rotate-sw', source: cursorRotateSw, builtinSource: builtinRotateSw, hotspot: [16, 16], fallback: 'crosshair' },
-  { variable: '--cursor-selection-rotate-nw', source: cursorRotateNw, builtinSource: builtinRotateNw, hotspot: [16, 16], fallback: 'crosshair' }
+  { variable: '--cursor-selection-rotate-nw', source: cursorRotateNw, builtinSource: builtinRotateNw, hotspot: [16, 16], fallback: 'crosshair' },
+  { variable: '--cursor-selection-shear-horizontal', source: cursorShearHorizontal, builtinSource: cursorShearHorizontal, hotspot: [16, 16], fallback: 'ew-resize' },
+  { variable: '--cursor-selection-shear-vertical', source: cursorShearVertical, builtinSource: cursorShearVertical, hotspot: [16, 16], fallback: 'ns-resize' }
 ]
 
 export type CursorPreferenceSource = 'system' | 'moonsprite'
@@ -88,12 +93,12 @@ const scaledCursorUrl = (source: string, scale: CursorScale): Promise<string> =>
       canvas.width = Math.max(1, Math.round(image.naturalWidth * scale))
       canvas.height = Math.max(1, Math.round(image.naturalHeight * scale))
       const context = canvas.getContext('2d')
-      if (!context) { reject(new Error('无法缩放鼠标光标。')); return }
+      if (!context) { reject(new Error(tr('core.cursor.scaleFailed'))); return }
       context.imageSmoothingEnabled = false
       context.drawImage(image, 0, 0, canvas.width, canvas.height)
       resolve(canvas.toDataURL('image/png'))
     }
-    image.onerror = () => reject(new Error('无法读取鼠标光标资源。'))
+    image.onerror = () => reject(new Error(tr('core.cursor.readFailed')))
     image.src = source
   })
   scaledCursorCache.set(key, pending)
@@ -103,6 +108,19 @@ const scaledCursorUrl = (source: string, scale: CursorScale): Promise<string> =>
 export async function applyCursorPreferences(useLocalCursors: boolean, scale: CursorScale): Promise<void> {
   const generation = ++applicationGeneration
   const root = document.documentElement.style
+  // Install an unscaled value synchronously so a preference refresh never falls
+  // back to the browser cursor while scaled assets are loading.
+  for (const definition of cursorDefinitions) {
+    if (cursorPreferenceSource(definition.variable, useLocalCursors) === 'system') {
+      root.setProperty(definition.variable, definition.fallback)
+      continue
+    }
+    const builtinSource = definition.builtinSource ?? definition.source
+    const preferredSource = useLocalCursors ? builtinSource : definition.source
+    const hotspotX = definition.hotspot[0]
+    const hotspotY = definition.hotspot[1]
+    root.setProperty(definition.variable, `url('${preferredSource}') ${hotspotX} ${hotspotY}, url('${builtinSource}') ${hotspotX} ${hotspotY}, ${definition.fallback}`)
+  }
   const values = await Promise.all(cursorDefinitions.map(async (definition) => {
     if (cursorPreferenceSource(definition.variable, useLocalCursors) === 'system') {
       return [definition.variable, definition.fallback] as const

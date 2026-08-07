@@ -12,5 +12,8 @@ ADR 用于记录会长期影响实现的决定，避免后续只看到代码而�
 
 - [0001：文档历史与视图状态分离](0001-separate-document-and-view-history.md)
 - [0002：动画时间轴与静态图层数据分离](0002-animation-timeline-schema.md)
+- [0003：当前图层表面与动画 Cel 像素同步](0003-animation-cel-surfaces.md)
+- [0004：动画导出与洋葱皮的隔离](0004-animation-export-and-onion-skin.md)
+- [0005：项目元数据与缩时快照持久化](0005-project-metadata-and-timelapse.md)
 
 新增 ADR 时按编号递增；废弃旧决定时保留原文件并指向替代 ADR。

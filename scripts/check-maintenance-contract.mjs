@@ -11,6 +11,7 @@ const requiredFiles = [
   'docs/architecture/overview.md',
   'docs/architecture/state-history.md',
   'docs/architecture/coordinates-rendering.md',
+  'docs/architecture/localization.md',
   'docs/interactions/pointer-modifiers.md',
   'docs/interactions/selection-transform.md',
   'docs/interactions/brush-color.md',
@@ -18,7 +19,9 @@ const requiredFiles = [
   'docs/testing/regression-matrix.md',
   'docs/testing/performance-baseline.md',
   'docs/testing/performance-history.md',
+  'docs/changelog/README.md',
   'docs/release/changelog-policy.md',
+  'docs/release/development-cycle.md',
   'docs/release/release-checklist.md',
   'docs/adr/README.md',
   'docs/templates/feature-spec.md',
@@ -27,6 +30,14 @@ const requiredFiles = [
   '.github/workflows/performance.yml',
   '.github/pull_request_template.md',
   'scripts/check-changelog-update.mjs',
+  'scripts/check-module-boundaries.mjs',
+  'scripts/module-boundaries.test.mjs',
+  'scripts/check-version-contract.mjs',
+  'scripts/version-contract.test.mjs',
+  'scripts/validation-scope.mjs',
+  'scripts/validation-scope.test.mjs',
+  'scripts/run-validation.mjs',
+  'scripts/ci-scope.mjs',
 ]
 
 const missing = []

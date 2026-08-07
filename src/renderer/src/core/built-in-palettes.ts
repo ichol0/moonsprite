@@ -1,4 +1,5 @@
 import type { RgbaColor } from '@shared/types'
+import type { TranslationKey } from './localization'
 
 export interface BuiltInPalette {
   id: string
@@ -12,6 +13,14 @@ const opaque = (hex: string): RgbaColor => {
 }
 
 const colors = (...values: string[]): RgbaColor[] => values.map(opaque)
+
+export const builtInPaletteNameKeys: Record<string, TranslationKey> = {
+  'moonlight-12': 'palette.builtIn.moonlight12',
+  'tiny-console-16': 'palette.builtIn.tinyConsole16',
+  'forest-dusk-12': 'palette.builtIn.forestDusk12',
+  'sunset-12': 'palette.builtIn.sunset12',
+  'mono-10': 'palette.builtIn.mono10'
+}
 
 export const builtInPalettes: BuiltInPalette[] = [
   {

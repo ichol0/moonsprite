@@ -1,1 +1,2 @@
-export const APP_CHANNEL_LABEL = 'DEV.2'
+export const APP_CHANNEL_LABEL = 'DEV.3'
+export const LATEST_PACKAGED_RELEASE_LABEL = 'DEV.3'

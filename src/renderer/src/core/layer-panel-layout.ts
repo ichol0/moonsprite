@@ -41,6 +41,7 @@ export interface LayerPanelDropInput {
   hit: LayerPanelRowHit
   draggedLayerIds: readonly string[]
   draggedGroupId?: string
+  copying?: boolean
 }
 
 /** 返回组的所有后代组，遇到损坏的循环关系时停止继续遍历。 */
@@ -129,7 +130,7 @@ const nodeDepth = (nodes: readonly LayerPanelNode[], kind: LayerPanelNode['kind'
   nodes.find((node) => node.kind === kind && node.id === id)?.depth ?? 0
 
 /** 根据已经由 DOM 命中的一行，统一计算插入线和最终拖放目标。 */
-export const resolveLayerPanelDropTarget = ({ layers, groups, nodes, hit, draggedLayerIds, draggedGroupId }: LayerPanelDropInput): LayerPanelDropTarget | null => {
+export const resolveLayerPanelDropTarget = ({ layers, groups, nodes, hit, draggedLayerIds, draggedGroupId, copying = false }: LayerPanelDropInput): LayerPanelDropTarget | null => {
   const descendants = draggedGroupId ? new Set(getLayerPanelDescendantGroupIds(groups, draggedGroupId)) : new Set<string>()
   const dragged = new Set(draggedLayerIds)
   const midpoint = hit.top + (hit.bottom - hit.top) / 2
@@ -137,25 +138,19 @@ export const resolveLayerPanelDropTarget = ({ layers, groups, nodes, hit, dragge
   if (hit.kind === 'layer') {
     const targetLayer = layers.find((layer) => layer.id === hit.id)
     if (!targetLayer) return null
-    if (draggedGroupId) {
-      if (targetLayer.groupId && targetLayer.groupId !== draggedGroupId && !descendants.has(targetLayer.groupId)) {
-        return { kind: 'group', id: targetLayer.groupId, depth: nodeDepth(nodes, 'group', targetLayer.groupId) + 1 }
-      }
-      if (!targetLayer.groupId) return { kind: 'layer', id: targetLayer.id, insertAfter: hit.pointerY < midpoint, depth: 0 }
-      return null
-    }
-    if (dragged.has(hit.id)) return null
+    if (draggedGroupId && targetLayer.groupId && (targetLayer.groupId === draggedGroupId || descendants.has(targetLayer.groupId))) return null
+    if (dragged.has(hit.id) && !copying) return null
     return { kind: 'layer', id: hit.id, insertAfter: hit.pointerY < midpoint, depth: nodeDepth(nodes, 'layer', hit.id) }
   }
 
-  if (hit.id === draggedGroupId || descendants.has(hit.id)) return null
-  const targetDepth = nodeDepth(nodes, 'group', hit.id)
-  if (draggedGroupId) {
-    const edge = Math.min(5, (hit.bottom - hit.top) * 0.15)
-    if (hit.pointerY <= hit.top + edge) return { kind: 'above-group', id: hit.id, insertAfter: true, depth: targetDepth }
-    if (hit.pointerY >= hit.bottom - edge) return { kind: 'above-group', id: hit.id, insertAfter: false, depth: targetDepth }
-  } else if (hit.pointerY <= hit.top + Math.min(11, (hit.bottom - hit.top) * 0.3)) {
-    return { kind: 'above-group', id: hit.id, insertAfter: true, depth: targetDepth }
+  if (hit.id === draggedGroupId) {
+    if (!copying) return null
+    return { kind: 'above-group', id: hit.id, insertAfter: hit.pointerY < midpoint, depth: nodeDepth(nodes, 'group', hit.id) }
   }
+  if (descendants.has(hit.id)) return null
+  const targetDepth = nodeDepth(nodes, 'group', hit.id)
+  const edge = Math.max(6, (hit.bottom - hit.top) * 0.25)
+  if (hit.pointerY <= hit.top + edge) return { kind: 'above-group', id: hit.id, insertAfter: true, depth: targetDepth }
+  if (hit.pointerY >= hit.bottom - edge) return { kind: 'above-group', id: hit.id, insertAfter: false, depth: targetDepth }
   return { kind: 'group', id: hit.id, depth: targetDepth + 1 }
 }

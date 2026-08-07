@@ -1,4 +1,5 @@
 import type { RasterLayer, SpriteDocument } from '@shared/types'
+import { animationLayerAtFrame, ensureAnimationDocument } from './animation'
 import { getLayer, layerIndexAtStoragePoint, layerStoragePoint, readLayerPacked, writeLayerPacked } from './document'
 
 export interface HistoryEntry {
@@ -81,6 +82,7 @@ export class HistoryStack {
 
 export interface PixelEdit {
   layerId: string
+  frameId?: string
   before: Map<number, number>
   after: Map<number, number>
 }
@@ -90,6 +92,7 @@ export function beginPixelEdit(layerId: string): PixelEdit {
 }
 
 export function recordPixel(document: SpriteDocument, layer: RasterLayer, edit: PixelEdit, index: number, next: number): boolean {
+  if (!edit.frameId && document.animation) edit.frameId = ensureAnimationDocument(document).activeFrameId
   const current = readLayerPacked(document, layer, index)
   if (current === next) return false
   if (!edit.before.has(index)) edit.before.set(index, current)
@@ -102,14 +105,18 @@ export function commitPixelEdit(document: SpriteDocument, edit: PixelEdit, label
   if (edit.before.size === 0) return null
   const changedIndices = [...edit.before.keys()].filter((index) => (edit.after.get(index) ?? edit.before.get(index)!) !== edit.before.get(index)!)
   if (changedIndices.length === 0) return null
-  const layer = getLayer(document, edit.layerId)
+  const frameId = edit.frameId ?? document.animation?.activeFrameId
+  const layerForFrame = (): RasterLayer => frameId && document.animation?.activeFrameId !== frameId
+    ? animationLayerAtFrame(document, edit.layerId, frameId) ?? getLayer(document, edit.layerId)
+    : getLayer(document, edit.layerId)
+  const layer = layerForFrame()
   const points = changedIndices.map((index) => layerStoragePoint(layer, index))
   const xs = Int32Array.from(points, (point) => point.x)
   const ys = Int32Array.from(points, (point) => point.y)
   const before = Uint32Array.from(changedIndices, (index) => edit.before.get(index)!)
   const after = Uint32Array.from(changedIndices, (index) => edit.after.get(index) ?? edit.before.get(index)!)
   const apply = (values: Uint32Array): void => {
-    const layer = getLayer(document, edit.layerId)
+    const layer = layerForFrame()
     for (let offset = 0; offset < xs.length; offset += 1) {
       const index = layerIndexAtStoragePoint(layer, xs[offset], ys[offset])
       if (index !== null) writeLayerPacked(document, layer, index, values[offset])
@@ -124,6 +131,8 @@ export function commitPixelEdit(document: SpriteDocument, edit: PixelEdit, label
 }
 
 export function revertPixelEdit(document: SpriteDocument, edit: PixelEdit): void {
-  const layer = getLayer(document, edit.layerId)
+  const layer = edit.frameId && document.animation?.activeFrameId !== edit.frameId
+    ? animationLayerAtFrame(document, edit.layerId, edit.frameId) ?? getLayer(document, edit.layerId)
+    : getLayer(document, edit.layerId)
   for (const [index, value] of edit.before) writeLayerPacked(document, layer, index, value)
 }

@@ -1,6 +1,7 @@
-import type { BrushPaintMode, BrushShape, BrushTexture, FillMode, ImageBrushSettings, ProceduralBrushId, ProceduralBrushSettings, SelectionKind, SelectionMode, ShapeKind, ShapeRatio, ToolId } from '@shared/types'
+import type { BrushPaintMode, BrushShape, BrushTexture, FillKind, FillMode, GradientDither, ImageBrushSettings, ProceduralBrushId, ProceduralBrushSettings, SelectionKind, SelectionMode, ShapeKind, ShapeRatio, ToolId } from '@shared/types'
 import { normalizeProceduralBrushSettings, PROCEDURAL_BRUSH_IDS } from './brushes'
 import { readStoredJson, writeStoredJson } from './storage'
+import { DEFAULT_SYMMETRY_AXES, type SymmetryAxes } from './symmetry'
 
 export const TOOL_SETTINGS_KEY = 'moonsprite.tool-settings.v1'
 export type BrushTool = 'pencil' | 'eraser' | 'fill'
@@ -25,12 +26,15 @@ export interface PersistedToolSettings extends PersistedBrushProfile {
   shapeKind: ShapeKind
   shapeRatio: ShapeRatio | number | null
   fillMode: FillMode
+  fillKind: FillKind
+  gradientDither: GradientDither
   moveAutoSelect: boolean
   selectionKind: SelectionKind
   selectionMode: SelectionMode
   wandTolerance: number
   wandContiguous: boolean
   perfectPixels: boolean
+  symmetryAxes: SymmetryAxes
 }
 
 const createDefaultProceduralBrushSettings = (): Record<ProceduralBrushId, ProceduralBrushSettings> => Object.fromEntries(
@@ -54,12 +58,15 @@ export const defaultToolSettings: PersistedToolSettings = {
   shapeKind: 'rectangle',
   shapeRatio: null,
   fillMode: 'contiguous',
+  fillKind: 'bucket',
+  gradientDither: 'none',
   moveAutoSelect: true,
   selectionKind: 'rectangle',
   selectionMode: 'replace',
   wandTolerance: 0,
   wandContiguous: true,
-  perfectPixels: false
+  perfectPixels: false,
+  symmetryAxes: { ...DEFAULT_SYMMETRY_AXES }
 }
 
 export const cloneProceduralSettings = (settings: Record<ProceduralBrushId, ProceduralBrushSettings>): Record<ProceduralBrushId, ProceduralBrushSettings> => Object.fromEntries(
@@ -112,6 +119,7 @@ export function loadToolSettings(storage?: Storage): PersistedToolSettings {
       tool,
       normalizePersistedBrushProfile(storedProfiles?.[tool], legacyProfile)
     ])) as Record<BrushTool, PersistedBrushProfile>
+    const storedSymmetryAxes = stored.symmetryAxes as (Partial<SymmetryAxes> & { diagonal?: boolean }) | undefined
     return {
       ...legacyProfile,
       brushPaintModePreferenceVersion: 1,
@@ -120,12 +128,20 @@ export function loadToolSettings(storage?: Storage): PersistedToolSettings {
       shapeKind: stored.shapeKind === 'ellipse' || stored.shapeKind === 'rectangle' || stored.shapeKind === 'ellipse-outline' || stored.shapeKind === 'rectangle-outline' ? stored.shapeKind : defaultToolSettings.shapeKind,
       shapeRatio: normalizeShapeRatio(stored.shapeRatio),
       fillMode: stored.fillMode === 'global' || stored.fillMode === 'contiguous' ? stored.fillMode : defaultToolSettings.fillMode,
+      fillKind: stored.fillKind === 'gradient' || stored.fillKind === 'bucket' ? stored.fillKind : defaultToolSettings.fillKind,
+      gradientDither: stored.gradientDither === 'checker' || stored.gradientDither === 'diagonal' || stored.gradientDither === 'diagonal-reverse' || stored.gradientDither === 'horizontal' || stored.gradientDither === 'vertical' || stored.gradientDither === 'bayer-2' || stored.gradientDither === 'bayer-4' || stored.gradientDither === 'bayer-8' || stored.gradientDither === 'none' ? stored.gradientDither : defaultToolSettings.gradientDither,
       moveAutoSelect: typeof stored.moveAutoSelect === 'boolean' ? stored.moveAutoSelect : defaultToolSettings.moveAutoSelect,
       selectionKind: stored.selectionKind === 'magic' || stored.selectionKind === 'lasso' || stored.selectionKind === 'polygon-lasso' || stored.selectionKind === 'ellipse' || stored.selectionKind === 'rectangle' ? stored.selectionKind : defaultToolSettings.selectionKind,
       selectionMode: stored.selectionMode === 'add' || stored.selectionMode === 'subtract' || stored.selectionMode === 'intersect' || stored.selectionMode === 'replace' ? stored.selectionMode : defaultToolSettings.selectionMode,
       wandTolerance: Number.isFinite(stored.wandTolerance) ? Math.max(0, Math.min(255, Math.round(stored.wandTolerance!))) : defaultToolSettings.wandTolerance,
       wandContiguous: typeof stored.wandContiguous === 'boolean' ? stored.wandContiguous : defaultToolSettings.wandContiguous,
-      perfectPixels: typeof stored.perfectPixels === 'boolean' ? stored.perfectPixels : defaultToolSettings.perfectPixels
+      perfectPixels: typeof stored.perfectPixels === 'boolean' ? stored.perfectPixels : defaultToolSettings.perfectPixels,
+      symmetryAxes: {
+        horizontal: storedSymmetryAxes?.horizontal === true,
+        vertical: storedSymmetryAxes?.vertical === true,
+        diagonalUp: storedSymmetryAxes?.diagonalUp === true,
+        diagonalDown: storedSymmetryAxes?.diagonalDown === true || storedSymmetryAxes?.diagonal === true
+      }
     }
   } catch {
     return { ...defaultToolSettings, proceduralBrushSettings: createDefaultProceduralBrushSettings() }

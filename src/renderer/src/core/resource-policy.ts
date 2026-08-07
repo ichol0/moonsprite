@@ -1,7 +1,9 @@
 import type { ColorMode, ResourceInfo } from '@shared/types'
+import { translateCurrent as tr } from './localization'
 
 export interface ResourceEstimate {
   pixels: number
+  layerBytes: number
   documentBytes: number
   operationBytes: number
   peakBytes: number
@@ -17,14 +19,15 @@ const MAX_TYPED_ARRAY_BYTES = 0x7fffffff
 
 export function estimateDocumentBytes(width: number, height: number, layers: number, colorMode: ColorMode): ResourceEstimate {
   if (!Number.isSafeInteger(width) || !Number.isSafeInteger(height) || width < 1 || height < 1 || layers < 1) {
-    throw new Error('画布尺寸和图层数量必须为正整数。')
+    throw new Error(tr('core.resource.invalidDimensions'))
   }
   const pixels = width * height
-  if (!Number.isSafeInteger(pixels)) throw new Error('画布尺寸过大，无法安全计算内存。')
+  if (!Number.isSafeInteger(pixels)) throw new Error(tr('core.resource.unsafePixels'))
   const bytesPerPixel = colorMode === 'rgba' ? 4 : 4
-  const documentBytes = pixels * bytesPerPixel * layers
+  const layerBytes = pixels * bytesPerPixel
+  const documentBytes = layerBytes * layers
   const operationBytes = pixels * 8
-  return { pixels, documentBytes, operationBytes, peakBytes: documentBytes + operationBytes }
+  return { pixels, layerBytes, documentBytes, operationBytes, peakBytes: documentBytes + operationBytes }
 }
 
 export function checkResourceLimit(
@@ -34,19 +37,30 @@ export function checkResourceLimit(
   colorMode: ColorMode,
   system: ResourceInfo
 ): ResourceCheck {
-  const estimate = estimateDocumentBytes(width, height, layers, colorMode)
-  if (estimate.documentBytes > MAX_TYPED_ARRAY_BYTES) {
-    return { allowed: false, estimate, reason: '单个图层超过当前 JavaScript TypedArray 的可分配范围。' }
-  }
+  const allocationCheck = checkTypedArrayLimit(width, height, layers, colorMode)
+  if (!allocationCheck.allowed) return allocationCheck
+  const { estimate } = allocationCheck
   const dynamicBudget = Math.floor(system.freeBytes * 0.4)
   if (estimate.peakBytes > dynamicBudget) {
     return {
       allowed: false,
       estimate,
-      reason: `预计峰值 ${formatBytes(estimate.peakBytes)}，超过当前可用内存的 40%（${formatBytes(dynamicBudget)}）。`
+      reason: tr('core.resource.memoryLimit', { peak: formatBytes(estimate.peakBytes), budget: formatBytes(dynamicBudget) })
     }
   }
   return { allowed: true, estimate }
+}
+
+export function checkTypedArrayLimit(
+  width: number,
+  height: number,
+  layers: number,
+  colorMode: ColorMode
+): ResourceCheck {
+  const estimate = estimateDocumentBytes(width, height, layers, colorMode)
+  return estimate.layerBytes > MAX_TYPED_ARRAY_BYTES
+    ? { allowed: false, estimate, reason: tr('core.resource.typedArrayLimit') }
+    : { allowed: true, estimate }
 }
 
 export const formatBytes = (bytes: number): string => {

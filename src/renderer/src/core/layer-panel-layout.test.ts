@@ -74,9 +74,9 @@ describe('layer panel layout helpers', () => {
     expect(getLayerPanelDescendantGroupIds(groups, 'characters')).toEqual(['face'])
   })
 
-  it('uses the group owning a layer as the drop target for a group drag', () => {
+  it('keeps a child layer row as an insertion target instead of promoting its parent group', () => {
     const nodes = buildLayerPanelTree({ layers, groups })
-    expect(resolveLayerPanelDropTarget({ layers, groups, nodes, hit: { kind: 'layer', id: 'highlight', top: 20, bottom: 52, pointerY: 36 }, draggedLayerIds: [], draggedGroupId: 'other' })).toEqual({ kind: 'group', id: 'face', depth: 2 })
+    expect(resolveLayerPanelDropTarget({ layers, groups, nodes, hit: { kind: 'layer', id: 'highlight', top: 20, bottom: 52, pointerY: 36 }, draggedLayerIds: [], draggedGroupId: 'other' })).toEqual({ kind: 'layer', id: 'highlight', insertAfter: false, depth: 2 })
   })
 
   it('rejects dropping a group onto itself or a descendant', () => {
@@ -88,5 +88,37 @@ describe('layer panel layout helpers', () => {
   it('keeps layer insertion depth tied to the visible row', () => {
     const nodes: LayerPanelNode[] = buildLayerPanelTree({ layers, groups })
     expect(resolveLayerPanelDropTarget({ layers, groups, nodes, hit: { kind: 'layer', id: 'body', top: 96, bottom: 128, pointerY: 100 }, draggedLayerIds: ['background'] })).toEqual({ kind: 'layer', id: 'body', insertAfter: true, depth: 1 })
+  })
+
+  it('uses a dragged source row as an insertion anchor only while copying', () => {
+    const nodes: LayerPanelNode[] = buildLayerPanelTree({ layers, groups })
+    const input = {
+      layers,
+      groups,
+      nodes,
+      hit: { kind: 'layer' as const, id: 'background', top: 96, bottom: 128, pointerY: 124 },
+      draggedLayerIds: ['background']
+    }
+    expect(resolveLayerPanelDropTarget(input)).toBeNull()
+    expect(resolveLayerPanelDropTarget({ ...input, copying: true })).toEqual({ kind: 'layer', id: 'background', insertAfter: false, depth: 0 })
+  })
+
+  it('treats a group row as an explicit container target while dragging layers over it', () => {
+    const nodes: LayerPanelNode[] = buildLayerPanelTree({ layers, groups })
+    expect(resolveLayerPanelDropTarget({
+      layers,
+      groups,
+      nodes,
+      hit: { kind: 'group', id: 'characters', top: 0, bottom: 32, pointerY: 16 },
+      draggedLayerIds: ['background']
+    })).toEqual({ kind: 'group', id: 'characters', depth: 1 })
+  })
+
+  it('splits every nested group title into above, container and below targets', () => {
+    const nodes: LayerPanelNode[] = buildLayerPanelTree({ layers, groups })
+    const base = { layers, groups, nodes, draggedLayerIds: [], draggedGroupId: 'other' }
+    expect(resolveLayerPanelDropTarget({ ...base, hit: { kind: 'group', id: 'face', top: 32, bottom: 64, pointerY: 34 } })).toEqual({ kind: 'above-group', id: 'face', insertAfter: true, depth: 1 })
+    expect(resolveLayerPanelDropTarget({ ...base, hit: { kind: 'group', id: 'face', top: 32, bottom: 64, pointerY: 48 } })).toEqual({ kind: 'group', id: 'face', depth: 2 })
+    expect(resolveLayerPanelDropTarget({ ...base, hit: { kind: 'group', id: 'face', top: 32, bottom: 64, pointerY: 62 } })).toEqual({ kind: 'above-group', id: 'face', insertAfter: false, depth: 1 })
   })
 })

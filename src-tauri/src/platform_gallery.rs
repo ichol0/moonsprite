@@ -25,7 +25,7 @@ pub(crate) struct GalleryListing {
 
 const BUILTIN_EXAMPLE_FILE_NAME: &str = "示例.moonsprite";
 const BUILTIN_EXAMPLE: &[u8] = include_bytes!("../resources/示例.moonsprite");
-const BUILTIN_EXAMPLE_MARKER_VERSION: &str = "2";
+const BUILTIN_EXAMPLE_MARKER_VERSION: &str = "3";
 const BUILTIN_EXAMPLE_DELETED: &str = "deleted";
 
 fn app_data_dir(app: &AppHandle) -> Result<PathBuf, String> {
@@ -44,12 +44,14 @@ fn builtin_example_marker(app: &AppHandle) -> Result<PathBuf, String> {
 pub(crate) fn ensure_builtin_example(app: AppHandle) -> Result<Option<String>, String> {
     let marker = builtin_example_marker(&app)?;
     let example_path = gallery_dir()?.join(BUILTIN_EXAMPLE_FILE_NAME);
-    if example_path.is_file() {
-        return Ok(Some(example_path.to_string_lossy().to_string()));
-    }
     let marker_state = fs::read_to_string(&marker).ok();
     if marker_state.as_deref().map(str::trim) == Some(BUILTIN_EXAMPLE_DELETED) {
         return Ok(None);
+    }
+    if example_path.is_file()
+        && marker_state.as_deref().map(str::trim) == Some(BUILTIN_EXAMPLE_MARKER_VERSION)
+    {
+        return Ok(Some(example_path.to_string_lossy().to_string()));
     }
     atomic_write(&example_path, BUILTIN_EXAMPLE)
         .map_err(|error| format!("无法安装内置示例工程：{error}"))?;

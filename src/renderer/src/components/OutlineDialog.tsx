@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Eye, X } from 'lucide-react'
 import type { OutlineDirection, OutlineDirections, OutlineKernel, OutlinePosition, RgbaColor } from '@shared/types'
 import { ColorPicker } from '@/components/ColorPicker'
+import { useI18n } from '@/components/I18nProvider'
 import { ModalShell } from '@/components/ModalShell'
 import { NumberInput } from '@/components/NumberInput'
 import { defaultOutlineSettings, normalizeOutlineSettings } from '@/core/outline-settings'
@@ -22,12 +23,7 @@ const matchesKernelDirections = (kernel: OutlineKernel, directions: OutlineDirec
   return (Object.keys(preset) as OutlineDirection[]).every((direction) => preset[direction] === directions[direction])
 }
 
-const quickShapes: Array<{ id: OutlineKernel; label: string }> = [
-  { id: 'round', label: '圆形' },
-  { id: 'square', label: '方形' },
-  { id: 'horizontal', label: '水平' },
-  { id: 'vertical', label: '垂直' }
-]
+const quickShapeIds: OutlineKernel[] = ['round', 'square', 'horizontal', 'vertical']
 
 const kernelMasks: Record<OutlineKernel, string[]> = {
   round: ['010', '101', '010'],
@@ -41,6 +37,7 @@ function OutlineKernelIcon({ kernel }: { kernel: OutlineKernel }) {
 }
 
 export function OutlineDialog({ open, session, onClose }: { open: boolean; session: DocumentSession; onClose: () => void }) {
+  const { t } = useI18n()
   const setOutlinePreview = useWorkspace((state) => state.setOutlinePreview)
   const outlineActiveSelection = useWorkspace((state) => state.outlineActiveSelection)
   const [color, setColor] = useState<RgbaColor>(() => ({ ...session.primaryColor }))
@@ -102,6 +99,7 @@ export function OutlineDialog({ open, session, onClose }: { open: boolean; sessi
   }, [open, color, thickness, position, edgeDirections, kernel, previewEnabled])
 
   if (!open) return null
+  const quickShapes = quickShapeIds.map((id) => ({ id, label: t(`outline.shape.${id}`) }))
 
   return <div className="modal-backdrop" role="presentation">
     <ModalShell as="form" storageKey="outline" defaultWidth={560} defaultHeight={540} className="outline-modal" onSubmit={(event) => { event.preventDefault(); submit() }} onKeyDown={(event) => {
@@ -111,23 +109,23 @@ export function OutlineDialog({ open, session, onClose }: { open: boolean; sessi
       event.preventDefault()
       submit()
     }}>
-      <header><div><span className="eyebrow">OUTLINE</span><h2>描边</h2></div><button type="button" className="icon-button" aria-label="关闭" onClick={close}><X size={16} /></button></header>
+      <header><div><span className="eyebrow">OUTLINE</span><h2>{t('outline.title')}</h2></div><button type="button" className="icon-button" aria-label={t('common.close')} onClick={close}><X size={16} /></button></header>
       <div className="modal-body outline-modal-body">
-        <section className="outline-color-section"><span className="outline-section-label">描边颜色</span><ColorPicker color={color} onChange={setColor} compact label="描边颜色" /></section>
-        <section className="outline-width-setting"><label><span>宽度</span><div className="outline-width-row"><input type="range" min="1" max="64" value={thickness} onChange={(event) => setThickness(Number(event.target.value))} /><NumberInput min={1} max={64} value={thickness} onValueChange={setThickness} /><span>px</span></div></label></section>
-        <fieldset className="outline-settings-fieldset"><legend>描边设置</legend>
-          <div className="outline-setting-group"><span>位置</span><div className="outline-position-control segmented-control"><button type="button" className={position === 'outside' ? 'selected' : ''} onClick={() => setPosition('outside')}>外部</button><button type="button" className={position === 'inside' ? 'selected' : ''} onClick={() => setPosition('inside')}>内部</button></div></div>
+        <section className="outline-color-section"><span className="outline-section-label">{t('outline.color')}</span><ColorPicker color={color} onChange={setColor} compact label={t('outline.color')} /></section>
+        <section className="outline-width-setting"><label><span>{t('outline.width')}</span><div className="outline-width-row"><input type="range" min="1" max="64" value={thickness} onChange={(event) => setThickness(Number(event.target.value))} /><NumberInput min={1} max={64} value={thickness} onValueChange={setThickness} /><span>px</span></div></label></section>
+        <fieldset className="outline-settings-fieldset"><legend>{t('outline.settings')}</legend>
+          <div className="outline-setting-group"><span>{t('outline.position')}</span><div className="outline-position-control segmented-control"><button type="button" className={position === 'outside' ? 'selected' : ''} onClick={() => setPosition('outside')}>{t('outline.outside')}</button><button type="button" className={position === 'inside' ? 'selected' : ''} onClick={() => setPosition('inside')}>{t('outline.inside')}</button></div></div>
           <div className="outline-pattern-layout">
-            <div className="outline-setting-group"><span>快捷形状</span><div className="outline-quick-shapes">{quickShapes.map((shape) => <button key={shape.id} type="button" className={activeQuickShape === shape.id ? 'selected' : ''} title={shape.label} aria-label={shape.label} onClick={() => applyQuickShape(shape.id)}><OutlineKernelIcon kernel={shape.id} /></button>)}</div></div>
-            <div className="outline-setting-group outline-direction-setting"><span>像素方向</span><div className="outline-direction-grid" aria-label="允许描边的像素方向">{directionGrid.map((direction) => {
+            <div className="outline-setting-group"><span>{t('outline.quickShapes')}</span><div className="outline-quick-shapes">{quickShapes.map((shape) => <button key={shape.id} type="button" className={activeQuickShape === shape.id ? 'selected' : ''} title={shape.label} aria-label={shape.label} onClick={() => applyQuickShape(shape.id)}><OutlineKernelIcon kernel={shape.id} /></button>)}</div></div>
+            <div className="outline-setting-group outline-direction-setting"><span>{t('outline.pixelDirections')}</span><div className="outline-direction-grid" aria-label={t('outline.pixelDirectionsAria')}>{directionGrid.map((direction) => {
               if (direction === 'center') return <span key={direction} className="outline-direction-center" aria-hidden="true"><i /></span>
-              return <button key={direction} type="button" className={edgeDirections[direction] ? 'selected' : ''} title={`允许 ${direction} 方向`} aria-label={`允许 ${direction} 方向`} onClick={() => toggleDirection(direction)}><span /></button>
+              return <button key={direction} type="button" className={edgeDirections[direction] ? 'selected' : ''} title={t('outline.allowDirection', { direction })} aria-label={t('outline.allowDirection', { direction })} onClick={() => toggleDirection(direction)}><span /></button>
             })}</div></div>
           </div>
         </fieldset>
-        <label className="outline-preview-toggle"><span className="outline-preview-label"><Eye size={15} />实时预览</span><input type="checkbox" checked={previewEnabled} onChange={(event) => setPreviewEnabled(event.target.checked)} /><span className="toggle-track" aria-hidden="true"><i /></span></label>
+        <label className="outline-preview-toggle"><span className="outline-preview-label"><Eye size={15} />{t('common.livePreview')}</span><input type="checkbox" checked={previewEnabled} onChange={(event) => setPreviewEnabled(event.target.checked)} /><span className="toggle-track" aria-hidden="true"><i /></span></label>
       </div>
-      <footer><button type="button" className="quiet-button" onClick={close}>取消</button><button type="submit" className="primary-button">应用描边</button></footer>
+      <footer><button type="button" className="quiet-button" onClick={close}>{t('common.cancel')}</button><button type="submit" className="primary-button">{t('outline.apply')}</button></footer>
     </ModalShell>
   </div>
 }

@@ -1,24 +1,29 @@
-import { useState } from 'react'
-import { Plus, RotateCcw, X } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
+import { Eye, EyeOff, GripVertical, Plus, RotateCcw, X } from 'lucide-react'
 import {
   DEFAULT_CHECKERBOARD_PREFERENCES,
+  DEFAULT_COLOR_EDITOR_MODES,
+  DEFAULT_GRID_COLOR,
   DEFAULT_LAYER_DISPLAY_COLOR_PRESETS,
+  DEFAULT_PIXEL_GRID_COLOR,
   loadEditorPreferences,
   parseDocumentSizePresets,
   parseExportScalePresets,
   parseLayerDisplayColorPresets,
   saveEditorPreferences,
   type BrushPreviewMode,
-  type CheckerSize,
   type CursorScale,
   type DocumentSizePreset,
   type RelativeLuminanceScope,
   type RotationIndicatorPosition,
   type ZoomToolDragMode
 } from '@/core/file-preferences'
-import { clearStoredValues } from '@/core/storage'
+import { clearStoredValuesExcept } from '@/core/storage'
+import { GALLERY_PINS_STORAGE_KEY, RECENT_PROJECTS_STORAGE_KEY } from '@/core/home-history'
+import { AVAILABLE_APP_LOCALES, localeDisplayName, type AppLocale } from '@/core/localization'
 import { ColorValueControl } from '@/components/ColorValueControl'
 import { DeleteIconButton } from '@/components/DeleteIconButton'
+import { useI18n } from '@/components/I18nProvider'
 import { ModalShell } from '@/components/ModalShell'
 import { NumberInput } from '@/components/NumberInput'
 import { ThemedSelect } from '@/components/ThemedSelect'
@@ -30,14 +35,65 @@ interface PreferencesDialogProps {
   onPresetChange: (documentSizes: DocumentSizePreset[], exportScales: number[]) => void
 }
 
-type PreferenceSection = 'general' | 'files' | 'cursor' | 'toolPreview' | 'background' | 'editing' | 'layers' | 'presets' | 'reset'
+type PreferenceSection = 'general' | 'files' | 'cursor' | 'toolPreview' | 'background' | 'editing' | 'colors' | 'layers' | 'presets' | 'reset'
 
 export function PreferencesDialog({ onClose, onPresetChange }: PreferencesDialogProps) {
+  const { locale, t } = useI18n()
   const [section, setSection] = useState<PreferenceSection>('general')
-  const [preferences, setPreferences] = useState(() => ({ ...loadEditorPreferences(), language: 'zh-CN' as const }))
+  const [preferences, setPreferences] = useState(loadEditorPreferences)
+  const [draggedColorMode, setDraggedColorMode] = useState<number | null>(null)
+  const colorModePointerDragRef = useRef<{ index: number } | null>(null)
   const update = <K extends keyof typeof preferences>(key: K, value: typeof preferences[K]): void => setPreferences((current) => ({ ...current, [key]: value }))
   const updateDocumentSize = (index: number, key: keyof DocumentSizePreset, value: number): void => update('documentSizePresets', preferences.documentSizePresets.map((preset, presetIndex) => presetIndex === index ? { ...preset, [key]: value } : preset))
   const updateLayerColorPreset = (index: number, color: typeof preferences.layerDisplayColorPresets[number]): void => update('layerDisplayColorPresets', preferences.layerDisplayColorPresets.map((preset, presetIndex) => presetIndex === index ? { ...color, a: 255 } : preset))
+  const moveColorMode = (index: number, target: number): void => setPreferences((current) => {
+    if (target < 0 || target >= current.colorEditorModes.length || index === target) return current
+    const next = current.colorEditorModes.map((item) => ({ ...item }))
+    const [item] = next.splice(index, 1)
+    next.splice(target, 0, item)
+    return { ...current, colorEditorModes: next }
+  })
+  const beginColorModePointerDrag = (event: React.PointerEvent<HTMLElement>, index: number): void => {
+    if (event.button !== 0) return
+    event.preventDefault()
+    event.stopPropagation()
+    colorModePointerDragRef.current = { index }
+    setDraggedColorMode(index)
+  }
+  const moveColorModePointerTo = (target: number): void => {
+    const drag = colorModePointerDragRef.current
+    if (!drag || target < 0 || target === drag.index) return
+    moveColorMode(drag.index, target)
+    drag.index = target
+    setDraggedColorMode(target)
+  }
+  useEffect(() => {
+    const move = (event: PointerEvent): void => {
+      const drag = colorModePointerDragRef.current
+      if (!drag) return
+      const pointed = typeof document.elementFromPoint === 'function' ? document.elementFromPoint(event.clientX, event.clientY) : null
+      const row = (pointed instanceof Element ? pointed.closest<HTMLElement>('[data-color-mode-index]') : null)
+        ?? (event.target instanceof Element ? event.target.closest<HTMLElement>('[data-color-mode-index]') : null)
+      const target = row ? Number(row.dataset.colorModeIndex) : -1
+      if (!Number.isInteger(target) || target < 0) return
+      moveColorModePointerTo(target)
+      event.preventDefault()
+    }
+    const end = (event: PointerEvent): void => {
+      const drag = colorModePointerDragRef.current
+      if (!drag) return
+      colorModePointerDragRef.current = null
+      setDraggedColorMode(null)
+    }
+    window.addEventListener('pointermove', move)
+    window.addEventListener('pointerup', end)
+    window.addEventListener('pointercancel', end)
+    return () => {
+      window.removeEventListener('pointermove', move)
+      window.removeEventListener('pointerup', end)
+      window.removeEventListener('pointercancel', end)
+    }
+  }, [])
   const recoveryValue = preferences.recovery ? String(preferences.recoveryMinutes) : 'off'
   const persist = (): void => {
     const documentSizePresets = parseDocumentSizePresets(JSON.stringify(preferences.documentSizePresets))
@@ -50,61 +106,68 @@ export function PreferencesDialog({ onClose, onPresetChange }: PreferencesDialog
   }
   const resetAllSettings = async (): Promise<void> => {
     const choice = await useWorkspace.getState().requestDialog({
-      title: '恢复所有初始设置',
-      message: '确定恢复 MoonSprite 的所有软件设置吗？',
-      detail: '将清除首选项、快捷键、工具状态、最近记录和工作区布局记录。不会删除任何用户创建的工程、笔刷、色板、工作区文件或其他磁盘文件。',
+      title: t('preferences.resetDialog.title'),
+      message: t('preferences.resetDialog.message'),
+      detail: t('preferences.resetDialog.detail'),
       choices: [
-        { id: 'cancel', label: '取消', tone: 'quiet' },
-        { id: 'reset', label: '恢复所有初始设置', tone: 'danger' }
+        { id: 'cancel', label: t('preferences.cancel'), tone: 'quiet' },
+        { id: 'reset', label: t('preferences.resetAll'), tone: 'danger' }
       ]
     })
     if (choice !== 'reset') return
-    clearStoredValues()
+    clearStoredValuesExcept([RECENT_PROJECTS_STORAGE_KEY, GALLERY_PINS_STORAGE_KEY])
     window.location.reload()
   }
   const toggle = (label: string, checked: boolean, onChange: (checked: boolean) => void, tooltip?: string) => <label className="preference-toggle outline-preview-toggle"><Tooltip content={tooltip}><span>{label}</span></Tooltip><input type="checkbox" checked={checked} onChange={(event) => onChange(event.target.checked)} /><span className="toggle-track" aria-hidden="true"><i /></span></label>
 
-  return <div className="modal-backdrop" role="presentation"><ModalShell storageKey="preferences" defaultWidth={720} defaultHeight={560} minWidth={620} minHeight={460} fitContent={false} className="settings-modal" role="dialog" aria-label="首选项">
-    <header><div><span className="eyebrow">PREFERENCES</span><h2>首选项</h2></div><button className="icon-button" aria-label="关闭" onClick={onClose}><X size={16} /></button></header>
-    <div className="settings-layout"><nav>{([['general', '常规'], ['files', '文件'], ['cursor', '光标'], ['toolPreview', '工具预览'], ['background', '背景'], ['editing', '编辑'], ['layers', '图层'], ['presets', '预设'], ['reset', '重置']] as Array<[PreferenceSection, string]>).map(([id, label]) => <button key={id} className={section === id ? 'selected' : ''} onClick={() => setSection(id)}>{label}</button>)}</nav><main>
+  return <div className="modal-backdrop" role="presentation"><ModalShell storageKey="preferences" defaultWidth={720} defaultHeight={560} minWidth={620} minHeight={460} fitContent={false} className="settings-modal" role="dialog" aria-label={t('preferences.title')}>
+    <header><div><span className="eyebrow">{t('preferences.eyebrow')}</span><h2>{t('preferences.title')}</h2></div><button className="icon-button" aria-label={t('common.close')} onClick={onClose}><X size={16} /></button></header>
+    <div className="settings-layout"><nav>{([['general', 'preferences.sections.general'], ['files', 'preferences.sections.files'], ['cursor', 'preferences.sections.cursor'], ['toolPreview', 'preferences.sections.toolPreview'], ['background', 'preferences.sections.background'], ['editing', 'preferences.sections.editing'], ['colors', 'preferences.sections.colors'], ['layers', 'preferences.sections.layers'], ['presets', 'preferences.sections.presets'], ['reset', 'preferences.sections.reset']] as Array<[PreferenceSection, Parameters<typeof t>[0]]>).map(([id, labelKey]) => <button key={id} className={section === id ? 'selected' : ''} onClick={() => setSection(id)}>{t(labelKey)}</button>)}</nav><main>
       {section === 'general' && <>
-        <div className="preference-field"><span>语言</span><span className="preference-static-value">简体中文</span></div>
-        <label className="preference-field">旋转指向标位置<ThemedSelect value={preferences.rotationIndicatorPosition} groups={[{ label: '位置', options: [{ value: 'view', label: '视图中心' }, { value: 'canvas', label: '画布中心' }] }]} label="旋转指向标位置" onChange={(value) => update('rotationIndicatorPosition', value as RotationIndicatorPosition)} /></label>
-        <label className="preference-field">默认缩放模式<ThemedSelect value={preferences.zoomToolDragMode} groups={[{ label: '缩放方式', options: [{ value: 'smooth', label: '平滑缩放' }, { value: 'stepped', label: '百分比缩放' }] }]} label="默认缩放模式" onChange={(value) => update('zoomToolDragMode', value as ZoomToolDragMode)} /></label>
-        <label className="preference-field">查看相对明暗作用区域<ThemedSelect value={preferences.relativeLuminanceScope} groups={[{ label: '作用区域', options: [{ value: 'canvas', label: '画布视图内' }, { value: 'app', label: '整体（整个软件）' }] }]} label="查看相对明暗作用区域" onChange={(value) => update('relativeLuminanceScope', value as RelativeLuminanceScope)} /></label>
+        <label className="preference-field">{t('preferences.language')}<ThemedSelect value={preferences.language} groups={[{ label: t('preferences.languageGroup'), options: AVAILABLE_APP_LOCALES.map((value) => ({ value, label: localeDisplayName(value, locale) })) }]} label={t('preferences.language')} onChange={(value) => update('language', value as AppLocale)} /></label>
+        {toggle(t('preferences.timelapseRecording'), preferences.timelapseRecordingEnabled, (value) => update('timelapseRecordingEnabled', value), t('preferences.timelapseRecordingHint'))}
+        <label className="preference-field">{t('preferences.position')}<ThemedSelect value={preferences.rotationIndicatorPosition} groups={[{ label: t('preferences.positionGroup'), options: [{ value: 'view', label: t('preferences.position.view') }, { value: 'canvas', label: t('preferences.position.canvas') }] }]} label={t('preferences.position')} onChange={(value) => update('rotationIndicatorPosition', value as RotationIndicatorPosition)} /></label>
+        <label className="preference-field">{t('preferences.zoomMode')}<ThemedSelect value={preferences.zoomToolDragMode} groups={[{ label: t('preferences.zoomModeGroup'), options: [{ value: 'smooth', label: t('preferences.zoomMode.smooth') }, { value: 'stepped', label: t('preferences.zoomMode.stepped') }] }]} label={t('preferences.zoomMode')} onChange={(value) => update('zoomToolDragMode', value as ZoomToolDragMode)} /></label>
+        <label className="preference-field">{t('preferences.luminanceScope')}<ThemedSelect value={preferences.relativeLuminanceScope} groups={[{ label: t('preferences.luminanceScopeGroup'), options: [{ value: 'canvas', label: t('preferences.luminanceScope.canvas') }, { value: 'app', label: t('preferences.luminanceScope.app') }] }]} label={t('preferences.luminanceScope')} onChange={(value) => update('relativeLuminanceScope', value as RelativeLuminanceScope)} /></label>
       </>}
       {section === 'files' && <>
-        <label className="preference-field">默认保存格式<ThemedSelect value={preferences.saveFormat} groups={[{ label: '保存格式', options: [{ value: 'moonsprite', label: '.moonsprite' }, { value: 'png', label: '.png' }, { value: 'jpeg', label: '.jpg / .jpeg' }, { value: 'webp', label: '.webp' }, { value: 'ase', label: '.ase' }, { value: 'aseprite', label: '.aseprite' }] }]} label="默认保存格式" onChange={(value) => update('saveFormat', value)} /></label>
-        <label className="preference-field">默认导出格式<ThemedSelect value={preferences.exportFormat} groups={[{ label: '导出格式', options: [{ value: 'png', label: 'PNG' }, { value: 'jpeg', label: 'JPEG' }, { value: 'webp', label: 'WebP' }, { value: 'svg', label: 'SVG' }] }]} label="默认导出格式" onChange={(value) => update('exportFormat', value)} /></label>
-        <label className="preference-field">自动保存恢复数据<ThemedSelect value={recoveryValue} groups={[{ label: '保存间隔', options: [{ value: 'off', label: '关闭' }, { value: '0.5', label: '每 30 秒' }, { value: '1', label: '每 1 分钟' }, { value: '2', label: '每 2 分钟' }, { value: '5', label: '每 5 分钟' }, { value: '10', label: '每 10 分钟' }] }]} label="自动保存恢复数据" onChange={(value) => setPreferences((current) => value === 'off' ? { ...current, recovery: false } : { ...current, recovery: true, recoveryMinutes: Number(value) })} /></label>
+        <label className="preference-field">{t('preferences.saveFormat')}<ThemedSelect value={preferences.saveFormat} groups={[{ label: t('preferences.saveFormatGroup'), options: [{ value: 'moonsprite', label: '.moonsprite' }, { value: 'png', label: '.png' }, { value: 'jpeg', label: '.jpg / .jpeg' }, { value: 'webp', label: '.webp' }, { value: 'ase', label: '.ase' }, { value: 'aseprite', label: '.aseprite' }] }]} label={t('preferences.saveFormat')} onChange={(value) => update('saveFormat', value)} /></label>
+        <label className="preference-field">{t('preferences.exportFormat')}<ThemedSelect value={preferences.exportFormat} groups={[{ label: t('preferences.exportFormatGroup'), options: [{ value: 'png', label: 'PNG' }, { value: 'jpeg', label: 'JPEG' }, { value: 'webp', label: 'WebP' }, { value: 'svg', label: 'SVG' }, { value: 'gif', label: 'GIF' }] }]} label={t('preferences.exportFormat')} onChange={(value) => update('exportFormat', value)} /></label>
+        <label className="preference-field">{t('preferences.recovery')}<ThemedSelect value={recoveryValue} groups={[{ label: t('preferences.recoveryGroup'), options: [{ value: 'off', label: t('preferences.recovery.off') }, { value: '0.5', label: t('preferences.recovery.seconds30') }, { value: '1', label: t('preferences.recovery.minutes1') }, { value: '2', label: t('preferences.recovery.minutes2') }, { value: '5', label: t('preferences.recovery.minutes5') }, { value: '10', label: t('preferences.recovery.minutes10') }] }]} label={t('preferences.recovery')} onChange={(value) => setPreferences((current) => value === 'off' ? { ...current, recovery: false } : { ...current, recovery: true, recoveryMinutes: Number(value) })} /></label>
       </>}
       {section === 'cursor' && <>
-        {toggle('使用本地指针', preferences.useLocalCursors, (value) => update('useLocalCursors', value), '开启后优先使用电脑系统指针；系统没有对应指针的特殊操作仍使用 MoonSprite 指针。')}
-        <label className="preference-field">鼠标光标比例<ThemedSelect value={String(preferences.cursorScale)} groups={[{ label: '光标比例', options: [{ value: '1', label: '100%' }, { value: '1.25', label: '125%' }, { value: '1.5', label: '150%' }, { value: '2', label: '200%' }] }]} label="鼠标光标比例" onChange={(value) => update('cursorScale', Number(value) as CursorScale)} /></label>
+        {toggle(t('preferences.localCursor'), preferences.useLocalCursors, (value) => update('useLocalCursors', value), t('preferences.localCursorHint'))}
+        <label className="preference-field">{t('preferences.cursorScale')}<ThemedSelect value={String(preferences.cursorScale)} groups={[{ label: t('preferences.cursorScaleGroup'), options: [{ value: '1', label: '100%' }, { value: '1.25', label: '125%' }, { value: '1.5', label: '150%' }, { value: '2', label: '200%' }] }]} label={t('preferences.cursorScale')} disabled={preferences.useLocalCursors} onChange={(value) => update('cursorScale', Number(value) as CursorScale)} /></label>
       </>}
       {section === 'toolPreview' && <>
-        <label className="preference-field">笔刷预览<ThemedSelect value={preferences.brushPreviewMode} groups={[{ label: '预览样式', options: [{ value: 'none', label: '无' }, { value: 'edge', label: '仅显示边缘' }, { value: 'full', label: '完整预览' }, { value: 'full-edge', label: '完整预览并显示边缘' }] }]} label="笔刷预览" onChange={(value) => update('brushPreviewMode', value as BrushPreviewMode)} /></label>
-        {toggle('绘制期间保持笔刷预览', preferences.drawingBrushPreviewEnabled, (value) => update('drawingBrushPreviewEnabled', value))}
-        {toggle('框选时显示十字指针', preferences.selectionCrosshair, (value) => update('selectionCrosshair', value))}
+        <label className="preference-field">{t('preferences.brushPreview')}<ThemedSelect value={preferences.brushPreviewMode} groups={[{ label: t('preferences.brushPreviewGroup'), options: [{ value: 'none', label: t('preferences.brushPreview.none') }, { value: 'edge', label: t('preferences.brushPreview.edge') }, { value: 'full', label: t('preferences.brushPreview.full') }, { value: 'full-edge', label: t('preferences.brushPreview.fullEdge') }] }]} label={t('preferences.brushPreview')} onChange={(value) => update('brushPreviewMode', value as BrushPreviewMode)} /></label>
+        {preferences.brushPreviewMode === 'full-edge' && toggle(t('preferences.drawingBrushPreview'), preferences.drawingBrushPreviewEnabled, (value) => update('drawingBrushPreviewEnabled', value))}
+        {toggle(t('preferences.selectionCrosshair'), preferences.selectionCrosshair, (value) => update('selectionCrosshair', value))}
       </>}
       {section === 'background' && <>
-        <label className="preference-field">透明背景格大小<ThemedSelect value={String(preferences.checkerboard.size)} groups={[{ label: '格子大小', options: [{ value: '4', label: '小（4 px）' }, { value: '8', label: '较小（8 px）' }, { value: '16', label: '中等（16 px）' }, { value: '32', label: '大（32 px）' }] }]} label="透明背景格大小" onChange={(value) => update('checkerboard', { ...preferences.checkerboard, size: Number(value) as CheckerSize })} /></label>
-        <div className="preference-checker-colors"><div className="preference-checker-color-heading"><span>透明背景颜色</span><button type="button" className="quiet-button" onClick={() => update('checkerboard', { ...DEFAULT_CHECKERBOARD_PREFERENCES, lightColor: { ...DEFAULT_CHECKERBOARD_PREFERENCES.lightColor }, darkColor: { ...DEFAULT_CHECKERBOARD_PREFERENCES.darkColor } })}><RotateCcw size={13} />重置</button></div><div className="preference-color-value-list"><ColorValueControl color={preferences.checkerboard.lightColor} onChange={(lightColor) => update('checkerboard', { ...preferences.checkerboard, lightColor: { ...lightColor, a: 255 } })} label="透明背景颜色" roleLabel="浅色" /><ColorValueControl color={preferences.checkerboard.darkColor} onChange={(darkColor) => update('checkerboard', { ...preferences.checkerboard, darkColor: { ...darkColor, a: 255 } })} label="透明背景颜色" roleLabel="深色" /></div></div>
+        <label className="preference-field">{t('preferences.checkerSize')}<NumberInput aria-label={t('preferences.checkerSize')} min={1} max={256} suffix="px" value={preferences.checkerboard.size} onValueChange={(size) => update('checkerboard', { ...preferences.checkerboard, size: Math.round(size) })} /></label>
+        <div className="preference-checker-colors"><div className="preference-checker-color-heading"><span>{t('preferences.checkerColors')}</span><button type="button" className="quiet-button" onClick={() => update('checkerboard', { ...DEFAULT_CHECKERBOARD_PREFERENCES, lightColor: { ...DEFAULT_CHECKERBOARD_PREFERENCES.lightColor }, darkColor: { ...DEFAULT_CHECKERBOARD_PREFERENCES.darkColor } })}><RotateCcw size={13} />{t('preferences.reset')}</button></div><div className="preference-color-value-list"><ColorValueControl color={preferences.checkerboard.lightColor} onChange={(lightColor) => update('checkerboard', { ...preferences.checkerboard, lightColor: { ...lightColor, a: 255 } })} label={t('preferences.checkerColors')} roleLabel={t('preferences.lightColor')} /><ColorValueControl color={preferences.checkerboard.darkColor} onChange={(darkColor) => update('checkerboard', { ...preferences.checkerboard, darkColor: { ...darkColor, a: 255 } })} label={t('preferences.checkerColors')} roleLabel={t('preferences.darkColor')} /></div></div>
+        <div className="preference-checker-colors preference-grid-colors"><div className="preference-checker-color-heading"><span>{t('preferences.pixelGridColor')}</span><button type="button" className="quiet-button" onClick={() => update('pixelGridColor', { ...DEFAULT_PIXEL_GRID_COLOR })}><RotateCcw size={13} />{t('preferences.reset')}</button></div><div className="preference-grid-color-list"><ColorValueControl color={preferences.pixelGridColor} onChange={(color) => update('pixelGridColor', color)} label={t('preferences.pixelGridColor')} roleLabel={t('preferences.pixelGridColor')} inPalette={false} /></div></div>
+        <div className="preference-checker-colors preference-grid-colors"><div className="preference-checker-color-heading"><span>{t('preferences.gridColor')}</span><button type="button" className="quiet-button" onClick={() => update('gridColor', { ...DEFAULT_GRID_COLOR })}><RotateCcw size={13} />{t('preferences.reset')}</button></div><div className="preference-grid-color-list"><ColorValueControl color={preferences.gridColor} onChange={(color) => update('gridColor', color)} label={t('preferences.gridColor')} roleLabel={t('preferences.gridColor')} inPalette={false} /></div></div>
       </>}
       {section === 'editing' && <>
-        {toggle('使用滚轮缩放', preferences.wheelZoomEnabled, (value) => update('wheelZoomEnabled', value))}
-        {toggle('实时显示铅笔直线预览', preferences.shiftLinePreviewEnabled, (value) => update('shiftLinePreviewEnabled', value))}
-        {toggle('直线算法优化', preferences.balancedShiftLineEnabled, (value) => update('balancedShiftLineEnabled', value), '启用后，斜线像素会均匀分配为长度相近的阶梯，使线条节奏更规整。')}
-        {toggle('套索选区预览闭合', preferences.lassoPreviewClosed, (value) => update('lassoPreviewClosed', value))}
-        {toggle('吸管取色后切回铅笔', preferences.eyedropperSwitchToPencil, (value) => update('eyedropperSwitchToPencil', value))}
+        {toggle(t('preferences.wheelZoom'), preferences.wheelZoomEnabled, (value) => update('wheelZoomEnabled', value))}
+        {toggle(t('preferences.shiftLinePreview'), preferences.shiftLinePreviewEnabled, (value) => update('shiftLinePreviewEnabled', value))}
+        {toggle(t('preferences.balancedLine'), preferences.balancedShiftLineEnabled, (value) => update('balancedShiftLineEnabled', value), t('preferences.balancedLineHint'))}
+        <label className="preference-field"><Tooltip content={t('preferences.lineDirectionStepHint')}><span>{t('preferences.lineDirectionStep')}</span></Tooltip><NumberInput aria-label={t('preferences.lineDirectionStep')} min={1} max={16} value={preferences.lineDirectionStep} onValueChange={(value) => update('lineDirectionStep', Math.round(value))} /></label>
+        {toggle(t('preferences.lassoClosed'), preferences.lassoPreviewClosed, (value) => update('lassoPreviewClosed', value))}
+        {toggle(t('preferences.eyedropperPencil'), preferences.eyedropperSwitchToPencil, (value) => update('eyedropperSwitchToPencil', value))}
       </>}
-      {section === 'layers' && <div className="preference-checker-colors preference-layer-colors">
-        <div className="preference-checker-color-heading"><span>图层属性颜色预设</span><div><button type="button" className="quiet-button" aria-label="恢复默认颜色" onClick={() => update('layerDisplayColorPresets', DEFAULT_LAYER_DISPLAY_COLOR_PRESETS.map((color) => ({ ...color })))}><RotateCcw size={13} />恢复默认</button><button type="button" className="quiet-button" disabled={preferences.layerDisplayColorPresets.length >= 12} onClick={() => update('layerDisplayColorPresets', [...preferences.layerDisplayColorPresets, { r: 117, g: 117, b: 117, a: 255 }])}><Plus size={13} />新增颜色</button></div></div>
-        <div className="preference-layer-color-grid">{preferences.layerDisplayColorPresets.map((color, index) => <div className="preference-layer-color-row" key={index}><ColorValueControl color={color} onChange={(value) => updateLayerColorPreset(index, value)} label={`图层显示颜色预设 ${index + 1}`} storageKey="layer-preset" /><DeleteIconButton size="regular" aria-label={`删除图层颜色预设 ${index + 1}`} disabled={preferences.layerDisplayColorPresets.length === 1} onClick={() => update('layerDisplayColorPresets', preferences.layerDisplayColorPresets.filter((_, presetIndex) => presetIndex !== index))} /></div>)}</div>
-      </div>}
-      {section === 'presets' && <div className="preference-presets"><section><header><strong>新建工程尺寸</strong><button type="button" onClick={() => update('documentSizePresets', [...preferences.documentSizePresets, { width: 64, height: 64 }])}><Plus size={13} />新增尺寸</button></header><div className="preference-preset-grid">{preferences.documentSizePresets.map((preset, index) => <div className="document-size-preset-row" key={index}><NumberInput aria-label={`预设 ${index + 1} 宽度`} min={1} max={16384} suffix="px" value={preset.width} onValueChange={(value) => updateDocumentSize(index, 'width', value)} /><span>x</span><NumberInput aria-label={`预设 ${index + 1} 高度`} min={1} max={16384} suffix="px" value={preset.height} onValueChange={(value) => updateDocumentSize(index, 'height', value)} /><DeleteIconButton aria-label={`删除尺寸 ${preset.width}x${preset.height}`} disabled={preferences.documentSizePresets.length === 1} onClick={() => update('documentSizePresets', preferences.documentSizePresets.filter((_, presetIndex) => presetIndex !== index))} /></div>)}</div></section><section><header><strong>导出图片放大倍数</strong><button type="button" onClick={() => update('exportScalePresets', [...preferences.exportScalePresets, 100])}><Plus size={13} />新增倍数</button></header><div className="preference-preset-grid export-scale-preset-grid">{preferences.exportScalePresets.map((scale, index) => <div className="export-scale-preset-row" key={index}><NumberInput aria-label={`导出倍数 ${index + 1}`} min={1} max={6400} suffix="%" value={scale} onValueChange={(value) => update('exportScalePresets', preferences.exportScalePresets.map((currentScale, scaleIndex) => scaleIndex === index ? value : currentScale))} /><DeleteIconButton aria-label={`删除 ${scale}%`} disabled={preferences.exportScalePresets.length === 1} onClick={() => update('exportScalePresets', preferences.exportScalePresets.filter((_, scaleIndex) => scaleIndex !== index))} /></div>)}</div></section></div>}
-      {section === 'reset' && <><p>重置只清除软件配置记录。用户创建的工程、笔刷、色板、工作区文件和其他磁盘文件不会删除。</p><button className="danger-button" onClick={() => void resetAllSettings()}>恢复所有初始设置</button></>}
+      {section === 'colors' && <div className="preference-presets preference-color-settings"><section><header><strong>{t('preferences.colorModes')}</strong><button type="button" className="quiet-button" onClick={() => update('colorEditorModes', DEFAULT_COLOR_EDITOR_MODES.map((item) => ({ ...item })))}><RotateCcw size={13} />{t('preferences.restoreDefaults')}</button></header><div className="preference-color-mode-list">{preferences.colorEditorModes.map((item, index) => {
+        const enabledCount = preferences.colorEditorModes.filter((candidate) => candidate.enabled).length
+        return <div className={`preference-color-mode-row ${draggedColorMode === index ? 'dragging' : ''}`} data-color-mode-index={index} key={item.mode} onPointerDown={(event) => { if ((event.target as Element).closest('.color-mode-drag-handle')) beginColorModePointerDrag(event, index) }} onPointerEnter={() => moveColorModePointerTo(index)} onPointerMove={() => moveColorModePointerTo(index)}><GripVertical className="color-mode-drag-handle" size={15} aria-hidden="true" /><span className="color-mode-name">{item.mode === 'gray' ? 'Gray' : item.mode.toUpperCase()}</span><button type="button" className="icon-button color-mode-visibility" aria-label={item.enabled ? `${item.mode} enabled` : `${item.mode} disabled`} aria-pressed={item.enabled} disabled={item.enabled && enabledCount === 1} onClick={() => update('colorEditorModes', preferences.colorEditorModes.map((candidate) => candidate.mode === item.mode ? { ...candidate, enabled: !candidate.enabled } : candidate))}>{item.enabled ? <Eye size={14} /> : <EyeOff size={14} />}</button></div>
+      })}</div></section></div>}
+      {section === 'layers' && <div className="preference-presets preference-layer-settings preference-checker-colors"><section><header><strong>{t('preferences.layerColors')}</strong><div><button type="button" className="quiet-button" aria-label={t('preferences.restoreDefaults')} onClick={() => update('layerDisplayColorPresets', DEFAULT_LAYER_DISPLAY_COLOR_PRESETS.map((color) => ({ ...color })))}><RotateCcw size={13} />{t('preferences.restoreDefaults')}</button><button type="button" className="quiet-button" disabled={preferences.layerDisplayColorPresets.length >= 12} onClick={() => update('layerDisplayColorPresets', [...preferences.layerDisplayColorPresets, { r: 117, g: 117, b: 117, a: 255 }])}><Plus size={13} />{t('preferences.addColor')}</button></div></header>
+        <div className="preference-layer-color-grid">{preferences.layerDisplayColorPresets.map((color, index) => <div className="preference-layer-color-row" key={index}><ColorValueControl color={color} onChange={(value) => updateLayerColorPreset(index, value)} label={t('preferences.layerColorAria', { index: index + 1 })} storageKey="layer-preset" /><DeleteIconButton size="regular" aria-label={t('preferences.deleteLayerColorAria', { index: index + 1 })} disabled={preferences.layerDisplayColorPresets.length === 1} onClick={() => update('layerDisplayColorPresets', preferences.layerDisplayColorPresets.filter((_, presetIndex) => presetIndex !== index))} /></div>)}</div>
+      </section></div>}
+      {section === 'presets' && <div className="preference-presets"><section><header><strong>{t('preferences.newDocumentPresets')}</strong><button type="button" onClick={() => update('documentSizePresets', [...preferences.documentSizePresets, { width: 64, height: 64 }])}><Plus size={13} />{t('preferences.addSize')}</button></header><div className="preference-preset-grid">{preferences.documentSizePresets.map((preset, index) => <div className="document-size-preset-row" key={index}><NumberInput aria-label={t('preferences.presetWidthAria', { index: index + 1 })} min={1} max={16384} suffix="px" value={preset.width} onValueChange={(value) => updateDocumentSize(index, 'width', value)} /><span>x</span><NumberInput aria-label={t('preferences.presetHeightAria', { index: index + 1 })} min={1} max={16384} suffix="px" value={preset.height} onValueChange={(value) => updateDocumentSize(index, 'height', value)} /><DeleteIconButton aria-label={t('preferences.deleteSizeAria', { width: preset.width, height: preset.height })} disabled={preferences.documentSizePresets.length === 1} onClick={() => update('documentSizePresets', preferences.documentSizePresets.filter((_, presetIndex) => presetIndex !== index))} /></div>)}</div></section><section><header><strong>{t('preferences.exportScalePresets')}</strong><button type="button" onClick={() => update('exportScalePresets', [...preferences.exportScalePresets, 100])}><Plus size={13} />{t('preferences.addScale')}</button></header><div className="preference-preset-grid export-scale-preset-grid">{preferences.exportScalePresets.map((scale, index) => <div className="export-scale-preset-row" key={index}><NumberInput aria-label={t('preferences.exportScaleAria', { index: index + 1 })} min={1} max={6400} suffix="%" value={scale} onValueChange={(value) => update('exportScalePresets', preferences.exportScalePresets.map((currentScale, scaleIndex) => scaleIndex === index ? value : currentScale))} /><DeleteIconButton aria-label={t('preferences.deleteScaleAria', { scale })} disabled={preferences.exportScalePresets.length === 1} onClick={() => update('exportScalePresets', preferences.exportScalePresets.filter((_, scaleIndex) => scaleIndex !== index))} /></div>)}</div></section></div>}
+      {section === 'reset' && <><p>{t('preferences.resetDescription')}</p><button className="danger-button" onClick={() => void resetAllSettings()}>{t('preferences.resetAll')}</button></>}
     </main></div>
-    <footer><button className="quiet-button" onClick={onClose}>取消</button><button className="quiet-button" onClick={persist}>应用</button><button className="primary-button" onClick={() => { persist(); onClose() }}>确定</button></footer>
+    <footer><button className="quiet-button" onClick={onClose}>{t('preferences.cancel')}</button><button className="quiet-button" onClick={persist}>{t('preferences.apply')}</button><button className="primary-button" onClick={() => { persist(); onClose() }}>{t('preferences.confirm')}</button></footer>
   </ModalShell></div>
 }
