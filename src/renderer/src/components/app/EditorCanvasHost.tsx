@@ -1,7 +1,7 @@
 import { createPortal, flushSync } from 'react-dom'
 import { lazy, memo, Suspense, useEffect, useRef, useState, type CSSProperties, type DragEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
-import { FileImage, X } from 'lucide-react'
 import { PerformanceProfiler } from '@/components/PerformanceProfiler'
+import { PixelUtilityIcon } from '@/components/PixelUtilityIcon'
 import { createDocumentPaneLayout, documentPaneLeafIds, insertDocumentPane, moveDocumentPane, removeDocumentPane, resizeDocumentPane, type DocumentPaneDirection, type DocumentPaneNode, type DocumentPaneOrientation, type DocumentPanePlacement } from '@/core/document-pane-layout'
 import { paneDockTargetAtPoint, type DocumentPaneDockTarget } from './document-pane-hit-test'
 import { useWorkspace } from '@/store/workspace'
@@ -222,7 +222,7 @@ export const EditorCanvasHost = memo(function EditorCanvasHost({ documentPaneLay
       const paneSession = sessions.find((item) => item.document.id === node.documentId)
       if (!paneSession) return null
       return <section key={node.id} data-document-pane-id={node.id} className={`document-pane ${activeId === paneSession.document.id ? 'active' : ''} ${draggingPaneId === paneSession.document.id ? 'dragging' : ''}`} onPointerDownCapture={() => useWorkspace.getState().setActive(paneSession.document.id)} onWheelCapture={() => useWorkspace.getState().setActive(paneSession.document.id)}>
-        <header onPointerDown={(event) => beginPaneDrag(event, paneSession.document.id)}><FileImage size={13} /><span>{paneSession.document.name}</span>{paneSession.document.dirty && <i />}<button title={t('common.close')} aria-label={t('tabs.closeAria', { name: paneSession.document.name })} onClick={() => { void useWorkspace.getState().closeDocument(paneSession.document.id) }}><X size={13} /></button></header>
+        <header onPointerDown={(event) => beginPaneDrag(event, paneSession.document.id)}><PixelUtilityIcon kind="project" /><span>{paneSession.document.name}</span>{paneSession.document.dirty && <i />}<button title={t('common.close')} aria-label={t('tabs.closeAria', { name: paneSession.document.name })} onClick={() => { void useWorkspace.getState().closeDocument(paneSession.document.id) }}><PixelUtilityIcon kind="close" /></button></header>
         <div className="document-pane-canvas"><LazyCanvasStage session={paneSession} /></div>
       </section>
     }
@@ -247,5 +247,5 @@ export const EditorCanvasHost = memo(function EditorCanvasHost({ documentPaneLay
     ? <div className="split-workspace">{renderNode(renderedPaneLayout)}</div>
     : session ? <div className="document-pane-target" data-document-pane-id={session.document.id}><LazyCanvasStage session={session} /></div> : null
 
-  return <PerformanceProfiler id="EditorCanvasHost"><div className={`stage-wrap ${renderedPaneLayout ? 'has-split' : ''}`} onDragOver={(event) => { if (event.dataTransfer.types.includes('application/x-moonsprite-document')) { event.preventDefault(); event.dataTransfer.dropEffect = 'move' } }} onDrop={dropDocumentIntoWorkspace}><Suspense fallback={<div aria-hidden="true" />}>{content}</Suspense></div>{paneTabReturnPreview && createPortal(<div className="document-tab-drag-layer" aria-hidden="true"><div className="document-pane-tab-return-preview" style={{ left: paneTabReturnPreview.left, top: paneTabReturnPreview.top, height: paneTabReturnPreview.height }} /><div className="document-tab-drag-ghost" data-document-pane-return-ghost="true" style={{ left: paneTabReturnPreview.pointerX - paneTabReturnPreview.pointerOffsetX, top: paneTabReturnPreview.pointerY - paneTabReturnPreview.pointerOffsetY, width: paneTabReturnPreview.width, height: paneTabReturnPreview.ghostHeight }}><FileImage size={14} /><span>{paneTabReturnPreview.name}</span></div></div>, document.body)}</PerformanceProfiler>
+  return <PerformanceProfiler id="EditorCanvasHost"><div className={`stage-wrap ${renderedPaneLayout ? 'has-split' : ''}`} onDragOver={(event) => { if (event.dataTransfer.types.includes('application/x-moonsprite-document')) { event.preventDefault(); event.dataTransfer.dropEffect = 'move' } }} onDrop={dropDocumentIntoWorkspace}><Suspense fallback={<div aria-hidden="true" />}>{content}</Suspense></div>{paneTabReturnPreview && createPortal(<div className="document-tab-drag-layer" aria-hidden="true"><div className="document-pane-tab-return-preview" style={{ left: paneTabReturnPreview.left, top: paneTabReturnPreview.top, height: paneTabReturnPreview.height }} /><div className="document-tab-drag-ghost" data-document-pane-return-ghost="true" style={{ left: paneTabReturnPreview.pointerX - paneTabReturnPreview.pointerOffsetX, top: paneTabReturnPreview.pointerY - paneTabReturnPreview.pointerOffsetY, width: paneTabReturnPreview.width, height: paneTabReturnPreview.ghostHeight }}><PixelUtilityIcon kind="project" /><span>{paneTabReturnPreview.name}</span></div></div>, document.body)}</PerformanceProfiler>
 })

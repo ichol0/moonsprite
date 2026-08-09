@@ -5,6 +5,7 @@ import { animationCelKey, connectAnimationCels, ensureAnimationDocument } from '
 import { buildLayerPanelTree } from '@/core/layer-panel-layout'
 import { ONION_SKIN_PREFERENCE_KEY } from '@/core/file-preferences'
 import { useWorkspace } from '@/store/workspace'
+import { revealLayerInPanel } from '@/components/layer-panel-reveal'
 import { LayersPanel } from './LayersPanel'
 
 beforeEach(() => {
@@ -98,6 +99,23 @@ describe('LayersPanel animation', () => {
     fireEvent.keyDown(opacity, { key: 'Enter' })
     await waitFor(() => expect(timeline.cels[0].opacity).toBeCloseTo(0.45))
     expect(screen.queryByRole('spinbutton', { name: '不透明度数值' })).not.toBeInTheDocument()
+  })
+
+  it('updates the active cel content without rerendering the full layer panel', () => {
+    const document = createDocument('live cel content', 1, 1, 'rgba')
+    useWorkspace.getState().addSession(document)
+    const session = useWorkspace.getState().sessions[0]
+    const timeline = ensureAnimationDocument(document)
+    const { container } = render(<LayersPanel session={session} docked />)
+    expect(container.querySelector('.cel-content-marker')).toBeNull()
+
+    act(() => {
+      timeline.cels[0].surface!.pixels.set([20, 40, 60, 255])
+      session.contentRevision += 1
+      useWorkspace.setState({ sessions: [...useWorkspace.getState().sessions] })
+    })
+
+    expect(container.querySelector('.cel-content-marker')).not.toBeNull()
   })
 
   it('opens playback settings on right click and adjusts the layer display scale with Ctrl+wheel', () => {
@@ -618,8 +636,8 @@ describe('LayersPanel properties', () => {
     render(<LayersPanel session={useWorkspace.getState().sessions[0]} docked />)
 
     const lockButton = screen.getByRole('button', { name: '锁定图层组' })
-    expect(lockButton.querySelector('.lucide-lock-open')).toBeInTheDocument()
-    expect(lockButton.querySelector('.lucide-lock')).not.toBeInTheDocument()
+    expect(lockButton.querySelector('[data-pixel-icon="unlock"]')).toBeInTheDocument()
+    expect(lockButton.querySelector('[data-pixel-icon="lock"]')).not.toBeInTheDocument()
   })
 
   it('keeps realtime property edits when the close button is used', () => {
@@ -1057,5 +1075,25 @@ describe('LayersPanel properties', () => {
 
     expect(container.querySelector('[data-group-id="child-group"] .layer-color-stripe')).toHaveStyle({ backgroundColor: 'rgba(41, 121, 255, 1)' })
     expect(container.querySelector(`[data-layer-id="${layer.id}"] .layer-color-stripe`)).toHaveStyle({ backgroundColor: 'rgba(41, 121, 255, 1)' })
+  })
+
+  it('reveals an auto-selected layer inside collapsed groups without changing horizontal timeline scroll', async () => {
+    const document = createDocument('reveal selected layer', 2, 2, 'rgba')
+    const layer = getActiveLayer(document)
+    layer.groupId = 'child-group'
+    document.groups.push(
+      { id: 'root-group', name: 'Root', parentGroupId: null, visible: true, locked: false, opacity: 1, blendMode: 'normal' },
+      { id: 'child-group', name: 'Child', parentGroupId: 'root-group', visible: true, locked: false, opacity: 1, blendMode: 'normal' }
+    )
+    useWorkspace.getState().addSession(document)
+    const session = useWorkspace.getState().sessions[0]
+    session.collapsedGroupIds = ['root-group', 'child-group']
+    const { container } = render(<LayersPanel session={session} docked />)
+    const list = container.querySelector<HTMLElement>('.layer-animation-list')!
+    list.scrollLeft = 137
+    act(() => revealLayerInPanel(document.id, layer.id))
+    await waitFor(() => expect(container.querySelector(`[data-layer-id="${layer.id}"]`)).not.toBeNull())
+    expect(session.collapsedGroupIds).toEqual([])
+    expect(list.scrollLeft).toBe(137)
   })
 })

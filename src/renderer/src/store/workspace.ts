@@ -19,7 +19,7 @@ import { assignGroupToGroup as assignGroupToGroupOperation, assignGroupToRoot as
 import { buildLayerPanelTree } from '@/core/layer-panel-layout'
 import { loadEditorPreferences, SAVE_FORMAT_PREFERENCE_KEY, saveImageKindForPreference } from '@/core/file-preferences'
 import { normalizeProjectDisplaySettings, normalizeProjectStatistics, normalizeTimelapseSettings } from '@/core/project-metadata'
-import { captureTimelapseSnapshot, type TimelapseExportOptions } from '@/core/timelapse'
+import { captureTimelapseSnapshot, createTimelapseCaptureCache, type TimelapseCaptureCache, type TimelapseExportOptions } from '@/core/timelapse'
 import { translate, type TranslationKey, type TranslationParams } from '@/core/localization'
 import { resolveClipboardPlacement } from '@/core/clipboard-placement'
 import { cloneProceduralSettings, defaultToolSettings, loadToolSettings, normalizePersistedBrushProfile, saveToolSettings, type BrushTool, type PersistedBrushProfile, type PersistedToolSettings } from '@/core/tool-preferences'
@@ -223,13 +223,83 @@ function activeSession(state: WorkspaceState): DocumentSession | null {
   return state.sessions.find((session) => session.document.id === state.activeId) ?? null
 }
 
+const TIMELAPSE_CAPTURE_IDLE_MS = 300
+const TIMELAPSE_CAPTURE_MIN_INTERVAL_MS = 1000
+const TIMELAPSE_CAPTURE_MAX_WAIT_MS = 1200
+interface PendingTimelapseCapture { timer: number; idleCallback?: number }
+const pendingTimelapseCaptures = new Map<string, PendingTimelapseCapture>()
+const timelapseCaptureCaches = new WeakMap<SpriteDocument, TimelapseCaptureCache>()
+
+const captureCacheFor = (document: SpriteDocument): TimelapseCaptureCache => {
+  const cached = timelapseCaptureCaches.get(document)
+  if (cached) return cached
+  const created = createTimelapseCaptureCache()
+  timelapseCaptureCaches.set(document, created)
+  return created
+}
+
+const cancelTimelapseCapture = (documentId: string): void => {
+  const pending = pendingTimelapseCaptures.get(documentId)
+  if (pending) {
+    window.clearTimeout(pending.timer)
+    if (pending.idleCallback !== undefined && typeof window.cancelIdleCallback === 'function') window.cancelIdleCallback(pending.idleCallback)
+  }
+  pendingTimelapseCaptures.delete(documentId)
+}
+
+const scheduleTimelapseCapture = (session: DocumentSession): void => {
+  const settings = normalizeTimelapseSettings(session.document.timelapse, session.document.timelapse?.snapshots ?? [])
+  session.document.timelapse = settings
+  cancelTimelapseCapture(session.document.id)
+  if (!settings.enabled) return
+  const document = session.document
+  const lastSnapshotAt = settings.snapshots.at(-1)?.capturedAt ?? 0
+  const elapsedSinceLastSnapshot = lastSnapshotAt > 0 ? Math.max(0, Date.now() - lastSnapshotAt) : Number.POSITIVE_INFINITY
+  const captureDelay = Math.max(TIMELAPSE_CAPTURE_IDLE_MS, TIMELAPSE_CAPTURE_MIN_INTERVAL_MS - elapsedSinceLastSnapshot)
+  const pending: PendingTimelapseCapture = { timer: 0 }
+  const capture = (): void => {
+    if (pendingTimelapseCaptures.get(document.id) !== pending) return
+    pendingTimelapseCaptures.delete(document.id)
+    const current = useWorkspace.getState().sessions.find((candidate) => candidate.document === document)
+    if (!current || !normalizeTimelapseSettings(document.timelapse, document.timelapse?.snapshots ?? []).enabled) return
+    if (current.animationPlaying) {
+      scheduleTimelapseCapture(current)
+      return
+    }
+    captureTimelapseSnapshot(document, Date.now(), {
+      cache: captureCacheFor(document),
+      contentRevision: current.contentRevision,
+      contentInvalidation: current.contentInvalidation
+    })
+    useWorkspace.setState({ sessions: [...useWorkspace.getState().sessions] })
+  }
+  pending.timer = window.setTimeout(() => {
+    if (pendingTimelapseCaptures.get(document.id) !== pending) return
+    if (typeof window.requestIdleCallback === 'function') pending.idleCallback = window.requestIdleCallback(capture, { timeout: TIMELAPSE_CAPTURE_MAX_WAIT_MS })
+    else capture()
+  }, captureDelay)
+  pendingTimelapseCaptures.set(document.id, pending)
+}
+
+const flushTimelapseCapture = (session: DocumentSession): void => {
+  if (!pendingTimelapseCaptures.has(session.document.id) || session.animationPlaying) return
+  cancelTimelapseCapture(session.document.id)
+  if (normalizeTimelapseSettings(session.document.timelapse, session.document.timelapse?.snapshots ?? []).enabled) {
+    captureTimelapseSnapshot(session.document, Date.now(), {
+      cache: captureCacheFor(session.document),
+      contentRevision: session.contentRevision,
+      contentInvalidation: session.contentInvalidation
+    })
+  }
+}
+
 const recordDocumentOperation = (session: DocumentSession, activity?: { stroke?: boolean; durationMs?: number }): void => {
   const statistics = normalizeProjectStatistics(session.document.statistics)
   statistics.operationCount += 1
   if (activity?.stroke) statistics.strokeCount += 1
   if (activity?.durationMs) statistics.drawingTimeMs += Math.max(0, Math.round(activity.durationMs))
   session.document.statistics = statistics
-  captureTimelapseSnapshot(session.document)
+  scheduleTimelapseCapture(session)
 }
 
 const persistDisplaySettings = (session: DocumentSession, view: Partial<ViewState>): boolean => {
@@ -864,7 +934,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       if (entry) {
         session.history.push(entry)
         syncActiveAnimationFrame(session.document)
-        touch(session)
+        touch(session, true, entry.invalidation)
         recordDocumentOperation(session, activity)
       }
     }, false)
@@ -877,7 +947,8 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     const current = normalizeTimelapseSettings(session.document.timelapse, session.document.timelapse?.snapshots ?? [])
     const next = normalizeTimelapseSettings({ ...current, ...settings }, current.snapshots)
     session.document.timelapse = next
-    if (next.enabled && next.snapshots.length === 0) captureTimelapseSnapshot(session.document)
+    if (next.enabled && next.snapshots.length === 0) scheduleTimelapseCapture(session)
+    else if (!next.enabled) cancelTimelapseCapture(session.document.id)
     touch(session)
     set({ sessions: [...state.sessions] })
   },
@@ -886,6 +957,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     const state = get()
     const session = activeSession(state)
     if (!session) return
+    cancelTimelapseCapture(session.document.id)
     session.document.timelapse = { ...normalizeTimelapseSettings(session.document.timelapse), snapshots: [] }
     touch(session)
     set({ sessions: [...state.sessions] })
@@ -894,6 +966,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
   async exportTimelapse(format, options) {
     const session = activeSession(get())
     if (!session) return false
+    flushTimelapseCapture(session)
     let progressStarted = false
     const updateProgress = (value: number, label: string): void => {
       if (progressStarted && !get().saveProgress) return
@@ -927,9 +1000,13 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     if (!session?.history.canUndo) return
     get().mutateActive((session) => {
       const view = { ...session.view }
-      session.history.undo()
+      const entry = session.history.undo()
       Object.assign(session.view, view)
-    })
+      if (!entry) return
+      syncActiveAnimationFrame(session.document)
+      touch(session, true, entry.invalidation)
+      recordDocumentOperation(session)
+    }, false)
   },
 
   redo() {
@@ -939,9 +1016,13 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     if (!session?.history.canRedo) return
     get().mutateActive((session) => {
       const view = { ...session.view }
-      session.history.redo()
+      const entry = session.history.redo()
       Object.assign(session.view, view)
-    })
+      if (!entry) return
+      syncActiveAnimationFrame(session.document)
+      touch(session, true, entry.invalidation)
+      recordDocumentOperation(session)
+    }, false)
   },
 
   setActiveAnimationFrame(frameId) {
@@ -2189,12 +2270,14 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
         if (layer && !isLayerEffectivelyLocked(session.document, layer)) applyColorAdjustment(session.document, layer, adjustment, targetSelection)
       }
       session.revision += 1
+      session.contentRevision += 1
     }, false)
   },
   restoreActiveDocumentSnapshot(snapshot) {
     get().mutateActive((session) => {
       restoreAdjustmentSnapshot(session, snapshot)
       session.revision += 1
+      session.contentRevision += 1
     }, false)
   },
   applyActiveLayerAdjustmentFromSnapshot(adjustment, baseline) {
@@ -2216,8 +2299,8 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       session.history.push({
         label: labels[adjustment.kind],
         bytes: before.layers.reduce((bytes, layer) => bytes + layer.pixels.byteLength, 0) + after.layers.reduce((bytes, layer) => bytes + layer.pixels.byteLength, 0) + (before.palette.length + after.palette.length) * 24,
-        undo: () => { restoreAdjustmentSnapshot(session, before); session.revision += 1 },
-        redo: () => { restoreAdjustmentSnapshot(session, after); session.revision += 1 }
+        undo: () => { restoreAdjustmentSnapshot(session, before); session.revision += 1; session.contentRevision += 1 },
+        redo: () => { restoreAdjustmentSnapshot(session, after); session.revision += 1; session.contentRevision += 1 }
       })
     })
   },
@@ -2538,6 +2621,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       // the pasted pixels instead of beginning a new pencil stroke.
       session.tool = 'selection'
       session.revision += 1
+      session.contentRevision += 1
       set({ message: tr('workspace.clipboard.pastedPixels', { count: pasted }) })
     }, false)
   },
@@ -2617,6 +2701,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       session.pendingPaste.target = cloneSelectionMask(target)!
       session.selection = cloneSelectionMask(target)
       session.revision += 1
+      session.contentRevision += 1
     }, false)
   },
 
@@ -2634,6 +2719,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       }
       session.selection = cloneSelectionMask(target)
       session.revision += 1
+      session.contentRevision += 1
     }, false)
   },
 
@@ -2667,6 +2753,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       session.selection = cloneSelectionMask(pending.beforeSelection)
       session.pendingPaste = null
       session.revision += 1
+      session.contentRevision += 1
     }, false)
   },
 
@@ -2699,6 +2786,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
         if (preview) {
           pending.previewEdit = preview
           session.revision += 1
+          session.contentRevision += 1
         }
         return
       }
@@ -2788,6 +2876,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     if (!session) return false
     const documentId = session.document.id
     get().commitFloatingPaste()
+    flushTimelapseCapture(session)
     const showProgress = saveAs || Boolean(options)
     let progressStarted = false
     const updateProgress = (value: number, label: string): void => {
@@ -2887,6 +2976,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       if (choice === 'discard') await get().discardRecovery(id)
     }
     if (!session.document.dirty) await get().discardRecovery(id)
+    cancelTimelapseCapture(id)
     set((state) => {
       const sessions = state.sessions.filter((item) => item.document.id !== id)
       return { sessions, activeId: state.activeId === id ? (sessions.at(-1)?.document.id ?? null) : state.activeId }

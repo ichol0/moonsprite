@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from 'vitest'
+import { unzipSync } from 'fflate'
 import type { MoonSpriteApi, RecoveryRecord } from '@shared/types'
 import { createDocument } from '@/core/document'
-import { encodeProject } from '@/core/project-format'
+import { decodeProject, encodeProject } from '@/core/project-format'
 import { RecoveryService } from './recovery-service'
 
 const api = (changes: Partial<MoonSpriteApi> = {}): MoonSpriteApi => ({
@@ -32,6 +33,17 @@ describe('recovery service', () => {
     releaseWrite()
     await Promise.all([autosave, discard])
     expect(events).toEqual(['write:start', 'write:end', 'delete'])
+  })
+
+  it('writes a decodable recovery without generating a gallery preview', async () => {
+    let saved: Uint8Array | null = null
+    const document = createDocument('large draft', 8, 8, 'rgba')
+    const service = new RecoveryService()
+    await service.autosave(api({ writeRecovery: async (_id, _name, data) => { saved = data } }), [document])
+
+    expect(saved).not.toBeNull()
+    expect(unzipSync(saved!)['preview.png']).toBeUndefined()
+    expect(decodeProject(saved!).name).toBe(document.name)
   })
 
   it('restores a project as a dirty recovery document', async () => {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildLayerPanelTree, getLayerPanelDescendantGroupIds, resolveLayerPanelDropTarget, resolveLayerPanelEdgeDropTarget, type LayerPanelNode } from './layer-panel-layout'
+import { buildLayerPanelTree, getLayerPanelAncestorGroupIds, getLayerPanelDescendantGroupIds, layerPanelRevealScrollTop, resolveLayerPanelDropTarget, resolveLayerPanelEdgeDropTarget, type LayerPanelNode } from './layer-panel-layout'
 
 const layers = [
   { id: 'background', groupId: null },
@@ -17,6 +17,17 @@ describe('layer panel layout helpers', () => {
     expect(resolveLayerPanelEdgeDropTarget(96, 100, 500)).toEqual({ kind: 'edge', edge: 'top' })
     expect(resolveLayerPanelEdgeDropTarget(504, 100, 500)).toEqual({ kind: 'edge', edge: 'bottom' })
     expect(resolveLayerPanelEdgeDropTarget(250, 100, 500)).toBeNull()
+  })
+
+  it('centers a revealed row below the sticky animation header', () => {
+    expect(layerPanelRevealScrollTop({
+      scrollTop: 120,
+      viewportTop: 100,
+      viewportHeight: 300,
+      stickyHeaderHeight: 34,
+      rowTop: 350,
+      rowHeight: 42
+    })).toBe(224)
   })
   it('flattens nested groups in top-to-bottom display order', () => {
     expect(buildLayerPanelTree({ layers, groups })).toEqual([
@@ -72,6 +83,18 @@ describe('layer panel layout helpers', () => {
 
   it('guards descendant checks against nested groups', () => {
     expect(getLayerPanelDescendantGroupIds(groups, 'characters')).toEqual(['face'])
+  })
+
+  it('returns containing groups from the immediate parent toward the root', () => {
+    expect(getLayerPanelAncestorGroupIds(groups, 'face')).toEqual(['face', 'characters'])
+    expect(getLayerPanelAncestorGroupIds(groups, null)).toEqual([])
+  })
+
+  it('stops ancestor traversal when damaged data contains a cycle', () => {
+    expect(getLayerPanelAncestorGroupIds([
+      { id: 'first', parentGroupId: 'second' },
+      { id: 'second', parentGroupId: 'first' }
+    ], 'first')).toEqual(['first', 'second'])
   })
 
   it('keeps a child layer row as an insertion target instead of promoting its parent group', () => {

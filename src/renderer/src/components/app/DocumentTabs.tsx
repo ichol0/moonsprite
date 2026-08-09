@@ -1,12 +1,12 @@
 import { createPortal, flushSync } from 'react-dom'
 import { memo, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
-import { Copy, FileImage, FolderOpen, Plus, X } from 'lucide-react'
 import { PerformanceProfiler } from '@/components/PerformanceProfiler'
 import { useI18n } from '@/components/I18nProvider'
 import { documentTabsRenderKey } from '@/core/app-render-keys'
 import type { DocumentPaneDirection, DocumentPanePlacement } from '@/core/document-pane-layout'
 import { paneDockTargetAtPoint, type DocumentPaneDockTarget } from './document-pane-hit-test'
 import { useWorkspace } from '@/store/workspace'
+import { PixelUtilityIcon } from '@/components/PixelUtilityIcon'
 
 interface DocumentTabsProps {
   homeOpen: boolean
@@ -293,19 +293,19 @@ export const DocumentTabs = memo(function DocumentTabs({ homeOpen, hiddenDocumen
       onContextMenu={(event) => { event.preventDefault(); event.stopPropagation(); onContextActivate(item.document.id); setContextMenu({ documentId: item.document.id, x: event.clientX, y: event.clientY }) }}
       onClick={(event) => { if (suppressClickRef.current || dragRef.current?.moved) { event.preventDefault(); return }; onActivate(item.document.id) }}
     >
-      <FileImage size={14} />
+      <PixelUtilityIcon kind="project" />
       <span>{item.document.name}</span>
       {item.document.dirty && <i />}
-      <span className="tab-close" role="button" tabIndex={0} aria-label={t('tabs.closeAria', { name: item.document.name })} onClick={(event) => { event.stopPropagation(); void useWorkspace.getState().closeDocument(item.document.id) }}><X size={12} /></span>
+      <span className="tab-close" role="button" tabIndex={0} aria-label={t('tabs.closeAria', { name: item.document.name })} onClick={(event) => { event.stopPropagation(); void useWorkspace.getState().closeDocument(item.document.id) }}><PixelUtilityIcon kind="close" /></span>
     </button>)}
-      <button className="new-tab-button" aria-label={t('tabs.newProject')} title={t('tabs.newProject')} onClick={onNew}><Plus size={16} /></button>
+      <button className="new-tab-button" aria-label={t('tabs.newProject')} title={t('tabs.newProject')} onClick={onNew}><PixelUtilityIcon kind="plus" /></button>
     {contextMenu && createPortal(<div className="context-menu document-tab-context-menu" role="menu" aria-label={t('tabs.contextAria')} style={{ left: Math.min(contextMenu.x, Math.max(8, window.innerWidth - 232)), top: Math.min(contextMenu.y, Math.max(8, window.innerHeight - 150)) }}>
-      <button className="context-menu-item" role="menuitem" onClick={() => { void useWorkspace.getState().closeDocument(contextMenu.documentId); setContextMenu(null) }}><X size={15} /><span>{t('common.close')}</span></button>
-      <button className="context-menu-item" role="menuitem" onClick={() => { void duplicateDocumentView(contextMenu.documentId) }}><Copy size={15} /><span>{t('tabs.duplicateView')}</span></button>
-      <button className="context-menu-item" role="menuitem" onClick={() => openProjectFolder(contextMenu.documentId)}><FolderOpen size={15} /><span>{t('app.menu.file.openFolder')}</span></button>
+      <button className="context-menu-item" role="menuitem" onClick={() => { void useWorkspace.getState().closeDocument(contextMenu.documentId); setContextMenu(null) }}><PixelUtilityIcon kind="close" /><span>{t('common.close')}</span></button>
+      <button className="context-menu-item" role="menuitem" onClick={() => { void duplicateDocumentView(contextMenu.documentId) }}><PixelUtilityIcon kind="copy" /><span>{t('tabs.duplicateView')}</span></button>
+      <button className="context-menu-item" role="menuitem" onClick={() => openProjectFolder(contextMenu.documentId)}><PixelUtilityIcon kind="folderOpen" /><span>{t('app.menu.file.openFolder')}</span></button>
     </div>, document.body)}
     {dragPreview && createPortal(<div className="document-tab-drag-layer" aria-hidden="true">
-      <div className="document-tab-drag-ghost" data-document-tab-drag-ghost="true" style={{ left: dragPreview.pointerX - dragPreview.pointerOffsetX, top: dragPreview.pointerY - dragPreview.pointerOffsetY, width: dragPreview.width, height: dragPreview.height }}><FileImage size={14} /><span>{dragPreview.name}</span></div>
+      <div className="document-tab-drag-ghost" data-document-tab-drag-ghost="true" style={{ left: dragPreview.pointerX - dragPreview.pointerOffsetX, top: dragPreview.pointerY - dragPreview.pointerOffsetY, width: dragPreview.width, height: dragPreview.height }}><PixelUtilityIcon kind="project" /><span>{dragPreview.name}</span></div>
     </div>, document.body)}
   </></PerformanceProfiler>
 })

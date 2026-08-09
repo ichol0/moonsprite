@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { DEFAULT_INSPECTOR_ORDER, DEFAULT_INSPECTOR_SIZES, MINIMUM_BOTTOM_WIDTHS, MINIMUM_INSPECTOR_SIZES, loadInspectorLayout, moveInspectorPanel } from './panel-layout'
+import { DEFAULT_INSPECTOR_ORDER, DEFAULT_INSPECTOR_SIZES, MINIMUM_BOTTOM_WIDTHS, MINIMUM_INSPECTOR_SIZES, loadInspectorLayout, moveInspectorPanel, verticalInspectorPanelFlex } from './panel-layout'
 
 describe('panel layout', () => {
   it('repairs duplicate, unknown and missing panel ids', () => {
@@ -25,5 +25,11 @@ describe('panel layout', () => {
     expect(moveInspectorPanel([...order], 'layers', 'color', false)).toEqual(['layers', 'color', 'palette', 'preview'])
     expect(moveInspectorPanel([...order], 'color', 'layers', true)).toEqual(['palette', 'layers', 'color', 'preview'])
     expect(moveInspectorPanel([...order], 'palette')).toEqual(['color', 'layers', 'preview', 'palette'])
+  })
+
+  it('keeps every vertical dock filled as panels are added or removed', () => {
+    expect(verticalInspectorPanelFlex(230, false, false)).toBe('1 1 230px')
+    expect(verticalInspectorPanelFlex(230, true, false)).toBe('0 1 237px')
+    expect(verticalInspectorPanelFlex(230, false, true)).toBe('1 1 230px')
   })
 })

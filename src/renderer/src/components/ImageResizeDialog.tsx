@@ -1,9 +1,9 @@
 import { useEffect, useState, type FormEvent } from 'react'
-import { Lock, LockOpen, X } from 'lucide-react'
 import type { ImageResizeInterpolation } from '@shared/types'
 import { ModalShell } from './ModalShell'
 import { NumberInput } from './NumberInput'
 import { useI18n } from './I18nProvider'
+import { PixelUtilityIcon } from './PixelUtilityIcon'
 
 export function ImageResizeDialog({ open, currentWidth, currentHeight, onClose, onResize }: {
   open: boolean
@@ -61,7 +61,7 @@ export function ImageResizeDialog({ open, currentWidth, currentHeight, onClose, 
     <ModalShell as="form" storageKey="image-resize-v3" placement="right" defaultWidth={450} defaultHeight={500} minWidth={400} minHeight={430} maxWidth={600} maxHeight={720} className="image-resize-modal" onSubmit={submit} aria-label={t('imageResize.title')}>
       <header>
         <div><span className="eyebrow">{t('imageResize.eyebrow')}</span><h2>{t('imageResize.title')}</h2></div>
-        <button type="button" className="icon-button" aria-label={t('common.close')} onClick={onClose}><X size={16} /></button>
+        <button type="button" className="icon-button" aria-label={t('common.close')} onClick={onClose}><PixelUtilityIcon kind="close" /></button>
       </header>
       <div className="modal-body image-resize-body">
         <div className="image-resize-current"><span>{t('imageResize.current')}</span><strong>{currentWidth} x {currentHeight} px</strong></div>
@@ -69,7 +69,7 @@ export function ImageResizeDialog({ open, currentWidth, currentHeight, onClose, 
           <div className="image-resize-section-heading"><h3>{t('imageResize.pixelSize')}</h3><small>{t(locked ? 'imageResize.locked' : 'imageResize.free')}</small></div>
           <div className="image-resize-fields">
             <label><span>{t('common.width')}</span><div className="image-resize-input"><NumberInput autoFocus onFocus={(event) => event.currentTarget.select()} aria-label={t('newDocument.widthAria')} min={1} max={16384} value={width} onValueChange={updateWidth} /><small>px</small></div></label>
-            <button type="button" className="image-resize-lock" aria-label={t(locked ? 'imageResize.unlockRatio' : 'imageResize.lockRatio')} title={t(locked ? 'imageResize.unlockRatio' : 'imageResize.lockRatio')} onClick={() => setLocked((value) => !value)}>{locked ? <Lock size={15} /> : <LockOpen size={15} />}</button>
+            <button type="button" className="image-resize-lock" aria-label={t(locked ? 'imageResize.unlockRatio' : 'imageResize.lockRatio')} title={t(locked ? 'imageResize.unlockRatio' : 'imageResize.lockRatio')} onClick={() => setLocked((value) => !value)}>{locked ? <PixelUtilityIcon kind="lock" /> : <PixelUtilityIcon kind="unlock" />}</button>
             <label><span>{t('common.height')}</span><div className="image-resize-input"><NumberInput aria-label={t('newDocument.heightAria')} min={1} max={16384} value={height} onValueChange={updateHeight} /><small>px</small></div></label>
           </div>
         </section>

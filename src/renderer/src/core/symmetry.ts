@@ -82,8 +82,8 @@ export function symmetryAxisSegment(axis: SymmetryAxis, width: number, height: n
 const pointKey = ({ x, y }: SymmetryPoint): string => `${x}:${y}`
 
 /** Returns the complete, de-duplicated orbit of a pixel under the enabled canvas-centered reflections. */
-export function symmetryPoints(point: SymmetryPoint, width: number, height: number, axes: SymmetryAxes | null | undefined, center?: SymmetryCenter | null): SymmetryPoint[] {
-  if (width <= 0 || height <= 0 || !hasSymmetry(axes)) return point.x >= 0 && point.y >= 0 && point.x < width && point.y < height ? [{ ...point }] : []
+export function symmetryPoints(point: SymmetryPoint, width: number, height: number, axes: SymmetryAxes | null | undefined, center?: SymmetryCenter | null, clipToCanvas = true): SymmetryPoint[] {
+  if (width <= 0 || height <= 0 || !hasSymmetry(axes)) return !clipToCanvas || (point.x >= 0 && point.y >= 0 && point.x < width && point.y < height) ? [{ ...point }] : []
   const pivot = resolvedCenter(width, height, center)
   const transforms: Array<(value: SymmetryPoint) => SymmetryPoint> = []
   if (axes!.horizontal) transforms.push(({ x, y }) => ({ x, y: Math.round(2 * pivot.y - y - 1) }))
@@ -96,7 +96,7 @@ export function symmetryPoints(point: SymmetryPoint, width: number, height: numb
   const seen = new Set<string>()
   for (let index = 0; index < queue.length; index += 1) {
     const current = queue[index]
-    if (current.x < 0 || current.y < 0 || current.x >= width || current.y >= height) continue
+    if (clipToCanvas && (current.x < 0 || current.y < 0 || current.x >= width || current.y >= height)) continue
     const key = pointKey(current)
     if (seen.has(key)) continue
     seen.add(key)
@@ -141,28 +141,28 @@ export function symmetrySelection(selection: SelectionMask | null, width: number
   return { x: left, y: top, width: maskWidth, height: maskHeight, mask }
 }
 
-const isSelectionSymmetryRepresentative = (point: SymmetryPoint, selection: SelectionMask, width: number, height: number, axes: SymmetryAxes, center?: SymmetryCenter | null): boolean => {
+const isSelectionSymmetryRepresentative = (point: SymmetryPoint, selection: SelectionMask, width: number, height: number, axes: SymmetryAxes, center?: SymmetryCenter | null, clipToCanvas = true): boolean => {
   const currentKey = point.y * width + point.x
-  return symmetryPoints(point, width, height, axes, center)
+  return symmetryPoints(point, width, height, axes, center, clipToCanvas)
     .filter((candidate) => selectionContains(selection, candidate.x, candidate.y))
     .every((candidate) => currentKey <= candidate.y * width + candidate.x)
 }
 
 /** Transforms one fundamental selection region and mirrors the result without duplicating an already symmetric source. */
-export function transformSymmetrySelection(selection: SelectionMask, target: SelectionRect, width: number, height: number, angle = 0, shear?: SelectionShearTransform, axes?: SymmetryAxes | null, center?: SymmetryCenter | null): SelectionMask | null {
+export function transformSymmetrySelection(selection: SelectionMask, target: SelectionRect, width: number, height: number, angle = 0, shear?: SelectionShearTransform, axes?: SymmetryAxes | null, center?: SymmetryCenter | null, clipToCanvas = true): SelectionMask | null {
   const bounds = transformedSelectionBounds(target, angle, shear)
-  const left = Math.max(0, bounds.x)
-  const top = Math.max(0, bounds.y)
-  const right = Math.min(width, bounds.x + bounds.width)
-  const bottom = Math.min(height, bounds.y + bounds.height)
+  const left = clipToCanvas ? Math.max(0, bounds.x) : bounds.x
+  const top = clipToCanvas ? Math.max(0, bounds.y) : bounds.y
+  const right = clipToCanvas ? Math.min(width, bounds.x + bounds.width) : bounds.x + bounds.width
+  const bottom = clipToCanvas ? Math.min(height, bounds.y + bounds.height) : bounds.y + bounds.height
   if (right <= left || bottom <= top) return null
   const points: SymmetryPoint[] = []
   const seen = new Set<string>()
   for (let y = top; y < bottom; y += 1) {
     for (let x = left; x < right; x += 1) {
       const sourcePoint = transformedSelectionSourcePoint(selection, target, x, y, angle, shear)
-      if (!sourcePoint || (axes && hasSymmetry(axes) && !isSelectionSymmetryRepresentative(sourcePoint, selection, width, height, axes, center))) continue
-      for (const destination of symmetryPoints({ x, y }, width, height, axes, center)) {
+      if (!sourcePoint || (axes && hasSymmetry(axes) && !isSelectionSymmetryRepresentative(sourcePoint, selection, width, height, axes, center, clipToCanvas))) continue
+      for (const destination of symmetryPoints({ x, y }, width, height, axes, center, clipToCanvas)) {
         const key = pointKey(destination)
         if (seen.has(key)) continue
         seen.add(key)

@@ -1,6 +1,6 @@
-import { CheckCircle2, Circle, X } from 'lucide-react'
 import { useI18n } from '@/components/I18nProvider'
 import { ModalShell } from '@/components/ModalShell'
+import { PixelUtilityIcon } from '@/components/PixelUtilityIcon'
 import type { TranslationKey } from '@/core/localization'
 
 const roadmapItems: Array<{ id: string; label: TranslationKey; category: TranslationKey; completed: boolean }> = [
@@ -18,7 +18,7 @@ const roadmapItems: Array<{ id: string; label: TranslationKey; category: Transla
   { id: 'slice', label: 'roadmap.item.slice', category: 'roadmap.category.tools', completed: false },
   { id: 'tile', label: 'roadmap.item.tile', category: 'roadmap.category.canvas', completed: false },
   { id: 'gif-bead-export', label: 'roadmap.item.beadExport', category: 'roadmap.category.export', completed: false },
-  { id: 'theme', label: 'roadmap.item.theme', category: 'roadmap.category.interface', completed: false },
+  { id: 'theme', label: 'roadmap.item.theme', category: 'roadmap.category.interface', completed: true },
   { id: 'extension-support', label: 'roadmap.item.extensionSupport', category: 'roadmap.category.ecosystem', completed: false }
 ]
 
@@ -26,8 +26,8 @@ export function FutureRoadmapDialog({ onClose }: { onClose: () => void }) {
   const { t } = useI18n()
   return <div className="modal-backdrop" role="presentation" onPointerDown={(event) => { if (event.target === event.currentTarget) onClose() }}>
     <ModalShell storageKey="future-roadmap" defaultWidth={480} defaultHeight={520} minWidth={400} minHeight={400} maxWidth={640} maxHeight={720} className="roadmap-modal" role="dialog" aria-modal="true" aria-labelledby="future-roadmap-title">
-      <header><div><span className="eyebrow">MOONSPRITE ROADMAP</span><h2 id="future-roadmap-title">{t('roadmap.title')}</h2></div><button type="button" className="icon-button" aria-label={t('common.close')} onClick={onClose}><X size={16} /></button></header>
-      <div className="roadmap-body component-scrollbar"><p>{t('roadmap.description')}</p><ul>{[...roadmapItems].sort((a, b) => Number(b.completed) - Number(a.completed)).map((item) => <li key={item.id} className={item.completed ? 'completed' : ''}><span className="roadmap-status-icon" aria-hidden="true">{item.completed ? <CheckCircle2 size={17} /> : <Circle size={17} />}</span><span className="roadmap-category">{t(item.category)}</span><strong>{t(item.label)}</strong><span>{t(item.completed ? 'roadmap.completed' : 'roadmap.planned')}</span></li>)}</ul></div>
+      <header><div><span className="eyebrow">MOONSPRITE ROADMAP</span><h2 id="future-roadmap-title">{t('roadmap.title')}</h2></div><button type="button" className="icon-button" aria-label={t('common.close')} onClick={onClose}><PixelUtilityIcon kind="close" /></button></header>
+      <div className="roadmap-body component-scrollbar"><p>{t('roadmap.description')}</p><ul>{[...roadmapItems].sort((a, b) => Number(b.completed) - Number(a.completed)).map((item) => <li key={item.id} className={item.completed ? 'completed' : ''}><span className="roadmap-status-icon" aria-hidden="true"><PixelUtilityIcon kind={item.completed ? 'roadmapCompleted' : 'roadmapPlanned'} /></span><span className="roadmap-category">{t(item.category)}</span><strong>{t(item.label)}</strong><span>{t(item.completed ? 'roadmap.completed' : 'roadmap.planned')}</span></li>)}</ul></div>
       <footer><button type="button" className="primary-button" onClick={onClose}>{t('common.done')}</button></footer>
     </ModalShell>
   </div>

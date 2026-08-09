@@ -1,10 +1,10 @@
 import { useEffect, useState } from 'react'
-import { Eye, X } from 'lucide-react'
 import type { OutlineDirection, OutlineDirections, OutlineKernel, OutlinePosition, RgbaColor } from '@shared/types'
 import { ColorPicker } from '@/components/ColorPicker'
 import { useI18n } from '@/components/I18nProvider'
 import { ModalShell } from '@/components/ModalShell'
 import { NumberInput } from '@/components/NumberInput'
+import { PixelUtilityIcon } from '@/components/PixelUtilityIcon'
 import { defaultOutlineSettings, normalizeOutlineSettings } from '@/core/outline-settings'
 import { useWorkspace, type DocumentSession } from '@/store/workspace'
 
@@ -109,7 +109,7 @@ export function OutlineDialog({ open, session, onClose }: { open: boolean; sessi
       event.preventDefault()
       submit()
     }}>
-      <header><div><span className="eyebrow">OUTLINE</span><h2>{t('outline.title')}</h2></div><button type="button" className="icon-button" aria-label={t('common.close')} onClick={close}><X size={16} /></button></header>
+      <header><div><span className="eyebrow">OUTLINE</span><h2>{t('outline.title')}</h2></div><button type="button" className="icon-button" aria-label={t('common.close')} onClick={close}><PixelUtilityIcon kind="close" /></button></header>
       <div className="modal-body outline-modal-body">
         <section className="outline-color-section"><span className="outline-section-label">{t('outline.color')}</span><ColorPicker color={color} onChange={setColor} compact label={t('outline.color')} /></section>
         <section className="outline-width-setting"><label><span>{t('outline.width')}</span><div className="outline-width-row"><input type="range" min="1" max="64" value={thickness} onChange={(event) => setThickness(Number(event.target.value))} /><NumberInput min={1} max={64} value={thickness} onValueChange={setThickness} /><span>px</span></div></label></section>
@@ -123,7 +123,7 @@ export function OutlineDialog({ open, session, onClose }: { open: boolean; sessi
             })}</div></div>
           </div>
         </fieldset>
-        <label className="outline-preview-toggle"><span className="outline-preview-label"><Eye size={15} />{t('common.livePreview')}</span><input type="checkbox" checked={previewEnabled} onChange={(event) => setPreviewEnabled(event.target.checked)} /><span className="toggle-track" aria-hidden="true"><i /></span></label>
+        <label className="outline-preview-toggle"><span className="outline-preview-label"><PixelUtilityIcon kind="eye" />{t('common.livePreview')}</span><input type="checkbox" checked={previewEnabled} onChange={(event) => setPreviewEnabled(event.target.checked)} /><span className="toggle-track" aria-hidden="true"><i /></span></label>
       </div>
       <footer><button type="button" className="quiet-button" onClick={close}>{t('common.cancel')}</button><button type="submit" className="primary-button">{t('outline.apply')}</button></footer>
     </ModalShell>

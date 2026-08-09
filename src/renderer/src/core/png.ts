@@ -54,12 +54,14 @@ const writeUint32 = (view: DataView, offset: number, value: number): void => vie
 export function encodePng(rgba: Uint8ClampedArray, width: number, height: number, forceRgba = false): PngExport {
   const colors: number[] = []
   const colorIds = new Map<number, number>()
-  for (let offset = 0; offset < rgba.length; offset += 4) {
-    const color = (rgba[offset] | (rgba[offset + 1] << 8) | (rgba[offset + 2] << 16) | (rgba[offset + 3] << 24)) >>> 0
-    if (!colorIds.has(color)) {
-      colorIds.set(color, colors.length)
-      colors.push(color)
-      if (colors.length > 256) break
+  if (!forceRgba) {
+    for (let offset = 0; offset < rgba.length; offset += 4) {
+      const color = (rgba[offset] | (rgba[offset + 1] << 8) | (rgba[offset + 2] << 16) | (rgba[offset + 3] << 24)) >>> 0
+      if (!colorIds.has(color)) {
+        colorIds.set(color, colors.length)
+        colors.push(color)
+        if (colors.length > 256) break
+      }
     }
   }
   const indexed = !forceRgba && colors.length <= 256

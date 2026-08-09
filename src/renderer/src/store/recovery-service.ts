@@ -25,7 +25,12 @@ export class RecoveryService {
   autosave(api: MoonSpriteApi, documents: readonly SpriteDocument[]): Promise<void> {
     return this.enqueue(async () => {
       await Promise.all(documents.map(async (document) => {
-        try { await api.writeRecovery(document.id, document.name, encodeProject(document)) } catch { /* Autosave remains non-blocking per document. */ }
+        try {
+          // Recovery only needs the manifest and editable layer data. Avoid
+          // generating a full-canvas gallery preview and use light compression
+          // so autosave cannot monopolize the renderer for large documents.
+          await api.writeRecovery(document.id, document.name, encodeProject(document, { includePreview: false, compressionLevel: 1 }))
+        } catch { /* Autosave remains non-blocking per document. */ }
       }))
     })
   }

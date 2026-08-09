@@ -14,17 +14,21 @@
 - [ ] 当前应用显示版本、最近已打包版本和归档索引符合 `docs/release/development-cycle.md`；`pnpm check:version -- --release` 通过。
 - [ ] 项目文件格式变更包含迁移、兼容测试和 ADR。
 - [ ] 没有提交用户工程、恢复文件、工作区、密钥或安装包。
+- [ ] 已完成本版本性能审计和最多两轮候选优化；已通过 `pnpm check:performance:accept` 生成与当前源码一致的性能发布凭证。
 
 ## 自动检查
 
 ```powershell
 pnpm install --frozen-lockfile
+pnpm check:release-performance -- <本周期相关文件...>
+pnpm check:performance:verify -- --audit=<审计编号> --correctness-passed
+pnpm check:performance:accept -- --audit=<审计编号> --outcome=<adopted|not-adopted|approved-no-change> --reason=<原因>
 pnpm check:release
 pnpm check:release -- --desktop # 需要真实桌面自动门禁时
 pnpm package                     # 用户明确要求安装包时
 ```
 
-普通 dev 发布不运行性能基准。只有本次属于大版本、阶段里程碑、性能专项、已观察到退化或用户明确要求时，才额外执行 `pnpm check:performance` 并更新性能历史。
+每次 dev.X 或正式版本发布都执行一次性能审计；普通连续开发不执行。`check:release` 只验证性能凭证，不重复运行性能基准。
 
 ## 安装版检查
 

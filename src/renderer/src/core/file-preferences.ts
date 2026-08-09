@@ -3,6 +3,7 @@ import { DEFAULT_APP_LOCALE, LANGUAGE_PREFERENCE_KEY as APP_LANGUAGE_PREFERENCE_
 import { readStoredString, writeStoredString } from './storage'
 import type { RgbaColor } from '@shared/types'
 import type { ColorValueMode } from './color-values'
+import { DEFAULT_THEME_PREFERENCES, THEME_PREFERENCE_KEY, loadThemePreferences, normalizeThemePreferences, resolveTheme, rgbaHex, saveThemePreferences, withThemePaletteColors, type ThemePalette, type ThemePreferences } from './theme'
 
 export const SAVE_FORMAT_PREFERENCE_KEY = 'moonsprite.preference.save-format'
 export const EXPORT_FORMAT_PREFERENCE_KEY = 'moonsprite.preference.export-format'
@@ -28,6 +29,10 @@ export const WHEEL_ZOOM_ENABLED_PREFERENCE_KEY = 'moonsprite.preference.wheel-zo
 export const SHIFT_LINE_PREVIEW_ENABLED_PREFERENCE_KEY = 'moonsprite.preference.shift-line-preview-enabled'
 export const LASSO_PREVIEW_CLOSED_PREFERENCE_KEY = 'moonsprite.preference.lasso-preview-closed'
 export const EYEDROPPER_SWITCH_TO_PENCIL_PREFERENCE_KEY = 'moonsprite.preference.eyedropper-switch-to-pencil'
+export const EYEDROPPER_MAGNIFIER_ENABLED_PREFERENCE_KEY = 'moonsprite.preference.eyedropper-magnifier-enabled'
+export const EYEDROPPER_MAGNIFIER_STYLE_PREFERENCE_KEY = 'moonsprite.preference.eyedropper-magnifier-style'
+export const EYEDROPPER_MAGNIFIER_DISTORTION_ENABLED_PREFERENCE_KEY = 'moonsprite.preference.eyedropper-magnifier-distortion-enabled'
+export const MOVE_LAYER_CONTENT_PREVIEW_ENABLED_PREFERENCE_KEY = 'moonsprite.preference.move-layer-content-preview-enabled'
 export const SELECTION_CROSSHAIR_PREFERENCE_KEY = 'moonsprite.preference.selection-crosshair'
 export const BALANCED_SHIFT_LINE_ENABLED_PREFERENCE_KEY = 'moonsprite.preference.balanced-shift-line-enabled'
 export const LINE_DIRECTION_STEP_PREFERENCE_KEY = 'moonsprite.preference.line-direction-step'
@@ -36,12 +41,17 @@ export const COLOR_EDITOR_MODES_PREFERENCE_KEY = 'moonsprite.preference.color-ed
 export const ONION_SKIN_PREFERENCE_KEY = 'moonsprite.preference.onion-skin'
 export const SYMMETRY_AXIS_PREFERENCE_KEY = 'moonsprite.preference.symmetry-axis'
 export const TIMELAPSE_RECORDING_ENABLED_PREFERENCE_KEY = 'moonsprite.preference.timelapse-recording-enabled'
+export const UI_SCALE_PREFERENCE_KEY = 'moonsprite.preference.ui-scale'
+export { THEME_PREFERENCE_KEY }
 
 export type RotationIndicatorPosition = 'view' | 'canvas'
 export type RelativeLuminanceScope = 'canvas' | 'app'
 export type ZoomToolDragMode = 'smooth' | 'stepped'
 export type CursorScale = 1 | 1.25 | 1.5 | 2
+export const UI_SCALE_VALUES = [0.75, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2] as const
+export type UiScale = typeof UI_SCALE_VALUES[number]
 export type BrushPreviewMode = 'none' | 'edge' | 'full' | 'full-edge'
+export type EyedropperMagnifierStyle = 'pixel' | 'line'
 export type CheckerSize = number
 
 export interface CheckerboardPreferences {
@@ -84,8 +94,17 @@ export function parseCursorScale(value: string | null): CursorScale {
   return parsed === 1.25 || parsed === 1.5 || parsed === 2 ? parsed : 1
 }
 
+export function parseUiScale(value: string | null): UiScale {
+  const parsed = Number(value)
+  return UI_SCALE_VALUES.includes(parsed as UiScale) ? parsed as UiScale : 1
+}
+
 export function parseBrushPreviewMode(value: string | null): BrushPreviewMode {
   return value === 'none' || value === 'edge' || value === 'full' || value === 'full-edge' ? value : 'full'
+}
+
+export function parseEyedropperMagnifierStyle(value: string | null): EyedropperMagnifierStyle {
+  return value === 'line' ? 'line' : 'pixel'
 }
 
 export function parseCheckerSize(value: string | null): CheckerSize {
@@ -187,6 +206,7 @@ export type ExportFormatPreference = 'png' | 'jpeg' | 'webp' | 'svg' | 'gif'
 
 export interface EditorPreferences {
   language: AppLocale
+  uiScale: UiScale
   saveFormat: SaveFormatPreference
   exportFormat: ExportFormatPreference
   recovery: boolean
@@ -208,6 +228,10 @@ export interface EditorPreferences {
   shiftLinePreviewEnabled: boolean
   lassoPreviewClosed: boolean
   eyedropperSwitchToPencil: boolean
+  eyedropperMagnifierEnabled: boolean
+  eyedropperMagnifierStyle: EyedropperMagnifierStyle
+  eyedropperMagnifierDistortionEnabled: boolean
+  moveLayerContentPreviewEnabled: boolean
   selectionCrosshair: boolean
   balancedShiftLineEnabled: boolean
   lineDirectionStep: number
@@ -216,10 +240,12 @@ export interface EditorPreferences {
   onionSkin: OnionSkinPreferences
   symmetryAxis: SymmetryAxisPreferences
   timelapseRecordingEnabled: boolean
+  theme: ThemePreferences
 }
 
 export const DEFAULT_EDITOR_PREFERENCES: EditorPreferences = {
   language: DEFAULT_APP_LOCALE,
+  uiScale: 1,
   saveFormat: 'moonsprite',
   exportFormat: 'png',
   recovery: true,
@@ -241,6 +267,10 @@ export const DEFAULT_EDITOR_PREFERENCES: EditorPreferences = {
   shiftLinePreviewEnabled: true,
   lassoPreviewClosed: false,
   eyedropperSwitchToPencil: false,
+  eyedropperMagnifierEnabled: true,
+  eyedropperMagnifierStyle: 'pixel',
+  eyedropperMagnifierDistortionEnabled: true,
+  moveLayerContentPreviewEnabled: true,
   selectionCrosshair: false,
   balancedShiftLineEnabled: true,
   lineDirectionStep: 1,
@@ -248,7 +278,68 @@ export const DEFAULT_EDITOR_PREFERENCES: EditorPreferences = {
   colorEditorModes: DEFAULT_COLOR_EDITOR_MODES,
   onionSkin: DEFAULT_ONION_SKIN_PREFERENCES,
   symmetryAxis: DEFAULT_SYMMETRY_AXIS_PREFERENCES,
-  timelapseRecordingEnabled: true
+  timelapseRecordingEnabled: true,
+  theme: DEFAULT_THEME_PREFERENCES
+}
+
+let previewPreferences: EditorPreferences | null = null
+
+export function setEditorPreferencesPreview(preferences: EditorPreferences | null): void {
+  previewPreferences = preferences
+}
+
+const sameColor = (a: RgbaColor, b: RgbaColor): boolean => a.r === b.r && a.g === b.g && a.b === b.b && a.a === b.a
+const copyPreferences = (preferences: EditorPreferences): EditorPreferences => structuredClone(preferences)
+
+const migrateLegacyThemeColors = (theme: ThemePreferences, get: (key: string) => string | null, checkerboard: CheckerboardPreferences, grid: GridColorPreferences, onionSkin: OnionSkinPreferences, symmetryAxis: SymmetryAxisPreferences): ThemePreferences => {
+  if (get(THEME_PREFERENCE_KEY) !== null) return theme
+  const colors: Partial<ThemePalette> = {}
+  if (get(CHECKER_LIGHT_COLOR_PREFERENCE_KEY) !== null) colors.checkerLight = rgbaHex(checkerboard.lightColor)
+  if (get(CHECKER_DARK_COLOR_PREFERENCE_KEY) !== null) colors.checkerDark = rgbaHex(checkerboard.darkColor)
+  if (get(PIXEL_GRID_COLOR_PREFERENCE_KEY) !== null) colors.pixelGrid = rgbaHex(grid.pixelGridColor)
+  if (get(GRID_COLOR_PREFERENCE_KEY) !== null) colors.customGrid = rgbaHex(grid.gridColor)
+  if (get(ONION_SKIN_PREFERENCE_KEY) !== null) {
+    colors.onionPrevious = rgbaHex(onionSkin.previousColor)
+    colors.onionNext = rgbaHex(onionSkin.nextColor)
+  }
+  if (get(SYMMETRY_AXIS_PREFERENCE_KEY) !== null) colors.symmetryAxis = rgbaHex(symmetryAxis.color)
+  return Object.keys(colors).length > 0 ? withThemePaletteColors(theme, colors) : theme
+}
+
+const effectiveThemeColors = (theme: ThemePreferences, get: (key: string) => string | null, storage?: Storage): { theme: ThemePreferences; checkerboard: CheckerboardPreferences; grid: GridColorPreferences; onionSkin: OnionSkinPreferences; symmetryAxis: SymmetryAxisPreferences } => {
+  const storedCheckerboard = loadCheckerboardPreferences(storage)
+  const storedGrid = loadGridColorPreferences(storage)
+  const storedOnionSkin = parseOnionSkinPreferences(get(ONION_SKIN_PREFERENCE_KEY))
+  const storedSymmetryAxis = parseSymmetryAxisPreferences(get(SYMMETRY_AXIS_PREFERENCE_KEY))
+  const migrated = migrateLegacyThemeColors(theme, get, storedCheckerboard, storedGrid, storedOnionSkin, storedSymmetryAxis)
+  const finalTheme = normalizeThemePreferences(migrated)
+  const finalResolved = resolveTheme(finalTheme)
+  return {
+    theme: finalTheme,
+    checkerboard: { size: parseCheckerSize(get(CHECKER_SIZE_PREFERENCE_KEY)), lightColor: { ...finalResolved.visualDefaults.checkerLight }, darkColor: { ...finalResolved.visualDefaults.checkerDark } },
+    grid: { pixelGridColor: { ...finalResolved.visualDefaults.pixelGrid }, gridColor: { ...finalResolved.visualDefaults.customGrid } },
+    onionSkin: { ...storedOnionSkin, previousColor: { ...finalResolved.visualDefaults.onionPrevious }, nextColor: { ...finalResolved.visualDefaults.onionNext } },
+    symmetryAxis: { ...storedSymmetryAxis, color: { ...finalResolved.visualDefaults.symmetryAxis } }
+  }
+}
+
+const themeWithInferredVisualColors = (preferences: EditorPreferences): ThemePreferences => {
+  const theme = normalizeThemePreferences(preferences.theme)
+  const defaults = resolveTheme(theme).visualDefaults
+  const values: Array<[keyof Pick<ThemePalette, 'checkerLight' | 'checkerDark' | 'pixelGrid' | 'customGrid' | 'onionPrevious' | 'onionNext' | 'symmetryAxis'>, RgbaColor, RgbaColor]> = [
+    ['checkerLight', preferences.checkerboard.lightColor, defaults.checkerLight],
+    ['checkerDark', preferences.checkerboard.darkColor, defaults.checkerDark],
+    ['pixelGrid', preferences.pixelGridColor, defaults.pixelGrid],
+    ['customGrid', preferences.gridColor, defaults.customGrid],
+    ['onionPrevious', preferences.onionSkin.previousColor, defaults.onionPrevious],
+    ['onionNext', preferences.onionSkin.nextColor, defaults.onionNext],
+    ['symmetryAxis', preferences.symmetryAxis.color, defaults.symmetryAxis]
+  ]
+  const colors: Partial<ThemePalette> = {}
+  for (const [key, value, fallback] of values) {
+    if (!sameColor(value, fallback)) colors[key] = rgbaHex(value)
+  }
+  return Object.keys(colors).length > 0 ? withThemePaletteColors(theme, colors) : theme
 }
 
 const boundedInteger = (value: unknown, max: number): number | null => {
@@ -416,9 +507,12 @@ export function parseRecoveryMinutes(value: string | null): number {
 }
 
 export function loadEditorPreferences(storage?: Storage): EditorPreferences {
+  if (!storage && previewPreferences) return copyPreferences(previewPreferences)
   const get = (key: string): string | null => readStoredString(key, storage)
+  const theme = effectiveThemeColors(loadThemePreferences(storage), get, storage)
   return {
     language: parseAppLocale(get(LANGUAGE_PREFERENCE_KEY)),
+    uiScale: parseUiScale(get(UI_SCALE_PREFERENCE_KEY)),
     saveFormat: parseSaveFormat(get(SAVE_FORMAT_PREFERENCE_KEY)),
     exportFormat: parseExportFormat(get(EXPORT_FORMAT_PREFERENCE_KEY)),
     recovery: get(RECOVERY_PREFERENCE_KEY) !== 'false',
@@ -433,26 +527,34 @@ export function loadEditorPreferences(storage?: Storage): EditorPreferences {
     useLocalCursors: get(USE_LOCAL_CURSORS_PREFERENCE_KEY) === 'true',
     cursorScale: parseCursorScale(get(CURSOR_SCALE_PREFERENCE_KEY)),
     brushPreviewMode: parseBrushPreviewMode(get(BRUSH_PREVIEW_MODE_PREFERENCE_KEY)),
-    checkerboard: loadCheckerboardPreferences(storage),
-    ...loadGridColorPreferences(storage),
+    checkerboard: theme.checkerboard,
+    pixelGridColor: theme.grid.pixelGridColor,
+    gridColor: theme.grid.gridColor,
     wheelZoomEnabled: get(WHEEL_ZOOM_ENABLED_PREFERENCE_KEY) !== 'false',
     shiftLinePreviewEnabled: get(SHIFT_LINE_PREVIEW_ENABLED_PREFERENCE_KEY) !== 'false',
     lassoPreviewClosed: get(LASSO_PREVIEW_CLOSED_PREFERENCE_KEY) === 'true',
     eyedropperSwitchToPencil: get(EYEDROPPER_SWITCH_TO_PENCIL_PREFERENCE_KEY) === 'true',
+    eyedropperMagnifierEnabled: get(EYEDROPPER_MAGNIFIER_ENABLED_PREFERENCE_KEY) !== 'false',
+    eyedropperMagnifierStyle: parseEyedropperMagnifierStyle(get(EYEDROPPER_MAGNIFIER_STYLE_PREFERENCE_KEY)),
+    eyedropperMagnifierDistortionEnabled: get(EYEDROPPER_MAGNIFIER_DISTORTION_ENABLED_PREFERENCE_KEY) !== 'false',
+    moveLayerContentPreviewEnabled: get(MOVE_LAYER_CONTENT_PREVIEW_ENABLED_PREFERENCE_KEY) !== 'false',
     selectionCrosshair: get(SELECTION_CROSSHAIR_PREFERENCE_KEY) === 'true',
     balancedShiftLineEnabled: get(BALANCED_SHIFT_LINE_ENABLED_PREFERENCE_KEY) !== 'false',
     lineDirectionStep: parseLineDirectionStep(get(LINE_DIRECTION_STEP_PREFERENCE_KEY)),
     layerDisplayColorPresets: parseLayerDisplayColorPresets(get(LAYER_DISPLAY_COLOR_PRESETS_KEY)),
     colorEditorModes: parseColorEditorModes(get(COLOR_EDITOR_MODES_PREFERENCE_KEY)),
-    onionSkin: parseOnionSkinPreferences(get(ONION_SKIN_PREFERENCE_KEY)),
-    symmetryAxis: parseSymmetryAxisPreferences(get(SYMMETRY_AXIS_PREFERENCE_KEY)),
-    timelapseRecordingEnabled: get(TIMELAPSE_RECORDING_ENABLED_PREFERENCE_KEY) !== 'false'
+    onionSkin: theme.onionSkin,
+    symmetryAxis: theme.symmetryAxis,
+    timelapseRecordingEnabled: get(TIMELAPSE_RECORDING_ENABLED_PREFERENCE_KEY) !== 'false',
+    theme: theme.theme
   }
 }
 
 export function saveEditorPreferences(preferences: EditorPreferences, storage?: Storage): void {
+  const theme = themeWithInferredVisualColors(preferences)
   const values: Record<string, string> = {
     [LANGUAGE_PREFERENCE_KEY]: preferences.language,
+    [UI_SCALE_PREFERENCE_KEY]: String(parseUiScale(String(preferences.uiScale))),
     [SAVE_FORMAT_PREFERENCE_KEY]: preferences.saveFormat,
     [EXPORT_FORMAT_PREFERENCE_KEY]: preferences.exportFormat,
     [RECOVERY_PREFERENCE_KEY]: String(preferences.recovery),
@@ -476,6 +578,10 @@ export function saveEditorPreferences(preferences: EditorPreferences, storage?: 
     [SHIFT_LINE_PREVIEW_ENABLED_PREFERENCE_KEY]: String(preferences.shiftLinePreviewEnabled),
     [LASSO_PREVIEW_CLOSED_PREFERENCE_KEY]: String(preferences.lassoPreviewClosed),
     [EYEDROPPER_SWITCH_TO_PENCIL_PREFERENCE_KEY]: String(preferences.eyedropperSwitchToPencil),
+    [EYEDROPPER_MAGNIFIER_ENABLED_PREFERENCE_KEY]: String(preferences.eyedropperMagnifierEnabled),
+    [EYEDROPPER_MAGNIFIER_STYLE_PREFERENCE_KEY]: preferences.eyedropperMagnifierStyle,
+    [EYEDROPPER_MAGNIFIER_DISTORTION_ENABLED_PREFERENCE_KEY]: String(preferences.eyedropperMagnifierDistortionEnabled),
+    [MOVE_LAYER_CONTENT_PREVIEW_ENABLED_PREFERENCE_KEY]: String(preferences.moveLayerContentPreviewEnabled),
     [SELECTION_CROSSHAIR_PREFERENCE_KEY]: String(preferences.selectionCrosshair),
     [BALANCED_SHIFT_LINE_ENABLED_PREFERENCE_KEY]: String(preferences.balancedShiftLineEnabled),
     [LINE_DIRECTION_STEP_PREFERENCE_KEY]: String(parseLineDirectionStep(String(preferences.lineDirectionStep))),
@@ -486,4 +592,5 @@ export function saveEditorPreferences(preferences: EditorPreferences, storage?: 
     [TIMELAPSE_RECORDING_ENABLED_PREFERENCE_KEY]: String(preferences.timelapseRecordingEnabled)
   }
   for (const [key, value] of Object.entries(values)) writeStoredString(key, value, storage)
+  saveThemePreferences(theme, storage)
 }

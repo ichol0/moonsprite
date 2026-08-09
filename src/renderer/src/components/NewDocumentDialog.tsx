@@ -1,11 +1,11 @@
 import { useEffect, useState } from 'react'
-import { X } from 'lucide-react'
 import type { ColorMode } from '@shared/types'
 import { DEFAULT_DOCUMENT_SIZE_PRESETS, type DocumentSizePreset } from '@/core/file-preferences'
 import { AVAILABLE_APP_LOCALES, DEFAULT_APP_LOCALE, translate, type AppLocale } from '@/core/localization'
 import { useI18n } from './I18nProvider'
 import { ModalShell } from './ModalShell'
 import { NumberInput } from './NumberInput'
+import { PixelUtilityIcon } from './PixelUtilityIcon'
 
 export function getWindowsFileNameError(value: string, locale: AppLocale = DEFAULT_APP_LOCALE): string | null {
   const name = value
@@ -57,7 +57,7 @@ export function NewDocumentDialog({ open, presets = DEFAULT_DOCUMENT_SIZE_PRESET
   }
   return <div className="modal-backdrop" role="presentation" onPointerDown={(event) => { if (event.target === event.currentTarget) onClose() }}>
     <ModalShell as="form" storageKey="new-document" defaultWidth={480} defaultHeight={520} minWidth={440} onSubmit={submit} aria-label={t('newDocument.title')}>
-      <header><div><span className="eyebrow">{t('newDocument.eyebrow')}</span><h2>{t('newDocument.title')}</h2></div><button type="button" className="icon-button" aria-label={t('common.close')} onClick={onClose}><X size={16} /></button></header>
+      <header><div><span className="eyebrow">{t('newDocument.eyebrow')}</span><h2>{t('newDocument.title')}</h2></div><button type="button" className="icon-button" aria-label={t('common.close')} onClick={onClose}><PixelUtilityIcon kind="close" /></button></header>
       <div className="modal-body"><label>{t('newDocument.name')}<input autoFocus value={name} aria-invalid={Boolean(nameError)} onChange={(event) => { setName(event.target.value); setNameError(getWindowsFileNameError(event.target.value, locale)) }} /></label>{nameError && <p className="field-error" role="alert">{nameError}</p>}
         <div className="form-grid">
           <label>{t('common.width')}<NumberInput aria-label={t('newDocument.widthAria')} min={1} value={width} onValueChange={setWidth} /></label>

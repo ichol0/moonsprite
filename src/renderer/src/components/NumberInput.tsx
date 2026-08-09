@@ -1,7 +1,7 @@
-import { ChevronDown, ChevronUp } from 'lucide-react'
 import { useLayoutEffect, useState, type CSSProperties, type InputHTMLAttributes } from 'react'
 import { evaluateNumericExpression } from '@/core/numeric-expression'
 import { useI18n } from './I18nProvider'
+import { PixelUtilityIcon } from './PixelUtilityIcon'
 
 interface NumberInputProps extends Omit<InputHTMLAttributes<HTMLInputElement>, 'type' | 'value' | 'onChange' | 'min' | 'max' | 'step'> {
   value: number | ''
@@ -60,8 +60,8 @@ export function NumberInput({ value, onValueChange, live = false, min, max, step
       {suffix && <span className="number-input-suffix" aria-hidden="true">{suffix}</span>}
     </span>
     <span className="number-input-stepper">
-      <button type="button" tabIndex={-1} aria-label={t('numberInput.increment')} disabled={inputProps.disabled} onClick={() => adjust(step)}><ChevronUp size={10} /></button>
-      <button type="button" tabIndex={-1} aria-label={t('numberInput.decrement')} disabled={inputProps.disabled} onClick={() => adjust(-step)}><ChevronDown size={10} /></button>
+      <button type="button" tabIndex={-1} aria-label={t('numberInput.increment')} disabled={inputProps.disabled} onClick={() => adjust(step)}><PixelUtilityIcon kind="up" /></button>
+      <button type="button" tabIndex={-1} aria-label={t('numberInput.decrement')} disabled={inputProps.disabled} onClick={() => adjust(-step)}><PixelUtilityIcon kind="down" /></button>
     </span>
   </span>
   return control

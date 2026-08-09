@@ -1,6 +1,6 @@
-import { Trash2 } from 'lucide-react'
 import type { ButtonHTMLAttributes } from 'react'
 import { useI18n } from './I18nProvider'
+import { PixelUtilityIcon } from './PixelUtilityIcon'
 
 export interface DeleteIconButtonProps extends Omit<ButtonHTMLAttributes<HTMLButtonElement>, 'children'> {
   size?: 'compact' | 'regular'
@@ -13,5 +13,5 @@ export function DeleteIconButton({ className = '', size = 'compact', title, ...p
     type={props.type ?? 'button'}
     className={`icon-button delete-icon-button ${size === 'regular' ? 'regular' : 'compact'} ${className}`.trim()}
     title={title ?? t('common.delete')}
-  ><Trash2 size={size === 'regular' ? 15 : 13} /></button>
+  ><PixelUtilityIcon kind="delete" /></button>
 }

@@ -1,5 +1,5 @@
-import type { SpriteDocument, TimelapseQuality, TimelapseSettings, TimelapseSnapshot, TimelapseVideoFormat } from '@shared/types'
-import { compositeDocument, createId } from './document'
+import type { SelectionRect, SpriteDocument, TimelapseQuality, TimelapseSettings, TimelapseSnapshot, TimelapseVideoFormat } from '@shared/types'
+import { compositeDocument, compositeRegion, createId, DocumentCompositeCache } from './document'
 import { encodePng } from './png'
 import { normalizeTimelapseSettings } from './project-metadata'
 import { translateCurrent as tr } from './localization'
@@ -11,6 +11,28 @@ export type TimelapseExportMode = 'duration' | 'speed'
 export interface TimelapseExportOptions {
   mode: TimelapseExportMode
   durationSeconds: number
+}
+
+export interface TimelapseCaptureInvalidation {
+  kind: 'full' | 'region'
+  fromRevision: number
+  revision: number
+  rect?: SelectionRect
+}
+
+export interface TimelapseCaptureCache {
+  width: number
+  height: number
+  frameId: string | null
+  revision: number
+  pixels: Uint8ClampedArray | null
+  composite: DocumentCompositeCache
+}
+
+export interface TimelapseCaptureOptions {
+  cache?: TimelapseCaptureCache
+  contentRevision?: number
+  contentInvalidation?: TimelapseCaptureInvalidation | null
 }
 
 const qualityMaxDimension: Record<TimelapseQuality, number> = {
@@ -46,6 +68,15 @@ export const timelapseOutputDimensions = (settings: Pick<TimelapseSettings, 'qua
   return { width, height }
 }
 
+export const createTimelapseCaptureCache = (): TimelapseCaptureCache => ({
+  width: 0,
+  height: 0,
+  frameId: null,
+  revision: Number.NaN,
+  pixels: null,
+  composite: new DocumentCompositeCache()
+})
+
 const scalePixels = (
   pixels: Uint8ClampedArray,
   sourceWidth: number,
@@ -62,7 +93,11 @@ const scalePixels = (
     for (let x = 0; x < width; x += 1) {
       const sourceX = Math.min(sourceWidth - 1, Math.floor(x * sourceWidth / width))
       const sourceOffset = (sourceY * sourceWidth + sourceX) * 4
-      output.set(pixels.subarray(sourceOffset, sourceOffset + 4), (y * width + x) * 4)
+      const targetOffset = (y * width + x) * 4
+      output[targetOffset] = pixels[sourceOffset]
+      output[targetOffset + 1] = pixels[sourceOffset + 1]
+      output[targetOffset + 2] = pixels[sourceOffset + 2]
+      output[targetOffset + 3] = pixels[sourceOffset + 3]
     }
   }
   return { pixels: output, width, height }
@@ -79,11 +114,55 @@ const compactSnapshots = (snapshots: TimelapseSnapshot[]): TimelapseSnapshot[] =
   return compacted
 }
 
-export function captureTimelapseSnapshot(document: SpriteDocument, now = Date.now()): void {
+const compositeTimelapsePixels = (document: SpriteDocument, options: TimelapseCaptureOptions): Uint8ClampedArray => {
+  const cache = options.cache
+  const revision = options.contentRevision ?? Number.NaN
+  const frameId = document.animation?.activeFrameId ?? null
+  if (!cache || !cache.pixels || cache.width !== document.width || cache.height !== document.height || cache.frameId !== frameId || !Number.isFinite(revision)) {
+    const pixels = compositeDocument(document)
+    if (cache) {
+      cache.width = document.width
+      cache.height = document.height
+      cache.frameId = frameId
+      cache.revision = revision
+      cache.pixels = pixels
+    }
+    return pixels
+  }
+  const cachedPixels = cache.pixels
+  if (cache.revision === revision) return cachedPixels
+
+  const invalidation = options.contentInvalidation
+  const patchRect = invalidation?.kind === 'region'
+    && invalidation.fromRevision === cache.revision
+    && invalidation.revision === revision
+    ? invalidation.rect
+    : undefined
+  if (!patchRect) {
+    cache.pixels = compositeRegion(document, 0, 0, document.width, document.height, cache.composite, revision)
+  } else {
+    const left = Math.max(0, Math.floor(patchRect.x))
+    const top = Math.max(0, Math.floor(patchRect.y))
+    const right = Math.min(document.width, Math.ceil(patchRect.x + patchRect.width))
+    const bottom = Math.min(document.height, Math.ceil(patchRect.y + patchRect.height))
+    if (right > left && bottom > top) {
+      const patch = compositeRegion(document, left, top, right - left, bottom - top, cache.composite, revision)
+      for (let y = top; y < bottom; y += 1) {
+        const sourceOffset = (y - top) * (right - left) * 4
+        const targetOffset = (y * document.width + left) * 4
+      cachedPixels.set(patch.subarray(sourceOffset, sourceOffset + (right - left) * 4), targetOffset)
+      }
+    }
+  }
+  cache.revision = revision
+  return cachedPixels
+}
+
+export function captureTimelapseSnapshot(document: SpriteDocument, now = Date.now(), options: TimelapseCaptureOptions = {}): void {
   const settings = normalizeTimelapseSettings(document.timelapse, document.timelapse?.snapshots ?? [])
   document.timelapse = settings
   if (!settings.enabled) return
-  const scaled = scalePixels(compositeDocument(document), document.width, document.height, qualityMaxDimension[settings.quality])
+  const scaled = scalePixels(compositeTimelapsePixels(document, options), document.width, document.height, qualityMaxDimension[settings.quality])
   const previous = settings.snapshots.at(-1)
   const snapshot: TimelapseSnapshot = {
     id: createId('timelapse'),

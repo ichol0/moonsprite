@@ -1,5 +1,5 @@
 import type { ImageBrush, ProceduralBrushId, ProceduralBrushSettings, RgbaColor, SelectionMask, SpriteDocument, ToolId } from '@shared/types'
-import { HistoryStack } from '@/core/history'
+import { HistoryStack, type ContentInvalidationHint } from '@/core/history'
 import { PROCEDURAL_BRUSH_IDS } from '@/core/brushes'
 import { packColor, unpackColor } from '@/core/raster'
 import {
@@ -220,6 +220,9 @@ export const sessionFromDocument = (document: SpriteDocument): DocumentSession =
     animationCellClipboardAnchorKey: null,
     animationFrameClipboard: [],
     revision: 0,
+    contentRevision: 0,
+    layersPanelRevision: 0,
+    contentInvalidation: null,
     recoverySuppressed: false
   } as DocumentSession
   applyBrushProfile(session, brushProfiles.pencil)
@@ -227,11 +230,17 @@ export const sessionFromDocument = (document: SpriteDocument): DocumentSession =
   return session
 }
 
-export function touch(session: DocumentSession, dirty = true): void {
+export function touch(session: DocumentSession, dirty = true, invalidation: ContentInvalidationHint = { kind: 'full' }): void {
   if (dirty) {
+    const fromRevision = session.contentRevision
     session.document.dirty = true
     session.document.updatedAt = new Date().toISOString()
     session.revision += 1
+    session.contentRevision += 1
+    if (invalidation.kind === 'full') session.layersPanelRevision += 1
+    session.contentInvalidation = invalidation.kind === 'region'
+      ? { ...invalidation, rect: { ...invalidation.rect }, fromRevision, revision: session.contentRevision }
+      : { kind: 'full', fromRevision, revision: session.contentRevision }
     session.recoverySuppressed = false
   }
 }

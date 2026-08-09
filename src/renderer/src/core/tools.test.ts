@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { createDocument, getActiveLayer, readLayerColor, readLayerColorAt, resizeDocumentAt, writeLayerColor } from './document'
+import { compositeRegion, createDocument, createLayer, DocumentCompositeCache, getActiveLayer, readLayerColor, readLayerColorAt, resizeDocumentAt, writeLayerColor } from './document'
 import { beginPixelEdit, commitPixelEdit, HistoryStack } from './history'
 import { appendPerfectPixelSegment, applySelectionTransform, applySelectionTranslationPreview, brushMaskOffsets, brushStampAnchor, brushStampDimensions, captureSelectionTransform, clearSelection, fillSelectionOrCanvas, flipLayer, flipSelection, floodFill, floodFillSymmetric, moveSelection, outlinePixelIndices, outlineSelection, paintBrush, paintLine, paintShape, selectionTranslationPreviewEdit } from './tools'
 import { combineSelection, ellipseSelection, lassoSelection, magicWandSelection, rotatedSelectionBounds, selectionBoundarySegments, selectionContains, transformedSelectionBounds, transformSelectionMask } from './selection'
@@ -193,6 +193,35 @@ describe('pixel tools', () => {
     paintLine(document, layer, divider, 2, 0, 2, 3, 1, blue)
     const fill = floodFill(document, layer, 0, 0, { r: 255, g: 0, b: 0, a: 255 })!
     expect(fill.before.size).toBe(8)
+  })
+
+  it('fills and undoes a region larger than the initial typed fill stack', () => {
+    const document = createDocument('large fill', 48, 48, 'rgba')
+    const layer = getActiveLayer(document)
+    const edit = floodFill(document, layer, 0, 0, red)!
+
+    expect(edit.before.size).toBe(48 * 48)
+    expect(edit.dirtyRect).toEqual({ x: 0, y: 0, width: 48, height: 48 })
+    const entry = commitPixelEdit(document, edit, 'large fill')!
+    entry.undo()
+    expect(readLayerColorAt(document, layer, 47, 47).a).toBe(0)
+    entry.redo()
+    expect(readLayerColorAt(document, layer, 47, 47)).toEqual(red)
+  })
+
+  it('stores a large solid fill as row runs instead of one history entry per pixel', () => {
+    const document = createDocument('compact fill', 512, 512, 'rgba')
+    const layer = getActiveLayer(document)
+    const edit = floodFill(document, layer, 0, 0, red)!
+
+    expect(edit.before.size).toBe(0)
+    expect(edit.runs).toHaveLength(512)
+    expect(edit.dirtyRect).toEqual({ x: 0, y: 0, width: 512, height: 512 })
+    const entry = commitPixelEdit(document, edit, 'compact fill')!
+    entry.undo()
+    expect(readLayerColorAt(document, layer, 511, 511).a).toBe(0)
+    entry.redo()
+    expect(readLayerColorAt(document, layer, 511, 511)).toEqual(red)
   })
 
   it('fills a selected region using canvas coordinates on an offset layer', () => {
@@ -449,6 +478,22 @@ describe('pixel tools', () => {
     expect(readLayerColor(document, layer, 2).a).toBe(0)
     expect(readLayerColor(document, layer, 3)).toEqual(blue)
     expect(selectionTranslationPreviewEdit(document, second)?.before.size).toBe(2)
+  })
+
+  it('invalidates cached opaque ranges after a selection translation preview', () => {
+    const document = createDocument('cached preview move', 6, 1, 'rgba')
+    const layer = getActiveLayer(document)
+    document.layers.push(createLayer('empty layer', document.width, document.height, 'rgba'))
+    writeLayerColor(document, layer, 0, red)
+    const cache = new DocumentCompositeCache()
+    compositeRegion(document, 0, 0, document.width, document.height, cache)
+    const selection = { x: 0, y: 0, width: 1, height: 1 }
+    const source = captureSelectionTransform(document, selection)!
+
+    applySelectionTranslationPreview(document, source, { ...selection, x: 4 })
+
+    const composite = compositeRegion(document, 0, 0, document.width, document.height, cache)
+    expect(Array.from(composite.slice(4 * 4, 4 * 4 + 4))).toEqual([red.r, red.g, red.b, red.a])
   })
 
   it('moves a selection in canvas coordinates on a cropped offset layer', () => {
@@ -1048,6 +1093,7 @@ describe('pixel tools', () => {
     const edit = floodFillSymmetric(document, layer, 0, 0, red, null, true, null, 1, undefined, 'solid', 1, 0, 'paint', { horizontal: false, vertical: true, diagonalUp: false, diagonalDown: false })!
 
     expect([...edit.after.keys()].sort((left, right) => left - right)).toEqual([0, 4])
+    expect(edit.dirtyRect).toEqual({ x: 0, y: 0, width: 5, height: 1 })
     expect(readLayerColorAt(document, layer, 0, 0)).toEqual(red)
     expect(readLayerColorAt(document, layer, 4, 0)).toEqual(red)
   })

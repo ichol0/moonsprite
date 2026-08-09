@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { activateAnimationFrame, addBlankAnimationFrame, animationCelAt, animationCelHasContent, connectAnimationCels, createDefaultAnimationTimeline, deleteAnimationFrame, disconnectAnimationCels, duplicateAnimationFrame, ensureAnimationDocument, nextAnimationFrameId, normalizeAnimationTimeline, resizeAnimationCelsAt, syncActiveAnimationFrame } from './animation'
+import { activateAnimationFrame, addBlankAnimationFrame, animationCelAt, animationCelHasContent, connectAnimationCels, createAnimationCelLookup, createDefaultAnimationTimeline, deleteAnimationFrame, disconnectAnimationCels, duplicateAnimationFrame, ensureAnimationDocument, nextAnimationFrameId, normalizeAnimationTimeline, resizeAnimationCelsAt, syncActiveAnimationFrame } from './animation'
 import { createDocument, createLayer, ensureLayerCoversCanvas, getActiveLayer, resizeDocumentAt, writeLayerColor } from './document'
 import { beginPixelEdit, commitPixelEdit, HistoryStack, recordPixel } from './history'
 
@@ -104,6 +104,12 @@ describe('animation timeline boundary', () => {
     expect(timeline.cels).toHaveLength(40 * 60)
     expect(new Set(timeline.cels.map((cel) => cel.id)).size).toBe(timeline.cels.length)
     expect(new Set(timeline.cels.map((cel) => `${cel.layerId}:${cel.frameId}`)).size).toBe(timeline.cels.length)
+    const lookup = createAnimationCelLookup(timeline)
+    for (const layer of document.layers) for (const frame of timeline.frames) {
+      const cel = lookup.at(layer.id, frame.id)
+      expect(cel).not.toBeNull()
+      expect(lookup.resolve(cel)).toBe(cel)
+    }
   })
 
   it('duplicates pixels without linking the copied frame', () => {

@@ -1,7 +1,8 @@
-import { Brush, Film, Layers3, Maximize2, X } from 'lucide-react'
+import { Brush, Film, Layers3, Maximize2 } from 'lucide-react'
 import type { SpriteDocument } from '@shared/types'
 import { ModalShell } from './ModalShell'
 import { useI18n } from './I18nProvider'
+import { PixelUtilityIcon } from './PixelUtilityIcon'
 
 interface ProjectInfoDialogProps {
   document: SpriteDocument
@@ -59,7 +60,7 @@ export function ProjectInfoDialog({ document, onClose }: ProjectInfoDialogProps)
 
   return <div className="modal-backdrop" role="presentation" onPointerDown={(event) => { if (event.target === event.currentTarget) onClose() }}>
     <ModalShell storageKey="project-info" defaultWidth={430} defaultHeight={520} fitContentKey={`${document.id}:${document.layers.length}:${timeline?.frames.length ?? 1}`} minWidth={360} minHeight={360} className="project-info-modal" role="dialog" aria-modal="true" aria-labelledby="project-info-title">
-      <header><div><h2 id="project-info-title">{t('projectInfo.title')}</h2></div><button className="icon-button" aria-label={t('common.close')} onClick={onClose}><X size={16} /></button></header>
+      <header><div><h2 id="project-info-title">{t('projectInfo.title')}</h2></div><button className="icon-button" aria-label={t('common.close')} onClick={onClose}><PixelUtilityIcon kind="close" /></button></header>
       <div className="project-info-content component-scrollbar">
         <section className="project-info-highlights" aria-label={t('projectInfo.title')}>
           {highlights.map(({ label, value, suffix, icon: Icon }) => <div key={label} className="project-info-highlight"><Icon size={16} aria-hidden="true" /><span>{label}</span><strong>{value}{suffix && <small>{suffix}</small>}</strong></div>)}

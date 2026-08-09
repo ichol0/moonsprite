@@ -43,6 +43,7 @@ const createBrowserApi = (): MoonSpriteApi => ({
   exportImage: async () => ({ canceled: true }),
   savePaletteImage: async () => ({ canceled: true }),
   saveShortcutFile: async () => ({ canceled: true }),
+  saveThemeFile: async () => ({ canceled: true }),
   fileExists: async () => false,
   readBinary: async (filePath) => {
     const brush = [...browserBrushes.values()].find((item) => item.stored.filePath === filePath)
@@ -118,6 +119,7 @@ export const createTauriApi = (): MoonSpriteApi => ({
   exportImage: (defaultPath, format) => invoke('export_image', { defaultPath, format, language: dialogLanguage() }),
   savePaletteImage: (defaultPath) => invoke('save_palette_image', { defaultPath, language: dialogLanguage() }),
   saveShortcutFile: (defaultPath) => invoke('save_shortcut_file', { defaultPath, language: dialogLanguage() }),
+  saveThemeFile: (defaultPath) => invoke('save_theme_file', { defaultPath, language: dialogLanguage() }),
   fileExists: (filePath) => invoke('file_exists', { filePath }),
   readBinary: (filePath) => invokeBytes('read_binary', { filePath }),
   writeBinaryAtomic: (filePath, data) => invoke('write_binary_atomic', { filePath, data: Array.from(data) }),

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { selectionContains } from './selection'
-import { moveSymmetryCenter, symmetryAxisSegment, symmetryPoints, symmetrySelection, type SymmetryAxes } from './symmetry'
+import { moveSymmetryCenter, symmetryAxisSegment, symmetryPoints, symmetrySelection, transformSymmetrySelection, type SymmetryAxes } from './symmetry'
 
 const axes = (values: Partial<SymmetryAxes>): SymmetryAxes => ({
   horizontal: false,
@@ -44,6 +44,23 @@ describe('symmetry', () => {
 
   it('drops diagonal results outside a rectangular canvas', () => {
     expect(symmetryPoints({ x: 0, y: 0 }, 8, 2, axes({ diagonalDown: true }))).toEqual([{ x: 0, y: 0 }])
+  })
+
+  it('preserves mirrored transform previews outside the canvas when requested', () => {
+    const transformed = transformSymmetrySelection(
+      { x: 0, y: 1, width: 1, height: 1 },
+      { x: -2, y: 1, width: 1, height: 1 },
+      4,
+      4,
+      0,
+      undefined,
+      axes({ vertical: true }),
+      undefined,
+      false
+    )
+
+    expect(selectionContains(transformed, -2, 1)).toBe(true)
+    expect(selectionContains(transformed, 5, 1)).toBe(true)
   })
 
   it('mirrors arbitrary selection masks with the same point mapping', () => {

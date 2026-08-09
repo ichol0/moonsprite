@@ -103,6 +103,7 @@ pub fn run() {
             platform_dialogs::export_image,
             platform_dialogs::save_palette_image,
             platform_dialogs::save_shortcut_file,
+            platform_dialogs::save_theme_file,
             platform_files::file_exists,
             platform_files::read_binary,
             platform_files::write_binary_atomic,

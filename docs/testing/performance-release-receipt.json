@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "status": "legacy",
+  "releaseLabel": "DEV.3",
+  "enforcedFrom": "DEV.4",
+  "auditId": null,
+  "outcome": null,
+  "acceptedAt": null,
+  "sourceFingerprint": null
+}

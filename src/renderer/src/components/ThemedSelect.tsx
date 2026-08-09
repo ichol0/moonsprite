@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
-import { Check, ChevronDown } from 'lucide-react'
 import { Tooltip } from '@/components/Tooltip'
+import { PixelDownIcon as ChevronDown, PixelUtilityIcon } from '@/components/PixelUtilityIcon'
 
 export interface ThemedSelectGroup<T extends string> {
   label: string
@@ -81,6 +81,6 @@ export function ThemedSelect<T extends string>({ value, groups, label, onChange,
       }
       if (event.key === 'Escape') setOpen(false)
     }}><span className="themed-select-selected-copy">{selected ? renderSelected?.(selected) ?? selected.label : value}</span><ChevronDown size={14} /></button>
-    {open && createPortal(<div ref={menuRef} className={`themed-select-popover ${popoverClassName}`.trim()} data-hide-check={!showCheck ? 'true' : undefined} role="listbox" aria-label={label} style={position}>{groups.map((group) => <section key={group.label} className="themed-select-group"><span>{group.label}</span>{group.options.map((option) => { const optionCopy = <span className="themed-select-option-copy">{renderOption?.(option) ?? <strong>{option.label}</strong>}</span>; return <button key={option.value} type="button" role="option" aria-selected={option.value === value} onClick={() => select(option.value)}>{showOptionTooltips ? <Tooltip content={option.description}>{optionCopy}</Tooltip> : optionCopy}{showCheck && option.value === value && <Check size={13} />}</button> })}</section>)}</div>, document.body)}
+    {open && createPortal(<div ref={menuRef} className={`themed-select-popover ${popoverClassName}`.trim()} data-hide-check={!showCheck ? 'true' : undefined} role="listbox" aria-label={label} style={position}>{groups.map((group) => <section key={group.label} className="themed-select-group"><span>{group.label}</span>{group.options.map((option) => { const optionCopy = <span className="themed-select-option-copy">{renderOption?.(option) ?? <strong>{option.label}</strong>}</span>; return <button key={option.value} type="button" role="option" aria-selected={option.value === value} onClick={() => select(option.value)}>{showOptionTooltips ? <Tooltip content={option.description}>{optionCopy}</Tooltip> : optionCopy}{showCheck && option.value === value && <PixelUtilityIcon kind="check" />}</button> })}</section>)}</div>, document.body)}
   </span>
 }

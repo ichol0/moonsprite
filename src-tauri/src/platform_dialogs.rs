@@ -245,6 +245,27 @@ pub(crate) fn save_shortcut_file(
     }
 }
 
+#[tauri::command]
+pub(crate) fn save_theme_file(
+    default_path: Option<String>,
+    language: Option<String>,
+) -> SaveDialogResult {
+    let path = file_dialog(default_path.as_deref())
+        .add_filter(
+            if is_english(language.as_deref()) {
+                "MoonSprite theme"
+            } else {
+                "MoonSprite 主题"
+            },
+            JSON,
+        )
+        .save_file();
+    SaveDialogResult {
+        canceled: path.is_none(),
+        file_path: path.map(|value| value.to_string_lossy().to_string()),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{image_export_filter, project_save_filter};

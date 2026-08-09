@@ -1,13 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { anchoredPreviewPan, pixelPerfectPreviewScale, previewCheckerCellSize } from './preview-geometry'
+import { anchoredPreviewPan, previewCheckerCellSize } from './preview-geometry'
 
 describe('preview zoom geometry', () => {
-  it('quantizes preview scales to uniform pixel sizes', () => {
-    expect(pixelPerfectPreviewScale(3.8)).toBe(4)
-    expect(pixelPerfectPreviewScale(0.64)).toBe(0.5)
-    expect(pixelPerfectPreviewScale(0.19)).toBeCloseTo(1 / 5)
-  })
-
   it('keeps the document point under the pointer while zooming', () => {
     expect(anchoredPreviewPan({
       documentSize: { width: 100, height: 100 },

@@ -91,20 +91,49 @@ export const animationFrameAt = (timeline: AnimationTimeline, frameId: string): 
 export const animationCelAt = (timeline: AnimationTimeline, layerId: string, frameId: string): AnimationCel | null =>
   timeline.cels.find((cel) => cel.layerId === layerId && cel.frameId === frameId) ?? null
 
-export const resolveAnimationCel = (timeline: AnimationTimeline, cel: AnimationCel | null): AnimationCel | null => {
-  if (!cel) return null
-  const byId = new Map(timeline.cels.map((candidate) => [candidate.id, candidate]))
-  const visited = new Set<string>()
-  let current = cel
-  while (current.linkedCelId) {
-    if (visited.has(current.id)) return cel
-    visited.add(current.id)
-    const linked = byId.get(current.linkedCelId)
-    if (!linked || linked.layerId !== cel.layerId) return cel
-    current = linked
-  }
-  return current
+export interface AnimationCelLookup {
+  at: (layerId: string, frameId: string) => AnimationCel | null
+  resolve: (cel: AnimationCel | null) => AnimationCel | null
 }
+
+/** Builds the cel indexes once for batch timeline work such as playback and panel rendering. */
+export const createAnimationCelLookup = (timeline: AnimationTimeline): AnimationCelLookup => {
+  const bySlot = new Map(timeline.cels.map((candidate) => [celSlotKey(candidate.layerId, candidate.frameId), candidate]))
+  let byId: Map<string, AnimationCel> | null = null
+  const resolved = new Map<string, AnimationCel>()
+  const resolve = (cel: AnimationCel | null): AnimationCel | null => {
+    if (!cel || !cel.linkedCelId) return cel
+    const cached = resolved.get(cel.id)
+    if (cached) return cached
+    const visited = new Set<string>()
+    const path: AnimationCel[] = []
+    let current = cel
+    while (current.linkedCelId) {
+      const known = resolved.get(current.id)
+      if (known) {
+        for (const member of path) resolved.set(member.id, known)
+        return known
+      }
+      if (visited.has(current.id)) return cel
+      visited.add(current.id)
+      path.push(current)
+      byId ??= new Map(timeline.cels.map((candidate) => [candidate.id, candidate]))
+      const linked = byId.get(current.linkedCelId)
+      if (!linked || linked.layerId !== cel.layerId) return cel
+      current = linked
+    }
+    resolved.set(current.id, current)
+    for (const member of path) resolved.set(member.id, current)
+    return current
+  }
+  return {
+    at: (layerId, frameId) => bySlot.get(celSlotKey(layerId, frameId)) ?? null,
+    resolve
+  }
+}
+
+export const resolveAnimationCel = (timeline: AnimationTimeline, cel: AnimationCel | null): AnimationCel | null =>
+  !cel?.linkedCelId ? cel : createAnimationCelLookup(timeline).resolve(cel)
 
 /** 判断 cel 是否包含至少一个可见像素，而不是只判断是否存在 surface。 */
 export const animationCelHasContent = (cel: AnimationCel | null, palette: readonly PaletteEntry[] = []): boolean => {
@@ -193,6 +222,10 @@ export const cloneAnimationCelSurface = (surface: AnimationCelSurface): Animatio
   ? { ...surface, pixels: surface.pixels.slice() }
   : { ...surface, pixels: surface.pixels.slice() }
 
+const shareAnimationCelSurface = (surface: AnimationCelSurface): AnimationCelSurface => surface.format === 'rgba'
+  ? { ...surface, pixels: surface.pixels }
+  : { ...surface, pixels: surface.pixels }
+
 const cropAnimationCelSurface = (surface: AnimationCelSurface, canvasWidth: number, canvasHeight: number): void => {
   const left = Math.max(0, surface.offsetX)
   const top = Math.max(0, surface.offsetY)
@@ -263,7 +296,7 @@ export const cloneAnimationCel = (cel: AnimationCel): AnimationCel => ({
 /** Create an isolated document snapshot for read-only animation previewing. */
 export const cloneDocumentForAnimationFrame = (document: SpriteDocument, frameId: string): SpriteDocument => {
   const layers = document.layers.map((layer) => {
-    const clone = { ...layer, pixels: layer.pixels.slice() } as RasterLayer
+    const clone = { ...layer, pixels: layer.pixels } as RasterLayer
     setLayerStorageOrigin(clone, getLayerStorageOrigin(layer))
     return clone
   })
@@ -278,7 +311,7 @@ export const cloneDocumentForAnimationFrame = (document: SpriteDocument, frameId
       ? {
           ...document.animation,
           frames: document.animation.frames.map((frame) => ({ ...frame })),
-          cels: document.animation.cels.map(cloneAnimationCel)
+          cels: document.animation.cels.map((cel) => ({ ...cel, surface: cel.surface ? shareAnimationCelSurface(cel.surface) : undefined }))
         }
       : undefined
   }
@@ -307,14 +340,23 @@ const celsByLayerForFrame = (timeline: AnimationTimeline, frameId: string): Map<
 
 const syncFrameSurfaces = (document: SpriteDocument, timeline: AnimationTimeline): void => {
   const activeCels = celsByLayerForFrame(timeline, timeline.activeFrameId)
+  const lookup = createAnimationCelLookup(timeline)
+  const membersBySource = new Map<string, AnimationCel[]>()
+  for (const candidate of timeline.cels) {
+    if (!candidate.linkedCelId) continue
+    const source = lookup.resolve(candidate)
+    if (!source) continue
+    const members = membersBySource.get(source.id) ?? []
+    members.push(candidate)
+    membersBySource.set(source.id, members)
+  }
   for (const layer of document.layers) {
     const cel = activeCels.get(layer.id)
     if (cel) {
-      const source = resolveAnimationCel(timeline, cel) ?? cel
+      const source = lookup.resolve(cel) ?? cel
       source.surface = surfaceFromLayer(layer)
       source.opacity = layer.opacity
-      for (const candidate of timeline.cels) {
-        if (resolveAnimationCel(timeline, candidate)?.id !== source.id) continue
+      for (const candidate of membersBySource.get(source.id) ?? []) {
         candidate.surface = source.surface
         candidate.opacity = source.opacity
       }
@@ -324,8 +366,9 @@ const syncFrameSurfaces = (document: SpriteDocument, timeline: AnimationTimeline
 
 const applyFrameSurfaces = (document: SpriteDocument, timeline: AnimationTimeline): void => {
   const activeCels = celsByLayerForFrame(timeline, timeline.activeFrameId)
+  const lookup = createAnimationCelLookup(timeline)
   for (const layer of document.layers) {
-    const cel = resolveAnimationCel(timeline, activeCels.get(layer.id) ?? null)
+    const cel = lookup.resolve(activeCels.get(layer.id) ?? null)
     if (cel?.surface) applySurfaceToLayer(layer, cel.surface, cel.opacity)
   }
 }
@@ -583,11 +626,7 @@ export const restoreAnimationCels = (document: SpriteDocument, cels: readonly An
   refreshActiveAnimationFrame(document)
 }
 
-/** 供撤销系统在非活动帧中原位写回像素。 */
-export const animationLayerAtFrame = (document: SpriteDocument, layerId: string, frameId: string): RasterLayer | null => {
-  const layer = document.layers.find((candidate) => candidate.id === layerId)
-  const timeline = ensureAnimationDocument(document)
-  const cel = resolveAnimationCel(timeline, animationCelAt(timeline, layerId, frameId))
+const layerFromAnimationCel = (layer: RasterLayer | undefined, cel: AnimationCel | null): RasterLayer | null => {
   const surface = cel?.surface
   if (!layer || !surface || layer.format !== surface.format) return null
   const target: RasterLayer | null = layer.format === 'rgba' && surface.format === 'rgba'
@@ -598,4 +637,19 @@ export const animationLayerAtFrame = (document: SpriteDocument, layerId: string,
   if (target) setLayerStorageOrigin(target, { x: surface.storageOriginX ?? 0, y: surface.storageOriginY ?? 0 })
   if (target && Number.isFinite(cel?.opacity)) target.opacity = cel!.opacity!
   return target
+}
+
+/** Resolves every layer for one frame with a single cel index build. */
+export const animationLayersAtFrame = (document: SpriteDocument, frameId: string): RasterLayer[] => {
+  const timeline = ensureAnimationDocument(document)
+  const lookup = createAnimationCelLookup(timeline)
+  return document.layers.map((layer) => layerFromAnimationCel(layer, lookup.resolve(lookup.at(layer.id, frameId))) ?? layer)
+}
+
+/** 供撤销系统在非活动帧中原位写回像素。 */
+export const animationLayerAtFrame = (document: SpriteDocument, layerId: string, frameId: string): RasterLayer | null => {
+  const layer = document.layers.find((candidate) => candidate.id === layerId)
+  const timeline = ensureAnimationDocument(document)
+  const lookup = createAnimationCelLookup(timeline)
+  return layerFromAnimationCel(layer, lookup.resolve(lookup.at(layerId, frameId)))
 }

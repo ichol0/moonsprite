@@ -6,6 +6,7 @@ import { DEFAULT_PROJECT_DISPLAY_SETTINGS, DEFAULT_PROJECT_STATISTICS, DEFAULT_T
 
 let sequence = 0
 const layerStorageOrigins = new WeakMap<RasterLayer, { x: number; y: number }>()
+const layerContentRevisions = new WeakMap<RasterLayer, number>()
 export const createId = (prefix: string): string => `${prefix}-${Date.now().toString(36)}-${(++sequence).toString(36)}`
 const transparentEntry = (): PaletteEntry => ({ id: 0, name: tr('core.document.transparentColor'), color: TRANSPARENT })
 
@@ -348,6 +349,12 @@ export function layerStoragePoint(layer: RasterLayer, index: number): { x: numbe
 
 export const getLayerStorageOrigin = (layer: RasterLayer): { x: number; y: number } => ({ ...(layerStorageOrigins.get(layer) ?? { x: 0, y: 0 }) })
 
+export const getLayerContentRevision = (layer: RasterLayer): number => layerContentRevisions.get(layer) ?? 0
+
+export const markLayerContentChanged = (layer: RasterLayer): void => {
+  layerContentRevisions.set(layer, getLayerContentRevision(layer) + 1)
+}
+
 export const setLayerStorageOrigin = (layer: RasterLayer, origin: { x: number; y: number }): void => {
   layerStorageOrigins.set(layer, { x: Math.trunc(origin.x), y: Math.trunc(origin.y) })
 }
@@ -401,6 +408,7 @@ export function readLayerPackedAt(document: SpriteDocument, layer: RasterLayer, 
   return index === null ? null : readLayerPacked(document, layer, index)
 }
 export function writeLayerColor(document: SpriteDocument, layer: RasterLayer, index: number, color: RgbaColor): void {
+  markLayerContentChanged(layer)
   if (layer.format === 'rgba') writeRgbaPixel(layer.pixels, index, color)
   else layer.pixels[index] = findOrAddPaletteColor(document, color)
 }
@@ -416,6 +424,22 @@ export function writeLayerPacked(_document: SpriteDocument, layer: RasterLayer, 
   layer.pixels[offset + 1] = (value >>> 8) & 0xff
   layer.pixels[offset + 2] = (value >>> 16) & 0xff
   layer.pixels[offset + 3] = (value >>> 24) & 0xff
+}
+
+/** Writes a packed value across one local bitmap row without per-pixel dispatch. */
+export function writeLayerPackedRun(document: SpriteDocument, layer: RasterLayer, start: number, length: number, value: number): void {
+  const count = Math.min(layer.width - (start % layer.width), length)
+  if (count <= 0) return
+  if (layer.format === 'indexed') {
+    layer.pixels.fill(value, start, start + count)
+    return
+  }
+  if (layer.pixels.byteOffset % 4 === 0) {
+    const words = new Uint32Array(layer.pixels.buffer as ArrayBuffer, layer.pixels.byteOffset, layer.pixels.byteLength / 4)
+    words.fill(value, start, start + count)
+    return
+  }
+  for (let index = start; index < start + count; index += 1) writeLayerPacked(document, layer, index, value)
 }
 
 export function duplicateLayer(document: SpriteDocument, layerId: string): RasterLayer {
@@ -461,7 +485,138 @@ export function convertDocumentColorMode(document: SpriteDocument, target: Color
   document.colorMode = target
 }
 
-export function compositeRegion(document: SpriteDocument, startX: number, startY: number, width: number, height: number): Uint8ClampedArray {
+const normalCompositeLayers = (document: SpriteDocument): RasterLayer[] | null => {
+  if (document.layers.some((layer) => layer.blendMode !== 'normal')) return null
+  if (document.groups.some((group) => group.blendMode !== 'normal' || group.opacity !== 1)) return null
+
+  const groupById = new Map(document.groups.map((group) => [group.id, group]))
+  const layerOrder = new Map(document.layers.map((layer, order) => [layer.id, order]))
+  const groupOrder = new Map(document.groups.map((group, order) => [group.id, order]))
+  const anchorCache = new Map<string, number>()
+  const groupAnchor = (groupId: string, visiting = new Set<string>()): number => {
+    const cached = anchorCache.get(groupId)
+    if (cached !== undefined) return cached
+    if (visiting.has(groupId)) return Number.POSITIVE_INFINITY
+    const nextVisiting = new Set(visiting).add(groupId)
+    let anchor = Number.POSITIVE_INFINITY
+    for (const layer of document.layers) if (layer.groupId === groupId) anchor = Math.min(anchor, layerOrder.get(layer.id) ?? anchor)
+    for (const child of document.groups) if (child.parentGroupId === groupId) anchor = Math.min(anchor, groupAnchor(child.id, nextVisiting))
+    anchorCache.set(groupId, anchor)
+    return anchor
+  }
+  const flatten = (parentGroupId: string | null, visiting: Set<string>): RasterLayer[] => {
+    const items: Array<
+      | { kind: 'layer'; layer: RasterLayer; order: number; tie: number }
+      | { kind: 'group'; group: LayerGroup; order: number; tie: number }
+    > = []
+    for (const layer of document.layers) {
+      const directParent = layer.groupId && groupById.has(layer.groupId) ? layer.groupId : null
+      if (directParent === parentGroupId) items.push({ kind: 'layer', layer, order: layerOrder.get(layer.id) ?? 0, tie: 0 })
+    }
+    for (const group of document.groups) {
+      const directParent = group.parentGroupId && groupById.has(group.parentGroupId) && group.parentGroupId !== group.id ? group.parentGroupId : null
+      if (directParent === parentGroupId) items.push({ kind: 'group', group, order: groupAnchor(group.id), tie: groupOrder.get(group.id) ?? 0 })
+    }
+    items.sort((left, right) => left.order - right.order || left.tie - right.tie)
+    return items.flatMap((item): RasterLayer[] => {
+      if (item.kind === 'layer') return item.layer.visible && item.layer.opacity > 0 ? [item.layer] : []
+      if (!item.group.visible || visiting.has(item.group.id)) return []
+      return flatten(item.group.id, new Set(visiting).add(item.group.id))
+    })
+  }
+  return flatten(null, new Set())
+}
+
+export class DocumentCompositeCache {
+  private rowRanges = new WeakMap<object, Map<string, Int32Array>>()
+
+  rowsFor(layer: RasterLayer, palette: readonly PaletteEntry[], _revision: number): Int32Array {
+    const paletteKey = layer.format === 'rgba' ? 'rgba' : palette.map((entry) => `${entry.id}:${entry.color.a}`).join(',')
+    const key = `${layer.format}:${layer.width}:${layer.height}:${getLayerContentRevision(layer)}:${paletteKey}`
+    const entries = this.rowRanges.get(layer.pixels) ?? new Map<string, Int32Array>()
+    const cached = entries.get(key)
+    if (cached) return cached
+    const ranges = new Int32Array(layer.height * 2)
+    const opaqueIds = layer.format === 'indexed' ? new Set(palette.filter((entry) => entry.color.a > 0).map((entry) => entry.id)) : null
+    for (let y = 0; y < layer.height; y += 1) {
+      let left = layer.width
+      let right = 0
+      for (let x = 0; x < layer.width; x += 1) {
+        const index = y * layer.width + x
+        const visible = layer.format === 'rgba' ? layer.pixels[index * 4 + 3] > 0 : opaqueIds!.has(layer.pixels[index])
+        if (!visible) continue
+        left = Math.min(left, x)
+        right = x + 1
+      }
+      ranges[y * 2] = left
+      ranges[y * 2 + 1] = right
+    }
+    entries.set(key, ranges)
+    this.rowRanges.set(layer.pixels, entries)
+    return ranges
+  }
+}
+
+const compositeNormalLayers = (document: SpriteDocument, layers: readonly RasterLayer[], startX: number, startY: number, width: number, height: number, cache?: DocumentCompositeCache, revision = 0): Uint8ClampedArray => {
+  const output = new Uint8ClampedArray(width * height * 4)
+  const paletteById = new Map(document.palette.map((entry) => [entry.id, entry.color]))
+  for (const layer of layers) {
+    const layerLeft = Math.max(startX, layer.offsetX)
+    const top = Math.max(startY, layer.offsetY)
+    const layerRight = Math.min(startX + width, layer.offsetX + layer.width)
+    const bottom = Math.min(startY + height, layer.offsetY + layer.height)
+    if (layerRight <= layerLeft || bottom <= top) continue
+    const opacity = layer.opacity
+    const rowRanges = cache?.rowsFor(layer, document.palette, revision)
+    for (let documentY = top; documentY < bottom; documentY += 1) {
+      const localY = documentY - layer.offsetY
+      const left = rowRanges ? Math.max(layerLeft, layer.offsetX + rowRanges[localY * 2]) : layerLeft
+      const right = rowRanges ? Math.min(layerRight, layer.offsetX + rowRanges[localY * 2 + 1]) : layerRight
+      if (right <= left) continue
+      let sourceIndex = (documentY - layer.offsetY) * layer.width + left - layer.offsetX
+      let outputOffset = ((documentY - startY) * width + left - startX) * 4
+      for (let documentX = left; documentX < right; documentX += 1, sourceIndex += 1, outputOffset += 4) {
+        let sourceR: number
+        let sourceG: number
+        let sourceB: number
+        let sourceA: number
+        if (layer.format === 'rgba') {
+          const sourceOffset = sourceIndex * 4
+          sourceR = layer.pixels[sourceOffset]
+          sourceG = layer.pixels[sourceOffset + 1]
+          sourceB = layer.pixels[sourceOffset + 2]
+          sourceA = layer.pixels[sourceOffset + 3]
+        } else {
+          const source = paletteById.get(layer.pixels[sourceIndex]) ?? TRANSPARENT
+          sourceR = source.r
+          sourceG = source.g
+          sourceB = source.b
+          sourceA = source.a
+        }
+        if (sourceA === 0) continue
+        const bottomA = output[outputOffset + 3]
+        if (opacity === 1 && (bottomA === 0 || sourceA === 255)) {
+          output[outputOffset] = sourceR
+          output[outputOffset + 1] = sourceG
+          output[outputOffset + 2] = sourceB
+          output[outputOffset + 3] = sourceA
+          continue
+        }
+        const topAlpha = sourceA / 255 * opacity
+        const bottomAlpha = bottomA / 255
+        const outputAlpha = topAlpha + bottomAlpha * (1 - topAlpha)
+        if (outputAlpha <= 0) continue
+        output[outputOffset] = Math.round((sourceR * topAlpha + output[outputOffset] * bottomAlpha * (1 - topAlpha)) / outputAlpha)
+        output[outputOffset + 1] = Math.round((sourceG * topAlpha + output[outputOffset + 1] * bottomAlpha * (1 - topAlpha)) / outputAlpha)
+        output[outputOffset + 2] = Math.round((sourceB * topAlpha + output[outputOffset + 2] * bottomAlpha * (1 - topAlpha)) / outputAlpha)
+        output[outputOffset + 3] = Math.round(outputAlpha * 255)
+      }
+    }
+  }
+  return output
+}
+
+export function compositeRegion(document: SpriteDocument, startX: number, startY: number, width: number, height: number, cache?: DocumentCompositeCache, revision = 0): Uint8ClampedArray {
   const output = new Uint8ClampedArray(width * height * 4)
   if (document.groups.length === 0 && document.layers.length === 1) {
     const layer = document.layers[0]
@@ -489,6 +644,8 @@ export function compositeRegion(document: SpriteDocument, startX: number, startY
       return output
     }
   }
+  const normalLayers = normalCompositeLayers(document)
+  if (normalLayers) return compositeNormalLayers(document, normalLayers, startX, startY, width, height, cache, revision)
   const sample = createCompositePointSampler(document)
   for (let y = 0; y < height; y += 1) for (let x = 0; x < width; x += 1) {
     writeRgbaPixel(output, y * width + x, sample(startX + x, startY + y))

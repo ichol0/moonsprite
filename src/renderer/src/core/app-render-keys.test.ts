@@ -87,5 +87,13 @@ describe('app render keys', () => {
     session.view.showSelectionOutline = false
     expect(appCoordinatorRenderKey(state)).not.toBe(hiddenOutline)
     expect(appMenuRenderKey(session)).toContain(';0;')
+
+    const toolKey = appCoordinatorRenderKey(state)
+    session.tool = 'eyedropper'
+    expect(appCoordinatorRenderKey(state)).not.toBe(toolKey)
+    const eyedropperKey = appCoordinatorRenderKey(state)
+    session.tool = 'fill'
+    session.fillKind = 'gradient'
+    expect(appCoordinatorRenderKey(state)).not.toBe(eyedropperKey)
   })
 })

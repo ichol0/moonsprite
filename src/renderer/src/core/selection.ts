@@ -230,13 +230,14 @@ export const transformSelectionMask = (
   canvasWidth: number,
   canvasHeight: number,
   angle = 0,
-  shear?: SelectionShearTransform
+  shear?: SelectionShearTransform,
+  clipToCanvas = true
 ): SelectionMask | null => {
   const bounds = transformedSelectionBounds(target, angle, shear)
-  const x = Math.max(0, bounds.x)
-  const y = Math.max(0, bounds.y)
-  const right = Math.min(canvasWidth, bounds.x + bounds.width)
-  const bottom = Math.min(canvasHeight, bounds.y + bounds.height)
+  const x = clipToCanvas ? Math.max(0, bounds.x) : bounds.x
+  const y = clipToCanvas ? Math.max(0, bounds.y) : bounds.y
+  const right = clipToCanvas ? Math.min(canvasWidth, bounds.x + bounds.width) : bounds.x + bounds.width
+  const bottom = clipToCanvas ? Math.min(canvasHeight, bounds.y + bounds.height) : bounds.y + bounds.height
   if (right <= x || bottom <= y) return null
   const width = right - x
   const height = bottom - y

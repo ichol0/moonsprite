@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { blendWithMode } from './raster'
-import { compositeRegion, createCompositePointSampler, createCompositeSampler, createDocument, createLayer, layerContentBounds, readLayerColor, readLayerColorAt, resizeDocumentAt, resizeDocumentImage, writeLayerColor } from './document'
+import { compositeRegion, createCompositePointSampler, createCompositeSampler, createDocument, createLayer, DocumentCompositeCache, layerContentBounds, readLayerColor, readLayerColorAt, resizeDocumentAt, resizeDocumentImage, writeLayerColor } from './document'
 
 const red = { r: 255, g: 0, b: 0, a: 255 }
 const blue = { r: 0, g: 0, b: 255, a: 128 }
@@ -48,6 +48,71 @@ describe('document compositing', () => {
 
     const expected = blendWithMode(red, { ...blue, a: 255 }, 0.5, 'normal')
     expect(Array.from(compositeRegion(document, 0, 0, 1, 1))).toEqual(Object.values(expected))
+  })
+
+  it('matches the generic sampler for normal grouped layers', () => {
+    const document = createDocument('normal fast path', 7, 5, 'rgba')
+    document.palette.push(
+      { id: 10, name: 'indexed red', color: { r: 210, g: 30, b: 20, a: 190 } },
+      { id: 11, name: 'indexed blue', color: { r: 20, g: 80, b: 220, a: 130 } }
+    )
+    document.groups.push(
+      { id: 'root', name: 'root', parentGroupId: null, visible: true, locked: false, opacity: 1, blendMode: 'normal' },
+      { id: 'child', name: 'child', parentGroupId: 'root', visible: true, locked: false, opacity: 1, blendMode: 'normal' },
+      { id: 'hidden', name: 'hidden', parentGroupId: null, visible: false, locked: false, opacity: 1, blendMode: 'normal' }
+    )
+    const rgba = createLayer('rgba', 5, 4, 'rgba')
+    rgba.groupId = 'child'
+    rgba.offsetX = -1
+    rgba.offsetY = 1
+    rgba.opacity = 0.65
+    if (rgba.format !== 'rgba') throw new Error('RGBA layer required')
+    for (let index = 0; index < rgba.width * rgba.height; index += 1) {
+      const offset = index * 4
+      rgba.pixels[offset] = index * 17 % 256
+      rgba.pixels[offset + 1] = index * 43 % 256
+      rgba.pixels[offset + 2] = index * 71 % 256
+      rgba.pixels[offset + 3] = index % 3 === 0 ? 0 : 80 + index * 9 % 176
+    }
+    const indexed = createLayer('indexed', 4, 3, 'indexed')
+    indexed.groupId = 'root'
+    indexed.offsetX = 3
+    indexed.offsetY = -1
+    indexed.opacity = 0.8
+    if (indexed.format !== 'indexed') throw new Error('Indexed layer required')
+    indexed.pixels.set(indexed.pixels.map((_, index) => index % 3 === 0 ? 0 : index % 2 === 0 ? 10 : 11))
+    const hidden = createLayer('hidden', 7, 5, 'rgba')
+    hidden.groupId = 'hidden'
+    if (hidden.format !== 'rgba') throw new Error('RGBA layer required')
+    hidden.pixels.fill(255)
+    document.layers.push(rgba, indexed, hidden)
+
+    const sample = createCompositePointSampler(document)
+    const expected: number[] = []
+    for (let y = -1; y < 6; y += 1) for (let x = -2; x < 8; x += 1) expected.push(...Object.values(sample(x, y)))
+
+    expect(Array.from(compositeRegion(document, -2, -1, 10, 7))).toEqual(expected)
+  })
+
+  it('invalidates cached sparse row ranges only for changed layer content', () => {
+    const document = createDocument('cached rows', 3, 1, 'rgba')
+    const top = createLayer('top', 3, 1, 'rgba')
+    document.layers.push(top)
+    const cache = new DocumentCompositeCache()
+    writeLayerColor(document, top, 0, red)
+    expect(Array.from(compositeRegion(document, 0, 0, 3, 1, cache, 1))).toEqual([
+      255, 0, 0, 255,
+      0, 0, 0, 0,
+      0, 0, 0, 0
+    ])
+
+    writeLayerColor(document, top, 0, { r: 0, g: 0, b: 0, a: 0 })
+    writeLayerColor(document, top, 2, blue)
+    expect(Array.from(compositeRegion(document, 0, 0, 3, 1, cache, 2))).toEqual([
+      0, 0, 0, 0,
+      0, 0, 0, 0,
+      0, 0, 255, 128
+    ])
   })
 
   it('substitutes an active-layer color in a compiled sampler', () => {

@@ -1,6 +1,6 @@
 import type { BrushPaintMode, BrushShape, BrushTexture, ImageBrush, ImageBrushSettings, OutlineDirection, OutlineDirections, OutlineKernel, OutlinePosition, RasterLayer, RgbaColor, SelectionMask, SelectionRect, ShapeKind, SpriteDocument } from '@shared/types'
-import { compositeRegion, ensureLayerCoversCanvas, findOrAddPaletteColor, getActiveLayer, getPaletteEntry, isLayerEffectivelyLocked, layerIndexAt, readLayerColor, readLayerColorAt, readLayerPacked, readLayerPackedAt, writeLayerPacked } from './document'
-import { beginPixelEdit, recordPixel, type PixelEdit } from './history'
+import { compositeRegion, ensureLayerCoversCanvas, findOrAddPaletteColor, getActiveLayer, getPaletteEntry, isLayerEffectivelyLocked, layerIndexAt, markLayerContentChanged, readLayerColor, readLayerColorAt, readLayerPacked, readLayerPackedAt, writeLayerPacked, writeLayerPackedRun } from './document'
+import { beginPixelEdit, preparePixelEdit, recordPixel, recordPixelKnownCurrent, type PixelEdit } from './history'
 import { blendOver, isInBounds, packColor, pixelIndex, unpackColor } from './raster'
 import { flipSelectionMask, selectionContains, transformedSelectionBounds, transformedSelectionSourcePoint, type SelectionFlipAxis, type SelectionShearTransform } from './selection'
 import { proceduralBrushCoverageAt } from './brushes'
@@ -548,17 +548,118 @@ export function shapePixelPoints(bounds: SelectionRect, kind: ShapeKind): BrushM
 }
 
 const insideSelection = (selection: SelectionMask, x: number, y: number): boolean => selectionContains(selection, x, y)
+const COMPACT_FILL_MIN_PIXELS = 512 * 512
+
+const floodFillSolidRuns = (document: SpriteDocument, layer: RasterLayer, startX: number, startY: number, target: number, next: number, selection: SelectionMask | null | undefined, contiguous: boolean): PixelEdit | null => {
+  const edit = beginPixelEdit(layer.id)
+  preparePixelEdit(document, edit)
+  const runs = [] as NonNullable<PixelEdit['runs']>
+  const rgbaWords = layer.format === 'rgba' && layer.pixels.byteOffset % 4 === 0
+    ? new Uint32Array(layer.pixels.buffer as ArrayBuffer, layer.pixels.byteOffset, layer.pixels.byteLength / 4)
+    : null
+  const layerIndexAtCanvas = (x: number, y: number): number | null => {
+    const localX = x - layer.offsetX
+    const localY = y - layer.offsetY
+    return localX < 0 || localY < 0 || localX >= layer.width || localY >= layer.height ? null : localY * layer.width + localX
+  }
+  const selected = (x: number, y: number): boolean => {
+    if (!selection) return true
+    if (x < selection.x || y < selection.y || x >= selection.x + selection.width || y >= selection.y + selection.height) return false
+    return !selection.mask || selection.mask[(y - selection.y) * selection.width + x - selection.x] === 1
+  }
+  const matches = (x: number, y: number): boolean => {
+    if (x < 0 || y < 0 || x >= document.width || y >= document.height || !selected(x, y)) return false
+    const index = layerIndexAtCanvas(x, y)
+    if (index === null) return false
+    return layer.format === 'indexed' ? layer.pixels[index] === target : rgbaWords ? rgbaWords[index] === target : readLayerPacked(document, layer, index) === target
+  }
+  let dirtyLeft = document.width
+  let dirtyTop = document.height
+  let dirtyRight = 0
+  let dirtyBottom = 0
+  const fillSpan = (left: number, right: number, y: number): void => {
+    const index = layerIndexAtCanvas(left, y)
+    if (index === null) return
+    const length = right - left + 1
+    if (runs.length === 0) markLayerContentChanged(layer)
+    writeLayerPackedRun(document, layer, index, length, next)
+    runs.push({ index, length, before: target, after: next })
+    dirtyLeft = Math.min(dirtyLeft, left)
+    dirtyTop = Math.min(dirtyTop, y)
+    dirtyRight = Math.max(dirtyRight, right + 1)
+    dirtyBottom = Math.max(dirtyBottom, y + 1)
+  }
+
+  if (!contiguous) {
+    const bounds = selection ? clampSelection(document, selection) : { x: 0, y: 0, width: document.width, height: document.height }
+    if (!bounds) return null
+    for (let y = bounds.y; y < bounds.y + bounds.height; y += 1) {
+      let x = bounds.x
+      while (x < bounds.x + bounds.width) {
+        while (x < bounds.x + bounds.width && !matches(x, y)) x += 1
+        if (x >= bounds.x + bounds.width) break
+        const left = x
+        while (x + 1 < bounds.x + bounds.width && matches(x + 1, y)) x += 1
+        fillSpan(left, x, y)
+        x += 1
+      }
+    }
+  } else {
+    let stack = new Int32Array(1024)
+    let stackLength = 0
+    const push = (x: number, y: number): void => {
+      if (stackLength === stack.length) {
+        const expanded = new Int32Array(stack.length * 2)
+        expanded.set(stack)
+        stack = expanded
+      }
+      stack[stackLength++] = pixelIndex(document.width, x, y)
+    }
+    const scanNeighbor = (left: number, right: number, y: number): void => {
+      if (y < 0 || y >= document.height) return
+      let x = left
+      while (x <= right) {
+        while (x <= right && !matches(x, y)) x += 1
+        if (x > right) break
+        push(x, y)
+        x += 1
+        while (x <= right && matches(x, y)) x += 1
+      }
+    }
+    push(startX, startY)
+    while (stackLength > 0) {
+      const seed = stack[--stackLength]
+      const x = seed % document.width
+      const y = Math.floor(seed / document.width)
+      if (!matches(x, y)) continue
+      let left = x
+      let right = x
+      while (matches(left - 1, y)) left -= 1
+      while (matches(right + 1, y)) right += 1
+      fillSpan(left, right, y)
+      scanNeighbor(left, right, y - 1)
+      scanNeighbor(left, right, y + 1)
+    }
+  }
+  if (runs.length === 0) return null
+  edit.runs = runs
+  edit.dirtyRect = { x: dirtyLeft, y: dirtyTop, width: dirtyRight - dirtyLeft, height: dirtyBottom - dirtyTop }
+  return edit
+}
 
 export function floodFill(document: SpriteDocument, layer: RasterLayer, startX: number, startY: number, color: RgbaColor, selection?: SelectionMask | null, contiguous = true, imageBrush: ImageBrush | null = null, brushSize = 1, imageBrushSettings?: ImageBrushSettings, brushTexture: BrushTexture = 'solid', brushTextureScale = 1, proceduralAntialiasStrength = 0, brushPaintMode: BrushPaintMode = 'paint'): PixelEdit | null {
   if (!isInBounds(document.width, document.height, startX, startY) || isLayerEffectivelyLocked(document, layer) || (selection && !insideSelection(selection, startX, startY))) return null
   if (!ensureLayerCoversCanvas(document, layer)) return null
   const startLayerIndex = layerIndexAt(layer, startX, startY)
   if (startLayerIndex === null) return null
-  const startIndex = pixelIndex(document.width, startX, startY)
   const target = readLayerPacked(document, layer, startLayerIndex)
   const edit = beginPixelEdit(layer.id)
+  preparePixelEdit(document, edit)
   const next = paintLayerValue(document, layer, edit, startLayerIndex, color)
   if (target === next) return null
+  if (document.width * document.height >= COMPACT_FILL_MIN_PIXELS && !imageBrush && brushTexture === 'solid') {
+    return floodFillSolidRuns(document, layer, startX, startY, target, next, selection, contiguous)
+  }
   const textureCoverage = (x: number, y: number): number => {
     if (!imageBrush) return brushTextureContains(brushTexture, x, y, brushTextureScale) ? 255 : 0
     const originX = brushPaintMode === 'pattern-source' ? imageBrush.sourceX ?? 0 : brushPaintMode === 'pattern-target' ? startX : 0
@@ -569,14 +670,24 @@ export function floodFill(document: SpriteDocument, layer: RasterLayer, startX: 
     if (imageBrush.id.startsWith('procedural:')) return imageBrushCoverage(proceduralBrushCoverageAt(imageBrush.id, sampleX, sampleY, sampleSize, imageBrush.proceduralSettings), sampleX, sampleY, imageBrushSettings, proceduralAntialiasStrength)
     return imageBrush.intrinsicSize ? imageBrush.coverage[wrappedIndex(sampleY, imageBrush.height) * imageBrush.width + wrappedIndex(sampleX, imageBrush.width)] ?? 0 : imageBrushCoverageAt(imageBrush, sampleX, sampleY, sampleSize, imageBrushSettings)
   }
-  const paintAtCoverage = (index: number, coverage: number): void => {
+  const constantFillValue = color.a === 0
+    ? layer.format === 'rgba' ? packColor(color) : 0
+    : color.a === 255
+      ? layer.format === 'rgba' ? packColor(color) : findOrAddPaletteColor(document, color)
+      : null
+  const layerIndexAtCanvas = (x: number, y: number): number | null => {
+    const localX = x - layer.offsetX
+    const localY = y - layer.offsetY
+    return localX < 0 || localY < 0 || localX >= layer.width || localY >= layer.height
+      ? null
+      : localY * layer.width + localX
+  }
+  const paintAtCoverage = (layerIndex: number, coverage: number): void => {
     if (coverage <= 0) return
-    const x = index % document.width
-    const y = Math.floor(index / document.width)
-    const layerIndex = layerIndexAt(layer, x, y)
-    if (layerIndex === null) return
-    const fillColor = coverage === 255 ? color : { ...color, a: Math.round(color.a * coverage / 255) }
-    recordPixel(document, layer, edit, layerIndex, paintLayerValue(document, layer, edit, layerIndex, fillColor))
+    const nextValue = coverage === 255 && constantFillValue !== null
+      ? constantFillValue
+      : paintLayerValue(document, layer, edit, layerIndex, coverage === 255 ? color : { ...color, a: Math.round(color.a * coverage / 255) })
+    recordPixelKnownCurrent(document, layer, edit, layerIndex, target, nextValue)
   }
   if (!contiguous) {
     const bounds = selection ? clampSelection(document, selection) : { x: 0, y: 0, width: document.width, height: document.height }
@@ -584,28 +695,43 @@ export function floodFill(document: SpriteDocument, layer: RasterLayer, startX: 
     for (let y = bounds.y; y < bounds.y + bounds.height; y += 1) {
       for (let x = bounds.x; x < bounds.x + bounds.width; x += 1) {
         if (selection && !selectionContains(selection, x, y)) continue
-        const index = pixelIndex(document.width, x, y)
-        const layerIndex = layerIndexAt(layer, x, y)
+        const layerIndex = layerIndexAtCanvas(x, y)
         if (layerIndex === null || readLayerPacked(document, layer, layerIndex) !== target) continue
-        paintAtCoverage(index, textureCoverage(x, y))
+        paintAtCoverage(layerIndex, textureCoverage(x, y))
       }
     }
     return edit.before.size > 0 ? edit : null
   }
-  const stack = [startIndex]
-  const visited = new Set<number>()
-  while (stack.length > 0) {
-    const index = stack.pop()!
+  const maxPixels = document.width * document.height
+  const visited = new Uint8Array(maxPixels)
+  let stack = new Int32Array(Math.min(maxPixels, 1024))
+  let stackLength = 0
+  const enqueueIfMatching = (x: number, y: number): void => {
+    if (x < 0 || y < 0 || x >= document.width || y >= document.height) return
+    const index = pixelIndex(document.width, x, y)
+    if (visited[index] || (selection && !insideSelection(selection, x, y))) return
+    const layerIndex = layerIndexAtCanvas(x, y)
+    if (layerIndex === null || readLayerPacked(document, layer, layerIndex) !== target) return
+    visited[index] = 1
+    if (stackLength === stack.length) {
+      const expanded = new Int32Array(Math.min(maxPixels, Math.max(stack.length * 2, 1024)))
+      expanded.set(stack)
+      stack = expanded
+    }
+    stack[stackLength++] = index
+  }
+  enqueueIfMatching(startX, startY)
+  while (stackLength > 0) {
+    const index = stack[--stackLength]
     const x = index % document.width
     const y = Math.floor(index / document.width)
-    const layerIndex = layerIndexAt(layer, x, y)
-    if (visited.has(index) || layerIndex === null || readLayerPacked(document, layer, layerIndex) !== target) continue
-    visited.add(index)
-    paintAtCoverage(index, textureCoverage(x, y))
-    if (x > 0 && (!selection || insideSelection(selection, x - 1, y))) stack.push(index - 1)
-    if (x < document.width - 1 && (!selection || insideSelection(selection, x + 1, y))) stack.push(index + 1)
-    if (y > 0 && (!selection || insideSelection(selection, x, y - 1))) stack.push(index - document.width)
-    if (y < document.height - 1 && (!selection || insideSelection(selection, x, y + 1))) stack.push(index + document.width)
+    const layerIndex = layerIndexAtCanvas(x, y)
+    if (layerIndex === null) continue
+    paintAtCoverage(layerIndex, textureCoverage(x, y))
+    enqueueIfMatching(x - 1, y)
+    enqueueIfMatching(x + 1, y)
+    enqueueIfMatching(x, y - 1)
+    enqueueIfMatching(x, y + 1)
   }
   return edit.before.size > 0 ? edit : null
 }
@@ -615,10 +741,22 @@ export function floodFillSymmetric(document: SpriteDocument, layer: RasterLayer,
   for (const seed of symmetryPoints({ x: startX, y: startY }, document.width, document.height, symmetryAxes, symmetryCenter)) {
     const edit = floodFill(document, layer, seed.x, seed.y, color, selection, contiguous, imageBrush, brushSize, imageBrushSettings, brushTexture, brushTextureScale, proceduralAntialiasStrength, brushPaintMode)
     if (!edit) continue
+    merged.frameId ??= edit.frameId
+    if (edit.runs?.length) (merged.runs ??= []).push(...edit.runs)
     for (const [index, value] of edit.before) if (!merged.before.has(index)) merged.before.set(index, value)
     for (const [index, value] of edit.after) merged.after.set(index, value)
+    if (edit.dirtyRect) {
+      if (!merged.dirtyRect) merged.dirtyRect = { ...edit.dirtyRect }
+      else {
+        const left = Math.min(merged.dirtyRect.x, edit.dirtyRect.x)
+        const top = Math.min(merged.dirtyRect.y, edit.dirtyRect.y)
+        const right = Math.max(merged.dirtyRect.x + merged.dirtyRect.width, edit.dirtyRect.x + edit.dirtyRect.width)
+        const bottom = Math.max(merged.dirtyRect.y + merged.dirtyRect.height, edit.dirtyRect.y + edit.dirtyRect.height)
+        merged.dirtyRect = { x: left, y: top, width: right - left, height: bottom - top }
+      }
+    }
   }
-  return merged.before.size > 0 ? merged : null
+  return merged.before.size > 0 || merged.runs?.length ? merged : null
 }
 
 export function clearSelection(document: SpriteDocument, selection: SelectionMask): PixelEdit | null {
@@ -780,6 +918,10 @@ export function applySelectionTranslationPreview(
     preview.indices = new Uint32Array(required)
     preview.before = new Uint32Array(required)
   }
+  const finishPreview = (): SelectionTranslationPreview => {
+    if (preview.count > 0) markLayerContentChanged(layer)
+    return preview
+  }
   const capture = (canvasIndex: number): void => {
     if (preview.marks[canvasIndex] === 1) return
     const x = canvasIndex % document.width
@@ -820,7 +962,7 @@ export function applySelectionTranslationPreview(
         writeCanvasPacked(index, value)
       }
     }
-    return preview
+    return finishPreview()
   }
   // Clipboard sources intentionally omit index arrays for large off-canvas
   // pastes. Their previous preview has already been reverted before this
@@ -849,7 +991,7 @@ export function applySelectionTranslationPreview(
       const targetY = target.y + localY
       if (isInBounds(document.width, document.height, targetX, targetY)) writeCanvasPacked(pixelIndex(document.width, targetX, targetY), source.values[sourceOffset])
     }
-    return preview
+    return finishPreview()
   }
   for (let offset = 0; offset < source.opaqueIndices.length; offset += 1) {
     const sourceIndex = source.opaqueIndices[offset]
@@ -868,7 +1010,7 @@ export function applySelectionTranslationPreview(
     const y = target.y + Math.floor(localOffset / sourceSelection.width)
     if (isInBounds(document.width, document.height, x, y)) writeCanvasPacked(pixelIndex(document.width, x, y), source.opaqueValues[offset])
   }
-  return preview
+  return finishPreview()
 }
 
 export function selectionTranslationPreviewEdit(document: SpriteDocument, preview: SelectionTranslationPreview): PixelEdit | null {

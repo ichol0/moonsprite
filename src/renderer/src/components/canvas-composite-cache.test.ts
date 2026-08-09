@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createDocument } from '@/core/document'
-import { CanvasCompositeCache } from './canvas-composite-cache'
+import { CanvasCompositeCache, shouldCacheFullCompositeSurface } from './canvas-composite-cache'
 
 class MockOffscreenCanvas {
   readonly context = { putImageData: vi.fn() }
@@ -20,6 +20,12 @@ describe('CanvasCompositeCache', () => {
 
   afterEach(() => {
     vi.unstubAllGlobals()
+  })
+
+  it('keeps a 4200 by 1800 document in the reusable full-surface cache', () => {
+    expect(shouldCacheFullCompositeSurface(4200, 1800)).toBe(true)
+    expect(shouldCacheFullCompositeSurface(9000, 1800)).toBe(false)
+    expect(shouldCacheFullCompositeSurface(4200, 1800, 16 * 1024 * 1024)).toBe(false)
   })
 
   it('draws a fractional-zoom canvas as one continuous surface while painting', () => {
@@ -44,7 +50,7 @@ describe('CanvasCompositeCache', () => {
       activeDrag: 'draw'
     })
     expect(context.drawImage).toHaveBeenCalledTimes(1)
-    expect(context.drawImage).toHaveBeenCalledWith(expect.any(MockOffscreenCanvas), 10, 20, 384, 384)
+    expect(context.drawImage).toHaveBeenCalledWith(expect.any(MockOffscreenCanvas), 0, 0, 256, 256, 10, 20, 384, 384)
     expect(context.translate).not.toHaveBeenCalled()
     expect(context.scale).not.toHaveBeenCalled()
   })
@@ -82,7 +88,7 @@ describe('CanvasCompositeCache', () => {
     expect(idle.drawImage).toHaveBeenCalledTimes(1)
     expect(drawing.drawImage).toHaveBeenCalledTimes(1)
     expect(idle.drawImage.mock.calls[0][0]).toBe(drawing.drawImage.mock.calls[0][0])
-    expect(idle.drawImage).toHaveBeenCalledWith(expect.any(MockOffscreenCanvas), 12.25, 8.75, 200.32, 200.32)
+    expect(idle.drawImage).toHaveBeenCalledWith(expect.any(MockOffscreenCanvas), 0, 0, 64, 64, 12.25, 8.75, 200.32, 200.32)
   })
 
   it('patches a dirty rectangle without splitting the final display surface', () => {
@@ -116,5 +122,106 @@ describe('CanvasCompositeCache', () => {
     expect(context.drawImage).toHaveBeenCalledTimes(2)
     expect(context.drawImage.mock.calls[1][0]).toBe(surface)
     expect(surface.context.putImageData).toHaveBeenLastCalledWith(expect.objectContaining({ width: 3, height: 3 }), 127, 127)
+  })
+
+  it('reuses cached frame surfaces while only the active frame revision changes', () => {
+    const context = {
+      save: vi.fn(), restore: vi.fn(), beginPath: vi.fn(), rect: vi.fn(), clip: vi.fn(),
+      translate: vi.fn(), scale: vi.fn(), drawImage: vi.fn(), imageSmoothingEnabled: true
+    }
+    const document = createDocument('animation cache', 64, 64, 'rgba')
+    const cache = new CanvasCompositeCache()
+    const draw = (frameId: string, revision: number) => cache.draw({
+      context: context as never,
+      document,
+      view: { zoom: 2, panX: 0, panY: 0, rotation: 0, mirrored: false, mirroredVertical: false, showGrid: false, relativeLuminance: false },
+      originX: 0,
+      originY: 0,
+      canvasWidth: 128,
+      canvasHeight: 128,
+      fromX: 0,
+      fromY: 0,
+      toX: 64,
+      toY: 64,
+      revision,
+      contentRevision: 1,
+      frameId
+    })
+
+    draw('frame-1', 1)
+    const firstFrameSurface = context.drawImage.mock.calls.at(-1)?.[0]
+    draw('frame-2', 2)
+    expect(context.drawImage.mock.calls.at(-1)?.[0]).not.toBe(firstFrameSurface)
+    draw('frame-1', 3)
+    expect(context.drawImage.mock.calls.at(-1)?.[0]).toBe(firstFrameSurface)
+  })
+
+  it('evicts old frame surfaces when the byte budget is reached', () => {
+    const context = {
+      save: vi.fn(), restore: vi.fn(), beginPath: vi.fn(), rect: vi.fn(), clip: vi.fn(),
+      translate: vi.fn(), scale: vi.fn(), drawImage: vi.fn(), imageSmoothingEnabled: true
+    }
+    const document = createDocument('budgeted animation cache', 8, 8, 'rgba')
+    const cache = new CanvasCompositeCache(8 * 8 * 4 * 2)
+    const draw = (frameId: string) => cache.draw({
+      context: context as never,
+      document,
+      view: { zoom: 1, panX: 0, panY: 0, rotation: 0, mirrored: false, mirroredVertical: false, showGrid: false, relativeLuminance: false },
+      originX: 0,
+      originY: 0,
+      canvasWidth: 8,
+      canvasHeight: 8,
+      fromX: 0,
+      fromY: 0,
+      toX: 8,
+      toY: 8,
+      revision: 1,
+      contentRevision: 1,
+      frameId
+    })
+
+    draw('frame-1')
+    const firstSurface = context.drawImage.mock.calls.at(-1)?.[0]
+    draw('frame-2')
+    draw('frame-3')
+    draw('frame-1')
+    expect(context.drawImage.mock.calls.at(-1)?.[0]).not.toBe(firstSurface)
+  })
+
+  it('patches a pixel-edit region across content revisions and rebuilds for full changes', () => {
+    const context = {
+      save: vi.fn(), restore: vi.fn(), beginPath: vi.fn(), rect: vi.fn(), clip: vi.fn(),
+      translate: vi.fn(), scale: vi.fn(), drawImage: vi.fn(), imageSmoothingEnabled: true
+    }
+    const document = createDocument('revision invalidation', 64, 64, 'rgba')
+    const frameId = document.animation!.activeFrameId
+    const cache = new CanvasCompositeCache()
+    const draw = (contentRevision: number, contentInvalidation: Parameters<CanvasCompositeCache['draw']>[0]['contentInvalidation']) => cache.draw({
+      context: context as never,
+      document,
+      view: { zoom: 2, panX: 0, panY: 0, rotation: 0, mirrored: false, mirroredVertical: false, showGrid: false, relativeLuminance: false },
+      originX: 0,
+      originY: 0,
+      canvasWidth: 128,
+      canvasHeight: 128,
+      fromX: 0,
+      fromY: 0,
+      toX: 64,
+      toY: 64,
+      revision: contentRevision,
+      contentRevision,
+      contentInvalidation,
+      frameId
+    })
+
+    draw(1, null)
+    const firstSurface = context.drawImage.mock.calls.at(-1)?.[0] as MockOffscreenCanvas
+    draw(2, { kind: 'region', fromRevision: 1, revision: 2, frameId, rect: { x: 8, y: 9, width: 3, height: 2 } })
+
+    expect(context.drawImage.mock.calls.at(-1)?.[0]).toBe(firstSurface)
+    expect(firstSurface.context.putImageData).toHaveBeenLastCalledWith(expect.objectContaining({ width: 3, height: 2 }), 8, 9)
+
+    draw(3, { kind: 'full', fromRevision: 2, revision: 3 })
+    expect(context.drawImage.mock.calls.at(-1)?.[0]).not.toBe(firstSurface)
   })
 })

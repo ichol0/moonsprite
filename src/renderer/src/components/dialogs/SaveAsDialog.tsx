@@ -1,9 +1,9 @@
 import { useState } from 'react'
-import { Save, X } from 'lucide-react'
 import { ThemedSelect } from '@/components/ThemedSelect'
 import { ModalShell } from '@/components/ModalShell'
 import type { SaveAsOptions } from '@/store/workspace'
 import { useI18n } from '@/components/I18nProvider'
+import { PixelUtilityIcon } from '@/components/PixelUtilityIcon'
 
 interface SaveAsDialogProps {
   initialName: string
@@ -35,5 +35,5 @@ export function SaveAsDialog({ initialName, initialFormat, onSave, onClose }: Sa
     }
   }
   const flattened = form.format === 'png-auto' || form.format === 'png-rgba' || form.format === 'jpeg' || form.format === 'webp'
-  return <div className="modal-backdrop" role="presentation" onPointerDown={(event) => { if (event.target === event.currentTarget && !saving) onClose() }}><ModalShell as="form" storageKey="save-as" defaultWidth={400} defaultHeight={300} className="save-as-modal" onSubmit={(event) => { event.preventDefault(); void submit() }}><header><div><span className="eyebrow">{t('saveAs.eyebrow')}</span><h2>{t('saveAs.title')}</h2></div><button type="button" className="icon-button" aria-label={t('common.close')} disabled={saving} onClick={onClose}><X size={16} /></button></header><div className="modal-body"><label>{t('saveAs.fileName')}<input autoFocus value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} /></label><label>{t('saveAs.format')}<ThemedSelect value={form.format} groups={[{ label: t('saveAs.formatGroup'), options: saveAsFormatOptions }]} label={t('saveAs.formatGroup')} onChange={(format) => setForm({ ...form, format })} /></label>{flattened && <p className="modal-note save-as-format-warning">{t('saveAs.flattenedWarning')}</p>}</div><footer><button type="button" className="quiet-button" disabled={saving} onClick={onClose}>{t('common.cancel')}</button><button type="submit" className="primary-button" disabled={saving || !form.name.trim()}><Save size={15} />{t('common.save')}</button></footer></ModalShell></div>
+  return <div className="modal-backdrop" role="presentation" onPointerDown={(event) => { if (event.target === event.currentTarget && !saving) onClose() }}><ModalShell as="form" storageKey="save-as" defaultWidth={400} defaultHeight={300} className="save-as-modal" onSubmit={(event) => { event.preventDefault(); void submit() }}><header><div><span className="eyebrow">{t('saveAs.eyebrow')}</span><h2>{t('saveAs.title')}</h2></div><button type="button" className="icon-button" aria-label={t('common.close')} disabled={saving} onClick={onClose}><PixelUtilityIcon kind="close" /></button></header><div className="modal-body"><label>{t('saveAs.fileName')}<input autoFocus value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} /></label><label>{t('saveAs.format')}<ThemedSelect value={form.format} groups={[{ label: t('saveAs.formatGroup'), options: saveAsFormatOptions }]} label={t('saveAs.formatGroup')} onChange={(format) => setForm({ ...form, format })} /></label>{flattened && <p className="modal-note save-as-format-warning">{t('saveAs.flattenedWarning')}</p>}</div><footer><button type="button" className="quiet-button" disabled={saving} onClick={onClose}>{t('common.cancel')}</button><button type="submit" className="primary-button" disabled={saving || !form.name.trim()}><PixelUtilityIcon kind="save" />{t('common.save')}</button></footer></ModalShell></div>
 }

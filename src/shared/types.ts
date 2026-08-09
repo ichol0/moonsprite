@@ -450,6 +450,7 @@ export interface MoonSpriteApi {
   exportImage(defaultPath: string | undefined, format: ImageExportFormat): Promise<SaveDialogResult>
   savePaletteImage(defaultPath?: string): Promise<SaveDialogResult>
   saveShortcutFile(defaultPath?: string): Promise<SaveDialogResult>
+  saveThemeFile(defaultPath?: string): Promise<SaveDialogResult>
   fileExists(filePath: string): Promise<boolean>
   readBinary(filePath: string): Promise<Uint8Array>
   writeBinaryAtomic(filePath: string, data: Uint8Array): Promise<void>

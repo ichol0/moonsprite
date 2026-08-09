@@ -1,5 +1,4 @@
 import { createPortal } from 'react-dom'
-import { LockKeyhole, LockKeyholeOpen, MoreHorizontal, RefreshCw, Settings2 } from 'lucide-react'
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react'
 import type { RgbaColor } from '@shared/types'
 import { ColorValueControl } from '@/components/ColorValueControl'
@@ -8,10 +7,11 @@ import { MAX_SYMMETRY_AXIS_THICKNESS, MIN_SYMMETRY_AXIS_THICKNESS, loadEditorPre
 import type { SymmetryAxes, SymmetryAxis } from '@/core/symmetry'
 import { useI18n } from '@/components/I18nProvider'
 import { PixelAssetIcon } from './editor-tools'
-import symmetryDiagonalDownIcon from '@/assets/pixel-icons/symmetry-diagonal-down.png'
-import symmetryDiagonalUpIcon from '@/assets/pixel-icons/symmetry-diagonal-up.png'
-import symmetryHorizontalIcon from '@/assets/pixel-icons/symmetry-horizontal.png'
-import symmetryVerticalIcon from '@/assets/pixel-icons/symmetry-vertical.png'
+import { PixelUtilityIcon } from '@/components/PixelUtilityIcon'
+import symmetryDiagonalDownIcon from '@/assets/pixel-icons/symmetry-diagonal-down.svg'
+import symmetryDiagonalUpIcon from '@/assets/pixel-icons/symmetry-diagonal-up.svg'
+import symmetryHorizontalIcon from '@/assets/pixel-icons/symmetry-horizontal.svg'
+import symmetryVerticalIcon from '@/assets/pixel-icons/symmetry-vertical.svg'
 
 interface SymmetryControlsProps {
   axes: SymmetryAxes
@@ -128,18 +128,18 @@ export function SymmetryControls({ axes, onAxisToggle, onResetCenter }: Symmetry
       if (!(event.target instanceof Element) || !event.target.closest('.symmetry-thickness-input')) setThicknessSliderOpen(false)
     }}>
       <button type="button" role="menuitem" className="symmetry-more-item" onClick={resetAxis}>
-        <RefreshCw size={14} />
+        <PixelUtilityIcon kind="refresh" />
         <span>{t('toolOptions.resetSymmetryAxis')}</span>
       </button>
       <button type="button" role="menuitemcheckbox" aria-checked={preferences.locked} className="symmetry-more-item" onClick={() => updatePreferences({ locked: !preferences.locked })}>
-        {preferences.locked ? <LockKeyhole size={14} /> : <LockKeyholeOpen size={14} />}
+        {preferences.locked ? <PixelUtilityIcon kind="lock" /> : <PixelUtilityIcon kind="unlock" />}
         <span>{t(preferences.locked ? 'toolOptions.unlockSymmetryAxis' : 'toolOptions.lockSymmetryAxis')}</span>
       </button>
       <button type="button" role="menuitem" aria-expanded={settingsOpen} className={`symmetry-more-item ${settingsOpen ? 'selected' : ''}`} onClick={() => setSettingsOpen((open) => {
         if (open) setThicknessSliderOpen(false)
         return !open
       })}>
-        <Settings2 size={14} />
+        <PixelUtilityIcon kind="properties" />
         <span>{t('toolOptions.adjustSymmetryAxis')}</span>
       </button>
       {settingsOpen && <section className="symmetry-axis-settings" aria-label={t('toolOptions.adjustSymmetryAxis')}>
@@ -158,7 +158,7 @@ export function SymmetryControls({ axes, onAxisToggle, onResetCenter }: Symmetry
         const label = t(item.labelKey)
         return <button key={item.axis} type="button" className={`symmetry-axis-button ${selected ? 'selected' : ''}`} title={label} aria-label={label} aria-pressed={selected} onClick={() => onAxisToggle(item.axis, !selected)}><PixelAssetIcon src={item.icon} /></button>
       })}
-      <button ref={triggerRef} type="button" className={`icon-button symmetry-more-button ${menuOpen ? 'active' : ''}`} title={t('toolOptions.symmetryMore')} aria-label={t('toolOptions.symmetryMore')} aria-expanded={menuOpen} onClick={toggleMenu}><MoreHorizontal size={15} /></button>
+      <button ref={triggerRef} type="button" className={`icon-button symmetry-more-button ${menuOpen ? 'active' : ''}`} title={t('toolOptions.symmetryMore')} aria-label={t('toolOptions.symmetryMore')} aria-expanded={menuOpen} onClick={toggleMenu}><PixelUtilityIcon kind="more" /></button>
     </div>
     {menu}
   </div>

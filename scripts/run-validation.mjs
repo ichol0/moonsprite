@@ -67,6 +67,7 @@ console.log(`验证模式：${mode === 'dev' ? 'dev.X 开发' : 'dev.X 发布'}`
 console.log(`范围：web=${scope.web}, rust=${scope.rust}, thumbnail=${scope.thumbnail}, desktop=${scope.desktop}`)
 
 if (mode === 'release') {
+  runPnpm(['check:performance-release'])
   runPnpm(['check:maintenance'])
   run(process.execPath, ['--test', 'scripts/module-boundaries.test.mjs'])
   runPnpm(['check:boundaries'])

@@ -1,5 +1,5 @@
 import { useMemo, useState, type ReactElement } from 'react'
-import { Check, CheckCircle2, ChevronRight, Copy, Eye, EyeOff, FileText, FolderOpen, Info, Layers2, LoaderCircle, Lock, LockOpen, MoreHorizontal, Palette, Plus, Search, Settings2, Trash2, X } from 'lucide-react'
+import { CheckCircle2, FileText, Layers2, LoaderCircle, Palette, Search } from 'lucide-react'
 import type { RgbaColor } from '@shared/types'
 import { ColorPicker, type ColorPickerConfig } from './ColorPicker'
 import { ColorValueControl } from './ColorValueControl'
@@ -10,6 +10,8 @@ import { TextAreaInput } from './TextAreaInput'
 import { ThemedSelect, type ThemedSelectGroup } from './ThemedSelect'
 import { Tooltip } from './Tooltip'
 import { useI18n } from './I18nProvider'
+import { PixelCloseIcon as X, PixelRightIcon as ChevronRight, PixelUtilityIcon, type PixelUtilityIconKind } from './PixelUtilityIcon'
+import { PixelCheckbox } from './PixelCheckbox'
 import { translate, type AppLocale, type TranslationKey, type TranslationParams } from '@/core/localization'
 
 type ComponentCategory = 'all' | 'controls' | 'forms' | 'panels' | 'dialogs' | 'editor'
@@ -38,6 +40,21 @@ const tagKeys: Record<string, TranslationKey> = {
 
 const componentText = (locale: AppLocale, key: TranslationKey, params?: TranslationParams): string => translate(locale, key, params)
 
+const pixelIconNames: Partial<Record<PixelUtilityIconKind, string>> = {
+  lock: '关锁', unlock: '开锁', eye: '睁眼', eyeOff: '闭眼', properties: '调整', delete: '删除',
+  newFolder: '新建文件夹', ungroupFolder: '解组文件夹', plus: '加', minus: '减', close: '叉', up: '上', down: '下',
+  left: '左', right: '右', onion: '洋葱皮', more: '更多', moreLines: '更多（横线）', paletteLocal: '选择本地色板',
+  paletteCenter: '居中', restore: '恢复', undo: '撤销', redo: '重做', workspace: '工作区', copy: '复制',
+  mergeDown: '向下合并', mergeVisible: '合并可见图层', folder: '文件夹', folderOpen: '展开文件夹', move: '移动',
+  save: '保存', export: '导出', project: '作品', image: '图像', roadmapPlanned: '未完成', roadmapCompleted: '完成',
+  info: '信息', canvasCenter: '居中', canvasTop: '上', canvasBottom: '下', canvasLeft: '左', canvasRight: '右',
+  canvasTopLeft: '左上', canvasTopRight: '右上', canvasBottomLeft: '左下', canvasBottomRight: '右下',
+  checkboxUnchecked: '复选框未选中', checkboxChecked: '复选框选中', pin: '置顶', clearRecords: '清除记录',
+  refresh: '刷新', extractColors: '提取颜色', check: '选择'
+}
+
+const pixelIconTitle = (kind: PixelUtilityIconKind): string => `名称: ${pixelIconNames[kind] ?? kind} · ID: ${kind}`
+
 const localizeEntry = (entry: ComponentLibraryEntry, locale: AppLocale): ComponentLibraryEntry => ({
   ...entry,
   name: componentText(locale, `componentLibrary.entry.${entry.id}.name` as TranslationKey),
@@ -48,6 +65,7 @@ const localizeEntry = (entry: ComponentLibraryEntry, locale: AppLocale): Compone
 export const COMPONENT_LIBRARY_ENTRIES: ComponentLibraryEntry[] = [
   { id: 'buttons', name: '按钮组', category: 'controls', description: '主要操作、次要操作和危险操作使用同一组尺寸与状态。', source: '.primary-button / .quiet-button / .danger-button', tags: ['操作', '状态'] },
   { id: 'icon-button', name: '图标按钮', category: 'controls', description: '工具栏和面板标题中的方形图标操作。', source: '.icon-button', tags: ['图标', '工具栏'] },
+  { id: 'pixel-utility-icon', name: '像素状态图标', category: 'controls', description: '界面状态与操作使用的 5×5、6×6 或 11×11 像素图标，以整数比例显示。', source: 'PixelUtilityIcon', tags: ['图标', '状态', '操作'] },
   { id: 'delete-icon-button', name: '删除图标按钮', category: 'controls', description: '用于删除预设或列表项目的统一危险图标按钮，提供紧凑、常规和禁用状态。', source: 'DeleteIconButton', tags: ['删除', '危险', '图标'] },
   { id: 'context-menu', name: '上下文菜单', category: 'controls', description: '通过右键或更多操作打开的紧凑菜单，支持图标、禁用和危险操作状态。', source: '.context-menu / .context-menu-item', tags: ['右键', '菜单', '操作'] },
   { id: 'segmented', name: '分段选择', category: 'controls', description: '用于工具模式、视图模式和互斥选项。', source: '.segmented-control', tags: ['模式', '选中'] },
@@ -55,7 +73,7 @@ export const COMPONENT_LIBRARY_ENTRIES: ComponentLibraryEntry[] = [
   { id: 'text-area-input', name: '多行文本输入', category: 'forms', description: '用于描述和备注的固定尺寸多行输入，不允许用户拖动改变大小。', source: 'TextAreaInput', tags: ['文本', '描述', '输入'] },
   { id: 'themed-select', name: '主题下拉', category: 'forms', description: '带分组、选中标记和键盘导航的下拉菜单。', source: 'ThemedSelect', tags: ['下拉', '分组'] },
   { id: 'range', name: '滑块', category: 'forms', description: '适用于尺寸、不透明度、强度等连续数值。', source: '.brush-size-popover input[type=range]', tags: ['数值', '实时'] },
-  { id: 'checkbox', name: '复选框', category: 'forms', description: '用于可以同时启用的独立选项。', source: '.tool-checkbox', tags: ['设置', '复选'] },
+  { id: 'checkbox', name: '复选框', category: 'forms', description: '用于可以同时启用的独立选项。', source: 'PixelCheckbox', tags: ['设置', '复选'] },
   { id: 'switch', name: '开关', category: 'forms', description: '用于明确的开启与关闭状态。', source: '.preference-toggle / .outline-preview-toggle', tags: ['设置', '开关'] },
   { id: 'scrollbar', name: '滚动区域', category: 'forms', description: '下拉菜单和长列表使用的统一滚动条。', source: '.component-scrollbar', tags: ['滚动', '列表'] },
   { id: 'panel-header', name: '栏目标题', category: 'panels', description: '停靠栏目标题、拖动入口和右侧操作。', source: '.panel-header', tags: ['栏目', '停靠'] },
@@ -89,11 +107,11 @@ const colorPickerVariants: Array<{ id: string; labelKey: TranslationKey; config:
 ]
 
 function ButtonsPreview({ locale }: { locale: AppLocale }) {
-  return <div className="component-preview-row"><button className="primary-button" type="button"><Plus size={14} />{componentText(locale, 'componentLibrary.preview.new')}</button><button className="quiet-button" type="button">{componentText(locale, 'componentLibrary.preview.cancel')}</button><button className="danger-button" type="button"><Trash2 size={14} />{componentText(locale, 'componentLibrary.preview.delete')}</button><button className="quiet-button" type="button" disabled>{componentText(locale, 'componentLibrary.preview.disabled')}</button></div>
+  return <div className="component-preview-row"><button className="primary-button" type="button"><PixelUtilityIcon kind="plus" />{componentText(locale, 'componentLibrary.preview.new')}</button><button className="quiet-button" type="button">{componentText(locale, 'componentLibrary.preview.cancel')}</button><button className="danger-button" type="button"><PixelUtilityIcon kind="delete" />{componentText(locale, 'componentLibrary.preview.delete')}</button><button className="quiet-button" type="button" disabled>{componentText(locale, 'componentLibrary.preview.disabled')}</button></div>
 }
 
 function IconButtonPreview({ locale }: { locale: AppLocale }) {
-  return <div className="component-preview-row"><button className="icon-button" type="button" aria-label={componentText(locale, 'componentLibrary.preview.copy')}><Copy size={16} /></button><button className="icon-button active" type="button" aria-label={componentText(locale, 'componentLibrary.preview.settings')}><Settings2 size={16} /></button><button className="icon-button" type="button" aria-label={componentText(locale, 'componentLibrary.preview.delete')}><Trash2 size={16} /></button></div>
+  return <div className="component-preview-row"><button className="icon-button" type="button" aria-label={componentText(locale, 'componentLibrary.preview.copy')}><PixelUtilityIcon kind="copy" /></button><button className="icon-button active" type="button" aria-label={componentText(locale, 'componentLibrary.preview.settings')}><PixelUtilityIcon kind="properties" /></button><button className="icon-button" type="button" aria-label={componentText(locale, 'componentLibrary.preview.delete')}><PixelUtilityIcon kind="delete" /></button></div>
 }
 
 function DeleteIconButtonPreview({ locale }: { locale: AppLocale }) {
@@ -103,11 +121,11 @@ function DeleteIconButtonPreview({ locale }: { locale: AppLocale }) {
 function ContextMenuPreview({ locale }: { locale: AppLocale }) {
   const [open, setOpen] = useState(true)
   return <div className="component-context-menu-preview">
-    <button className="icon-button" type="button" aria-label={componentText(locale, 'componentLibrary.preview.openContext')} aria-expanded={open} onClick={() => setOpen((value) => !value)}><MoreHorizontal size={17} /></button>
+    <button className="icon-button" type="button" aria-label={componentText(locale, 'componentLibrary.preview.openContext')} aria-expanded={open} onClick={() => setOpen((value) => !value)}><PixelUtilityIcon kind="more" /></button>
     {open && <div className="context-menu component-context-menu-demo" role="menu" aria-label={componentText(locale, 'componentLibrary.preview.openContext')}>
       <button className="context-menu-item" type="button" role="menuitem" onClick={() => setOpen(false)}><X size={15} /><span>{componentText(locale, 'componentLibrary.preview.close')}</span></button>
-      <button className="context-menu-item" type="button" role="menuitem" onClick={() => setOpen(false)}><Copy size={15} /><span>{componentText(locale, 'componentLibrary.preview.duplicateView')}</span></button>
-      <button className="context-menu-item" type="button" role="menuitem" disabled><FolderOpen size={15} /><span>{componentText(locale, 'componentLibrary.preview.openFolder')}</span></button>
+      <button className="context-menu-item" type="button" role="menuitem" onClick={() => setOpen(false)}><PixelUtilityIcon kind="copy" /><span>{componentText(locale, 'componentLibrary.preview.duplicateView')}</span></button>
+      <button className="context-menu-item" type="button" role="menuitem" disabled><PixelUtilityIcon kind="folderOpen" /><span>{componentText(locale, 'componentLibrary.preview.openFolder')}</span></button>
     </div>}
   </div>
 }
@@ -149,7 +167,7 @@ function RangePreview({ locale }: { locale: AppLocale }) {
 
 function CheckboxPreview({ locale }: { locale: AppLocale }) {
   const [checked, setChecked] = useState(true)
-  return <label className="tool-checkbox component-preview-checkbox"><input type="checkbox" checked={checked} onChange={(event) => setChecked(event.target.checked)} />{componentText(locale, 'componentLibrary.preview.perfectPixels')}</label>
+  return <label className="tool-checkbox component-preview-checkbox"><PixelCheckbox checked={checked} onChange={(event) => setChecked(event.target.checked)} />{componentText(locale, 'componentLibrary.preview.perfectPixels')}</label>
 }
 
 function SwitchPreview({ locale }: { locale: AppLocale }) {
@@ -162,14 +180,21 @@ function ScrollbarPreview({ locale }: { locale: AppLocale }) {
 }
 
 function PanelHeaderPreview({ locale }: { locale: AppLocale }) {
-  return <div className="component-panel-preview"><header className="component-panel-header"><div><span className="eyebrow">PANEL</span><strong>{componentText(locale, 'componentLibrary.preview.panel')}</strong></div><div className="component-preview-row compact"><button className="icon-button" type="button" aria-label={componentText(locale, 'componentLibrary.preview.show')}><Eye size={14} /></button><button className="icon-button" type="button" aria-label={componentText(locale, 'componentLibrary.preview.settings')}><Settings2 size={14} /></button></div></header><div className="component-panel-content"><Layers2 size={18} /><span>{componentText(locale, 'componentLibrary.preview.draggablePanel')}</span></div></div>
+  return <div className="component-panel-preview"><header className="component-panel-header"><div><span className="eyebrow">PANEL</span><strong>{componentText(locale, 'componentLibrary.preview.panel')}</strong></div><div className="component-preview-row compact"><button className="icon-button" type="button" aria-label={componentText(locale, 'componentLibrary.preview.show')}><PixelUtilityIcon kind="eye" /></button><button className="icon-button" type="button" aria-label={componentText(locale, 'componentLibrary.preview.settings')}><PixelUtilityIcon kind="properties" /></button></div></header><div className="component-panel-content"><Layers2 size={18} /><span>{componentText(locale, 'componentLibrary.preview.draggablePanel')}</span></div></div>
+}
+
+function PixelUtilityIconPreview() {
+  const [locked, setLocked] = useState(true)
+  const [visible, setVisible] = useState(true)
+  const kinds = ['properties', 'delete', 'newFolder', 'ungroupFolder', 'plus', 'minus', 'close', 'up', 'down', 'left', 'right', 'onion', 'more', 'moreLines', 'paletteLocal', 'paletteCenter', 'restore', 'undo', 'redo', 'workspace', 'copy', 'mergeDown', 'mergeVisible', 'folder', 'folderOpen', 'move', 'save', 'export', 'project', 'image', 'roadmapPlanned', 'roadmapCompleted', 'info', 'canvasCenter', 'canvasTop', 'canvasBottom', 'canvasLeft', 'canvasRight', 'canvasTopLeft', 'canvasTopRight', 'canvasBottomLeft', 'canvasBottomRight', 'checkboxUnchecked', 'checkboxChecked', 'pin', 'clearRecords', 'refresh', 'extractColors', 'check'] as const
+  return <div className="component-preview-row"><button type="button" title={pixelIconTitle(locked ? 'lock' : 'unlock')} className={locked ? 'icon-button selected' : 'icon-button'} aria-label={pixelIconTitle(locked ? 'lock' : 'unlock')} aria-pressed={locked} onClick={() => setLocked((value) => !value)}><PixelUtilityIcon kind={locked ? 'lock' : 'unlock'} /></button><button type="button" title={pixelIconTitle(visible ? 'eye' : 'eyeOff')} className={visible ? 'icon-button selected' : 'icon-button'} aria-label={pixelIconTitle(visible ? 'eye' : 'eyeOff')} aria-pressed={visible} onClick={() => setVisible((value) => !value)}><PixelUtilityIcon kind={visible ? 'eye' : 'eyeOff'} /></button>{kinds.map((kind) => <button key={kind} type="button" className="icon-button" title={pixelIconTitle(kind)} aria-label={pixelIconTitle(kind)}><PixelUtilityIcon kind={kind} /></button>)}<button type="button" className="icon-button" title={pixelIconTitle('lock')} aria-label={pixelIconTitle('lock')} disabled><PixelUtilityIcon kind="lock" /></button></div>
 }
 
 function LayerRowPreview({ locale }: { locale: AppLocale }) {
   const [selected, setSelected] = useState(true)
   const [visible, setVisible] = useState(true)
   const [locked, setLocked] = useState(false)
-  return <div className="component-layer-list-preview"><button className={`layer-row ${selected ? 'selected' : ''}`} type="button" onClick={() => setSelected((value) => !value)}><span className="layer-color-stripe" style={{ backgroundColor: '#ef5350' }} aria-hidden="true" /><span className="layer-visibility" role="button" tabIndex={-1} aria-label={visible ? componentText(locale, 'componentLibrary.preview.hideLayer') : componentText(locale, 'componentLibrary.preview.showLayer')} onClick={(event) => { event.stopPropagation(); setVisible((value) => !value) }}>{visible ? <Eye size={14} /> : <EyeOff size={14} />}</span><span className={`layer-lock-toggle ${locked ? 'locked' : ''}`} role="button" tabIndex={-1} aria-label={locked ? componentText(locale, 'componentLibrary.preview.unlockLayer') : componentText(locale, 'componentLibrary.preview.lockLayer')} onClick={(event) => { event.stopPropagation(); setLocked((value) => !value) }}>{locked ? <Lock size={14} /> : <LockOpen size={14} />}</span><Tooltip className="layer-name" content={componentText(locale, 'componentLibrary.preview.layerDescription')}><span>{componentText(locale, 'componentLibrary.preview.foregroundLayer')}</span><small>{componentText(locale, 'componentLibrary.preview.normalOpacity')}</small></Tooltip></button><button className="layer-row group-row" type="button"><span className="layer-visibility" role="button" tabIndex={-1} aria-label={componentText(locale, 'componentLibrary.preview.showLayer')}><Eye size={14} /></span><span className="layer-lock-toggle" role="button" tabIndex={-1} aria-label={componentText(locale, 'componentLibrary.preview.lockLayer')}><LockOpen size={14} /></span><span className="group-folder" role="button" tabIndex={-1} aria-label={componentText(locale, 'componentLibrary.preview.collapseGroup')}><FolderOpen size={16} /></span><span className="layer-name"><span>{componentText(locale, 'componentLibrary.preview.group')}</span><small>{componentText(locale, 'componentLibrary.preview.normalOpacity')}</small></span></button></div>
+  return <div className="component-layer-list-preview"><button className={`layer-row ${selected ? 'selected' : ''}`} type="button" onClick={() => setSelected((value) => !value)}><span className="layer-color-stripe" style={{ backgroundColor: '#ef5350' }} aria-hidden="true" /><span className="layer-visibility" role="button" tabIndex={-1} aria-label={visible ? componentText(locale, 'componentLibrary.preview.hideLayer') : componentText(locale, 'componentLibrary.preview.showLayer')} onClick={(event) => { event.stopPropagation(); setVisible((value) => !value) }}>{visible ? <PixelUtilityIcon kind="eye" /> : <PixelUtilityIcon kind="eyeOff" />}</span><span className={`layer-lock-toggle ${locked ? 'locked' : ''}`} role="button" tabIndex={-1} aria-label={locked ? componentText(locale, 'componentLibrary.preview.unlockLayer') : componentText(locale, 'componentLibrary.preview.lockLayer')} onClick={(event) => { event.stopPropagation(); setLocked((value) => !value) }}>{locked ? <PixelUtilityIcon kind="lock" /> : <PixelUtilityIcon kind="unlock" />}</span><Tooltip className="layer-name" content={componentText(locale, 'componentLibrary.preview.layerDescription')}><span>{componentText(locale, 'componentLibrary.preview.foregroundLayer')}</span><small>{componentText(locale, 'componentLibrary.preview.normalOpacity')}</small></Tooltip></button><button className="layer-row group-row" type="button"><span className="layer-visibility" role="button" tabIndex={-1} aria-label={componentText(locale, 'componentLibrary.preview.showLayer')}><PixelUtilityIcon kind="eye" /></span><span className="layer-lock-toggle" role="button" tabIndex={-1} aria-label={componentText(locale, 'componentLibrary.preview.lockLayer')}><PixelUtilityIcon kind="unlock" /></span><span className="group-folder" role="button" tabIndex={-1} aria-label={componentText(locale, 'componentLibrary.preview.collapseGroup')}><PixelUtilityIcon kind="folderOpen" /></span><span className="layer-name"><span>{componentText(locale, 'componentLibrary.preview.group')}</span><small>{componentText(locale, 'componentLibrary.preview.normalOpacity')}</small></span></button></div>
 }
 
 function SwatchesPreview({ locale }: { locale: AppLocale }) {
@@ -179,7 +204,7 @@ function SwatchesPreview({ locale }: { locale: AppLocale }) {
 }
 
 function ModalShellPreview({ locale }: { locale: AppLocale }) {
-  return <div className="component-modal-preview"><div className="component-modal-window"><header><div><span className="eyebrow">PREVIEW</span><strong>{componentText(locale, 'componentLibrary.preview.title')}</strong></div><button className="icon-button" type="button" aria-label={componentText(locale, 'componentLibrary.preview.close')}><X size={15} /></button></header><div className="component-modal-body"><Info size={18} /><span>{componentText(locale, 'componentLibrary.preview.modalContent')}</span></div><footer><button className="quiet-button" type="button">{componentText(locale, 'componentLibrary.preview.cancel')}</button><button className="primary-button" type="button">{componentText(locale, 'componentLibrary.preview.ok')}</button></footer></div></div>
+  return <div className="component-modal-preview"><div className="component-modal-window"><header><div><span className="eyebrow">PREVIEW</span><strong>{componentText(locale, 'componentLibrary.preview.title')}</strong></div><button className="icon-button" type="button" aria-label={componentText(locale, 'componentLibrary.preview.close')}><X size={15} /></button></header><div className="component-modal-body"><PixelUtilityIcon kind="info" /><span>{componentText(locale, 'componentLibrary.preview.modalContent')}</span></div><footer><button className="quiet-button" type="button">{componentText(locale, 'componentLibrary.preview.cancel')}</button><button className="primary-button" type="button">{componentText(locale, 'componentLibrary.preview.ok')}</button></footer></div></div>
 }
 
 function SaveProgressPreview({ locale }: { locale: AppLocale }) {
@@ -222,6 +247,7 @@ function DockPreview({ locale }: { locale: AppLocale }) {
 const previewRenderers: Record<string, (props: { locale: AppLocale }) => ReactElement> = {
   buttons: ButtonsPreview,
   'icon-button': IconButtonPreview,
+  'pixel-utility-icon': PixelUtilityIconPreview,
   'delete-icon-button': DeleteIconButtonPreview,
   'context-menu': ContextMenuPreview,
   segmented: SegmentedPreview,
@@ -273,7 +299,7 @@ export function ComponentLibrary({ onClose }: { onClose: () => void }) {
           <div className="component-library-main-heading"><div><span className="eyebrow">{componentText(locale, 'componentLibrary.eyebrow')}</span><h3>{selectedEntry.name}</h3></div><span className="component-library-id">{selectedEntry.id}</span></div>
           <div className="component-preview-stage"><Preview locale={locale} /></div>
           <div className="component-library-details"><div className="component-detail-block"><span>{componentText(locale, 'componentLibrary.details')}</span><p>{selectedEntry.description}</p></div><div className="component-detail-block"><span>{componentText(locale, 'componentLibrary.source')}</span><code>{selectedEntry.source}</code></div><div className="component-detail-block"><span>{componentText(locale, 'componentLibrary.tags')}</span><div className="component-tag-list">{selectedEntry.tags.map((tag) => <span key={tag}>{tag}</span>)}</div></div></div>
-          <div className="component-library-checklist"><strong><Check size={14} />{componentText(locale, 'componentLibrary.checkStatus')}</strong><span><i />{componentText(locale, 'componentLibrary.interactive')}</span><span><i />{componentText(locale, 'componentLibrary.squareLayout')}</span><span><i />{componentText(locale, 'componentLibrary.blue')}</span></div>
+          <div className="component-library-checklist"><strong><PixelUtilityIcon kind="check" />{componentText(locale, 'componentLibrary.checkStatus')}</strong><span><i />{componentText(locale, 'componentLibrary.interactive')}</span><span><i />{componentText(locale, 'componentLibrary.squareLayout')}</span><span><i />{componentText(locale, 'componentLibrary.blue')}</span></div>
         </main>
       </div>
       <footer className="component-library-footer"><span><FileText size={14} />{componentText(locale, 'componentLibrary.registered', { count: COMPONENT_LIBRARY_ENTRIES.length })}</span><span className="component-library-footer-note"><Palette size={14} />{componentText(locale, 'componentLibrary.footerHint')}</span><button className="primary-button" type="button" onClick={onClose}>{componentText(locale, 'componentLibrary.done')}</button></footer>

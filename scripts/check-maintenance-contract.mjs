@@ -19,6 +19,8 @@ const requiredFiles = [
   'docs/testing/regression-matrix.md',
   'docs/testing/performance-baseline.md',
   'docs/testing/performance-history.md',
+  'docs/testing/performance-baseline-data.json',
+  'docs/testing/performance-release-receipt.json',
   'docs/changelog/README.md',
   'docs/release/changelog-policy.md',
   'docs/release/development-cycle.md',
@@ -38,6 +40,15 @@ const requiredFiles = [
   'scripts/validation-scope.test.mjs',
   'scripts/run-validation.mjs',
   'scripts/ci-scope.mjs',
+  'scripts/performance-analysis.mjs',
+  'scripts/performance-audit-store.mjs',
+  'scripts/performance-executor.mjs',
+  'scripts/performance-acceptance.mjs',
+  'scripts/performance-runtime.mjs',
+  'scripts/run-performance-audit.mjs',
+  'scripts/verify-performance-optimization.mjs',
+  'scripts/accept-performance-audit.mjs',
+  'scripts/check-performance-release.mjs',
 ]
 
 const missing = []

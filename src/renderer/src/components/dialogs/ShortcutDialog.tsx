@@ -1,5 +1,5 @@
 import { useMemo, useRef, useState } from 'react'
-import { FileUp, TriangleAlert, X } from 'lucide-react'
+import { FileUp, TriangleAlert } from 'lucide-react'
 import {
   DEFAULT_SHORTCUTS,
   SHORTCUT_GROUPS,
@@ -9,6 +9,7 @@ import {
   shortcutText
 } from '@/core/shortcuts'
 import { ModalShell } from '@/components/ModalShell'
+import { PixelCloseIcon as X } from '@/components/PixelUtilityIcon'
 import { useI18n } from '@/components/I18nProvider'
 
 const defaultShortcuts: Record<string, string> = { ...DEFAULT_SHORTCUTS }

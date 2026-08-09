@@ -33,6 +33,35 @@ beforeEach(() => {
   useWorkspace.setState({ sessions: [], activeId: null, message: null, saveProgress: null, dialog: null })
 })
 
+describe('pixel content invalidation', () => {
+  it('tracks the edited document region for commit, undo, and redo', () => {
+    const document = createDocument('dirty region', 8, 6, 'rgba')
+    const layer = getActiveLayer(document)
+    useWorkspace.getState().addSession(document)
+    const edit = beginPixelEdit(layer.id)
+    recordPixel(document, layer, edit, 2 + 1 * layer.width, 0xff0000ff)
+    recordPixel(document, layer, edit, 5 + 4 * layer.width, 0xff0000ff)
+
+    useWorkspace.getState().commitPixelEdit(edit, 'paint')
+    let session = useWorkspace.getState().sessions[0]
+    expect(session.contentInvalidation).toEqual({
+      kind: 'region',
+      frameId: document.animation!.activeFrameId,
+      rect: { x: 2, y: 1, width: 4, height: 4 },
+      fromRevision: 0,
+      revision: 1
+    })
+
+    useWorkspace.getState().undo()
+    session = useWorkspace.getState().sessions[0]
+    expect(session.contentInvalidation).toMatchObject({ kind: 'region', rect: { x: 2, y: 1, width: 4, height: 4 }, fromRevision: 1, revision: 2 })
+
+    useWorkspace.getState().redo()
+    session = useWorkspace.getState().sessions[0]
+    expect(session.contentInvalidation).toMatchObject({ kind: 'region', rect: { x: 2, y: 1, width: 4, height: 4 }, fromRevision: 2, revision: 3 })
+  })
+})
+
 describe('project-owned display and activity metadata', () => {
   it('restores grid visibility and settings when a project session is opened', () => {
     const document = createDocument('grid memory', 8, 8, 'rgba')
@@ -48,18 +77,38 @@ describe('project-owned display and activity metadata', () => {
   })
 
   it('counts committed strokes and records timelapse frames while enabled', () => {
-    const document = createDocument('activity', 2, 1, 'rgba')
-    const layer = getActiveLayer(document)
-    useWorkspace.getState().addSession(document)
-    useWorkspace.getState().setTimelapseSettings({ enabled: true, quality: 'low', fps: 12, speed: 8 })
-    const initialFrames = document.timelapse?.snapshots.length ?? 0
-    const edit = beginPixelEdit(layer.id)
-    recordPixel(document, layer, edit, 0, 0xff0000ff)
+    vi.useFakeTimers()
+    try {
+      const document = createDocument('activity', 2, 1, 'rgba')
+      const layer = getActiveLayer(document)
+      useWorkspace.getState().addSession(document)
+      useWorkspace.getState().setTimelapseSettings({ enabled: true, quality: 'low', fps: 12, speed: 8 })
+      const initialFrames = document.timelapse?.snapshots.length ?? 0
+      const first = beginPixelEdit(layer.id)
+      recordPixel(document, layer, first, 0, 0xff0000ff)
+      useWorkspace.getState().commitPixelEdit(first, 'paint', { stroke: true, durationMs: 250 })
+      vi.advanceTimersByTime(100)
+      const second = beginPixelEdit(layer.id)
+      recordPixel(document, layer, second, 1, 0xffff0000)
+      useWorkspace.getState().commitPixelEdit(second, 'paint again', { stroke: true, durationMs: 150 })
 
-    useWorkspace.getState().commitPixelEdit(edit, 'paint', { stroke: true, durationMs: 250 })
+      expect(document.statistics).toEqual({ strokeCount: 2, operationCount: 2, drawingTimeMs: 400 })
+      expect(document.timelapse?.snapshots).toHaveLength(initialFrames)
+      vi.advanceTimersByTime(299)
+      expect(document.timelapse?.snapshots).toHaveLength(initialFrames)
+      vi.advanceTimersByTime(1)
+      expect(document.timelapse?.snapshots).toHaveLength(initialFrames + 1)
 
-    expect(document.statistics).toEqual({ strokeCount: 1, operationCount: 1, drawingTimeMs: 250 })
-    expect(document.timelapse?.snapshots).toHaveLength(initialFrames + 1)
+      const third = beginPixelEdit(layer.id)
+      recordPixel(document, layer, third, 0, 0x00ff00ff)
+      useWorkspace.getState().commitPixelEdit(third, 'paint throttled', { stroke: true, durationMs: 80 })
+      vi.advanceTimersByTime(999)
+      expect(document.timelapse?.snapshots).toHaveLength(initialFrames + 1)
+      vi.advanceTimersByTime(1)
+      expect(document.timelapse?.snapshots).toHaveLength(initialFrames + 2)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })
 

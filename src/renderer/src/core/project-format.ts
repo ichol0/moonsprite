@@ -160,7 +160,14 @@ const normalizeManifestAnimation = (value: unknown): ManifestAnimation => {
   }
 }
 
-export function encodeProject(document: SpriteDocument): Uint8Array {
+export interface ProjectEncodeOptions {
+  /** Recovery snapshots do not need a gallery preview and can skip its full-canvas composite. */
+  includePreview?: boolean
+  /** Lower compression trades disk space for a substantially shorter main-thread encode. */
+  compressionLevel?: 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9
+}
+
+export function encodeProject(document: SpriteDocument, options: ProjectEncodeOptions = {}): Uint8Array {
   syncActiveAnimationFrame(document)
   const files: Record<string, Uint8Array> = {}
   const layers: ManifestLayer[] = document.layers.map((layer) => {
@@ -241,8 +248,8 @@ export function encodeProject(document: SpriteDocument): Uint8Array {
     }
   }
   files['manifest.json'] = strToU8(JSON.stringify(manifest))
-  files['preview.png'] = encodePng(compositeDocument(document), document.width, document.height).bytes
-  return zipSync(files, { level: 6 })
+  if (options.includePreview !== false) files['preview.png'] = encodePng(compositeDocument(document), document.width, document.height).bytes
+  return zipSync(files, { level: options.compressionLevel ?? 6 })
 }
 
 export function migrateProjectManifest(input: unknown): ProjectManifest {

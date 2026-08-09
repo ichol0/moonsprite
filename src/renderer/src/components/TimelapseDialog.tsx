@@ -1,11 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { FileVideo, Pause, Play, Trash2, X } from 'lucide-react'
+import { FileVideo, Pause, Play } from 'lucide-react'
 import type { TimelapseQuality, TimelapseSettings, TimelapseSnapshot, TimelapseVideoFormat } from '@shared/types'
 import { timelapseFrameDurations, timelapseOutputDimensions, timelapseOutputScale, timelapseSourceDurationMs, type TimelapseExportMode, type TimelapseExportOptions } from '@/core/timelapse'
+import { loadEditorPreferences } from '@/core/file-preferences'
+import { resolveTheme } from '@/core/theme'
 import { ModalShell } from './ModalShell'
 import { NumberInput } from './NumberInput'
 import { ThemedSelect } from './ThemedSelect'
 import { useI18n } from './I18nProvider'
+import { PixelUtilityIcon } from './PixelUtilityIcon'
+import { PixelCheckbox } from './PixelCheckbox'
 
 interface TimelapseDialogProps {
   settings: TimelapseSettings
@@ -24,6 +28,10 @@ export function TimelapseDialog({ settings, onChange, onClear, onExport, onClose
   const [exportMode, setExportMode] = useState<TimelapseExportMode>('duration')
   const [clearConfirm, setClearConfirm] = useState(false)
   const [durationSeconds, setDurationSeconds] = useState(() => Math.max(1, Math.round(timelapseSourceDurationMs(settings) / 1000 / Math.max(1, settings.speed))))
+  const [previewVisuals, setPreviewVisuals] = useState(() => {
+    const preferences = loadEditorPreferences()
+    return { checkerboard: preferences.checkerboard, background: resolveTheme(preferences.theme).variables['--theme-deep-surface'] }
+  })
   const snapshot = settings.snapshots[Math.min(previewFrame, Math.max(0, settings.snapshots.length - 1))]
   const exportOptions = useMemo<TimelapseExportOptions>(() => ({ mode: exportMode, durationSeconds }), [durationSeconds, exportMode])
   const frameDurations = timelapseFrameDurations(settings, exportOptions)
@@ -44,6 +52,15 @@ export function TimelapseDialog({ settings, onChange, onClear, onExport, onClose
   }, [previewFrame, settings.snapshots.length])
 
   useEffect(() => {
+    const syncPreferences = (): void => {
+      const preferences = loadEditorPreferences()
+      setPreviewVisuals({ checkerboard: preferences.checkerboard, background: resolveTheme(preferences.theme).variables['--theme-deep-surface'] })
+    }
+    window.addEventListener('moonsprite:preferences-changed', syncPreferences)
+    return () => window.removeEventListener('moonsprite:preferences-changed', syncPreferences)
+  }, [])
+
+  useEffect(() => {
     if (!previewPlaying || settings.snapshots.length < 2) return
     const timer = window.setTimeout(() => {
       setPreviewFrame((frame) => (frame + 1) % settings.snapshots.length)
@@ -59,7 +76,7 @@ export function TimelapseDialog({ settings, onChange, onClear, onExport, onClose
       canvas.height = 270
       const context = canvas.getContext('2d')
       if (!context) return
-      context.fillStyle = '#171a21'
+      context.fillStyle = previewVisuals.background
       context.fillRect(0, 0, canvas.width, canvas.height)
     }
     if (!snapshot) {
@@ -79,7 +96,8 @@ export function TimelapseDialog({ settings, onChange, onClear, onExport, onClose
       if (!context) { bitmap.close(); return }
       const checkerSize = 8
       for (let y = 0; y < previewHeight; y += checkerSize) for (let x = 0; x < previewWidth; x += checkerSize) {
-        context.fillStyle = ((x / checkerSize + y / checkerSize) & 1) === 0 ? '#aeb3ba' : '#737983'
+        const color = ((x / checkerSize + y / checkerSize) & 1) === 0 ? previewVisuals.checkerboard.lightColor : previewVisuals.checkerboard.darkColor
+        context.fillStyle = `rgb(${color.r} ${color.g} ${color.b})`
         context.fillRect(x, y, checkerSize, checkerSize)
       }
       context.imageSmoothingEnabled = false
@@ -91,11 +109,11 @@ export function TimelapseDialog({ settings, onChange, onClear, onExport, onClose
     }
     void render(snapshot)
     return () => { canceled = true }
-  }, [snapshot])
+  }, [previewVisuals, snapshot])
 
   return <div className="modal-backdrop" role="presentation" onPointerDown={(event) => { if (event.target === event.currentTarget) onClose() }}>
     <ModalShell storageKey="timelapse-v2" defaultWidth={640} defaultHeight={525} fitContent={false} minWidth={420} minHeight={420} maxWidth={760} maxHeight={760} className="timelapse-modal" role="dialog" aria-modal="true" aria-labelledby="timelapse-title">
-      <header><div><h2 id="timelapse-title">{t('timelapse.title')}</h2></div><button className="icon-button" aria-label={t('common.close')} onClick={onClose}><X size={16} /></button></header>
+      <header><div><h2 id="timelapse-title">{t('timelapse.title')}</h2></div><button className="icon-button" aria-label={t('common.close')} onClick={onClose}><PixelUtilityIcon kind="close" /></button></header>
       <div className="modal-body timelapse-body component-scrollbar">
         <section className="timelapse-preview" aria-label={t('timelapse.preview')}>
           <div className="timelapse-preview-frame"><canvas ref={canvasRef} /></div>
@@ -105,7 +123,7 @@ export function TimelapseDialog({ settings, onChange, onClear, onExport, onClose
             <output>{settings.snapshots.length === 0 ? '0 / 0' : `${previewFrame + 1} / ${settings.snapshots.length}`}</output>
           </div>
         </section>
-        <label className="timelapse-toggle"><span>{t('timelapse.recording')}</span><input type="checkbox" checked={settings.enabled} onChange={(event) => onChange({ enabled: event.target.checked })} /></label>
+        <label className="timelapse-toggle"><span>{t('timelapse.recording')}</span><PixelCheckbox checked={settings.enabled} onChange={(event) => onChange({ enabled: event.target.checked })} /></label>
         <div className="timelapse-config-grid">
           <label>{t('timelapse.quality')}<ThemedSelect<TimelapseQuality> value={settings.quality} groups={[{ label: t('timelapse.quality'), options: qualityOptions }]} label={t('timelapse.quality')} onChange={(quality) => onChange({ quality })} /><small>{t('timelapse.qualityHint')}</small></label>
           <label>{t('timelapse.videoFormat')}<ThemedSelect<TimelapseVideoFormat> value={format} groups={[{ label: t('timelapse.videoFormat'), options: [{ value: 'mp4', label: 'MP4' }, { value: 'webm', label: 'WebM' }] }]} label={t('timelapse.videoFormat')} onChange={setFormat} /></label>
@@ -123,7 +141,7 @@ export function TimelapseDialog({ settings, onChange, onClear, onExport, onClose
       </div>
       <footer className="timelapse-footer">
         <div className="timelapse-clear-actions">
-          {!clearConfirm ? <button type="button" className="quiet-button timelapse-clear" disabled={settings.snapshots.length === 0} onClick={() => { setPreviewPlaying(false); setClearConfirm(true) }}><Trash2 size={15} />{t('timelapse.clear')}</button> : <><span className="timelapse-clear-confirm-label">{t('timelapse.clearConfirm')}</span><button type="button" className="quiet-button" onClick={() => setClearConfirm(false)}>{t('common.cancel')}</button><button type="button" className="danger-button" onClick={() => { setClearConfirm(false); setPreviewFrame(0); onClear() }}>{t('timelapse.confirmClear')}</button></>}
+          {!clearConfirm ? <button type="button" className="quiet-button timelapse-clear" disabled={settings.snapshots.length === 0} onClick={() => { setPreviewPlaying(false); setClearConfirm(true) }}><PixelUtilityIcon kind="clearRecords" />{t('timelapse.clear')}</button> : <><span className="timelapse-clear-confirm-label">{t('timelapse.clearConfirm')}</span><button type="button" className="quiet-button" onClick={() => setClearConfirm(false)}>{t('common.cancel')}</button><button type="button" className="danger-button" onClick={() => { setClearConfirm(false); setPreviewFrame(0); onClear() }}>{t('timelapse.confirmClear')}</button></>}
         </div>
         <div className="timelapse-footer-actions"><button className="quiet-button" onClick={onClose}>{t('common.close')}</button><button className="primary-button" disabled={settings.snapshots.length === 0} onClick={() => { void onExport(format, exportOptions) }}><FileVideo size={15} />{t('timelapse.exportVideo')}</button></div>
       </footer>

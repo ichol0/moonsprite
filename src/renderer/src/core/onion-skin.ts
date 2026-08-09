@@ -1,6 +1,6 @@
 import type { AnimationTimeline, RgbaColor, SpriteDocument } from '@shared/types'
-import { animationLayerAtFrame, ensureAnimationDocument } from './animation'
-import { compositeDocument } from './document'
+import { animationLayersAtFrame, ensureAnimationDocument } from './animation'
+import { compositeDocument, compositeRegion } from './document'
 
 export interface OnionSkinFrameRef { frameId: string; distance: number; side: 'previous' | 'next' }
 
@@ -21,8 +21,14 @@ export const onionSkinFrameRefs = (timeline: AnimationTimeline, previousFrames: 
 
 export const compositeAnimationFrame = (document: SpriteDocument, frameId: string): Uint8ClampedArray => {
   ensureAnimationDocument(document)
-  const layers = document.layers.map((layer) => animationLayerAtFrame(document, layer.id, frameId) ?? layer)
+  const layers = animationLayersAtFrame(document, frameId)
   return compositeDocument({ ...document, layers })
+}
+
+export const compositeAnimationFrameRegion = (document: SpriteDocument, frameId: string, x: number, y: number, width: number, height: number): Uint8ClampedArray => {
+  ensureAnimationDocument(document)
+  const layers = animationLayersAtFrame(document, frameId)
+  return compositeRegion({ ...document, layers }, x, y, width, height)
 }
 
 export const tintOnionSkinPixels = (source: Uint8ClampedArray, tint: RgbaColor, opacityPercent: number, distance: number): Uint8ClampedArray => {

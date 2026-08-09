@@ -1,6 +1,6 @@
-import { X } from 'lucide-react'
 import { useI18n } from '@/components/I18nProvider'
 import { ModalShell } from '@/components/ModalShell'
+import { PixelUtilityIcon } from '@/components/PixelUtilityIcon'
 import { LATEST_PACKAGED_RELEASE_LABEL } from '@/core/app-meta'
 import type { TranslationKey } from '@/core/localization'
 
@@ -50,7 +50,7 @@ export function LatestReleaseDialog({ onClose }: { onClose: () => void }) {
   const { t } = useI18n()
   return <div className="modal-backdrop" role="presentation" onPointerDown={(event) => { if (event.target === event.currentTarget) onClose() }}>
     <ModalShell storageKey="latest-release" defaultWidth={640} defaultHeight={620} minWidth={480} minHeight={420} maxWidth={820} maxHeight={800} className="latest-release-modal" role="dialog" aria-modal="true" aria-labelledby="latest-release-title">
-      <header><div><span className="eyebrow">MOONSPRITE {latestRelease.version}</span><h2 id="latest-release-title">{t('latestRelease.title')}</h2></div><button type="button" className="icon-button" aria-label={t('common.close')} onClick={onClose}><X size={16} /></button></header>
+      <header><div><span className="eyebrow">MOONSPRITE {latestRelease.version}</span><h2 id="latest-release-title">{t('latestRelease.title')}</h2></div><button type="button" className="icon-button" aria-label={t('common.close')} onClick={onClose}><PixelUtilityIcon kind="close" /></button></header>
       <div className="latest-release-body"><p className="latest-release-version">{t('latestRelease.version', { version: latestRelease.version })}</p>{latestRelease.sections.map((section) => <section key={section.title}><h3>{t(section.title)}</h3><ul>{section.items.map((item) => <li key={item}>{t(item)}</li>)}</ul></section>)}</div>
       <footer><button type="button" className="primary-button" onClick={onClose}>{t('common.done')}</button></footer>
     </ModalShell>

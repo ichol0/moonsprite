@@ -58,7 +58,7 @@ describe('PreviewPanel animation controls', () => {
     expect(screen.getByRole('button', { name: '暂停动画' })).toBeInTheDocument()
   })
 
-  it('uses the same fixed zoom levels as the canvas', () => {
+  it('keeps fixed zoom controls without rendering a percentage label', () => {
     const document = createDocument('stepped preview zoom', 8, 8, 'rgba')
     useWorkspace.getState().addSession(document)
     vi.spyOn(HTMLCanvasElement.prototype, 'getBoundingClientRect').mockReturnValue({
@@ -67,12 +67,32 @@ describe('PreviewPanel animation controls', () => {
     render(<PreviewPanel session={useWorkspace.getState().sessions[0]} onClose={vi.fn()} docked />)
 
     fireEvent.click(screen.getByRole('button', { name: '放大预览' }))
-    expect(screen.getByText('125%')).toBeInTheDocument()
+    expect(screen.queryByText('125%')).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: '放大预览' }))
-    expect(screen.getByText('150%')).toBeInTheDocument()
+    expect(screen.queryByText('150%')).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: '缩小预览' }))
     fireEvent.click(screen.getByRole('button', { name: '缩小预览' }))
     fireEvent.click(screen.getByRole('button', { name: '缩小预览' }))
-    expect(screen.getByText('66.67%')).toBeInTheDocument()
+    expect(screen.queryByText('66.67%')).not.toBeInTheDocument()
+  })
+
+  it('uses Space plus the primary pointer button to pan the preview', () => {
+    const document = createDocument('space preview pan', 8, 8, 'rgba')
+    useWorkspace.getState().addSession(document)
+    render(<PreviewPanel session={useWorkspace.getState().sessions[0]} onClose={vi.fn()} docked />)
+
+    const surface = window.document.querySelector('.preview-canvas-wrap') as HTMLDivElement
+    surface.setPointerCapture = vi.fn()
+    surface.hasPointerCapture = vi.fn(() => true)
+    surface.releasePointerCapture = vi.fn()
+
+    fireEvent.keyDown(window, { code: 'Space' })
+    expect(surface).toHaveClass('space-pan-ready')
+    fireEvent.pointerDown(surface, { button: 0, pointerId: 7, clientX: 20, clientY: 30 })
+    expect(surface).toHaveClass('space-panning')
+    fireEvent.pointerUp(surface, { button: 0, pointerId: 7, clientX: 28, clientY: 34 })
+    expect(surface).not.toHaveClass('space-panning')
+    fireEvent.keyUp(window, { code: 'Space' })
+    expect(surface).not.toHaveClass('space-pan-ready')
   })
 })

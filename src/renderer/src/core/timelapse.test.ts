@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { resolveTimelapseMimeType, timelapseFrameDurations, timelapseFrameHoldMs, timelapseOutputDimensions, timelapseOutputScale, timelapseSourceDurationMs } from './timelapse'
+import { captureTimelapseSnapshot, createTimelapseCaptureCache, resolveTimelapseMimeType, timelapseFrameDurations, timelapseFrameHoldMs, timelapseOutputDimensions, timelapseOutputScale, timelapseSourceDurationMs } from './timelapse'
+import { createDocument, getActiveLayer } from './document'
 
 describe('timelapse video encoding helpers', () => {
   it('selects the first supported MP4 MIME type', () => {
@@ -41,5 +42,22 @@ describe('timelapse video encoding helpers', () => {
     expect(timelapseSourceDurationMs(settings)).toBe(400)
     expect(timelapseFrameDurations(settings, { mode: 'duration', durationSeconds: 10 })).toEqual([2500, 7500])
     expect(timelapseFrameDurations(settings, { mode: 'speed', durationSeconds: 1 })).toEqual([25, 75])
+  })
+
+  it('keeps a capture cache valid while patching only a dirty region', () => {
+    const document = createDocument('timelapse cache', 4, 3, 'rgba')
+    const layer = getActiveLayer(document)
+    const cache = createTimelapseCaptureCache()
+    const first = new Uint8ClampedArray(document.width * document.height * 4)
+    layer.pixels.set([255, 0, 0, 255], 0)
+    document.timelapse = { enabled: true, quality: 'low', fps: 12, speed: 8, snapshots: [] }
+
+    captureTimelapseSnapshot(document, 1000, { cache, contentRevision: 1, contentInvalidation: { kind: 'full', fromRevision: 0, revision: 1 } })
+    first.set(cache.pixels ?? [])
+    layer.pixels.set([0, 255, 0, 255], 0)
+    captureTimelapseSnapshot(document, 2000, { cache, contentRevision: 2, contentInvalidation: { kind: 'region', fromRevision: 1, revision: 2, rect: { x: 0, y: 0, width: 1, height: 1 } } })
+
+    expect(Array.from(cache.pixels ?? [])).not.toEqual(Array.from(first))
+    expect(Array.from(cache.pixels?.slice(4) ?? [])).toEqual(Array.from(first.slice(4)))
   })
 })

@@ -121,9 +121,9 @@ export function useFloatingPanel(initialPosition: FloatingPosition | null = null
         setDockPreview(target?.preview ?? null)
       }
     }
-    const up = (): void => {
+    const up = (event: globalThis.PointerEvent): void => {
       if (drag.current && canDock && ref.current?.classList.contains('floating-panel')) {
-        const dock = dockTargetRef.current
+        const dock = event.type === 'pointerup' ? panelDockZoneAt(event.clientX, event.clientY)?.dock ?? null : null
         if (dock) {
           userPositioned.current = false
           updatePosition(() => null)

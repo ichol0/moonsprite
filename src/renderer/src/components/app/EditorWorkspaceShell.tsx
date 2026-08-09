@@ -81,14 +81,14 @@ export const EditorWorkspaceShell = memo(function EditorWorkspaceShell({
   return <PerformanceProfiler id="EditorWorkspaceShell"><section className="editor-layout" style={{ gridTemplateColumns: editorOnly ? 'minmax(0, 1fr)' : editorColumns, gridTemplateAreas: editorOnly ? '"work"' : `"${editorAreas}"` }}>
     <EditorToolRail side={toolRailSide} onGripPointerDown={onToolRailGrip} />
     {hasLeftDock && <aside ref={setLeftDockHost} className="left-panel-dock" data-panel-dock-zone="left" />}
-    {hasLeftDock && <div className="left-dock-resizer" role="separator" aria-orientation="vertical" aria-label={t('workspaceDock.resizeLeft')} onPointerDown={onLeftDockResize} />}
+    {hasLeftDock && <div className="left-dock-resizer" role="separator" aria-orientation="vertical" aria-label={t('workspaceDock.resizeLeft')} onPointerDown={onLeftDockResize}><span aria-hidden="true" /></div>}
     <section ref={workAreaRef} className={`work-area ${hasBottomDock ? 'has-bottom-layers' : ''}`} style={{ '--bottom-layers-height': `${bottomDockHeight}px` } as CSSProperties}>
       <EditorToolOptions />
       <EditorCanvasHost documentPaneLayout={documentPaneLayout} documentPanePreview={documentPanePreview} onDocumentPaneLayoutChange={onDocumentPaneLayoutChange} onDocumentPaneMove={onDocumentPaneMove} onDocumentPaneReturnToTabs={onDocumentPaneReturnToTabs} />
       {hasBottomDock && <div className="bottom-layers-resizer" role="separator" aria-orientation="horizontal" aria-label={t('workspaceDock.resizeBottom')} onPointerDown={onBottomDockResize}><span /></div>}
       {hasBottomDock && <div ref={setBottomDockHost} className="bottom-layers-dock" data-panel-dock-zone="bottom" />}
     </section>
-    {hasRightDock && <div className="inspector-resizer" role="separator" aria-orientation="vertical" aria-label={t('workspaceDock.resizeRight')} onPointerDown={onInspectorResize} />}
+    {hasRightDock && <div className="inspector-resizer" role="separator" aria-orientation="vertical" aria-label={t('workspaceDock.resizeRight')} onPointerDown={onInspectorResize}><span aria-hidden="true" /></div>}
     <aside className={`inspector ${hasRightDock ? '' : 'inspector-empty'}`} {...(hasRightDock ? { 'data-panel-dock-zone': 'right' } : {})}>
       <InspectorPanels key={workspaceLayoutRevision} session={session} panelVisibility={panelVisibility} onClosePreview={onClosePreview} panelDocks={panelDocks} leftDockHost={leftDockHost} bottomDockHost={bottomDockHost} onPanelDockChange={onPanelDockChange} onPanelVisibilityChange={onPanelVisibilityChange} relativeLuminanceInPreview={relativeLuminanceInPreview} />
     </aside>

@@ -1,6 +1,6 @@
 import { memo, useEffect, useState, type PointerEvent as ReactPointerEvent } from 'react'
-import { GripVertical } from 'lucide-react'
 import { PerformanceProfiler } from '@/components/PerformanceProfiler'
+import { PixelUtilityIcon } from '@/components/PixelUtilityIcon'
 import { Tooltip } from '@/components/Tooltip'
 import { useI18n } from '@/components/I18nProvider'
 import { toolRailRenderKey } from '@/core/app-render-keys'
@@ -73,9 +73,9 @@ export const EditorToolRail = memo(function EditorToolRail({ side, onGripPointer
 
   return <PerformanceProfiler id="EditorToolRail"><aside className={`tool-rail side-${side}`} aria-label={t('tools.toolbar')}>
     <span className="tool-icon-preload" aria-hidden="true">
-      {ALL_EDITOR_TOOL_ICONS.map((source) => <img key={source} src={source} alt="" decoding="sync" draggable={false} />)}
+      {ALL_EDITOR_TOOL_ICONS.map((source) => <PixelAssetIcon key={source} src={source} />)}
     </span>
-    <button className="tool-rail-grip" type="button" aria-label={t('tools.moveToolbar')} title={t('tools.moveToolbarHint')} onPointerDown={onGripPointerDown}><GripVertical size={14} /></button>
+    <button className="tool-rail-grip" type="button" aria-label={t('tools.moveToolbar')} title={t('tools.moveToolbarHint')} onPointerDown={onGripPointerDown}><PixelUtilityIcon kind="move" /></button>
     {tools.map((tool) => {
       const presentation = activeToolPresentation(tool.id, session.selectionKind, session.shapeKind, locale, fillKind)
       const shortcut = shortcuts[presentation.shortcutId] ?? ''

@@ -24,7 +24,7 @@ import type {
   ToolId,
   ViewState
 } from '@shared/types'
-import type { HistoryStack, PixelEdit } from '@/core/history'
+import type { ContentInvalidationHint, HistoryStack, PixelEdit } from '@/core/history'
 import type { SelectionTransformSource } from '@/core/tools'
 import type { SymmetryAxes, SymmetryCenter } from '@/core/symmetry'
 import type { BrushTool } from '@/core/tool-preferences'
@@ -91,6 +91,11 @@ export interface BrushProfile {
   proceduralAntialiasStrength: number
 }
 
+export type DocumentContentInvalidation = ContentInvalidationHint & {
+  fromRevision: number
+  revision: number
+}
+
 export interface DocumentSession {
   document: SpriteDocument
   history: HistoryStack
@@ -151,6 +156,10 @@ export interface DocumentSession {
   animationCellClipboardAnchorKey: string | null
   animationFrameClipboard: AnimationFrameClipboardItem[]
   revision: number
+  contentRevision: number
+  /** Changes that require the layer/timeline panel structure to render again. */
+  layersPanelRevision: number
+  contentInvalidation: DocumentContentInvalidation | null
   recoverySuppressed: boolean
 }
 

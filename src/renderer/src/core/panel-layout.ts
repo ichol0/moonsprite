@@ -48,3 +48,8 @@ export function moveInspectorPanel(order: WorkspacePanelId[], movingId: Workspac
   next.splice(targetIndex + (insertAfter ? 1 : 0), 0, movingId)
   return next
 }
+
+export function verticalInspectorPanelFlex(size: number, hasFollowingPanel: boolean, fillsRemainingSpace: boolean): string {
+  if (fillsRemainingSpace || !hasFollowingPanel) return `1 1 ${size}px`
+  return `0 1 ${size + 7}px`
+}

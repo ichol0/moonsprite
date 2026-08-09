@@ -21,11 +21,11 @@ export const selectionCreationCursor = (showCrosshair: boolean, available = true
 
 export const colorLuminance = (color: RgbaColor): number => color.r * 0.2126 + color.g * 0.7152 + color.b * 0.0722
 
-export const canvasStatusTextColor = (backgrounds: RgbaColor[]): '#111318' | '#f1f4f8' => {
+export const canvasStatusTextColor = (backgrounds: RgbaColor[], darkColor: string, lightColor: string): string => {
   const luminance = backgrounds.length > 0
     ? backgrounds.reduce((total, color) => total + colorLuminance(color), 0) / backgrounds.length
     : 0
-  return luminance > 145 ? '#111318' : '#f1f4f8'
+  return luminance > 145 ? darkColor : lightColor
 }
 
 export interface VisualRect { x: number; y: number; width: number; height: number }

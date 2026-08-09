@@ -1,9 +1,22 @@
 import { decode } from 'upng-js'
 import { describe, expect, it } from 'vitest'
 import { createDocument, getActiveLayer, writeLayerColor } from './document'
-import { encodePalettePng, extractPaletteColors, mergePaletteColors } from './palette'
+import { countUsedPaletteColors, encodePalettePng, extractPaletteColors, mergePaletteColors } from './palette'
 
 describe('palette extraction', () => {
+  it('counts palette colors used by RGBA and indexed animation surfaces', () => {
+    const rgbaDocument = createDocument('rgba usage', 2, 1, 'rgba')
+    writeLayerColor(rgbaDocument, getActiveLayer(rgbaDocument), 0, rgbaDocument.palette[1].color)
+    expect(countUsedPaletteColors(rgbaDocument)).toBe(1)
+
+    const indexedDocument = createDocument('indexed usage', 2, 1, 'indexed')
+    const indexedLayer = getActiveLayer(indexedDocument)
+    if (indexedLayer.format !== 'indexed') throw new Error('Indexed layer required')
+    indexedLayer.pixels[0] = 1
+    indexedLayer.pixels[1] = 2
+    expect(countUsedPaletteColors(indexedDocument)).toBe(2)
+  })
+
   it('extracts visible exact colors, preserves alpha, and omits full transparency', () => {
     const document = createDocument('palette', 4, 1, 'rgba')
     const layer = getActiveLayer(document)

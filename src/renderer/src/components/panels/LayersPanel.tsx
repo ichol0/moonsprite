@@ -1,7 +1,7 @@
-import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
-import { Clock3, Combine, Copy, Eye, EyeOff, FilePlus2, Folder, FolderMinus, FolderOpen, FolderPlus, Layers2, Link2, Lock, LockOpen, Pause, Play, Plus, RotateCcw, Settings2, SkipBack, SkipForward, StepBack, StepForward, Trash2, X } from 'lucide-react'
-import type { AnimationCel, BlendMode, LayerGroup, PaletteEntry, RasterLayer, RgbaColor } from '@shared/types'
+import { Clock3, FilePlus2, Layers2, Link2 } from 'lucide-react'
+import type { AnimationCel, AnimationCelSurface, BlendMode, LayerGroup, PaletteEntry, RasterLayer, RgbaColor } from '@shared/types'
 import { FloatingDockPreview, PanelResizeHandles, useFloatingPanel } from '@/components/floating-panel'
 import { ColorValueControl } from '@/components/ColorValueControl'
 import { ModalShell } from '@/components/ModalShell'
@@ -11,14 +11,17 @@ import { ThemedSelect, type ThemedSelectGroup } from '@/components/ThemedSelect'
 import { Tooltip } from '@/components/Tooltip'
 import type { DockDragProps } from '@/components/workspace-panel-types'
 import { getDescendantGroupIds, getGroupLockingAncestor, getLayerIdsInGroup, getLayerLockingGroup, isGroupEffectivelyLocked, isLayerEffectivelyLocked } from '@/core/document'
-import { buildLayerPanelTree, resolveLayerPanelDropTarget, resolveLayerPanelEdgeDropTarget, type LayerPanelNode } from '@/core/layer-panel-layout'
+import { buildLayerPanelTree, getLayerPanelAncestorGroupIds, layerPanelRevealScrollTop, resolveLayerPanelDropTarget, resolveLayerPanelEdgeDropTarget, type LayerPanelNode } from '@/core/layer-panel-layout'
 import { DEFAULT_ONION_SKIN_PREFERENCES, loadEditorPreferences, saveEditorPreferences, type OnionSkinPreferences } from '@/core/file-preferences'
-import { animationCelAt, animationCelHasContent, animationCelKey, ensureAnimationDocument, parseAnimationCelKey, resolveAnimationCel } from '@/core/animation'
+import { animationCelHasContent, animationCelKey, createAnimationCelLookup, ensureAnimationDocument, parseAnimationCelKey } from '@/core/animation'
 import { renderAnimationCelThumbnailPixels } from '@/core/animation-thumbnail'
 import { DEFAULT_SHORTCUTS, loadShortcuts, type ShortcutId } from '@/core/shortcuts'
 import { useWorkspace, type DocumentSession } from '@/store/workspace'
 import { useI18n } from '@/components/I18nProvider'
 import { AnimationPlaybackMenu } from '@/components/AnimationPlaybackMenu'
+import { PlaybackPixelIcon } from '@/components/PlaybackPixelIcon'
+import { PixelUtilityIcon, type PixelUtilityIconKind } from '@/components/PixelUtilityIcon'
+import { LAYER_PANEL_REVEAL_EVENT, type LayerPanelRevealDetail } from '@/components/layer-panel-reveal'
 
 interface LayerFormTarget { id: string; kind: 'layer' | 'group' }
 type BatchProperty = 'name' | 'opacity' | 'blendMode' | 'displayColor' | 'description'
@@ -27,6 +30,9 @@ interface LayerPropertySnapshot extends LayerFormTarget { name: string; opacity:
 interface LayerDragState { ids: string[]; groupIds: string[]; groupId?: string; row: LayerFormTarget; preserveSelection: boolean; selectedLayerIds: string[]; selectedGroupIds: string[]; wholeGroupSelection: boolean; startX: number; startY: number; moved: boolean; copy: boolean }
 type DropTarget = { kind: 'layer'; id: string; insertAfter?: boolean; depth: number } | { kind: 'group'; id: string; depth: number } | { kind: 'above-group'; id: string; insertAfter?: boolean; depth: number } | { kind: 'edge'; edge: 'top' | 'bottom'; offset?: number }
 interface LayerContextMenu { kind: 'layer' | 'group'; id: string; x: number; y: number }
+function LayerContextMenuItem({ icon, label, shortcut, onClick, danger = false }: { icon: PixelUtilityIconKind; label: ReactNode; shortcut?: ReactNode; onClick: () => void; danger?: boolean }) {
+  return <button role="menuitem" className={danger ? 'danger' : undefined} onClick={onClick}><span className="layer-context-icon"><PixelUtilityIcon kind={icon} /></span><span className="layer-context-label">{label}</span>{shortcut}</button>
+}
 type AnimationContextMenu = { kind: 'playback'; x: number; y: number } | { kind: 'frame'; frameId: string; x: number; y: number } | { kind: 'cel'; layerId: string; frameId: string; x: number; y: number }
 type LayerDisplayDensity = 'compact' | 'normal' | 'detailed' | 'expanded' | 'large' | 'huge'
 interface LayerDragGhost { y: number; items?: Array<{ id: string; kind: 'layer' | 'group'; name: string }>; name?: string; count: number }
@@ -54,6 +60,23 @@ const loadLayerDensity = (): LayerDisplayDensity => {
   const value = localStorage.getItem(layerDensityKey)
   return layerDensityOrder.includes(value as LayerDisplayDensity) ? value as LayerDisplayDensity : 'normal'
 }
+type CelPixelBuffer = AnimationCelSurface['pixels']
+const celContentCache = new WeakMap<CelPixelBuffer, Map<string, { revision: number; value: boolean }>>()
+const celThumbnailCache = new WeakMap<CelPixelBuffer, Map<string, { revision: number; pixels: Uint8ClampedArray }>>()
+const paletteVisibilityKey = (palette: readonly PaletteEntry[]): string => palette.map((entry) => `${entry.id}:${entry.color.a}`).join(',')
+const paletteRenderKey = (palette: readonly PaletteEntry[]): string => palette.map((entry) => `${entry.id}:${entry.color.r},${entry.color.g},${entry.color.b},${entry.color.a}`).join('|')
+const cachedCelHasContent = (cel: AnimationCel | null, palette: readonly PaletteEntry[], revision = 0): boolean => {
+  const surface = cel?.surface
+  if (!surface) return false
+  const key = surface.format === 'rgba' ? 'rgba' : paletteVisibilityKey(palette)
+  const entries = celContentCache.get(surface.pixels) ?? new Map<string, { revision: number; value: boolean }>()
+  const cached = entries.get(key)
+  if (cached && (revision === 0 || cached.revision === revision)) return cached.value
+  const value = animationCelHasContent(cel, palette)
+  entries.set(key, { revision, value })
+  celContentCache.set(surface.pixels, entries)
+  return value
+}
 function CelThumbnail({ cel, palette, revision, documentWidth, documentHeight, thumbnailSize }: { cel: AnimationCel; palette: readonly PaletteEntry[]; revision: number; documentWidth: number; documentHeight: number; thumbnailSize: number }) {
   const ref = useRef<HTMLCanvasElement>(null)
   useEffect(() => {
@@ -64,7 +87,16 @@ function CelThumbnail({ cel, palette, revision, documentWidth, documentHeight, t
     try {
       const context = canvas.getContext('2d')
       if (!context) return
-      const pixels = renderAnimationCelThumbnailPixels(documentWidth, documentHeight, canvas.width, surface, palette, cel.opacity ?? 1)
+      const key = `${documentWidth}:${documentHeight}:${canvas.width}:${surface.width}:${surface.height}:${surface.offsetX}:${surface.offsetY}:${cel.opacity ?? 1}:${surface.format === 'rgba' ? 'rgba' : paletteRenderKey(palette)}`
+      const entries = celThumbnailCache.get(surface.pixels) ?? new Map<string, { revision: number; pixels: Uint8ClampedArray }>()
+      const cached = entries.get(key)
+      const pixels = cached && (revision === 0 || cached.revision === revision)
+        ? cached.pixels
+        : renderAnimationCelThumbnailPixels(documentWidth, documentHeight, canvas.width, surface, palette, cel.opacity ?? 1)
+      if (!cached || pixels !== cached.pixels) {
+        entries.set(key, { revision, pixels })
+        celThumbnailCache.set(surface.pixels, entries)
+      }
       const image = context.createImageData(canvas.width, canvas.height)
       image.data.set(pixels)
       context.putImageData(image, 0, 0)
@@ -73,6 +105,52 @@ function CelThumbnail({ cel, palette, revision, documentWidth, documentHeight, t
     }
   }, [cel, palette, revision, documentWidth, documentHeight, thumbnailSize])
   return <span className="cel-thumbnail" aria-hidden="true"><canvas ref={ref} width={thumbnailSize} height={thumbnailSize} /></span>
+}
+function ActiveCelContent({ documentId, cel, palette, revision, documentWidth, documentHeight, thumbnailSize, showThumbnail }: {
+  documentId: string
+  cel: AnimationCel
+  palette: readonly PaletteEntry[]
+  revision: number
+  documentWidth: number
+  documentHeight: number
+  thumbnailSize: number
+  showThumbnail: boolean
+}) {
+  const liveRevision = useWorkspace((state) => state.sessions.find((item) => item.document.id === documentId)?.contentRevision ?? revision)
+  const liveSession = useWorkspace.getState().sessions.find((item) => item.document.id === documentId)
+  const livePalette = liveSession?.document.palette ?? palette
+  const hasContent = cachedCelHasContent(cel, livePalette, liveRevision)
+  if (!hasContent) return null
+  return showThumbnail
+    ? <CelThumbnail cel={cel} palette={livePalette} revision={liveRevision} documentWidth={liveSession?.document.width ?? documentWidth} documentHeight={liveSession?.document.height ?? documentHeight} thumbnailSize={thumbnailSize} />
+    : <span className="cel-content-marker" />
+}
+function ActiveFrameSync({ documentId, frameIds, containerRef }: {
+  documentId: string
+  frameIds: readonly string[]
+  containerRef: { current: HTMLDivElement | null }
+}) {
+  const { t } = useI18n()
+  const activeFrameId = useWorkspace((state) => state.sessions.find((item) => item.document.id === documentId)?.document.animation?.activeFrameId ?? frameIds[0] ?? '')
+  const activeFrameIndex = Math.max(0, frameIds.indexOf(activeFrameId))
+  const previousFrameIndexRef = useRef(activeFrameIndex)
+  useLayoutEffect(() => {
+    const root = containerRef.current
+    if (!root) return
+    const updateColumn = (frameIndex: number, active: boolean): void => {
+      const header = root.querySelector<HTMLElement>(`.layer-animation-frame-header[data-frame-index="${frameIndex}"]`)
+      header?.classList.toggle('active', active)
+      for (const cell of root.querySelectorAll<HTMLElement>(`.layer-animation-cel[data-frame-index="${frameIndex}"]`)) {
+        cell.classList.toggle('active-frame', active)
+        cell.classList.toggle('current-cel', active && cell.classList.contains('selected-layer'))
+      }
+    }
+    const previousFrameIndex = previousFrameIndexRef.current
+    if (previousFrameIndex !== activeFrameIndex) updateColumn(previousFrameIndex, false)
+    updateColumn(activeFrameIndex, true)
+    previousFrameIndexRef.current = activeFrameIndex
+  }, [activeFrameId, activeFrameIndex, containerRef])
+  return <span>{t('timeline.frameNumber', { number: activeFrameIndex + 1 })}</span>
 }
 const sameColor = (left: RgbaColor | null, right: RgbaColor | null): boolean => left === null || right === null
   ? left === right
@@ -125,6 +203,15 @@ export function LayersPanel({ session, docked = false, onDockDragStart, onPanelC
   ]
   const store = useWorkspace.getState()
   const timeline = ensureAnimationDocument(session.document)
+  const celLookup = createAnimationCelLookup(timeline)
+  const currentCelHasContent = (layerId: string, frameId: string): boolean => {
+    const liveSession = useWorkspace.getState().sessions.find((item) => item.document.id === session.document.id)
+    if (!liveSession) return false
+    const liveTimeline = ensureAnimationDocument(liveSession.document)
+    const liveLookup = createAnimationCelLookup(liveTimeline)
+    const cel = liveLookup.at(layerId, frameId)
+    return cachedCelHasContent(liveLookup.resolve(cel), liveSession.document.palette, frameId === liveTimeline.activeFrameId ? liveSession.contentRevision : 0)
+  }
   const activeFrameIndex = Math.max(0, timeline.frames.findIndex((frame) => frame.id === timeline.activeFrameId))
   const floating = useFloatingPanel(null, false, true, 'moonsprite.layers-panel.v1', false, onFloatingDock, docked)
   const [form, setForm] = useState<LayerFormState | null>(null)
@@ -141,6 +228,8 @@ export function LayersPanel({ session, docked = false, onDockDragStart, onPanelC
   const propertyPreviewTimerRef = useRef<number | null>(null)
   const dragRef = useRef<LayerDragState | null>(null)
   const layerListRef = useRef<HTMLDivElement>(null)
+  const revealSequenceRef = useRef(0)
+  const [layerRevealRequest, setLayerRevealRequest] = useState<{ layerId: string; sequence: number } | null>(null)
   const [draggingIds, setDraggingIds] = useState<string[]>([])
   const [draggingGroupId, setDraggingGroupId] = useState<string | null>(null)
   const [draggingCopy, setDraggingCopy] = useState(false)
@@ -171,6 +260,47 @@ export function LayersPanel({ session, docked = false, onDockDragStart, onPanelC
   const [layerDensity, setLayerDensity] = useState<LayerDisplayDensity>(loadLayerDensity)
   const showLinkedCelVisuals = layerDensityOrder.indexOf(layerDensity) < layerDensityOrder.indexOf('detailed')
   const animationItemDragging = draggingAnimationFrameIds.length > 0 || draggingAnimationCellKeys.length > 0
+  useEffect(() => {
+    const revealLayer = (event: Event): void => {
+      const detail = (event as CustomEvent<LayerPanelRevealDetail>).detail
+      if (detail.documentId !== session.document.id) return
+      const liveSession = useWorkspace.getState().sessions.find((item) => item.document.id === detail.documentId)
+      const layer = liveSession?.document.layers.find((candidate) => candidate.id === detail.layerId)
+      if (!liveSession || !layer) return
+      const ancestorIds = new Set(getLayerPanelAncestorGroupIds(liveSession.document.groups, layer.groupId))
+      if (liveSession.collapsedGroupIds.some((id) => ancestorIds.has(id))) {
+        store.mutateActive((active) => {
+          if (active.document.id !== detail.documentId) return
+          active.collapsedGroupIds = active.collapsedGroupIds.filter((id) => !ancestorIds.has(id))
+        }, false)
+      }
+      revealSequenceRef.current += 1
+      setLayerRevealRequest({ layerId: detail.layerId, sequence: revealSequenceRef.current })
+    }
+    window.addEventListener(LAYER_PANEL_REVEAL_EVENT, revealLayer)
+    return () => window.removeEventListener(LAYER_PANEL_REVEAL_EVENT, revealLayer)
+  }, [session.document.id, store])
+
+  useLayoutEffect(() => {
+    if (!layerRevealRequest) return
+    const list = layerListRef.current
+    if (!list) return
+    const row = Array.from(list.querySelectorAll<HTMLElement>('[data-layer-id]'))
+      .find((candidate) => candidate.dataset.layerId === layerRevealRequest.layerId)
+    if (!row) return
+    const listBounds = list.getBoundingClientRect()
+    const rowBounds = row.getBoundingClientRect()
+    const stickyHeaderHeight = Number.parseFloat(getComputedStyle(list).getPropertyValue('--animation-header-height')) || 34
+    list.scrollTop = layerPanelRevealScrollTop({
+      scrollTop: list.scrollTop,
+      viewportTop: listBounds.top,
+      viewportHeight: list.clientHeight || listBounds.height,
+      stickyHeaderHeight,
+      rowTop: rowBounds.top,
+      rowHeight: rowBounds.height
+    })
+  }, [layerRevealRequest])
+
   useLayoutEffect(() => {
     if (!animationMenu || animationMenu.kind === 'playback') return
     const menu = animationMenuRef.current
@@ -326,8 +456,8 @@ export function LayersPanel({ session, docked = false, onDockDragStart, onPanelC
     setFrameProperties(null)
   }
   const openCelProperties = (layerId: string, frameId: string): void => {
-    const cel = animationCelAt(ensureAnimationDocument(session.document), layerId, frameId)
-    if (!animationCelHasContent(cel, session.document.palette)) return
+    const cel = celLookup.at(layerId, frameId)
+    if (!currentCelHasContent(layerId, frameId)) return
     store.selectAnimationCell(animationCelKey(layerId, frameId))
     setCelProperties({ layerId, frameId, opacity: Math.round((cel?.opacity ?? 1) * 100) })
     setAnimationMenu(null)
@@ -399,7 +529,7 @@ export function LayersPanel({ session, docked = false, onDockDragStart, onPanelC
     animationPointerDragRef.current = drag
     event.preventDefault()
   }
-  const beginAnimationCelDrag = (event: React.PointerEvent<HTMLButtonElement>, layerId: string, frameId: string, hasContent: boolean): void => {
+  const beginAnimationCelDrag = (event: React.PointerEvent<HTMLButtonElement>, layerId: string, frameId: string): void => {
     if (event.button !== 0) return
     if (session.selectedAnimationFrameIds.includes(frameId) && pointerHitsSelectionOutline(event, `[data-animation-frame-selection~="${frameId}"]`)) {
       beginAnimationFrameDrag(event, frameId)
@@ -414,7 +544,7 @@ export function LayersPanel({ session, docked = false, onDockDragStart, onPanelC
       event.preventDefault()
       return
     }
-    const canMove = selected && hasContent && pointerHitsSelectionOutline(event, '[data-animation-cel-selection]')
+    const canMove = selected && currentCelHasContent(layerId, frameId) && pointerHitsSelectionOutline(event, '[data-animation-cel-selection]')
     const active = useWorkspace.getState().sessions.find((item) => item.document.id === session.document.id)
     const drag: AnimationPointerDrag = {
       kind: 'cel',
@@ -453,9 +583,10 @@ export function LayersPanel({ session, docked = false, onDockDragStart, onPanelC
     const parsed = cell?.dataset.animationCelKey ? parseAnimationCelKey(cell.dataset.animationCelKey) : null
     return cell && parsed ? { frameId: parsed.frameId, element: cell } : null
   }
-  const updateAnimationItemCursor = (event: React.PointerEvent<HTMLElement>, frameId: string, cellKey?: string, hasContent = false): void => {
+  const updateAnimationItemCursor = (event: React.PointerEvent<HTMLElement>, frameId: string, cellKey?: string): void => {
     const frameMove = session.selectedAnimationFrameIds.includes(frameId) && pointerHitsSelectionOutline(event, `[data-animation-frame-selection~="${frameId}"]`)
-    const cellMove = Boolean(cellKey && hasContent && session.selectedAnimationCellKeys.includes(cellKey) && pointerHitsSelectionOutline(event, '[data-animation-cel-selection]'))
+    const parsed = cellKey ? parseAnimationCelKey(cellKey) : null
+    const cellMove = Boolean(parsed && currentCelHasContent(parsed.layerId, parsed.frameId) && session.selectedAnimationCellKeys.includes(cellKey!) && pointerHitsSelectionOutline(event, '[data-animation-cel-selection]'))
     event.currentTarget.style.cursor = frameMove || cellMove ? 'var(--cursor-move)' : ''
   }
   const moveAnimationPointerDrag = (event: PointerEvent): void => {
@@ -501,8 +632,17 @@ export function LayersPanel({ session, docked = false, onDockDragStart, onPanelC
     const pointed = typeof document.elementFromPoint === 'function' ? document.elementFromPoint(event.clientX, event.clientY) : null
     const target = pointed?.closest('[data-animation-frame-id], [data-animation-cel-key]') ? pointed : pointerTargetElement(event)
     if (drag.kind === 'frame') {
+      if (target?.closest('.layer-animation-corner')) {
+        animationFrameDropTargetRef.current = null
+        setAnimationFrameDropTarget(null)
+        return
+      }
       const frameTarget = animationFrameTarget(target)
-      if (!frameTarget) return
+      if (!frameTarget) {
+        animationFrameDropTargetRef.current = null
+        setAnimationFrameDropTarget(null)
+        return
+      }
       const { frameId, element } = frameTarget
       const bounds = element.getBoundingClientRect()
       const next = { frameId, insertAfter: event.clientX >= bounds.left + bounds.width / 2 }
@@ -695,8 +835,8 @@ export function LayersPanel({ session, docked = false, onDockDragStart, onPanelC
     if (node.kind !== 'layer') return []
     const bySource = new Map<string, number[]>()
     timeline.frames.forEach((frame, frameIndex) => {
-      const cel = animationCelAt(timeline, node.layer.id, frame.id)
-      const source = cel ? resolveAnimationCel(timeline, cel) : null
+      const cel = celLookup.at(node.layer.id, frame.id)
+      const source = celLookup.resolve(cel)
       if (!source) return
       const indexes = bySource.get(source.id) ?? []
       indexes.push(frameIndex)
@@ -813,6 +953,8 @@ export function LayersPanel({ session, docked = false, onDockDragStart, onPanelC
       active.document.dirty = true
       active.document.updatedAt = new Date().toISOString()
       active.revision += 1
+      active.contentRevision += 1
+      active.layersPanelRevision += 1
       active.recoverySuppressed = false
     }, false)
   }
@@ -864,6 +1006,8 @@ export function LayersPanel({ session, docked = false, onDockDragStart, onPanelC
         }
         active.document.dirty = formWasDirtyRef.current
         active.revision += 1
+        active.contentRevision += 1
+        active.layersPanelRevision += 1
       }, false)
       const committedName = closingForm.name.trim()
       const committedDescription = closingForm.description.trim()
@@ -919,6 +1063,8 @@ export function LayersPanel({ session, docked = false, onDockDragStart, onPanelC
         }
         active.document.dirty = formWasDirtyRef.current
         active.revision += 1
+        active.contentRevision += 1
+        active.layersPanelRevision += 1
       }, false)
       if (changed) {
         if (committed.kind === 'group') store.setGroupProperties(committed.id, committed.name, committed.opacity / 100, committed.blendMode, committed.locked, committed.displayColor, committed.description)
@@ -1158,12 +1304,12 @@ export function LayersPanel({ session, docked = false, onDockDragStart, onPanelC
     : session.document.layers.some((layer) => layer.id === form.id && isLayerEffectivelyLocked(session.document, layer))))
   const dragGhostItems = dragGhost?.items ?? (dragGhost ? [{ id: 'legacy', kind: 'layer' as const, name: dragGhost.name ?? t('layers.fallbackName') }] : [])
   const hiddenDragGhostCount = dragGhost ? Math.max(0, dragGhost.count - Math.min(4, dragGhostItems.length)) : 0
-  const animationMenuCel = animationMenu?.kind === 'cel' ? animationCelAt(timeline, animationMenu.layerId, animationMenu.frameId) : null
-  const animationMenuCelHasContent = animationCelHasContent(animationMenuCel, session.document.palette)
+  const animationMenuCel = animationMenu?.kind === 'cel' ? celLookup.at(animationMenu.layerId, animationMenu.frameId) : null
+  const animationMenuCelHasContent = cachedCelHasContent(celLookup.resolve(animationMenuCel), session.document.palette, animationMenu?.kind === 'cel' && animationMenu.frameId === timeline.activeFrameId ? session.contentRevision : 0)
   const selectedAnimationCelsCanLink = animationMenu?.kind === 'cel' && (() => {
     const selected = new Set(session.selectedAnimationCellKeys)
     const targets = timeline.cels.filter((cel) => selected.has(animationCelKey(cel.layerId, cel.frameId)))
-    if (targets.length < 2 || !targets.some((cel) => animationCelHasContent(resolveAnimationCel(timeline, cel), session.document.palette))) return false
+    if (targets.length < 2 || !targets.some((cel) => cachedCelHasContent(celLookup.resolve(cel), session.document.palette, cel.frameId === timeline.activeFrameId ? session.contentRevision : 0))) return false
     const counts = new Map<string, number>()
     for (const cel of targets) counts.set(cel.layerId, (counts.get(cel.layerId) ?? 0) + 1)
     return [...counts.values()].some((count) => count > 1)
@@ -1172,26 +1318,23 @@ export function LayersPanel({ session, docked = false, onDockDragStart, onPanelC
     const selected = new Set(session.selectedAnimationCellKeys)
     return timeline.cels.some((cel) => {
       if (!selected.has(animationCelKey(cel.layerId, cel.frameId))) return false
-      const source = resolveAnimationCel(timeline, cel)
-      return Boolean(cel.linkedCelId) || Boolean(source && timeline.cels.some((candidate) => candidate.id !== source.id && resolveAnimationCel(timeline, candidate)?.id === source.id))
+      const source = celLookup.resolve(cel)
+      return Boolean(cel.linkedCelId) || Boolean(source && timeline.cels.some((candidate) => candidate.id !== source.id && celLookup.resolve(candidate)?.id === source.id))
     })
   })()
   return <><section ref={floating.ref} className={`panel layers-panel layer-density-${layerDensity} ${session.animationPlaying ? 'animation-playing' : ''} ${animationItemDragging ? 'animation-item-dragging' : ''} ${floating.style ? 'floating-panel' : ''} ${altCopyReady ? 'layer-alt-copy-ready' : ''} ${draggingCopy ? 'layer-copy-drag' : ''}`} data-command-scope="layers" style={floating.style} onPointerDown={floating.bringToFront} onWheel={handleLayerPanelWheel} onContextMenu={onPanelContextMenu}>
-    <header onPointerDown={(event) => floating.style ? floating.startDrag(event) : onDockDragStart?.(event, floating.startDetachedDrag)}><Layers2 size={15} /><span>{t('panel.layers')}</span><span className="panel-actions"><button title={t('layers.new')} aria-label={t('layers.new')} onClick={() => void store.addLayer()}><Plus size={14} /></button><button title={t('layers.newGroupShortcut')} aria-label={t('layers.newGroup')} onClick={() => store.createLayerGroup()}><FolderPlus size={14} /></button><button title={t('layers.deleteSelected')} aria-label={t('layers.deleteSelected')} onClick={() => store.deleteSelectedLayers()}><Trash2 size={14} /></button><button title={t('layers.settings')} aria-label={t('layers.settings')} onClick={openLayerSettings}><Settings2 size={14} /></button></span></header>
-    <div className="layer-animation-toolbar">
-      <span className="layer-animation-playback">
-        <button type="button" title={t('timeline.firstFrame')} aria-label={t('timeline.firstFrame')} onClick={() => selectAnimationEdge('first')}><SkipBack size={14} /></button>
-        <button type="button" title={t('timeline.previousFrame')} aria-label={t('timeline.previousFrame')} onClick={() => selectAnimationStep(-1)}><StepBack size={14} /></button>
-        <button type="button" className={session.animationPlaying ? 'active' : ''} title={session.animationPlaying ? t('timeline.pause') : t('timeline.play')} aria-label={session.animationPlaying ? t('timeline.pause') : t('timeline.play')} onClick={() => store.setAnimationPlaying(!session.animationPlaying)} onContextMenu={(event) => openAnimationMenu(event, { kind: 'playback', x: event.clientX, y: event.clientY })}>{session.animationPlaying ? <Pause size={14} /> : <Play size={14} />}</button>
-        <button type="button" title={t('timeline.nextFrame')} aria-label={t('timeline.nextFrame')} onClick={() => selectAnimationStep(1)}><StepForward size={14} /></button>
-        <button type="button" title={t('timeline.lastFrame')} aria-label={t('timeline.lastFrame')} onClick={() => selectAnimationEdge('last')}><SkipForward size={14} /></button>
-      </span>
-      <span className="layer-animation-edit">
-        <button type="button" title={t('timeline.addFrame')} aria-label={t('timeline.addFrame')} onClick={() => store.duplicateAnimationFrame()}><Plus size={14} /></button>
-        <button type="button" title={t('timeline.deleteFrame')} aria-label={t('timeline.deleteFrame')} disabled={timeline.frames.length <= 1} onClick={() => store.deleteSelectedAnimationItems()}><Trash2 size={14} /></button>
-      </span>
-    </div>
-    <div ref={layerListRef} className="layer-list layer-animation-list" style={{ '--layer-frame-count': timeline.frames.length, '--layer-label-width': `${layerLabelWidth}px` } as CSSProperties} onPointerDown={(event) => { if (event.target === event.currentTarget) { store.clearLayerSelection(); store.clearAnimationSelection() } }} onContextMenu={(event) => { const target = (event.target as HTMLElement).closest<HTMLElement>('[data-layer-id], [data-group-id]'); if (target?.dataset.layerId) openLayerContextMenu(event, 'layer', target.dataset.layerId); else if (target?.dataset.groupId) openLayerContextMenu(event, 'group', target.dataset.groupId) }}><div className="layer-animation-tree"><div className="layer-animation-corner"><span>{t('timeline.frameCounter', { current: activeFrameIndex + 1, total: timeline.frames.length })}</span><button type="button" className={layerSettings.onionSkin.enabled ? 'active' : ''} title={t('layers.onionSkinEnabled')} aria-label={t('layers.onionSkinEnabled')} aria-pressed={layerSettings.onionSkin.enabled} onClick={toggleOnionSkin}><Eye size={13} /></button></div><span className="layer-animation-column-resizer" role="separator" aria-label={t('timeline.resizeLayerArea')} aria-orientation="vertical" aria-valuemin={layerLabelWidthLimits.min} aria-valuemax={layerLabelWidthLimits.max} aria-valuenow={layerLabelWidth} tabIndex={0} onPointerDown={beginLayerLabelResize} onKeyDown={(event) => { if (event.key === 'ArrowLeft') { event.preventDefault(); setStoredLayerLabelWidth(layerLabelWidth - 12) } else if (event.key === 'ArrowRight') { event.preventDefault(); setStoredLayerLabelWidth(layerLabelWidth + 12) } }} />{nodes.map((node) => {
+    <header onPointerDown={(event) => floating.style ? floating.startDrag(event) : onDockDragStart?.(event, floating.startDetachedDrag)}><div className="layer-animation-toolbar" onPointerDown={(event) => event.stopPropagation()}><span className="layer-animation-playback">
+        <button type="button" title={t('timeline.firstFrame')} aria-label={t('timeline.firstFrame')} onClick={() => selectAnimationEdge('first')}><PlaybackPixelIcon kind="first" /></button>
+        <button type="button" title={t('timeline.previousFrame')} aria-label={t('timeline.previousFrame')} onClick={() => selectAnimationStep(-1)}><PlaybackPixelIcon kind="previous" /></button>
+        <button type="button" className={session.animationPlaying ? 'active' : ''} title={session.animationPlaying ? t('timeline.pause') : t('timeline.play')} aria-label={session.animationPlaying ? t('timeline.pause') : t('timeline.play')} onClick={() => store.setAnimationPlaying(!session.animationPlaying)} onContextMenu={(event) => openAnimationMenu(event, { kind: 'playback', x: event.clientX, y: event.clientY })}><PlaybackPixelIcon kind={session.animationPlaying ? 'pause' : 'play'} /></button>
+        <button type="button" title={t('timeline.nextFrame')} aria-label={t('timeline.nextFrame')} onClick={() => selectAnimationStep(1)}><PlaybackPixelIcon kind="next" /></button>
+        <button type="button" title={t('timeline.lastFrame')} aria-label={t('timeline.lastFrame')} onClick={() => selectAnimationEdge('last')}><PlaybackPixelIcon kind="last" /></button>
+      </span><span className="layer-animation-edit">
+        <button type="button" className={layerSettings.onionSkin.enabled ? 'active' : ''} title={t('layers.onionSkinEnabled')} aria-label={t('layers.onionSkinEnabled')} aria-pressed={layerSettings.onionSkin.enabled} onClick={toggleOnionSkin}><PixelUtilityIcon kind="onion" /></button>
+        <button type="button" title={t('timeline.addFrame')} aria-label={t('timeline.addFrame')} onClick={() => store.duplicateAnimationFrame()}><PixelUtilityIcon kind="plus" /></button>
+        <button type="button" title={t('timeline.deleteFrame')} aria-label={t('timeline.deleteFrame')} disabled={timeline.frames.length <= 1} onClick={() => store.deleteSelectedAnimationItems()}><PixelUtilityIcon kind="delete" /></button>
+      </span></div><span className="panel-actions" onPointerDown={(event) => event.stopPropagation()}><button title={t('layers.new')} aria-label={t('layers.new')} onClick={() => void store.addLayer()}><PixelUtilityIcon kind="plus" /></button><button title={t('layers.newGroupShortcut')} aria-label={t('layers.newGroup')} onClick={() => store.createLayerGroup()}><PixelUtilityIcon kind="newFolder" /></button><button title={t('layers.deleteSelected')} aria-label={t('layers.deleteSelected')} onClick={() => store.deleteSelectedLayers()}><PixelUtilityIcon kind="delete" /></button><button title={t('layers.settings')} aria-label={t('layers.settings')} onClick={openLayerSettings}><PixelUtilityIcon kind="properties" /></button></span></header>
+    <div ref={layerListRef} className="layer-list layer-animation-list component-scrollbar" style={{ '--layer-frame-count': timeline.frames.length, '--layer-label-width': `${layerLabelWidth}px` } as CSSProperties} onPointerDown={(event) => { if (event.target === event.currentTarget) { store.clearLayerSelection(); store.clearAnimationSelection() } }} onContextMenu={(event) => { const target = (event.target as HTMLElement).closest<HTMLElement>('[data-layer-id], [data-group-id]'); if (target?.dataset.layerId) openLayerContextMenu(event, 'layer', target.dataset.layerId); else if (target?.dataset.groupId) openLayerContextMenu(event, 'group', target.dataset.groupId) }}><div className="layer-animation-tree"><div className="layer-animation-corner"><ActiveFrameSync documentId={session.document.id} frameIds={timeline.frames.map((frame) => frame.id)} containerRef={layerListRef} /></div><span className="layer-animation-column-resizer" role="separator" aria-label={t('timeline.resizeLayerArea')} aria-orientation="vertical" aria-valuemin={layerLabelWidthLimits.min} aria-valuemax={layerLabelWidthLimits.max} aria-valuenow={layerLabelWidth} tabIndex={0} onPointerDown={beginLayerLabelResize} onKeyDown={(event) => { if (event.key === 'ArrowLeft') { event.preventDefault(); setStoredLayerLabelWidth(layerLabelWidth - 12) } else if (event.key === 'ArrowRight') { event.preventDefault(); setStoredLayerLabelWidth(layerLabelWidth + 12) } }} />{nodes.map((node) => {
       if (node.kind === 'group') {
         const collapsed = session.collapsedGroupIds.includes(node.group.id)
         const lockingAncestor = getGroupLockingAncestor(session.document, node.group)
@@ -1200,7 +1343,7 @@ export function LayersPanel({ session, docked = false, onDockDragStart, onPanelC
             ? <span className={`layer-drop-indicator ${dropTarget.insertAfter === false ? 'below' : 'above'}`} style={{ left: `${8 + node.depth * 14}px` }} aria-hidden="true"><i /><b /><i /></span>
             : null
         const displayColor = effectiveDisplayColor(node.group, 'group')
-        return <button key={node.group.id} data-group-id={node.group.id} className={`layer-row group-row ${session.selectedGroupIds.includes(node.group.id) ? 'selected' : ''} ${draggingGroupId === node.group.id ? 'dragging' : ''} ${groupInsideTarget ? 'group-drop-target' : ''}`} style={{ '--layer-depth': node.depth } as React.CSSProperties} onPointerDown={(event) => beginGroupDrag(event, node.group.id)} onDoubleClick={() => editGroup(node.group)}>{groupIndicator}{displayColor && <span className="layer-color-stripe" style={{ backgroundColor: `rgba(${displayColor.r}, ${displayColor.g}, ${displayColor.b}, ${displayColor.a / 255})` }} aria-hidden="true" />}<span className="layer-visibility" role="button" tabIndex={-1} aria-label={t(node.group.visible ? 'layers.hideGroup' : 'layers.showGroup')} onPointerDown={(event) => event.stopPropagation()} onDoubleClick={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); store.toggleGroupVisibility(node.group.id) }}>{node.group.visible ? <Eye size={14} /> : <EyeOff size={14} />}</span><span className={`layer-lock-toggle ${node.group.locked || lockingAncestor ? 'locked' : ''}`} role="button" tabIndex={-1} title={lockingAncestor ? t('layers.lockedByGroup', { name: lockingAncestor.name }) : undefined} aria-label={lockingAncestor ? t('layers.lockedByGroup', { name: lockingAncestor.name }) : t(node.group.locked ? 'layers.unlockGroup' : 'layers.lockGroup')} aria-disabled={Boolean(lockingAncestor)} aria-pressed={node.group.locked || Boolean(lockingAncestor)} onPointerDown={(event) => event.stopPropagation()} onDoubleClick={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); if (lockingAncestor) store.setMessage(t('layers.lockedByGroup', { name: lockingAncestor.name })); else store.setGroupProperties(node.group.id, node.group.name, node.group.opacity, node.group.blendMode, !node.group.locked, node.group.displayColor, node.group.description) }}>{node.group.locked || lockingAncestor ? <Lock size={14} /> : <LockOpen size={14} />}</span><span className="group-folder" role="button" tabIndex={-1} aria-label={t(collapsed ? 'layers.expandGroup' : 'layers.collapseGroup')} title={t(collapsed ? 'layers.expandGroup' : 'layers.collapseGroup')} onPointerDown={(event) => event.stopPropagation()} onDoubleClick={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); store.toggleGroupCollapsed(node.group.id) }}>{collapsed ? <Folder size={16} /> : <FolderOpen size={16} />}</span><Tooltip className="layer-name" content={node.group.description?.trim()}><span>{node.group.name}</span><small>{blendOptions.find((option) => option.value === node.group.blendMode)?.label} · {Math.round(node.group.opacity * 100)}%</small></Tooltip></button>
+        return <button key={node.group.id} data-group-id={node.group.id} className={`layer-row group-row ${session.selectedGroupIds.includes(node.group.id) ? 'selected' : ''} ${draggingGroupId === node.group.id ? 'dragging' : ''} ${groupInsideTarget ? 'group-drop-target' : ''}`} style={{ '--layer-depth': node.depth } as React.CSSProperties} onPointerDown={(event) => beginGroupDrag(event, node.group.id)} onDoubleClick={() => editGroup(node.group)}>{groupIndicator}{displayColor && <span className="layer-color-stripe" style={{ backgroundColor: `rgba(${displayColor.r}, ${displayColor.g}, ${displayColor.b}, ${displayColor.a / 255})` }} aria-hidden="true" />}<span className="layer-visibility" role="button" tabIndex={-1} aria-label={t(node.group.visible ? 'layers.hideGroup' : 'layers.showGroup')} onPointerDown={(event) => event.stopPropagation()} onDoubleClick={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); store.toggleGroupVisibility(node.group.id) }}>{node.group.visible ? <PixelUtilityIcon kind="eye" /> : <PixelUtilityIcon kind="eyeOff" />}</span><span className={`layer-lock-toggle ${node.group.locked || lockingAncestor ? 'locked' : ''}`} role="button" tabIndex={-1} title={lockingAncestor ? t('layers.lockedByGroup', { name: lockingAncestor.name }) : undefined} aria-label={lockingAncestor ? t('layers.lockedByGroup', { name: lockingAncestor.name }) : t(node.group.locked ? 'layers.unlockGroup' : 'layers.lockGroup')} aria-disabled={Boolean(lockingAncestor)} aria-pressed={node.group.locked || Boolean(lockingAncestor)} onPointerDown={(event) => event.stopPropagation()} onDoubleClick={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); if (lockingAncestor) store.setMessage(t('layers.lockedByGroup', { name: lockingAncestor.name })); else store.setGroupProperties(node.group.id, node.group.name, node.group.opacity, node.group.blendMode, !node.group.locked, node.group.displayColor, node.group.description) }}>{node.group.locked || lockingAncestor ? <PixelUtilityIcon kind="lock" /> : <PixelUtilityIcon kind="unlock" />}</span><span className="group-folder" role="button" tabIndex={-1} aria-label={t(collapsed ? 'layers.expandGroup' : 'layers.collapseGroup')} title={t(collapsed ? 'layers.expandGroup' : 'layers.collapseGroup')} onPointerDown={(event) => event.stopPropagation()} onDoubleClick={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); store.toggleGroupCollapsed(node.group.id) }}>{collapsed ? <PixelUtilityIcon kind="folder" /> : <PixelUtilityIcon kind="folderOpen" />}</span><Tooltip className="layer-name" content={node.group.description?.trim()}><span>{node.group.name}</span><small>{blendOptions.find((option) => option.value === node.group.blendMode)?.label} · {Math.round(node.group.opacity * 100)}%</small></Tooltip></button>
       }
       const selected = session.selectedLayerIds.includes(node.layer.id) && !session.selectedGroupId
       const lockingGroup = getLayerLockingGroup(session.document, node.layer)
@@ -1208,23 +1351,24 @@ export function LayersPanel({ session, docked = false, onDockDragStart, onPanelC
       const indicator = dropTarget?.kind === 'layer' && dropTarget.id === node.layer.id
         ? <span className={`layer-drop-indicator ${dropTarget.insertAfter ? 'above' : 'below'}`} style={{ left: `${8 + node.depth * 14}px` }} aria-hidden="true"><i /><b /><i /></span>
         : null
-      return <button key={node.layer.id} data-layer-id={node.layer.id} className={`layer-row ${node.depth > 0 ? 'group-member' : ''} ${selected ? 'selected' : ''} ${draggingIds.includes(node.layer.id) ? 'dragging' : ''}`} style={{ '--layer-depth': node.depth } as React.CSSProperties} onPointerDown={(event) => beginLayerDrag(event, node.layer.id)} onDoubleClick={() => editLayer(node.layer)}>{indicator}{displayColor && <span className="layer-color-stripe" style={{ backgroundColor: `rgba(${displayColor.r}, ${displayColor.g}, ${displayColor.b}, ${displayColor.a / 255})` }} aria-hidden="true" />}<span className="layer-visibility" role="button" tabIndex={-1} aria-label={t(node.layer.visible ? 'layers.hideLayer' : 'layers.showLayer')} onPointerDown={(event) => event.stopPropagation()} onDoubleClick={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); store.toggleLayerVisibility(node.layer.id) }}>{node.layer.visible ? <Eye size={14} /> : <EyeOff size={14} />}</span><span className={`layer-lock-toggle ${node.layer.locked || lockingGroup ? 'locked' : ''}`} role="button" tabIndex={-1} title={lockingGroup ? t('layers.lockedByGroup', { name: lockingGroup.name }) : undefined} aria-label={lockingGroup ? t('layers.lockedByGroup', { name: lockingGroup.name }) : t(node.layer.locked ? 'layers.unlockLayer' : 'layers.lockLayer')} aria-disabled={Boolean(lockingGroup)} aria-pressed={node.layer.locked || Boolean(lockingGroup)} onPointerDown={(event) => event.stopPropagation()} onDoubleClick={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); if (lockingGroup) store.setMessage(t('layers.lockedByGroup', { name: lockingGroup.name })); else store.setLayerPropertiesWithBlend(node.layer.id, node.layer.name, node.layer.opacity, node.layer.blendMode, !node.layer.locked, node.layer.displayColor, node.layer.description) }}>{node.layer.locked || lockingGroup ? <Lock size={14} /> : <LockOpen size={14} />}</span><Tooltip className="layer-name" content={node.layer.description?.trim()}><span>{node.layer.name}</span><small>{blendOptions.find((option) => option.value === node.layer.blendMode)?.label} · {Math.round(node.layer.opacity * 100)}%</small></Tooltip></button>
+      return <button key={node.layer.id} data-layer-id={node.layer.id} className={`layer-row ${node.depth > 0 ? 'group-member' : ''} ${selected ? 'selected' : ''} ${draggingIds.includes(node.layer.id) ? 'dragging' : ''}`} style={{ '--layer-depth': node.depth } as React.CSSProperties} onPointerDown={(event) => beginLayerDrag(event, node.layer.id)} onDoubleClick={() => editLayer(node.layer)}>{indicator}{displayColor && <span className="layer-color-stripe" style={{ backgroundColor: `rgba(${displayColor.r}, ${displayColor.g}, ${displayColor.b}, ${displayColor.a / 255})` }} aria-hidden="true" />}<span className="layer-visibility" role="button" tabIndex={-1} aria-label={t(node.layer.visible ? 'layers.hideLayer' : 'layers.showLayer')} onPointerDown={(event) => event.stopPropagation()} onDoubleClick={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); store.toggleLayerVisibility(node.layer.id) }}>{node.layer.visible ? <PixelUtilityIcon kind="eye" /> : <PixelUtilityIcon kind="eyeOff" />}</span><span className={`layer-lock-toggle ${node.layer.locked || lockingGroup ? 'locked' : ''}`} role="button" tabIndex={-1} title={lockingGroup ? t('layers.lockedByGroup', { name: lockingGroup.name }) : undefined} aria-label={lockingGroup ? t('layers.lockedByGroup', { name: lockingGroup.name }) : t(node.layer.locked ? 'layers.unlockLayer' : 'layers.lockLayer')} aria-disabled={Boolean(lockingGroup)} aria-pressed={node.layer.locked || Boolean(lockingGroup)} onPointerDown={(event) => event.stopPropagation()} onDoubleClick={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); if (lockingGroup) store.setMessage(t('layers.lockedByGroup', { name: lockingGroup.name })); else store.setLayerPropertiesWithBlend(node.layer.id, node.layer.name, node.layer.opacity, node.layer.blendMode, !node.layer.locked, node.layer.displayColor, node.layer.description) }}>{node.layer.locked || lockingGroup ? <PixelUtilityIcon kind="lock" /> : <PixelUtilityIcon kind="unlock" />}</span><Tooltip className="layer-name" content={node.layer.description?.trim()}><span>{node.layer.name}</span><small>{blendOptions.find((option) => option.value === node.layer.blendMode)?.label} · {Math.round(node.layer.opacity * 100)}%</small></Tooltip></button>
     })}</div><div className="layer-animation-grid">{selectedAnimationLayerRows.map((row) => <span key={`selected-layer-row-${row}`} data-animation-selected-layer-row className="animation-selected-layer-row" style={{ '--animation-row-index': row } as CSSProperties} aria-hidden="true" />)}{showLinkedCelVisuals && linkedCelBlocks.map((block) => <span key={block.key} data-linked-cel-block data-frame-index={block.start} data-frame-span={block.span} className={`animation-linked-cel-block ${block.selected ? 'selected' : ''} ${block.layerSelected ? 'layer-selected' : ''}`} style={{ '--animation-row-index': block.row, '--animation-frame-index': block.start, '--animation-frame-span': block.span } as CSSProperties} aria-hidden="true" />)}{showLinkedCelVisuals && linkedCelConnectors.map((connector) => <span key={connector.key} data-linked-cel-connector data-start-frame-index={connector.start} data-end-frame-index={connector.end} className={`animation-linked-cel-connector ${connector.selected ? 'selected' : ''} ${connector.layerSelected ? 'layer-selected' : ''}`} style={{ '--animation-row-index': connector.row, '--animation-link-start': connector.start, '--animation-link-end': connector.end } as CSSProperties} aria-hidden="true" />)}{!session.animationPlaying && selectedFrameRanges.map((range) => <span key={`${range.start}-${range.span}`} data-animation-frame-selection={timeline.frames.slice(range.start, range.start + range.span).map((frame) => frame.id).join(' ')} className="animation-frame-selection-column" style={{ '--animation-frame-index': range.start, '--animation-frame-span': range.span } as CSSProperties} aria-hidden="true" />)}{!session.animationPlaying && selectedCelPositions.length > 0 && <span data-animation-cel-selection className="animation-cel-selection-box" style={{ '--animation-frame-index': selectedCelColumn, '--animation-frame-span': selectedCelColumnSpan, '--animation-row-index': selectedCelRow, '--animation-row-span': selectedCelRowSpan } as CSSProperties} aria-hidden="true" />}{animationFrameDropTarget && timeline.frames.findIndex((frame) => frame.id === animationFrameDropTarget.frameId) >= 0 && <span className="animation-frame-drop-line" style={{ '--animation-frame-drop-index': timeline.frames.findIndex((frame) => frame.id === animationFrameDropTarget.frameId) + (animationFrameDropTarget.insertAfter ? 1 : 0) } as CSSProperties} aria-hidden="true" />}{timeline.frames.map((frame, index) => {
       const frameSelected = !session.animationPlaying && selectedFrameIndexSet.has(index)
-      return <button type="button" data-animation-frame-id={frame.id} key={`header-${frame.id}`} className={`layer-animation-frame-header ${frame.id === timeline.activeFrameId ? 'active' : ''} ${frameSelected ? 'selected-animation-frame' : ''} ${draggingAnimationFrameIds.includes(frame.id) ? 'dragging' : ''}`} aria-label={t('timeline.frameNumber', { number: index + 1 })} title={`${t('timeline.frameNumber', { number: index + 1 })} · ${frame.duration} ms`} onPointerDown={(event) => beginAnimationFrameDrag(event, frame.id)} onPointerMove={(event) => updateAnimationItemCursor(event, frame.id)} onPointerLeave={(event) => { event.currentTarget.style.cursor = '' }} onClick={(event) => { if (suppressAnimationClickRef.current) { event.preventDefault(); event.stopPropagation(); return } if (event.detail === 0) selectAnimationFrame(frame.id, event.shiftKey ? 'range' : event.ctrlKey ? 'toggle' : 'replace') }} onDoubleClick={() => openFramePropertiesFor(frame.id)} onContextMenu={(event) => openFrameMenu(event, frame.id)}><strong>{index + 1}</strong><small>{frame.duration}</small></button>
+      return <button type="button" data-animation-frame-id={frame.id} data-frame-index={index} key={`header-${frame.id}`} className={`layer-animation-frame-header ${frame.id === timeline.activeFrameId ? 'active' : ''} ${frameSelected ? 'selected-animation-frame' : ''} ${draggingAnimationFrameIds.includes(frame.id) ? 'dragging' : ''}`} aria-label={t('timeline.frameNumber', { number: index + 1 })} title={`${t('timeline.frameNumber', { number: index + 1 })} · ${frame.duration} ms`} onPointerDown={(event) => beginAnimationFrameDrag(event, frame.id)} onPointerMove={(event) => updateAnimationItemCursor(event, frame.id)} onPointerLeave={(event) => { event.currentTarget.style.cursor = '' }} onClick={(event) => { if (suppressAnimationClickRef.current) { event.preventDefault(); event.stopPropagation(); return } if (event.detail === 0) selectAnimationFrame(frame.id, event.shiftKey ? 'range' : event.ctrlKey ? 'toggle' : 'replace') }} onDoubleClick={() => openFramePropertiesFor(frame.id)} onContextMenu={(event) => openFrameMenu(event, frame.id)}><strong>{index + 1}</strong><small>{frame.duration}</small></button>
     })}{nodes.flatMap((node) => timeline.frames.map((frame, index) => {
       const active = frame.id === timeline.activeFrameId
-      if (node.kind === 'group') return <button type="button" key={`${node.id}-${frame.id}`} className={`layer-animation-cel group ${active ? 'active-frame' : ''}`} title={t('timeline.frameNumber', { number: index + 1 })} onClick={() => selectAnimationFrame(frame.id)} />
+      if (node.kind === 'group') return <button type="button" key={`${node.id}-${frame.id}`} data-frame-index={index} className={`layer-animation-cel group ${active ? 'active-frame' : ''}`} title={t('timeline.frameNumber', { number: index + 1 })} onClick={() => selectAnimationFrame(frame.id)} />
       const selected = session.selectedLayerIds.includes(node.layer.id) && !session.selectedGroupId
-      const cel = animationCelAt(timeline, node.layer.id, frame.id)
-      const resolvedCel = cel ? resolveAnimationCel(timeline, cel) : null
-      const hasContent = animationCelHasContent(resolvedCel, session.document.palette)
+      const cel = celLookup.at(node.layer.id, frame.id)
+      const resolvedCel = celLookup.resolve(cel)
+      const contentRevision = active && selected ? session.contentRevision : 0
+      const hasContent = cachedCelHasContent(resolvedCel, session.document.palette, contentRevision)
       const key = animationCelKey(node.layer.id, frame.id)
       const resolvedId = resolvedCel?.id ?? null
-      const previousCel = index > 0 ? animationCelAt(timeline, node.layer.id, timeline.frames[index - 1].id) : null
-      const nextCel = index + 1 < timeline.frames.length ? animationCelAt(timeline, node.layer.id, timeline.frames[index + 1].id) : null
-      const previousResolvedId = previousCel ? resolveAnimationCel(timeline, previousCel)?.id : null
-      const nextResolvedId = nextCel ? resolveAnimationCel(timeline, nextCel)?.id : null
+      const previousCel = index > 0 ? celLookup.at(node.layer.id, timeline.frames[index - 1].id) : null
+      const nextCel = index + 1 < timeline.frames.length ? celLookup.at(node.layer.id, timeline.frames[index + 1].id) : null
+      const previousResolvedId = celLookup.resolve(previousCel)?.id ?? null
+      const nextResolvedId = celLookup.resolve(nextCel)?.id ?? null
       const linkedWithPrevious = Boolean(resolvedId && previousResolvedId === resolvedId && (cel?.linkedCelId || previousCel?.linkedCelId))
       const linkedWithNext = Boolean(resolvedId && nextResolvedId === resolvedId && (cel?.linkedCelId || nextCel?.linkedCelId))
       const linkedCelMember = showLinkedCelVisuals && linkedCelMemberKeys.has(key)
@@ -1239,52 +1383,65 @@ export function LayersPanel({ session, docked = false, onDockDragStart, onPanelC
           : layerDensity === 'large'
             ? 88
             : 120
-      return <button type="button" data-animation-cel-key={key} key={`${node.id}-${frame.id}`} className={`layer-animation-cel ${cel ? 'has-cel' : ''} ${active ? 'active-frame' : ''} ${!session.animationPlaying && renderedFrameIds.includes(frame.id) ? 'selected-animation-frame' : ''} ${selected ? 'selected-layer' : ''} ${active && selected ? 'current-cel' : ''} ${cellSelected ? 'selected-cel' : ''} ${linkedCelMember ? 'linked-cel-member' : ''} ${showLinkedCelVisuals && (linkedWithPrevious || linkedWithNext) ? 'linked-cel' : ''} ${showLinkedCelVisuals && linkedWithPrevious ? 'linked-cel-previous' : ''} ${showLinkedCelVisuals && linkedWithNext ? 'linked-cel-next' : ''} ${linkedCelEnd ? 'linked-cel-end' : ''} ${linkedCelBridgeEnd ? 'linked-cel-bridge-end' : ''} ${draggingAnimationFrameIds.includes(frame.id) || draggingAnimationCellKeys.includes(key) ? 'dragging' : ''} ${animationCelDropTargetKey === key ? 'drop-target' : ''}`} aria-label={t('timeline.celAtFrame', { number: index + 1 })} title={`${node.layer.name} · ${t('timeline.frameNumber', { number: index + 1 })}`} onPointerDown={(event) => beginAnimationCelDrag(event, node.layer.id, frame.id, hasContent)} onPointerMove={(event) => updateAnimationItemCursor(event, frame.id, key, hasContent)} onPointerLeave={(event) => { event.currentTarget.style.cursor = '' }} onClick={(event) => { if (suppressAnimationClickRef.current) { event.preventDefault(); event.stopPropagation(); return } if (event.detail === 0) store.selectAnimationCell(key, event.shiftKey ? 'range' : event.ctrlKey ? 'toggle' : 'replace') }} onDoubleClick={() => openCelProperties(node.layer.id, frame.id)} onContextMenu={(event) => openCelMenu(event, node.layer.id, frame.id)}>{hasContent && (showThumbnail && resolvedCel ? <CelThumbnail cel={resolvedCel} palette={session.document.palette} revision={session.revision} documentWidth={session.document.width} documentHeight={session.document.height} thumbnailSize={thumbnailSize} /> : <span className="cel-content-marker" />)}</button>
-    }))}</div>{dropTarget?.kind === 'edge' && <div className={`layer-edge-drop-indicator ${dropTarget.edge}`} style={{ top: dropTarget.offset ?? 0 }} aria-hidden="true"><i /><b /><i /></div>}{dragGhost && <div className="layer-drag-ghost" style={{ top: dragGhost.y }}>{dragGhostItems.slice(0, 4).map((item) => <span key={`${item.kind}-${item.id}`}>{item.kind === 'group' ? <Folder size={13} /> : <Layers2 size={13} />}<b>{item.name}</b></span>)}{hiddenDragGhostCount > 0 && <small>+{hiddenDragGhostCount}</small>}</div>}</div>
-    {contextMenu && <div className="layer-context-menu" style={{ left: contextMenu.x, top: contextMenu.y }} role="menu" onPointerDown={(event) => event.stopPropagation()}><button role="menuitem" onClick={() => { void store.addLayer(); closeContextMenu() }}><Plus size={14} />{t('layers.new')}{shortcutHint('newLayer')}</button><button role="menuitem" onClick={() => { store.createLayerGroup(); closeContextMenu() }}><FolderPlus size={14} />{t('layers.newGroup')}{shortcutHint('createLayerGroup')}</button><button role="menuitem" onClick={duplicateContextSelection}><Copy size={14} />{t('layers.duplicate')}{shortcutHint('duplicateLayer')}</button>{contextMenu.kind === 'layer' && <button role="menuitem" onClick={() => { session.selectedLayerIds.length > 1 ? store.mergeSelectedLayers() : store.mergeActiveLayerDown(); closeContextMenu() }}><Combine size={14} />{t(session.selectedLayerIds.length > 1 ? 'app.menu.layer.mergeSelected' : 'app.menu.layer.mergeDown')}{shortcutHint(session.selectedLayerIds.length > 1 ? 'mergeSelectedLayers' : 'mergeLayerDown')}</button>}{contextMenu.kind === 'group' && <><button role="menuitem" onClick={() => { store.toggleGroupCollapsed(contextMenu.id); closeContextMenu() }}><FolderOpen size={14} />{t('layers.expandCollapseGroup')}</button><button role="menuitem" onClick={() => { store.mergeSelectedGroup(); closeContextMenu() }}><Combine size={14} />{t('app.menu.layer.mergeGroup')}{shortcutHint('mergeLayerGroup')}</button><button role="menuitem" onClick={() => { store.ungroupSelected(); closeContextMenu() }}><FolderMinus size={14} />{t('app.menu.layer.ungroup')}{shortcutHint('ungroupLayers')}</button></>}<button role="menuitem" onClick={() => { store.mergeVisibleLayers(); closeContextMenu() }}><Layers2 size={14} />{t('app.menu.layer.mergeVisible')}{shortcutHint('mergeVisibleLayers')}</button><button role="menuitem" onClick={openProperties}><Settings2 size={14} />{t('layers.properties')}</button><button role="menuitem" className="danger" onClick={deleteContextSelection}><Trash2 size={14} />{t('common.delete')}{shortcutHint('deleteLayer')}</button></div>}
+      return <button type="button" data-animation-cel-key={key} data-frame-index={index} key={`${node.id}-${frame.id}`} className={`layer-animation-cel ${cel ? 'has-cel' : ''} ${active ? 'active-frame' : ''} ${!session.animationPlaying && renderedFrameIds.includes(frame.id) ? 'selected-animation-frame' : ''} ${selected ? 'selected-layer' : ''} ${active && selected ? 'current-cel' : ''} ${cellSelected ? 'selected-cel' : ''} ${linkedCelMember ? 'linked-cel-member' : ''} ${showLinkedCelVisuals && (linkedWithPrevious || linkedWithNext) ? 'linked-cel' : ''} ${showLinkedCelVisuals && linkedWithPrevious ? 'linked-cel-previous' : ''} ${showLinkedCelVisuals && linkedWithNext ? 'linked-cel-next' : ''} ${linkedCelEnd ? 'linked-cel-end' : ''} ${linkedCelBridgeEnd ? 'linked-cel-bridge-end' : ''} ${draggingAnimationFrameIds.includes(frame.id) || draggingAnimationCellKeys.includes(key) ? 'dragging' : ''} ${animationCelDropTargetKey === key ? 'drop-target' : ''}`} aria-label={t('timeline.celAtFrame', { number: index + 1 })} title={`${node.layer.name} · ${t('timeline.frameNumber', { number: index + 1 })}`} onPointerDown={(event) => beginAnimationCelDrag(event, node.layer.id, frame.id)} onPointerMove={(event) => updateAnimationItemCursor(event, frame.id, key)} onPointerLeave={(event) => { event.currentTarget.style.cursor = '' }} onClick={(event) => { if (suppressAnimationClickRef.current) { event.preventDefault(); event.stopPropagation(); return } if (event.detail === 0) store.selectAnimationCell(key, event.shiftKey ? 'range' : event.ctrlKey ? 'toggle' : 'replace') }} onDoubleClick={() => openCelProperties(node.layer.id, frame.id)} onContextMenu={(event) => openCelMenu(event, node.layer.id, frame.id)}>{active && selected && resolvedCel ? <ActiveCelContent documentId={session.document.id} cel={resolvedCel} palette={session.document.palette} revision={contentRevision} documentWidth={session.document.width} documentHeight={session.document.height} thumbnailSize={thumbnailSize} showThumbnail={showThumbnail} /> : hasContent && (showThumbnail && resolvedCel ? <CelThumbnail cel={resolvedCel} palette={session.document.palette} revision={contentRevision} documentWidth={session.document.width} documentHeight={session.document.height} thumbnailSize={thumbnailSize} /> : <span className="cel-content-marker" />)}</button>
+    }))}</div>{dropTarget?.kind === 'edge' && <div className={`layer-edge-drop-indicator ${dropTarget.edge}`} style={{ top: dropTarget.offset ?? 0 }} aria-hidden="true"><i /><b /><i /></div>}{dragGhost && <div className="layer-drag-ghost" style={{ top: dragGhost.y }}>{dragGhostItems.slice(0, 4).map((item) => <span key={`${item.kind}-${item.id}`}>{item.kind === 'group' ? <PixelUtilityIcon kind="folder" /> : <Layers2 size={13} />}<b>{item.name}</b></span>)}{hiddenDragGhostCount > 0 && <small>+{hiddenDragGhostCount}</small>}</div>}</div>
+    {contextMenu && <div className="layer-context-menu" style={{ left: contextMenu.x, top: contextMenu.y }} role="menu" onPointerDown={(event) => event.stopPropagation()}>
+      <LayerContextMenuItem icon="plus" label={t('layers.new')} shortcut={shortcutHint('newLayer')} onClick={() => { void store.addLayer(); closeContextMenu() }} />
+      <LayerContextMenuItem icon="newFolder" label={t('layers.newGroup')} shortcut={shortcutHint('createLayerGroup')} onClick={() => { store.createLayerGroup(); closeContextMenu() }} />
+      <LayerContextMenuItem icon="copy" label={t('layers.duplicate')} shortcut={shortcutHint('duplicateLayer')} onClick={duplicateContextSelection} />
+      {contextMenu.kind === 'layer' && <LayerContextMenuItem icon="mergeDown" label={t(session.selectedLayerIds.length > 1 ? 'app.menu.layer.mergeSelected' : 'app.menu.layer.mergeDown')} shortcut={shortcutHint(session.selectedLayerIds.length > 1 ? 'mergeSelectedLayers' : 'mergeLayerDown')} onClick={() => { session.selectedLayerIds.length > 1 ? store.mergeSelectedLayers() : store.mergeActiveLayerDown(); closeContextMenu() }} />}
+      {contextMenu.kind === 'group' && <>
+        <LayerContextMenuItem icon="folderOpen" label={t('layers.expandCollapseGroup')} onClick={() => { store.toggleGroupCollapsed(contextMenu.id); closeContextMenu() }} />
+        <LayerContextMenuItem icon="mergeDown" label={t('app.menu.layer.mergeGroup')} shortcut={shortcutHint('mergeLayerGroup')} onClick={() => { store.mergeSelectedGroup(); closeContextMenu() }} />
+        <LayerContextMenuItem icon="ungroupFolder" label={t('app.menu.layer.ungroup')} shortcut={shortcutHint('ungroupLayers')} onClick={() => { store.ungroupSelected(); closeContextMenu() }} />
+      </>}
+      <LayerContextMenuItem icon="mergeVisible" label={t('app.menu.layer.mergeVisible')} shortcut={shortcutHint('mergeVisibleLayers')} onClick={() => { store.mergeVisibleLayers(); closeContextMenu() }} />
+      <LayerContextMenuItem icon="properties" label={t('layers.properties')} onClick={openProperties} />
+      <LayerContextMenuItem icon="delete" label={t('common.delete')} shortcut={shortcutHint('deleteLayer')} onClick={deleteContextSelection} danger />
+    </div>}
     {animationMenu?.kind === 'playback' && <AnimationPlaybackMenu session={session} x={animationMenu.x} y={animationMenu.y} onClose={() => setAnimationMenu(null)} />}
     {animationMenu && animationMenu.kind !== 'playback' && createPortal(<div ref={animationMenuRef} className="context-menu animation-context-menu" role="menu" aria-label={t(animationMenu.kind === 'frame' ? 'timeline.frameMenu' : 'timeline.celMenu')} style={animationMenuPosition} onPointerDown={(event) => event.stopPropagation()} onContextMenu={(event) => event.preventDefault()}>
       {animationMenu.kind === 'frame' ? <>
         <button className="context-menu-item" type="button" role="menuitem" onClick={openFrameProperties}><Clock3 size={15} /><span>{t('timeline.frameProperties')}</span></button>
         <span className="context-menu-divider" />
-        <button className="context-menu-item" type="button" role="menuitem" onClick={() => { store.copySelectedAnimationFrames(); setAnimationMenu(null) }}><Copy size={15} /><span>{t('timeline.copyFrame')}</span>{shortcutHint('copy')}</button>
+        <button className="context-menu-item" type="button" role="menuitem" onClick={() => { store.copySelectedAnimationFrames(); setAnimationMenu(null) }}><PixelUtilityIcon kind="copy" /><span>{t('timeline.copyFrame')}</span>{shortcutHint('copy')}</button>
         <button className="context-menu-item" type="button" role="menuitem" disabled={!session.animationFrameClipboard.length} onClick={() => { store.pasteAnimationFrames(); setAnimationMenu(null) }}><FilePlus2 size={15} /><span>{t('timeline.pasteFrame')}</span>{shortcutHint('paste')}</button>
         <span className="context-menu-divider" />
-        <button className="context-menu-item" type="button" role="menuitem" onClick={() => useFrameMenuTarget(() => store.duplicateAnimationFrame())}><Copy size={15} /><span>{t('timeline.addFrame')}</span>{shortcutHint('addAnimationFrame')}</button>
+        <button className="context-menu-item" type="button" role="menuitem" onClick={() => useFrameMenuTarget(() => store.duplicateAnimationFrame())}><PixelUtilityIcon kind="copy" /><span>{t('timeline.addFrame')}</span>{shortcutHint('addAnimationFrame')}</button>
         <button className="context-menu-item" type="button" role="menuitem" onClick={() => useFrameMenuTarget(() => store.addAnimationFrame())}><FilePlus2 size={15} /><span>{t('timeline.addBlankFrame')}</span>{shortcutHint('addBlankAnimationFrame')}</button>
-        <button className="context-menu-item danger" type="button" role="menuitem" disabled={timeline.frames.length <= 1} onClick={() => useFrameMenuTarget(() => store.deleteSelectedAnimationItems())}><Trash2 size={15} /><span>{t('timeline.deleteFrame')}</span>{shortcutHint('deleteAnimationFrame', 'deleteLayer')}</button>
+        <button className="context-menu-item danger" type="button" role="menuitem" disabled={timeline.frames.length <= 1} onClick={() => useFrameMenuTarget(() => store.deleteSelectedAnimationItems())}><PixelUtilityIcon kind="delete" /><span>{t('timeline.deleteFrame')}</span>{shortcutHint('deleteAnimationFrame', 'deleteLayer')}</button>
       </> : <>
         <button className="context-menu-item" type="button" role="menuitem" disabled={!animationMenuCelHasContent} onClick={() => openCelProperties(animationMenu.layerId, animationMenu.frameId)}><Clock3 size={15} /><span>{t('timeline.celProperties')}</span></button>
         <span className="context-menu-divider" />
-        <button className="context-menu-item" type="button" role="menuitem" disabled={!animationMenuCelHasContent} onClick={() => { store.copySelectedAnimationCels(); setAnimationMenu(null) }}><Copy size={15} /><span>{t('timeline.copyCel')}</span>{shortcutHint('copy', 'copyAnimationCel')}</button>
+        <button className="context-menu-item" type="button" role="menuitem" disabled={!animationMenuCelHasContent} onClick={() => { store.copySelectedAnimationCels(); setAnimationMenu(null) }}><PixelUtilityIcon kind="copy" /><span>{t('timeline.copyCel')}</span>{shortcutHint('copy', 'copyAnimationCel')}</button>
         <button className="context-menu-item" type="button" role="menuitem" disabled={!session.animationCellClipboard.length} onClick={() => { store.pasteAnimationCels(); setAnimationMenu(null) }}><FilePlus2 size={15} /><span>{t('timeline.pasteCel')}</span>{shortcutHint('paste')}</button>
         <button className="context-menu-item" type="button" role="menuitem" disabled={!selectedAnimationCelsCanLink} onClick={() => { store.connectSelectedAnimationCels(); setAnimationMenu(null) }}><Link2 size={15} /><span>{t('timeline.connectCel')}</span></button>
         <button className="context-menu-item" type="button" role="menuitem" disabled={!selectedAnimationCelsCanUnlink} onClick={() => { store.disconnectSelectedAnimationCels(); setAnimationMenu(null) }}><Link2 size={15} /><span>{t('timeline.disconnectCel')}</span></button>
-        <button className="context-menu-item danger" type="button" role="menuitem" disabled={!animationMenuCelHasContent} onClick={() => { store.deleteSelectedAnimationItems(); setAnimationMenu(null) }}><Trash2 size={15} /><span>{t('timeline.deleteCel')}</span>{shortcutHint('deleteAnimationFrame', 'deleteLayer')}</button>
+        <button className="context-menu-item danger" type="button" role="menuitem" disabled={!animationMenuCelHasContent} onClick={() => { store.deleteSelectedAnimationItems(); setAnimationMenu(null) }}><PixelUtilityIcon kind="delete" /><span>{t('timeline.deleteCel')}</span>{shortcutHint('deleteAnimationFrame', 'deleteLayer')}</button>
       </>}
     </div>, document.body)}
     {frameProperties && <div className="modal-backdrop" role="presentation" onPointerDown={(event) => { if (event.target === event.currentTarget) setFrameProperties(null) }}>
       <ModalShell as="form" storageKey="animation-frame-properties" defaultWidth={340} defaultHeight={224} minWidth={300} minHeight={210} maxWidth={440} maxHeight={300} className="layer-modal frame-properties-modal" onSubmit={(event) => { event.preventDefault(); saveFrameProperties() }}>
-        <header><div><span className="eyebrow">FRAME PROPERTIES</span><h2>{t('timeline.framePropertiesNumbered', { number: timeline.frames.findIndex((frame) => frame.id === frameProperties.frameId) + 1 })}</h2></div><button type="button" className="icon-button" aria-label={t('common.close')} onClick={() => setFrameProperties(null)}><X size={16} /></button></header>
+        <header><div><span className="eyebrow">FRAME PROPERTIES</span><h2>{t('timeline.framePropertiesNumbered', { number: timeline.frames.findIndex((frame) => frame.id === frameProperties.frameId) + 1 })}</h2></div><button type="button" className="icon-button" aria-label={t('common.close')} onClick={() => setFrameProperties(null)}><PixelUtilityIcon kind="close" /></button></header>
         <div className="modal-body"><label>{t('timeline.duration')}<NumberInput autoFocus onFocus={(event) => event.currentTarget.select()} aria-label={t('timeline.duration')} value={frameProperties.duration} min={1} max={60_000} step={10} suffix="ms" onValueChange={(duration) => setFrameProperties({ ...frameProperties, duration })} /></label></div>
         <footer><button type="button" className="quiet-button" onClick={() => setFrameProperties(null)}>{t('common.cancel')}</button><button type="submit" className="primary-button">{t('common.save')}</button></footer>
       </ModalShell>
     </div>}
     {celProperties && <div className="modal-backdrop" role="presentation" onPointerDown={(event) => { if (event.target === event.currentTarget) setCelProperties(null) }}>
       <ModalShell as="form" storageKey="animation-cel-properties" defaultWidth={340} defaultHeight={224} minWidth={300} minHeight={210} maxWidth={440} maxHeight={300} className="layer-modal frame-properties-modal" onSubmit={(event) => { event.preventDefault(); saveCelProperties() }}>
-        <header><div><span className="eyebrow">CEL PROPERTIES</span><h2>{t('timeline.celPropertiesNumbered', { number: timeline.frames.findIndex((frame) => frame.id === celProperties.frameId) + 1 })}</h2></div><button type="button" className="icon-button" aria-label={t('common.close')} onClick={() => setCelProperties(null)}><X size={16} /></button></header>
+        <header><div><span className="eyebrow">CEL PROPERTIES</span><h2>{t('timeline.celPropertiesNumbered', { number: timeline.frames.findIndex((frame) => frame.id === celProperties.frameId) + 1 })}</h2></div><button type="button" className="icon-button" aria-label={t('common.close')} onClick={() => setCelProperties(null)}><PixelUtilityIcon kind="close" /></button></header>
         <div className="modal-body"><label>{t('layers.opacity')}<div className="layer-opacity-control"><input aria-label={t('layers.opacity')} type="range" min="0" max="100" step="1" value={celProperties.opacity} onChange={(event) => setCelProperties({ ...celProperties, opacity: Number(event.target.value) })} /><NumberInput autoFocus aria-label={t('layers.opacityValue')} value={celProperties.opacity} min={0} max={100} onValueChange={(opacity) => setCelProperties({ ...celProperties, opacity })} /><span>%</span></div></label></div>
         <footer><button type="button" className="quiet-button" onClick={() => setCelProperties(null)}>{t('common.cancel')}</button><button type="submit" className="primary-button">{t('common.save')}</button></footer>
       </ModalShell>
     </div>}
     {layerSettingsOpen && <div className="modal-backdrop" role="presentation" onPointerDown={(event) => { if (event.target === event.currentTarget) setLayerSettingsOpen(false) }}>
       <ModalShell as="form" storageKey="layer-settings-layout-v11" defaultWidth={360} defaultHeight={530} minWidth={340} minHeight={470} maxWidth={420} maxHeight={700} className="layer-modal layer-settings-modal" onSubmit={(event) => { event.preventDefault(); saveLayerSettings() }}>
-        <header><div><h2>{t('layers.settings')}</h2></div><button type="button" className="icon-button" aria-label={t('common.close')} onClick={() => setLayerSettingsOpen(false)}><X size={16} /></button></header>
+        <header><div><h2>{t('layers.settings')}</h2></div><button type="button" className="icon-button" aria-label={t('common.close')} onClick={() => setLayerSettingsOpen(false)}><PixelUtilityIcon kind="close" /></button></header>
         <div className="modal-body" onPointerDown={(event) => { if (!(event.target as Element).closest('.layer-setting-percent')) setLayerSettingsSlider(null) }}>
           <section className="layer-settings-density"><strong>{t('layers.thumbnailSize')}</strong><div><input aria-label={t('layers.thumbnailSize')} type="range" min={0} max={layerDensityOrder.length - 1} step={1} value={layerDensityOrder.indexOf(layerSettings.density)} onChange={(event) => applyLayerSettings({ ...layerSettings, density: layerDensityOrder[Number(event.target.value)] })} /><output>{t(layerDensityLabelKeys[layerSettings.density])}</output></div></section>
           <fieldset className="layer-settings-onion"><legend>{t('layers.onionSkin')}</legend><label className="preference-toggle outline-preview-toggle layer-onion-toggle"><span>{t('layers.onionSkinEnabled')}</span><input type="checkbox" checked={layerSettings.onionSkin.enabled} onChange={(event) => applyLayerSettings({ ...layerSettings, onionSkin: { ...layerSettings.onionSkin, enabled: event.target.checked } })} /><span className="toggle-track" aria-hidden="true"><i /></span></label><div className="layer-settings-pair"><label>{t('layers.previousFrames')}<NumberInput min={0} max={8} value={layerSettings.onionSkin.previousFrames} onValueChange={(value) => applyLayerSettings({ ...layerSettings, onionSkin: { ...layerSettings.onionSkin, previousFrames: value } })} /></label><label>{t('layers.nextFrames')}<NumberInput min={0} max={8} value={layerSettings.onionSkin.nextFrames} onValueChange={(value) => applyLayerSettings({ ...layerSettings, onionSkin: { ...layerSettings.onionSkin, nextFrames: value } })} /></label><label>{t('layers.previousOpacity')}<div className="brush-size-control layer-setting-percent" onPointerDown={() => setLayerSettingsSlider('previousOpacity')}><NumberInput min={0} max={100} suffix="%" value={layerSettings.onionSkin.previousOpacity} onValueChange={(value) => applyLayerSettings({ ...layerSettings, onionSkin: { ...layerSettings.onionSkin, previousOpacity: value } })} onFocus={() => setLayerSettingsSlider('previousOpacity')} />{layerSettingsSlider === 'previousOpacity' && <div className="brush-size-popover" role="dialog"><input aria-label={t('layers.previousOpacity')} type="range" min={0} max={100} value={layerSettings.onionSkin.previousOpacity} onChange={(event) => applyLayerSettings({ ...layerSettings, onionSkin: { ...layerSettings.onionSkin, previousOpacity: Number(event.target.value) } })} onBlur={() => setLayerSettingsSlider(null)} /><strong>{layerSettings.onionSkin.previousOpacity}%</strong></div>}</div></label><label>{t('layers.nextOpacity')}<div className="brush-size-control layer-setting-percent" onPointerDown={() => setLayerSettingsSlider('nextOpacity')}><NumberInput min={0} max={100} suffix="%" value={layerSettings.onionSkin.nextOpacity} onValueChange={(value) => applyLayerSettings({ ...layerSettings, onionSkin: { ...layerSettings.onionSkin, nextOpacity: value } })} onFocus={() => setLayerSettingsSlider('nextOpacity')} />{layerSettingsSlider === 'nextOpacity' && <div className="brush-size-popover" role="dialog"><input aria-label={t('layers.nextOpacity')} type="range" min={0} max={100} value={layerSettings.onionSkin.nextOpacity} onChange={(event) => applyLayerSettings({ ...layerSettings, onionSkin: { ...layerSettings.onionSkin, nextOpacity: Number(event.target.value) } })} onBlur={() => setLayerSettingsSlider(null)} /><strong>{layerSettings.onionSkin.nextOpacity}%</strong></div>}</div></label><label>{t('layers.previousColor')}<ColorValueControl color={layerSettings.onionSkin.previousColor} onChange={(color) => applyLayerSettings({ ...layerSettings, onionSkin: { ...layerSettings.onionSkin, previousColor: color } })} label={t('layers.previousColor')} /></label><label>{t('layers.nextColor')}<ColorValueControl color={layerSettings.onionSkin.nextColor} onChange={(color) => applyLayerSettings({ ...layerSettings, onionSkin: { ...layerSettings.onionSkin, nextColor: color } })} label={t('layers.nextColor')} /></label></div></fieldset>
         </div>
-        <footer><button type="button" className="quiet-button" onClick={resetLayerSettings}><RotateCcw size={13} />{t('common.reset')}</button><span className="modal-footer-spacer" /><button type="button" className="quiet-button" onClick={() => setLayerSettingsOpen(false)}>{t('common.cancel')}</button><button type="submit" className="primary-button">{t('common.save')}</button></footer>
+        <footer><button type="button" className="quiet-button" onClick={resetLayerSettings}><PixelUtilityIcon kind="restore" />{t('common.reset')}</button><span className="modal-footer-spacer" /><button type="button" className="quiet-button" onClick={() => setLayerSettingsOpen(false)}>{t('common.cancel')}</button><button type="submit" className="primary-button">{t('common.save')}</button></footer>
       </ModalShell>
     </div>}
     {form && <div className="modal-backdrop" role="presentation" onPointerDown={(event) => { if (event.target === event.currentTarget) closeProperties() }}>
@@ -1294,7 +1451,7 @@ export function LayersPanel({ session, docked = false, onDockDragStart, onPanelC
         event.stopPropagation()
         closeProperties()
       }}>
-        <header><div><span className="eyebrow">{form.targets.length > 1 ? 'MULTIPLE PROPERTIES' : form.kind === 'group' ? 'GROUP PROPERTIES' : 'LAYER PROPERTIES'}</span><h2>{t(form.targets.length > 1 ? 'layers.multipleProperties' : form.kind === 'group' ? 'layers.groupProperties' : 'layers.layerProperties')}</h2></div><button type="button" className="icon-button" aria-label={t('common.close')} onClick={closeProperties}><X size={16} /></button></header>
+        <header><div><span className="eyebrow">{form.targets.length > 1 ? 'MULTIPLE PROPERTIES' : form.kind === 'group' ? 'GROUP PROPERTIES' : 'LAYER PROPERTIES'}</span><h2>{t(form.targets.length > 1 ? 'layers.multipleProperties' : form.kind === 'group' ? 'layers.groupProperties' : 'layers.layerProperties')}</h2></div><button type="button" className="icon-button" aria-label={t('common.close')} onClick={closeProperties}><PixelUtilityIcon kind="close" /></button></header>
         <div className="modal-body">
           <label>{t('layers.name')}<input autoFocus onFocus={(event) => event.currentTarget.select()} value={form.name} onChange={(event) => previewProperties({ ...form, name: event.target.value }, 'name')} /></label>
           <label>{t('layers.blendMode')}<ThemedSelect label={t('layers.blendMode')} value={form.blendMode} groups={blendOptionGroups} disabled={singleFormTargetLocked} onChange={(blendMode) => previewProperties({ ...form, blendMode }, 'blendMode')} /></label>

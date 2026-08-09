@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { BRUSH_SHIFT_LINE_ENABLED_KEY, DEFAULT_GRID_COLOR, DEFAULT_PIXEL_GRID_COLOR, EXPORT_FORMAT_PREFERENCE_KEY, GRID_COLOR_PREFERENCE_KEY, LANGUAGE_PREFERENCE_KEY, LAYER_DISPLAY_COLOR_PRESETS_KEY, NEW_DOCUMENT_SIZE_PRESETS_KEY, PIXEL_GRID_COLOR_PREFERENCE_KEY, RECOVERY_MINUTES_PREFERENCE_KEY, SAVE_FORMAT_PREFERENCE_KEY, SYMMETRY_AXIS_PREFERENCE_KEY, TIMELAPSE_RECORDING_ENABLED_PREFERENCE_KEY, ZOOM_TOOL_DRAG_MODE_PREFERENCE_KEY, imageExportKindForPreference, loadEditorPreferences, parseBrushPreviewMode, parseBrushShiftLineEnabled, parseCheckerSize, parseCursorScale, parseDocumentSizePresets, parseDrawingBrushPreviewEnabled, parseExportScalePresets, parseLayerDisplayColorPresets, parseLineDirectionStep, parseRelativeLuminanceScope, parseSymmetryAxisPreferences, parseZoomToolDragMode, saveEditorPreferences, saveImageKindForPreference } from './file-preferences'
+import { BRUSH_SHIFT_LINE_ENABLED_KEY, DEFAULT_GRID_COLOR, DEFAULT_PIXEL_GRID_COLOR, EXPORT_FORMAT_PREFERENCE_KEY, GRID_COLOR_PREFERENCE_KEY, LANGUAGE_PREFERENCE_KEY, LAYER_DISPLAY_COLOR_PRESETS_KEY, MOVE_LAYER_CONTENT_PREVIEW_ENABLED_PREFERENCE_KEY, NEW_DOCUMENT_SIZE_PRESETS_KEY, PIXEL_GRID_COLOR_PREFERENCE_KEY, RECOVERY_MINUTES_PREFERENCE_KEY, SAVE_FORMAT_PREFERENCE_KEY, SYMMETRY_AXIS_PREFERENCE_KEY, THEME_PREFERENCE_KEY, TIMELAPSE_RECORDING_ENABLED_PREFERENCE_KEY, UI_SCALE_PREFERENCE_KEY, ZOOM_TOOL_DRAG_MODE_PREFERENCE_KEY, imageExportKindForPreference, loadEditorPreferences, parseBrushPreviewMode, parseBrushShiftLineEnabled, parseCheckerSize, parseCursorScale, parseDocumentSizePresets, parseDrawingBrushPreviewEnabled, parseExportScalePresets, parseEyedropperMagnifierStyle, parseLayerDisplayColorPresets, parseLineDirectionStep, parseRelativeLuminanceScope, parseSymmetryAxisPreferences, parseUiScale, parseZoomToolDragMode, saveEditorPreferences, saveImageKindForPreference } from './file-preferences'
+import { resolveTheme } from './theme'
 
 describe('file format preferences', () => {
   it('maps export formats to encoder kinds', () => {
@@ -97,6 +98,7 @@ describe('editor preferences persistence boundary', () => {
     const defaults = loadEditorPreferences(adapter)
     expect(defaults.saveFormat).toBe('moonsprite')
     expect(defaults.language).toBe('zh-CN')
+    expect(defaults.uiScale).toBe(1)
     expect(defaults.exportFormat).toBe('png')
     expect(defaults.recoveryMinutes).toBe(5)
     expect(defaults.useLocalCursors).toBe(false)
@@ -107,6 +109,10 @@ describe('editor preferences persistence boundary', () => {
     expect(defaults.wheelZoomEnabled).toBe(true)
     expect(defaults.lassoPreviewClosed).toBe(false)
     expect(defaults.eyedropperSwitchToPencil).toBe(false)
+    expect(defaults.eyedropperMagnifierEnabled).toBe(true)
+    expect(defaults.eyedropperMagnifierStyle).toBe('pixel')
+    expect(defaults.eyedropperMagnifierDistortionEnabled).toBe(true)
+    expect(defaults.moveLayerContentPreviewEnabled).toBe(true)
     expect(defaults.selectionCrosshair).toBe(false)
     expect(defaults.balancedShiftLineEnabled).toBe(true)
     expect(defaults.lineDirectionStep).toBe(1)
@@ -118,6 +124,10 @@ describe('editor preferences persistence boundary', () => {
     expect(loadEditorPreferences(adapter).recoveryMinutes).toBe(60)
     storage.set(LANGUAGE_PREFERENCE_KEY, 'en-US')
     expect(loadEditorPreferences(adapter).language).toBe('en-US')
+    storage.set(UI_SCALE_PREFERENCE_KEY, '1.25')
+    expect(loadEditorPreferences(adapter).uiScale).toBe(1.25)
+    storage.set(UI_SCALE_PREFERENCE_KEY, '1.23')
+    expect(loadEditorPreferences(adapter).uiScale).toBe(1)
   })
 
   it('round-trips normalized values through storage', () => {
@@ -131,9 +141,12 @@ describe('editor preferences persistence boundary', () => {
       get length() { return storage.size }
     } as Storage
     const current = loadEditorPreferences(adapter)
-    saveEditorPreferences({ ...current, saveFormat: 'aseprite', exportFormat: 'svg', recoveryMinutes: 12, documentSizePresets: [{ width: 32, height: 16 }, { width: 32, height: 16 }], exportScalePresets: [100, 100, 250] }, adapter)
+    saveEditorPreferences({ ...current, uiScale: 1.5, saveFormat: 'aseprite', exportFormat: 'svg', recoveryMinutes: 12, documentSizePresets: [{ width: 32, height: 16 }, { width: 32, height: 16 }], exportScalePresets: [100, 100, 250] }, adapter)
     expect(storage.get(SAVE_FORMAT_PREFERENCE_KEY)).toBe('aseprite')
     expect(storage.get(EXPORT_FORMAT_PREFERENCE_KEY)).toBe('svg')
+    expect(storage.get(UI_SCALE_PREFERENCE_KEY)).toBe('1.5')
+    expect(parseUiScale('2')).toBe(2)
+    expect(parseUiScale('0.5')).toBe(1)
     expect(loadEditorPreferences(adapter).recoveryMinutes).toBe(12)
     expect(loadEditorPreferences(adapter).documentSizePresets).toEqual([{ width: 32, height: 16 }])
     expect(loadEditorPreferences(adapter).exportScalePresets).toEqual([100, 250])
@@ -142,9 +155,15 @@ describe('editor preferences persistence boundary', () => {
     expect(storage.get(ZOOM_TOOL_DRAG_MODE_PREFERENCE_KEY)).toBe('stepped')
     saveEditorPreferences({ ...loadEditorPreferences(adapter), brushShiftLineEnabled: false }, adapter)
     expect(storage.get(BRUSH_SHIFT_LINE_ENABLED_KEY)).toBe('false')
-    saveEditorPreferences({ ...loadEditorPreferences(adapter), timelapseRecordingEnabled: false }, adapter)
+    saveEditorPreferences({ ...loadEditorPreferences(adapter), timelapseRecordingEnabled: false, eyedropperMagnifierEnabled: false, eyedropperMagnifierDistortionEnabled: false, moveLayerContentPreviewEnabled: false }, adapter)
     expect(storage.get(TIMELAPSE_RECORDING_ENABLED_PREFERENCE_KEY)).toBe('false')
     expect(loadEditorPreferences(adapter).timelapseRecordingEnabled).toBe(false)
+    expect(loadEditorPreferences(adapter).eyedropperMagnifierEnabled).toBe(false)
+    expect(loadEditorPreferences(adapter).eyedropperMagnifierDistortionEnabled).toBe(false)
+    expect(storage.get(MOVE_LAYER_CONTENT_PREVIEW_ENABLED_PREFERENCE_KEY)).toBe('false')
+    expect(loadEditorPreferences(adapter).moveLayerContentPreviewEnabled).toBe(false)
+    saveEditorPreferences({ ...loadEditorPreferences(adapter), eyedropperMagnifierStyle: 'line' }, adapter)
+    expect(loadEditorPreferences(adapter).eyedropperMagnifierStyle).toBe('line')
     saveEditorPreferences({ ...loadEditorPreferences(adapter), useLocalCursors: false, cursorScale: 1.5, brushPreviewMode: 'edge', checkerboard: { size: 12, lightColor: { r: 1, g: 2, b: 3, a: 255 }, darkColor: { r: 4, g: 5, b: 6, a: 255 } }, pixelGridColor: { r: 10, g: 20, b: 30, a: 40 }, gridColor: { r: 50, g: 60, b: 70, a: 80 }, wheelZoomEnabled: false, shiftLinePreviewEnabled: false, lassoPreviewClosed: true, eyedropperSwitchToPencil: true, balancedShiftLineEnabled: false, lineDirectionStep: 2, layerDisplayColorPresets: [{ r: 12, g: 34, b: 56, a: 99 }], symmetryAxis: { locked: true, color: { r: 22, g: 44, b: 66, a: 7 }, thickness: 6 } }, adapter)
     const customized = loadEditorPreferences(adapter)
     expect(customized.useLocalCursors).toBe(false)
@@ -165,5 +184,49 @@ describe('editor preferences persistence boundary', () => {
     expect(storage.has(SYMMETRY_AXIS_PREFERENCE_KEY)).toBe(true)
     expect(storage.has(PIXEL_GRID_COLOR_PREFERENCE_KEY)).toBe(true)
     expect(storage.has(GRID_COLOR_PREFERENCE_KEY)).toBe(true)
+  })
+
+  it('accepts only the supported eyedropper magnifier styles', () => {
+    expect(parseEyedropperMagnifierStyle('pixel')).toBe('pixel')
+    expect(parseEyedropperMagnifierStyle('line')).toBe('line')
+    expect(parseEyedropperMagnifierStyle('unknown')).toBe('pixel')
+  })
+
+  it('switches theme defaults while preserving explicit visual overrides', () => {
+    const values = new Map<string, string>()
+    const storage = {
+      getItem: (key: string) => values.get(key) ?? null,
+      setItem: (key: string, value: string) => { values.set(key, value) },
+      removeItem: (key: string) => { values.delete(key) },
+      clear: () => { values.clear() },
+      key: (index: number) => [...values.keys()][index] ?? null,
+      get length() { return values.size }
+    } as Storage
+    const current = loadEditorPreferences(storage)
+    const theme = { ...current.theme, activeThemeId: 'light' }
+    const visual = resolveTheme(theme).visualDefaults
+    saveEditorPreferences({ ...current, theme, checkerboard: { ...current.checkerboard, lightColor: visual.checkerLight, darkColor: visual.checkerDark }, pixelGridColor: visual.pixelGrid, gridColor: visual.customGrid, onionSkin: { ...current.onionSkin, previousColor: visual.onionPrevious, nextColor: visual.onionNext }, symmetryAxis: { ...current.symmetryAxis, color: visual.symmetryAxis } }, storage)
+    const light = loadEditorPreferences(storage)
+    expect(light.theme.activeThemeId).toBe('light')
+    expect(light.checkerboard.lightColor).toEqual(visual.checkerLight)
+    saveEditorPreferences({ ...light, pixelGridColor: { r: 2, g: 4, b: 6, a: 8 } }, storage)
+    expect(loadEditorPreferences(storage).pixelGridColor).toEqual({ r: 2, g: 4, b: 6, a: 8 })
+  })
+
+  it('migrates legacy stored visual colors to explicit theme overrides', () => {
+    const values = new Map<string, string>([[PIXEL_GRID_COLOR_PREFERENCE_KEY, '#01020304']])
+    const storage = {
+      getItem: (key: string) => values.get(key) ?? null,
+      setItem: (key: string, value: string) => { values.set(key, value) },
+      removeItem: (key: string) => { values.delete(key) },
+      clear: () => { values.clear() },
+      key: (index: number) => [...values.keys()][index] ?? null,
+      get length() { return values.size }
+    } as Storage
+    const loaded = loadEditorPreferences(storage)
+    expect(loaded.pixelGridColor).toEqual({ r: 1, g: 2, b: 3, a: 4 })
+    expect(loaded.theme.visualOverrides?.pixelGrid).toEqual({ r: 1, g: 2, b: 3, a: 4 })
+    saveEditorPreferences(loaded, storage)
+    expect(values.has(THEME_PREFERENCE_KEY)).toBe(true)
   })
 })

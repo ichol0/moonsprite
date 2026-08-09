@@ -5,6 +5,8 @@ describe('cursor preference source', () => {
   it('uses system cursors for supported scenes and MoonSprite cursors for missing scenes', () => {
     expect(cursorPreferenceSource('--cursor-default', true)).toBe('system')
     expect(cursorPreferenceSource('--cursor-pointer', true)).toBe('system')
+    expect(cursorPreferenceSource('--cursor-crosshair', true)).toBe('moonsprite')
+    expect(cursorPreferenceSource('--cursor-eyedropper', true)).toBe('moonsprite')
     expect(cursorPreferenceSource('--cursor-selection-rotate-ne', true)).toBe('moonsprite')
     expect(cursorPreferenceSource('--cursor-rotate', true)).toBe('moonsprite')
   })

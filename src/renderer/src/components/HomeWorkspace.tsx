@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
-import { Eraser, FileImage, FolderOpen, GripVertical, Images, Pin, Plus, RefreshCw, Trash2, TriangleAlert, X } from 'lucide-react'
+import { Plus, TriangleAlert } from 'lucide-react'
 import type { RecoveryRecord } from '@shared/types'
 import { APP_CHANNEL_LABEL } from '@/core/app-meta'
 import { readProjectGalleryMetadata } from '@/core/project-format'
@@ -10,6 +10,7 @@ import { useWorkspace } from '@/store/workspace'
 import { useI18n } from '@/components/I18nProvider'
 import { translate, type AppLocale } from '@/core/localization'
 import moonspriteLogo from '@/assets/moonsprite-logo.svg'
+import { PixelCloseIcon as X, PixelUtilityIcon } from '@/components/PixelUtilityIcon'
 
 interface ProjectCard extends RecentProject {
   previewUrl?: string
@@ -87,14 +88,14 @@ function ProjectFileRow({ project, reorderable, dragging, removePending, onOpen,
   const invalid = Boolean(project.error)
   return <article className={`recent-file-row ${invalid ? 'invalid' : ''} ${project.pinned ? 'pinned' : ''} ${reorderable ? 'reorderable' : ''} ${onDelete ? 'deletable' : ''} ${onRemoveFromRecent ? 'removable' : ''} ${dragging ? 'dragging' : ''} ${removePending ? 'remove-pending' : ''}`} data-recent-path={project.filePath}>
     <button type="button" className="recent-file-open" onPointerDown={(event) => { if (event.button === 1) event.preventDefault() }} onClick={onOpen} onAuxClick={(event) => { if (event.button !== 1) return; event.preventDefault(); event.stopPropagation(); onOpenInBackground() }} title={invalid ? t('home.previewReadFailedTitle', { error: project.error ?? '' }) : t('home.openProject', { name: project.name })}>
-      <span className="recent-file-preview">{project.previewUrl ? <img src={project.previewUrl} alt="" /> : invalid ? <TriangleAlert size={21} /> : <FileImage size={20} />}</span>
+      <span className="recent-file-preview">{project.previewUrl ? <img src={project.previewUrl} alt="" /> : invalid ? <TriangleAlert size={21} /> : <PixelUtilityIcon kind="image" />}</span>
       <span className="recent-file-copy"><strong>{project.name}</strong><small>{invalid ? t('home.previewReadFailed') : project.width && project.height ? `${project.width} x ${project.height} · ${project.colorMode === 'indexed' ? t('home.indexedColor') : 'RGBA'}` : t('home.readingPreview')}</small><span>{project.filePath}</span></span>
       <time>{formatTime(project.lastOpened, locale)}</time>
     </button>
-    <button className="recent-file-pin" type="button" onClick={onPin} aria-label={t(project.pinned ? 'home.unpinProject' : 'home.pinProject', { name: project.name })} title={t(project.pinned ? 'home.unpin' : 'home.pin')}><Pin size={14} /></button>
-    {onDelete && <button className="recent-file-delete" type="button" onClick={onDelete} aria-label={t('home.deleteProjectAria', { name: project.name })} title={t('home.deleteProject')}><Trash2 size={14} /></button>}
+    <button className="recent-file-pin" type="button" onClick={onPin} aria-label={t(project.pinned ? 'home.unpinProject' : 'home.pinProject', { name: project.name })} title={t(project.pinned ? 'home.unpin' : 'home.pin')}><PixelUtilityIcon kind="pin" /></button>
+    {onDelete && <button className="recent-file-delete" type="button" onClick={onDelete} aria-label={t('home.deleteProjectAria', { name: project.name })} title={t('home.deleteProject')}><PixelUtilityIcon kind="delete" /></button>}
     {onRemoveFromRecent && <button className="recent-file-remove" type="button" onClick={onRemoveFromRecent} aria-label={t('home.removeRecentAria', { name: project.name })} title={t('home.removeRecentHint')}><X size={15} /></button>}
-    {reorderable && <button className="recent-file-reorder" type="button" onPointerDown={(event) => onReorderStart(event, project.filePath)} aria-label={t('home.reorderAria', { name: project.name })} title={t('home.reorderHint')}><GripVertical size={15} /></button>}
+    {reorderable && <button className="recent-file-reorder" type="button" onPointerDown={(event) => onReorderStart(event, project.filePath)} aria-label={t('home.reorderAria', { name: project.name })} title={t('home.reorderHint')}><PixelUtilityIcon kind="move" /></button>}
   </article>
 }
 
@@ -103,11 +104,11 @@ function RecoveryFileRow({ record, onRestore, onDiscard }: { record: RecoveryRec
   const updatedAt = parseRecoveryTimestamp(record.updatedAt)
   return <article className="recent-file-row recovery-file-row">
     <button type="button" className="recent-file-open" onClick={onRestore} title={t('home.restoreProject', { name: record.name })}>
-      <span className="recent-file-preview"><RefreshCw size={20} /></span>
+      <span className="recent-file-preview"><PixelUtilityIcon kind="refresh" /></span>
       <span className="recent-file-copy"><strong>{record.name}</strong><small>{t('home.recoveryDescription')}</small><span>{t('home.lastSaved', { time: formatTime(updatedAt, locale) })}</span></span>
       <time>{formatTime(updatedAt, locale)}</time>
     </button>
-    <button type="button" className="recent-file-discard" onClick={onDiscard} aria-label={t('home.discardRecoveryAria', { name: record.name })} title={t('home.discardRecoveryHint')}><Trash2 size={14} /></button>
+    <button type="button" className="recent-file-discard" onClick={onDiscard} aria-label={t('home.discardRecoveryAria', { name: record.name })} title={t('home.discardRecoveryHint')}><PixelUtilityIcon kind="delete" /></button>
   </article>
 }
 
@@ -428,10 +429,10 @@ export function HomeWorkspace({ onNew, onOpen, onOpenProject, onRestoreRecovery 
   }, [section])
 
   const emptyState = section === 'gallery'
-    ? { icon: <Images size={28} />, title: t('home.emptyGallery'), detail: t('home.emptyGalleryDetail') }
+    ? { icon: <PixelUtilityIcon kind="image" />, title: t('home.emptyGallery'), detail: t('home.emptyGalleryDetail') }
     : section === 'recovery'
-      ? { icon: <RefreshCw size={28} />, title: t('home.emptyRecovery'), detail: t('home.emptyRecoveryDetail') }
-      : { icon: <FileImage size={28} />, title: t('home.emptyRecent'), detail: t('home.emptyRecentDetail') }
+      ? { icon: <PixelUtilityIcon kind="refresh" />, title: t('home.emptyRecovery'), detail: t('home.emptyRecoveryDetail') }
+      : { icon: <PixelUtilityIcon kind="image" />, title: t('home.emptyRecent'), detail: t('home.emptyRecentDetail') }
 
   return <section className="aseprite-home" aria-label={t('home.aria')}>
     <div className="aseprite-home-inner">
@@ -444,8 +445,8 @@ export function HomeWorkspace({ onNew, onOpen, onOpenProject, onRestoreRecovery 
       <div className="start-screen-layout">
         <aside className="start-actions" aria-label={t('home.actionsAria')}>
           <button className="start-action primary-button" type="button" onClick={onNew}><Plus size={20} /><span><strong>{t('home.newSprite')}</strong><small>{t('home.newSpriteDetail')}</small></span></button>
-          <button className="start-action quiet-button" type="button" onClick={onOpen}><FolderOpen size={20} /><span><strong>{t('home.openSprite')}</strong><small>{t('home.openSpriteDetail')}</small></span></button>
-          <div className="start-action-note"><FileImage size={15} /><span>{t('home.supportedFormats')}</span></div>
+          <button className="start-action quiet-button" type="button" onClick={onOpen}><PixelUtilityIcon kind="folderOpen" /><span><strong>{t('home.openSprite')}</strong><small>{t('home.openSpriteDetail')}</small></span></button>
+          <div className="start-action-note"><PixelUtilityIcon kind="image" /><span>{t('home.supportedFormats')}</span></div>
         </aside>
         <section className="recent-files-panel" aria-label={t(section === 'recent' ? 'home.section.recentFiles' : section === 'gallery' ? 'home.section.galleryTab' : 'home.section.recovery')}>
           <header className="recent-files-header">
@@ -455,13 +456,13 @@ export function HomeWorkspace({ onNew, onOpen, onOpenProject, onRestoreRecovery 
               {recoveryRecords.length > 0 && <button role="tab" aria-selected={section === 'recovery'} className={section === 'recovery' ? 'selected' : ''} onClick={() => selectSection('recovery')}>{t('home.section.recovery')}<span className="recovery-count">{recoveryRecords.length}</span></button>}
             </div>
             <div className="recent-file-tools">
-              {section === 'gallery' && <button className="icon-button" type="button" onClick={() => void window.moonSprite.openGalleryFolder()} aria-label={t('home.openGalleryFolder')} title={galleryDirectory || t('home.openGalleryFolder')}><FolderOpen size={15} /></button>}
-              <button className="icon-button" type="button" onClick={() => void loadSection(section)} disabled={loading || section === 'recovery'} aria-label={t('home.refreshSection')} title={t('common.refresh')}><RefreshCw size={15} /></button>
-              {section === 'recent' && <button className="icon-button" type="button" onClick={clearRecent} disabled={!projects.some((project) => !project.pinned)} aria-label={t('home.clearUnpinned')} title={t('home.clearUnpinned')}><Eraser size={15} /></button>}
+              {section === 'gallery' && <button className="icon-button" type="button" onClick={() => void window.moonSprite.openGalleryFolder()} aria-label={t('home.openGalleryFolder')} title={galleryDirectory || t('home.openGalleryFolder')}><PixelUtilityIcon kind="folderOpen" /></button>}
+              <button className="icon-button" type="button" onClick={() => void loadSection(section)} disabled={loading || section === 'recovery'} aria-label={t('home.refreshSection')} title={t('common.refresh')}><PixelUtilityIcon kind="refresh" /></button>
+              {section === 'recent' && <button className="icon-button" type="button" onClick={clearRecent} disabled={!projects.some((project) => !project.pinned)} aria-label={t('home.clearUnpinned')} title={t('home.clearUnpinned')}><PixelUtilityIcon kind="clearRecords" /></button>}
             </div>
           </header>
           <div ref={recentListRef} className="recent-files-list component-scrollbar">
-            {loading && <div className="start-screen-state"><RefreshCw className="spin" size={22} /><span>{t('home.readingProjects')}</span></div>}
+            {loading && <div className="start-screen-state"><PixelUtilityIcon kind="refresh" className="spin" /><span>{t('home.readingProjects')}</span></div>}
             {!loading && loadError && <div className="start-screen-state error"><TriangleAlert size={22} /><strong>{t('home.readSectionFailed')}</strong><span>{loadError}</span><button className="quiet-button" type="button" onClick={() => void loadSection(section)}>{t('home.retry')}</button></div>}
             {!loading && !loadError && ((section !== 'recovery' && projects.length === 0) || (section === 'recovery' && recoveryRecords.length === 0)) && <div className="start-screen-state">{emptyState.icon}<strong>{emptyState.title}</strong><span>{emptyState.detail}</span></div>}
             {!loading && !loadError && section === 'recovery' && recoveryRecords.map((record) => <RecoveryFileRow key={record.id} record={record} onRestore={() => void onRestoreRecovery(record.id)} onDiscard={() => void discardRecovery(record.id)} />)}

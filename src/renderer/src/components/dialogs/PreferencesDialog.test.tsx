@@ -2,6 +2,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { PreferencesDialog } from './PreferencesDialog'
 import { useWorkspace } from '@/store/workspace'
+import { THEME_PREFERENCE_KEY } from '@/core/file-preferences'
 
 afterEach(() => {
   cleanup()
@@ -84,6 +85,17 @@ describe('PreferencesDialog', () => {
     const deleteButtons = screen.getAllByRole('button', { name: /删除/ })
     expect(deleteButtons.length).toBeGreaterThan(0)
     expect(deleteButtons.every((button) => button.classList.contains('delete-icon-button') && button.classList.contains('compact'))).toBe(true)
+  })
+
+  it('previews a theme immediately and restores the persisted theme when canceled', () => {
+    const { unmount } = render(<PreferencesDialog onClose={vi.fn()} onPresetChange={vi.fn()} />)
+    fireEvent.click(screen.getByRole('button', { name: '主题' }))
+    fireEvent.click(screen.getByRole('option', { name: 'MoonSprite Light可用主题' }))
+
+    expect(document.documentElement.dataset.themeMode).toBe('light')
+    expect(localStorage.getItem(THEME_PREFERENCE_KEY)).toBeNull()
+    unmount()
+    expect(document.documentElement.dataset.themeMode).toBe('dark')
   })
 
 })

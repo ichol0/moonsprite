@@ -20,6 +20,23 @@ export type LayerPanelDropTarget =
 
 export type LayerPanelEdgeDropTarget = { kind: 'edge'; edge: 'top' | 'bottom' }
 
+export interface LayerPanelRevealScrollGeometry {
+  scrollTop: number
+  viewportTop: number
+  viewportHeight: number
+  stickyHeaderHeight: number
+  rowTop: number
+  rowHeight: number
+}
+
+/** Centers a revealed row in the usable area below the sticky animation header. */
+export const layerPanelRevealScrollTop = ({ scrollTop, viewportTop, viewportHeight, stickyHeaderHeight, rowTop, rowHeight }: LayerPanelRevealScrollGeometry): number => {
+  const usableHeight = Math.max(0, viewportHeight - stickyHeaderHeight)
+  const usableCenter = viewportTop + stickyHeaderHeight + usableHeight / 2
+  const rowCenter = rowTop + rowHeight / 2
+  return Math.max(0, scrollTop + rowCenter - usableCenter)
+}
+
 export const resolveLayerPanelEdgeDropTarget = (clientY: number, top: number, bottom: number, inset = 10): LayerPanelEdgeDropTarget | null => {
   if (clientY <= top + inset) return { kind: 'edge', edge: 'top' }
   if (clientY >= bottom - inset) return { kind: 'edge', edge: 'bottom' }
@@ -59,6 +76,22 @@ export const getLayerPanelDescendantGroupIds = (groups: readonly LayerPanelGroup
     }
   }
   return descendants
+}
+
+/** Returns the containing groups from the immediate parent toward the root. */
+export const getLayerPanelAncestorGroupIds = (groups: readonly LayerPanelGroupRef[], groupId?: string | null): string[] => {
+  const ancestors: string[] = []
+  const groupById = new Map(groups.map((group) => [group.id, group]))
+  const visited = new Set<string>()
+  let currentId = groupId ?? null
+  while (currentId && !visited.has(currentId)) {
+    visited.add(currentId)
+    const group = groupById.get(currentId)
+    if (!group) break
+    ancestors.push(group.id)
+    currentId = group.parentGroupId ?? null
+  }
+  return ancestors
 }
 
 const normalizedParent = (group: LayerPanelGroupRef, groupById: Map<string, LayerPanelGroupRef>): string | null => {

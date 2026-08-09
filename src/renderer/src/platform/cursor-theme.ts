@@ -42,22 +42,22 @@ const cursorDefinitions: CursorDefinition[] = [
   { variable: '--cursor-progress', source: cursorProgress, hotspot: [11, 5], fallback: 'progress' },
   { variable: '--cursor-wait', source: cursorProgress, hotspot: [11, 5], fallback: 'wait' },
   { variable: '--cursor-project', source: cursorProgress, hotspot: [11, 5], fallback: 'pointer' },
-  { variable: '--cursor-crosshair', source: cursorWhite, hotspot: [15, 15], fallback: 'crosshair' },
+  { variable: '--cursor-crosshair', source: cursorWhite, hotspot: [15, 15], fallback: 'none' },
   { variable: '--cursor-text', source: cursorDefault, hotspot: [9, 5], fallback: 'text' },
   { variable: '--cursor-pointer', source: cursorDefault, hotspot: [9, 5], fallback: 'pointer' },
-  { variable: '--cursor-pencil-black', source: cursorBlack, hotspot: [15, 15], fallback: 'crosshair' },
-  { variable: '--cursor-pencil-white', source: cursorWhite, hotspot: [15, 15], fallback: 'crosshair' },
-  { variable: '--cursor-selection-black', source: cursorBlack, hotspot: [15, 15], fallback: 'crosshair' },
-  { variable: '--cursor-selection-white', source: cursorWhite, hotspot: [15, 15], fallback: 'crosshair' },
+  { variable: '--cursor-pencil-black', source: cursorBlack, hotspot: [15, 15], fallback: 'none' },
+  { variable: '--cursor-pencil-white', source: cursorWhite, hotspot: [15, 15], fallback: 'none' },
+  { variable: '--cursor-selection-black', source: cursorBlack, hotspot: [15, 15], fallback: 'none' },
+  { variable: '--cursor-selection-white', source: cursorWhite, hotspot: [15, 15], fallback: 'none' },
   { variable: '--cursor-unavailable', source: cursorUnavailable, hotspot: [15, 15], fallback: 'not-allowed' },
   { variable: '--cursor-grab', source: cursorGrab, hotspot: [16, 16], fallback: 'grab' },
   { variable: '--cursor-grabbing', source: cursorGrab, hotspot: [16, 16], fallback: 'grabbing' },
   { variable: '--cursor-move', source: cursorMove, hotspot: [3, 3], fallback: 'move' },
   { variable: '--cursor-swatch-edge', source: cursorMove, hotspot: [3, 3], fallback: 'default' },
-  { variable: '--cursor-eyedropper', source: cursorEyedropper, hotspot: [5, 28], fallback: 'crosshair' },
+  { variable: '--cursor-eyedropper', source: cursorEyedropper, hotspot: [5, 28], fallback: 'none' },
   { variable: '--cursor-selection-move', source: cursorSelectionMove, hotspot: [3, 3], fallback: 'move' },
   { variable: '--cursor-copy', source: cursorCopy, hotspot: [5, 3], fallback: 'copy' },
-  { variable: '--cursor-zoom', source: cursorZoom, hotspot: [13, 13], fallback: 'zoom-in' },
+  { variable: '--cursor-zoom', source: cursorZoom, hotspot: [13, 13], fallback: 'none' },
   { variable: '--cursor-rotate', source: cursorRotate, builtinSource: builtinRotate, hotspot: [12, 22], fallback: 'crosshair' },
   { variable: '--cursor-ns-resize', source: cursorNsResize, hotspot: [15, 15], fallback: 'ns-resize' },
   { variable: '--cursor-n-resize', source: cursorNsResize, hotspot: [15, 15], fallback: 'n-resize' },
@@ -72,11 +72,24 @@ const cursorDefinitions: CursorDefinition[] = [
   { variable: '--cursor-selection-shear-vertical', source: cursorShearVertical, builtinSource: cursorShearVertical, hotspot: [16, 16], fallback: 'ns-resize' }
 ]
 
+// Editing feedback must stay deterministic. The system crosshair is visually
+// indistinguishable from a lost/unfinished canvas interaction, so these
+// canvas-facing cursors always use the bundled pixel assets. The preference
+// still controls ordinary application cursors and resize cursors.
+const canvasPixelCursorVariables = new Set([
+  '--cursor-crosshair',
+  '--cursor-pencil-black',
+  '--cursor-pencil-white',
+  '--cursor-selection-black',
+  '--cursor-selection-white',
+  '--cursor-eyedropper'
+])
+
 export type CursorPreferenceSource = 'system' | 'moonsprite'
 
 export const cursorPreferenceSource = (variable: string, useLocalCursors: boolean): CursorPreferenceSource => {
   const definition = cursorDefinitions.find((item) => item.variable === variable)
-  return useLocalCursors && !definition?.builtinSource ? 'system' : 'moonsprite'
+  return useLocalCursors && !definition?.builtinSource && !canvasPixelCursorVariables.has(variable) ? 'system' : 'moonsprite'
 }
 
 const scaledCursorCache = new Map<string, Promise<string>>()
