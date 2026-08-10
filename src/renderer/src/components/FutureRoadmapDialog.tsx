@@ -18,7 +18,7 @@ const roadmapItems: Array<{ id: string; label: TranslationKey; category: Transla
   { id: 'slice', label: 'roadmap.item.slice', category: 'roadmap.category.tools', completed: false },
   { id: 'tile', label: 'roadmap.item.tile', category: 'roadmap.category.canvas', completed: false },
   { id: 'gif-bead-export', label: 'roadmap.item.beadExport', category: 'roadmap.category.export', completed: false },
-  { id: 'theme', label: 'roadmap.item.theme', category: 'roadmap.category.interface', completed: true },
+  { id: 'theme', label: 'roadmap.item.theme', category: 'roadmap.category.interface', completed: false },
   { id: 'extension-support', label: 'roadmap.item.extensionSupport', category: 'roadmap.category.ecosystem', completed: false }
 ]
 
