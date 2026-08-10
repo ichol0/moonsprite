@@ -1,9 +1,12 @@
 import { strFromU8, strToU8, unzipSync, zipSync } from 'fflate'
-import { BLEND_MODES, type BlendMode, type ColorMode, type LayerGroup, type PaletteEntry, type ProjectBrush, type RasterLayer, type RgbaColor, type SpriteDocument } from '@shared/types'
+import { BLEND_MODES, type AnimationFrame, type BlendMode, type ColorMode, type LayerGroup, type PaletteEntry, type ProjectBrush, type RasterLayer, type RgbaColor, type SpriteDocument, type TimelapseSettings } from '@shared/types'
 import { compositeDocument, createId } from './document'
-import { createDefaultAnimationTimeline, normalizeAnimationTimeline } from './animation'
+import { createDefaultAnimationTimeline, ensureAnimationDocument, normalizeAnimationTimeline, refreshActiveAnimationFrame, syncActiveAnimationFrame } from './animation'
 import { normalizeOutlineSettings } from './outline-settings'
+import { normalizeProjectDisplaySettings, normalizeProjectStatistics, normalizeTimelapseSettings } from './project-metadata'
+import { MAX_TIMELAPSE_SNAPSHOTS } from './timelapse'
 import { encodePng } from './png'
+import { translateCurrent as tr } from './localization'
 
 interface ManifestLayer {
   id: string
@@ -33,12 +36,46 @@ interface ManifestProjectBrush {
   sourceY?: number
 }
 
+interface ManifestCel {
+  id: string
+  layerId: string
+  frameId: string
+  linkedCelId?: string | null
+  opacity?: number
+  format?: ColorMode
+  width?: number
+  height?: number
+  offsetX?: number
+  offsetY?: number
+  dataFile?: string
+}
+
+interface ManifestAnimation {
+  frames: AnimationFrame[]
+  cels: ManifestCel[]
+  activeFrameId: string
+  loop: boolean
+}
+
+interface ManifestTimelapseSnapshot {
+  id: string
+  capturedAt: number
+  elapsedMs: number
+  width: number
+  height: number
+  dataFile: string
+}
+
+interface ManifestTimelapse extends Omit<TimelapseSettings, 'snapshots'> {
+  snapshots: ManifestTimelapseSnapshot[]
+}
+
 export const PROJECT_SCHEMA_VERSION = 2
 
 interface ProjectManifest {
   schemaVersion: typeof PROJECT_SCHEMA_VERSION
   app: 'MoonSprite'
-  document: Omit<SpriteDocument, 'layers' | 'palette' | 'customBrushes' | 'filePath' | 'sourceFilePath' | 'dirty'> & { schemaVersion: typeof PROJECT_SCHEMA_VERSION; layers: ManifestLayer[]; palette: PaletteEntry[]; customBrushes: ManifestProjectBrush[] }
+  document: Omit<SpriteDocument, 'layers' | 'palette' | 'customBrushes' | 'animation' | 'timelapse' | 'filePath' | 'sourceFilePath' | 'dirty'> & { schemaVersion: typeof PROJECT_SCHEMA_VERSION; layers: ManifestLayer[]; palette: PaletteEntry[]; customBrushes: ManifestProjectBrush[]; animation: ManifestAnimation; timelapse?: ManifestTimelapse }
 }
 
 export interface ProjectGalleryMetadata {
@@ -66,7 +103,7 @@ const normalizeLayerGroups = (source: unknown): LayerGroup[] => {
     seen.add(candidate.id)
     groups.push({
       id: candidate.id,
-      name: typeof candidate.name === 'string' && candidate.name ? candidate.name : '未命名组',
+      name: typeof candidate.name === 'string' && candidate.name ? candidate.name : tr('core.document.group'),
       ...(Number.isFinite(candidate.panelOrder) ? { panelOrder: Number(candidate.panelOrder) } : {}),
       ...(normalizeDisplayColor(candidate.displayColor) ? { displayColor: normalizeDisplayColor(candidate.displayColor)! } : {}),
       ...(typeof candidate.description === 'string' && candidate.description ? { description: candidate.description } : {}),
@@ -107,7 +144,31 @@ const normalizeDisplayColor = (value: unknown): RgbaColor | null => {
   return { r: Math.max(0, Math.min(255, Math.round(color.r!))), g: Math.max(0, Math.min(255, Math.round(color.g!))), b: Math.max(0, Math.min(255, Math.round(color.b!))), a: Math.max(0, Math.min(255, Math.round(color.a!))) }
 }
 
-export function encodeProject(document: SpriteDocument): Uint8Array {
+const normalizeManifestAnimation = (value: unknown): ManifestAnimation => {
+  const normalized = normalizeAnimationTimeline(value)
+  const rawCels = value && typeof value === 'object' && Array.isArray((value as { cels?: unknown }).cels)
+    ? (value as { cels: unknown[] }).cels
+    : []
+  return {
+    frames: normalized.frames,
+    activeFrameId: normalized.activeFrameId,
+    loop: normalized.loop,
+    cels: normalized.cels.map((cel) => {
+      const raw = rawCels.find((candidate) => candidate && typeof candidate === 'object' && (candidate as { id?: unknown }).id === cel.id) as Partial<ManifestCel> | undefined
+      return { ...cel, ...(Number.isFinite(raw?.opacity) ? { opacity: Math.max(0, Math.min(1, Number(raw!.opacity))) } : {}), ...(raw?.format === 'rgba' || raw?.format === 'indexed' ? { format: raw.format } : {}), ...(Number.isSafeInteger(raw?.width) ? { width: raw!.width } : {}), ...(Number.isSafeInteger(raw?.height) ? { height: raw!.height } : {}), ...(Number.isFinite(raw?.offsetX) ? { offsetX: Math.trunc(raw!.offsetX!) } : {}), ...(Number.isFinite(raw?.offsetY) ? { offsetY: Math.trunc(raw!.offsetY!) } : {}), ...(typeof raw?.dataFile === 'string' ? { dataFile: raw.dataFile } : {}) }
+    })
+  }
+}
+
+export interface ProjectEncodeOptions {
+  /** Recovery snapshots do not need a gallery preview and can skip its full-canvas composite. */
+  includePreview?: boolean
+  /** Lower compression trades disk space for a substantially shorter main-thread encode. */
+  compressionLevel?: 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9
+}
+
+export function encodeProject(document: SpriteDocument, options: ProjectEncodeOptions = {}): Uint8Array {
+  syncActiveAnimationFrame(document)
   const files: Record<string, Uint8Array> = {}
   const layers: ManifestLayer[] = document.layers.map((layer) => {
     const dataFile = `layers/${layer.id}.${layer.format === 'rgba' ? 'rgba' : 'idx32'}`
@@ -136,7 +197,43 @@ export function encodeProject(document: SpriteDocument): Uint8Array {
     if (colorsFile) files[colorsFile] = toU8(brush.colors!)
     return { id: brush.id, name: brush.name, width: brush.width, height: brush.height, dataFile, colorsFile, sourceX: brush.sourceX, sourceY: brush.sourceY }
   })
-  const { schemaVersion: _schemaVersion, layers: _layers, palette: _palette, customBrushes: _customBrushes, filePath: _filePath, sourceFilePath: _sourceFilePath, dirty: _dirty, ...serializable } = document
+  const timeline = ensureAnimationDocument(document)
+  const animation: ManifestAnimation = {
+    frames: timeline.frames.map((frame) => ({ ...frame })),
+    activeFrameId: timeline.activeFrameId,
+    loop: timeline.loop,
+    cels: timeline.cels.flatMap((cel) => {
+      if (!cel.surface) return []
+      const dataFile = `cels/${cel.id}.${cel.surface.format === 'rgba' ? 'rgba' : 'idx32'}`
+      files[dataFile] = toU8(cel.surface.pixels)
+      return [{
+        id: cel.id,
+        layerId: cel.layerId,
+        frameId: cel.frameId,
+        ...(cel.linkedCelId ? { linkedCelId: cel.linkedCelId } : {}),
+        ...(Number.isFinite(cel.opacity) ? { opacity: cel.opacity } : {}),
+        format: cel.surface.format,
+        width: cel.surface.width,
+        height: cel.surface.height,
+        offsetX: cel.surface.offsetX,
+        offsetY: cel.surface.offsetY,
+        dataFile
+      }]
+    })
+  }
+  const timelapseSettings = normalizeTimelapseSettings(document.timelapse, document.timelapse?.snapshots ?? [])
+  const timelapse: ManifestTimelapse = {
+    enabled: timelapseSettings.enabled,
+    quality: timelapseSettings.quality,
+    fps: timelapseSettings.fps,
+    speed: timelapseSettings.speed,
+    snapshots: timelapseSettings.snapshots.map((snapshot) => {
+      const dataFile = `timelapse/${snapshot.id}.png`
+      files[dataFile] = snapshot.data.slice()
+      return { id: snapshot.id, capturedAt: snapshot.capturedAt, elapsedMs: snapshot.elapsedMs, width: snapshot.width, height: snapshot.height, dataFile }
+    })
+  }
+  const { schemaVersion: _schemaVersion, layers: _layers, palette: _palette, customBrushes: _customBrushes, animation: _animation, timelapse: _timelapse, filePath: _filePath, sourceFilePath: _sourceFilePath, dirty: _dirty, ...serializable } = document
   const manifest: ProjectManifest = {
     schemaVersion: PROJECT_SCHEMA_VERSION,
     app: 'MoonSprite',
@@ -145,46 +242,48 @@ export function encodeProject(document: SpriteDocument): Uint8Array {
       schemaVersion: PROJECT_SCHEMA_VERSION,
       layers,
       palette: document.palette.map((entry) => ({ ...entry, color: { ...entry.color } })),
-      customBrushes
+      customBrushes,
+      animation,
+      timelapse
     }
   }
   files['manifest.json'] = strToU8(JSON.stringify(manifest))
-  files['preview.png'] = encodePng(compositeDocument(document), document.width, document.height).bytes
-  return zipSync(files, { level: 6 })
+  if (options.includePreview !== false) files['preview.png'] = encodePng(compositeDocument(document), document.width, document.height).bytes
+  return zipSync(files, { level: options.compressionLevel ?? 6 })
 }
 
 export function migrateProjectManifest(input: unknown): ProjectManifest {
-  if (!input || typeof input !== 'object') throw new Error('manifest.json format is invalid')
+  if (!input || typeof input !== 'object') throw new Error(tr('core.project.invalidManifestFormat'))
   const candidate = input as { app?: unknown; schemaVersion?: unknown; document?: Record<string, unknown> }
-  if (candidate.app !== 'MoonSprite' || !candidate.document) throw new Error('Unsupported MoonSprite project version')
+  if (candidate.app !== 'MoonSprite' || !candidate.document) throw new Error(tr('core.project.unsupportedVersion'))
   if (candidate.schemaVersion === PROJECT_SCHEMA_VERSION && candidate.document.schemaVersion === PROJECT_SCHEMA_VERSION) {
     return {
       ...(candidate as ProjectManifest),
       schemaVersion: PROJECT_SCHEMA_VERSION,
-      document: { ...(candidate.document as ProjectManifest['document']), schemaVersion: PROJECT_SCHEMA_VERSION, animation: normalizeAnimationTimeline(candidate.document.animation) }
+      document: { ...(candidate.document as ProjectManifest['document']), schemaVersion: PROJECT_SCHEMA_VERSION, animation: normalizeManifestAnimation(candidate.document.animation) }
     }
   }
   if (candidate.schemaVersion === 1 && candidate.document.schemaVersion === 1) {
     return {
       ...(candidate as Omit<ProjectManifest, 'schemaVersion' | 'document'>),
       schemaVersion: PROJECT_SCHEMA_VERSION,
-      document: { ...(candidate.document as ProjectManifest['document']), schemaVersion: PROJECT_SCHEMA_VERSION, animation: createDefaultAnimationTimeline() }
+      document: { ...(candidate.document as ProjectManifest['document']), schemaVersion: PROJECT_SCHEMA_VERSION, animation: normalizeManifestAnimation(createDefaultAnimationTimeline()) }
     }
   }
-  throw new Error('Unsupported MoonSprite project version')
+  throw new Error(tr('core.project.unsupportedVersion'))
 }
 
 function readManifest(files: Record<string, Uint8Array>): ProjectManifest {
   const manifestFile = files['manifest.json']
-  if (!manifestFile) throw new Error('工程文件缺少 manifest.json。')
+  if (!manifestFile) throw new Error(tr('core.project.missingManifest'))
   let manifest: ProjectManifest
   try {
     manifest = migrateProjectManifest(JSON.parse(strFromU8(manifestFile)))
   } catch {
-    throw new Error('工程文件的 manifest.json 无法读取。')
+    throw new Error(tr('core.project.manifestUnreadable'))
   }
   if (manifest.app !== 'MoonSprite' || manifest.schemaVersion !== PROJECT_SCHEMA_VERSION || manifest.document?.schemaVersion !== PROJECT_SCHEMA_VERSION) {
-    throw new Error('该工程版本不受当前 MoonSprite 支持。')
+    throw new Error(tr('core.project.invalidVersion'))
   }
   return manifest
 }
@@ -194,18 +293,18 @@ export function readProjectGalleryMetadata(input: Uint8Array): ProjectGalleryMet
   try {
     files = unzipSync(input)
   } catch {
-    throw new Error('无法解压工程文件')
+    throw new Error(tr('core.project.galleryUnzip'))
   }
   const manifest = readManifest(files)
   const source = manifest.document
   if (!Number.isSafeInteger(source.width) || !Number.isSafeInteger(source.height) || source.width < 1 || source.height < 1) {
-    throw new Error('工程包含无效的画布尺寸')
+    throw new Error(tr('core.project.galleryCanvasSize'))
   }
-  if (source.colorMode !== 'rgba' && source.colorMode !== 'indexed') throw new Error('工程包含未知颜色模式')
+  if (source.colorMode !== 'rgba' && source.colorMode !== 'indexed') throw new Error(tr('core.project.galleryColorMode'))
   const preview = files['preview.png']
-  if (!preview?.byteLength) throw new Error('工程缺少预览图')
+  if (!preview?.byteLength) throw new Error(tr('core.project.missingPreview'))
   return {
-    name: source.name || '未命名作品',
+    name: source.name || tr('core.document.untitled'),
     width: source.width,
     height: source.height,
     colorMode: source.colorMode,
@@ -218,29 +317,29 @@ export function decodeProject(input: Uint8Array): SpriteDocument {
   try {
     files = unzipSync(input)
   } catch {
-    throw new Error('无法解压 MoonSprite 工程文件。')
+    throw new Error(tr('core.project.unzip'))
   }
   const manifest = readManifest(files)
   const source = manifest.document
   if (!Number.isSafeInteger(source.width) || !Number.isSafeInteger(source.height) || source.width < 1 || source.height < 1) {
-    throw new Error('工程文件包含无效画布尺寸。')
+    throw new Error(tr('core.project.invalidCanvasSize'))
   }
   const mode = source.colorMode as ColorMode
-  if (mode !== 'rgba' && mode !== 'indexed') throw new Error('工程文件包含未知颜色模式。')
+  if (mode !== 'rgba' && mode !== 'indexed') throw new Error(tr('core.project.unknownColorMode'))
   const pixels = source.width * source.height
   const layers: RasterLayer[] = source.layers.map((metadata) => {
     const width = Number.isSafeInteger(metadata.width) && metadata.width! > 0 ? metadata.width! : source.width
     const height = Number.isSafeInteger(metadata.height) && metadata.height! > 0 ? metadata.height! : source.height
     const expectedBytes = width * height * 4
     const bytes = files[metadata.dataFile]
-    if (!bytes || bytes.byteLength !== expectedBytes) throw new Error(`图层“${metadata.name}”数据损坏或不完整。`)
+    if (!bytes || bytes.byteLength !== expectedBytes) throw new Error(tr('core.project.layerCorrupt', { name: metadata.name }))
     const copied = bytes.slice()
     if (mode === 'rgba') {
       return { ...metadata, ...(normalizeDisplayColor(metadata.displayColor) ? { displayColor: normalizeDisplayColor(metadata.displayColor)! } : {}), ...(typeof metadata.description === 'string' && metadata.description ? { description: metadata.description } : {}), width, height, offsetX: Number.isFinite(metadata.offsetX) ? Math.trunc(metadata.offsetX!) : 0, offsetY: Number.isFinite(metadata.offsetY) ? Math.trunc(metadata.offsetY!) : 0, blendMode: normalizeBlendMode(metadata.blendMode), format: 'rgba', pixels: new Uint8ClampedArray(copied.buffer) }
     }
     return { ...metadata, ...(normalizeDisplayColor(metadata.displayColor) ? { displayColor: normalizeDisplayColor(metadata.displayColor)! } : {}), ...(typeof metadata.description === 'string' && metadata.description ? { description: metadata.description } : {}), width, height, offsetX: Number.isFinite(metadata.offsetX) ? Math.trunc(metadata.offsetX!) : 0, offsetY: Number.isFinite(metadata.offsetY) ? Math.trunc(metadata.offsetY!) : 0, blendMode: normalizeBlendMode(metadata.blendMode), format: 'indexed', pixels: new Uint32Array(copied.buffer) }
   })
-  if (layers.length === 0) throw new Error('工程文件不包含图层。')
+  if (layers.length === 0) throw new Error(tr('core.project.noLayers'))
   const groups = normalizeLayerGroups(source.groups)
   const groupIds = new Set(groups.map((group) => group.id))
   for (const layer of layers) if (layer.groupId && !groupIds.has(layer.groupId)) layer.groupId = null
@@ -248,9 +347,9 @@ export function decodeProject(input: Uint8Array): SpriteDocument {
   const customBrushes: ProjectBrush[] = []
   for (const metadata of Array.isArray(source.customBrushes) ? source.customBrushes : []) {
     if (typeof metadata?.id !== 'string' || typeof metadata?.name !== 'string') continue
-    if (!Number.isSafeInteger(metadata.width) || !Number.isSafeInteger(metadata.height) || metadata.width < 1 || metadata.height < 1 || metadata.width * metadata.height > 16 * 1024 * 1024) throw new Error(`工程中的自定义笔刷“${metadata.name}”尺寸无效。`)
+    if (!Number.isSafeInteger(metadata.width) || !Number.isSafeInteger(metadata.height) || metadata.width < 1 || metadata.height < 1 || metadata.width * metadata.height > 16 * 1024 * 1024) throw new Error(tr('core.project.brushInvalidSize', { name: metadata.name }))
     const bytes = files[metadata.dataFile]
-    if (!bytes || bytes.byteLength !== metadata.width * metadata.height) throw new Error(`自定义笔刷“${metadata.name}”数据损坏或不完整。`)
+    if (!bytes || bytes.byteLength !== metadata.width * metadata.height) throw new Error(tr('core.project.brushCorrupt', { name: metadata.name }))
     let colors: Uint32Array | undefined
     if (metadata.colorsFile) {
       const colorBytes = files[metadata.colorsFile]
@@ -259,10 +358,42 @@ export function decodeProject(input: Uint8Array): SpriteDocument {
     customBrushes.push({ id: metadata.id, name: metadata.name, width: metadata.width, height: metadata.height, coverage: bytes.slice(), colors, sourceX: metadata.sourceX, sourceY: metadata.sourceY })
   }
   const outlineSettings = normalizeOutlineSettings(source.outlineSettings)
-  return {
+  const displaySettings = normalizeProjectDisplaySettings(source.displaySettings)
+  const statistics = normalizeProjectStatistics(source.statistics)
+  const manifestTimelapse = source.timelapse && typeof source.timelapse === 'object' ? source.timelapse : undefined
+  const timelapseSnapshots = (Array.isArray(manifestTimelapse?.snapshots) ? manifestTimelapse.snapshots : [])
+    .slice(0, MAX_TIMELAPSE_SNAPSHOTS)
+    .flatMap((snapshot) => {
+      if (!snapshot || typeof snapshot.id !== 'string' || typeof snapshot.dataFile !== 'string') return []
+      const width = Number(snapshot.width)
+      const height = Number(snapshot.height)
+      const data = files[snapshot.dataFile]
+      if (!Number.isSafeInteger(width) || !Number.isSafeInteger(height) || width < 1 || height < 1 || !data?.byteLength) return []
+      return [{ id: snapshot.id, capturedAt: Math.max(0, Math.trunc(Number(snapshot.capturedAt) || 0)), elapsedMs: Math.max(0, Math.trunc(Number(snapshot.elapsedMs) || 0)), width, height, data: data.slice() }]
+    })
+  const timelapse = normalizeTimelapseSettings(manifestTimelapse, timelapseSnapshots)
+  const animation = normalizeAnimationTimeline(source.animation)
+  const manifestCels = Array.isArray(source.animation?.cels) ? source.animation.cels : []
+  animation.cels = animation.cels.flatMap((cel) => {
+    const metadata = manifestCels.find((candidate) => candidate.id === cel.id)
+    if (!metadata?.dataFile) return []
+    if (metadata.format !== 'rgba' && metadata.format !== 'indexed') throw new Error(tr('core.project.layerCorrupt', { name: cel.id }))
+    const width = Number(metadata.width)
+    const height = Number(metadata.height)
+    if (!Number.isSafeInteger(width) || !Number.isSafeInteger(height) || width < 1 || height < 1) return []
+    const bytes = files[metadata.dataFile]
+    const expectedBytes = width * height * 4
+    if (!bytes || bytes.byteLength !== expectedBytes) throw new Error(tr('core.project.layerCorrupt', { name: cel.id }))
+    const copied = bytes.slice()
+    const surface = metadata.format === 'rgba'
+      ? { format: 'rgba' as const, width, height, offsetX: Math.trunc(metadata.offsetX ?? 0), offsetY: Math.trunc(metadata.offsetY ?? 0), pixels: new Uint8ClampedArray(copied.buffer) }
+      : { format: 'indexed' as const, width, height, offsetX: Math.trunc(metadata.offsetX ?? 0), offsetY: Math.trunc(metadata.offsetY ?? 0), pixels: new Uint32Array(copied.buffer) }
+    return [{ ...cel, surface }]
+  })
+  const document: SpriteDocument = {
     schemaVersion: PROJECT_SCHEMA_VERSION,
     id: createId('doc'),
-    name: source.name || '未命名作品',
+    name: source.name || tr('core.document.untitled'),
     width: source.width,
     height: source.height,
     colorMode: mode,
@@ -273,11 +404,17 @@ export function decodeProject(input: Uint8Array): SpriteDocument {
     paletteOrder: Array.isArray(source.paletteOrder) ? source.paletteOrder : [],
     nextColorId: Math.max(1, source.nextColorId ?? 1),
     customBrushes,
-    animation: normalizeAnimationTimeline(source.animation),
+    animation,
     ...(outlineSettings ? { outlineSettings } : {}),
+    displaySettings,
+    statistics,
+    timelapse,
     filePath: null,
     dirty: false,
     createdAt: source.createdAt || new Date().toISOString(),
     updatedAt: new Date().toISOString()
   }
+  ensureAnimationDocument(document)
+  refreshActiveAnimationFrame(document)
+  return document
 }

@@ -2,6 +2,11 @@ use crate::platform_storage::atomic_write;
 use std::{fs, path::Path};
 
 #[tauri::command]
+pub fn file_exists(file_path: String) -> bool {
+    Path::new(&file_path).is_file()
+}
+
+#[tauri::command]
 pub fn read_binary(file_path: String) -> Result<Vec<u8>, String> {
     fs::read(file_path).map_err(|error| error.to_string())
 }

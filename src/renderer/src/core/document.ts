@@ -1,11 +1,14 @@
 import type { CanvasAnchor, ColorMode, ImageResizeInterpolation, IndexedLayer, LayerGroup, PaletteEntry, RasterLayer, RgbaColor, RgbaLayer, SelectionRect, SpriteDocument } from '@shared/types'
-import { createDefaultAnimationTimeline } from './animation'
 import { blendWithMode, colorEquals, packColor, pixelIndex, readRgbaPixel, TRANSPARENT, unpackColor, writeRgbaPixel } from './raster'
+import { translateCurrent as tr } from './localization'
+import { loadEditorPreferences } from './file-preferences'
+import { DEFAULT_PROJECT_DISPLAY_SETTINGS, DEFAULT_PROJECT_STATISTICS, DEFAULT_TIMELAPSE_SETTINGS } from './project-metadata'
 
 let sequence = 0
 const layerStorageOrigins = new WeakMap<RasterLayer, { x: number; y: number }>()
+const layerContentRevisions = new WeakMap<RasterLayer, number>()
 export const createId = (prefix: string): string => `${prefix}-${Date.now().toString(36)}-${(++sequence).toString(36)}`
-const transparentEntry = (): PaletteEntry => ({ id: 0, name: '透明', color: TRANSPARENT })
+const transparentEntry = (): PaletteEntry => ({ id: 0, name: tr('core.document.transparentColor'), color: TRANSPARENT })
 
 export function createLayer(name: string, width: number, height: number, mode: ColorMode): RasterLayer {
   const common = { id: createId('layer'), name, description: '', visible: true, locked: false, opacity: 1, blendMode: 'normal' as const, width, height, offsetX: 0, offsetY: 0 }
@@ -15,12 +18,38 @@ export function createLayer(name: string, width: number, height: number, mode: C
 }
 
 export function createDocument(name: string, width: number, height: number, colorMode: ColorMode): SpriteDocument {
-  const layer = createLayer('图层 1', width, height, colorMode)
+  const layer = createLayer(tr('core.document.defaultLayer', { index: 1 }), width, height, colorMode)
   const palette = colorMode === 'indexed'
-    ? [transparentEntry(), { id: 1, name: '墨黑', color: { r: 24, g: 27, b: 33, a: 255 } }, { id: 2, name: '月蓝', color: { r: 41, g: 121, b: 255, a: 255 } }]
-    : [{ id: 1, name: '墨黑', color: { r: 24, g: 27, b: 33, a: 255 } }, { id: 2, name: '月蓝', color: { r: 41, g: 121, b: 255, a: 255 } }]
+    ? [transparentEntry(), { id: 1, name: tr('core.document.inkBlack'), color: { r: 24, g: 27, b: 33, a: 255 } }, { id: 2, name: tr('core.document.moonBlue'), color: { r: 41, g: 121, b: 255, a: 255 } }]
+    : [{ id: 1, name: tr('core.document.inkBlack'), color: { r: 24, g: 27, b: 33, a: 255 } }, { id: 2, name: tr('core.document.moonBlue'), color: { r: 41, g: 121, b: 255, a: 255 } }]
   const now = new Date().toISOString()
-  return { schemaVersion: 2, id: createId('doc'), name, width, height, colorMode, layers: [layer], groups: [], activeLayerId: layer.id, palette, paletteOrder: palette.map((entry) => entry.id), nextColorId: 3, customBrushes: [], animation: createDefaultAnimationTimeline(), filePath: null, dirty: false, createdAt: now, updatedAt: now }
+  const frameId = 'frame-1'
+  const initialSurface = layer.format === 'rgba'
+    ? { format: 'rgba' as const, width, height, offsetX: 0, offsetY: 0, pixels: layer.pixels }
+    : { format: 'indexed' as const, width, height, offsetX: 0, offsetY: 0, pixels: layer.pixels }
+  return {
+    schemaVersion: 2,
+    id: createId('doc'),
+    name,
+    width,
+    height,
+    colorMode,
+    layers: [layer],
+    groups: [],
+    activeLayerId: layer.id,
+    palette,
+    paletteOrder: palette.map((entry) => entry.id),
+    nextColorId: 3,
+    customBrushes: [],
+    animation: { frames: [{ id: frameId, duration: 100 }], cels: [{ id: createId('cel'), layerId: layer.id, frameId, opacity: layer.opacity, surface: initialSurface }], activeFrameId: frameId, loop: true },
+    displaySettings: { ...DEFAULT_PROJECT_DISPLAY_SETTINGS, grid: { ...DEFAULT_PROJECT_DISPLAY_SETTINGS.grid } },
+    statistics: { ...DEFAULT_PROJECT_STATISTICS },
+    timelapse: { ...DEFAULT_TIMELAPSE_SETTINGS, enabled: loadEditorPreferences().timelapseRecordingEnabled, snapshots: [] },
+    filePath: null,
+    dirty: false,
+    createdAt: now,
+    updatedAt: now
+  }
 }
 
 export function resizeDocumentAt(document: SpriteDocument, width: number, height: number, offsetX: number, offsetY: number, trimOutside = false): { offsetX: number; offsetY: number } {
@@ -158,17 +187,17 @@ export function resizeDocumentImage(document: SpriteDocument, width: number, hei
 
 export const getActiveLayer = (document: SpriteDocument): RasterLayer => {
   const layer = document.layers.find((candidate) => candidate.id === document.activeLayerId)
-  if (!layer) throw new Error('当前图层不存在')
+  if (!layer) throw new Error(tr('core.document.activeLayerMissing'))
   return layer
 }
 export const getLayer = (document: SpriteDocument, id: string): RasterLayer => {
   const layer = document.layers.find((candidate) => candidate.id === id)
-  if (!layer) throw new Error('图层不存在')
+  if (!layer) throw new Error(tr('core.document.layerMissing'))
   return layer
 }
 export const getGroup = (document: SpriteDocument, id: string): LayerGroup => {
   const group = document.groups.find((candidate) => candidate.id === id)
-  if (!group) throw new Error('图层组不存在。')
+  if (!group) throw new Error(tr('core.document.groupMissing'))
   return group
 }
 export const getDescendantGroupIds = (document: SpriteDocument, groupId: string): string[] => {
@@ -245,7 +274,7 @@ export function findOrAddPaletteColor(document: SpriteDocument, color: RgbaColor
     return existing.id
   }
   const id = document.nextColorId++
-  document.palette.push({ id, name: `颜色 ${id}`, color: { ...color } })
+  document.palette.push({ id, name: tr('core.document.colorName', { id }), color: { ...color } })
   if (addToVisiblePalette) document.paletteOrder.push(id)
   return id
 }
@@ -318,6 +347,18 @@ export function layerStoragePoint(layer: RasterLayer, index: number): { x: numbe
   return { x: index % layer.width + origin.x, y: Math.floor(index / layer.width) + origin.y }
 }
 
+export const getLayerStorageOrigin = (layer: RasterLayer): { x: number; y: number } => ({ ...(layerStorageOrigins.get(layer) ?? { x: 0, y: 0 }) })
+
+export const getLayerContentRevision = (layer: RasterLayer): number => layerContentRevisions.get(layer) ?? 0
+
+export const markLayerContentChanged = (layer: RasterLayer): void => {
+  layerContentRevisions.set(layer, getLayerContentRevision(layer) + 1)
+}
+
+export const setLayerStorageOrigin = (layer: RasterLayer, origin: { x: number; y: number }): void => {
+  layerStorageOrigins.set(layer, { x: Math.trunc(origin.x), y: Math.trunc(origin.y) })
+}
+
 export function layerIndexAtStoragePoint(layer: RasterLayer, x: number, y: number): number | null {
   const origin = layerStorageOrigins.get(layer) ?? { x: 0, y: 0 }
   const localX = x - origin.x
@@ -367,6 +408,7 @@ export function readLayerPackedAt(document: SpriteDocument, layer: RasterLayer, 
   return index === null ? null : readLayerPacked(document, layer, index)
 }
 export function writeLayerColor(document: SpriteDocument, layer: RasterLayer, index: number, color: RgbaColor): void {
+  markLayerContentChanged(layer)
   if (layer.format === 'rgba') writeRgbaPixel(layer.pixels, index, color)
   else layer.pixels[index] = findOrAddPaletteColor(document, color)
 }
@@ -384,11 +426,27 @@ export function writeLayerPacked(_document: SpriteDocument, layer: RasterLayer, 
   layer.pixels[offset + 3] = (value >>> 24) & 0xff
 }
 
+/** Writes a packed value across one local bitmap row without per-pixel dispatch. */
+export function writeLayerPackedRun(document: SpriteDocument, layer: RasterLayer, start: number, length: number, value: number): void {
+  const count = Math.min(layer.width - (start % layer.width), length)
+  if (count <= 0) return
+  if (layer.format === 'indexed') {
+    layer.pixels.fill(value, start, start + count)
+    return
+  }
+  if (layer.pixels.byteOffset % 4 === 0) {
+    const words = new Uint32Array(layer.pixels.buffer as ArrayBuffer, layer.pixels.byteOffset, layer.pixels.byteLength / 4)
+    words.fill(value, start, start + count)
+    return
+  }
+  for (let index = start; index < start + count; index += 1) writeLayerPacked(document, layer, index, value)
+}
+
 export function duplicateLayer(document: SpriteDocument, layerId: string): RasterLayer {
   const source = getLayer(document, layerId)
   const copy = source.format === 'rgba'
-    ? { ...source, id: createId('layer'), name: `${source.name} 副本`, pixels: new Uint8ClampedArray(source.pixels) } as RgbaLayer
-    : { ...source, id: createId('layer'), name: `${source.name} 副本`, pixels: new Uint32Array(source.pixels) } as IndexedLayer
+    ? { ...source, id: createId('layer'), name: `${source.name} ${tr('core.document.copySuffix')}`, pixels: new Uint8ClampedArray(source.pixels) } as RgbaLayer
+    : { ...source, id: createId('layer'), name: `${source.name} ${tr('core.document.copySuffix')}`, pixels: new Uint32Array(source.pixels) } as IndexedLayer
   document.layers.splice(document.layers.findIndex((layer) => layer.id === layerId) + 1, 0, copy)
   document.activeLayerId = copy.id
   return copy
@@ -407,7 +465,7 @@ export function convertDocumentColorMode(document: SpriteDocument, target: Color
         if (color.a === 0) continue
         const packed = packColor(color)
         let id = colorIds.get(packed)
-        if (!id) { id = nextId++; colorIds.set(packed, id); palette.push({ id, name: `颜色 ${id}`, color }) }
+        if (!id) { id = nextId++; colorIds.set(packed, id); palette.push({ id, name: tr('core.document.colorName', { id }), color }) }
         indexed[index] = id
       }
       Object.assign(layer, { format: 'indexed', pixels: indexed })
@@ -427,7 +485,138 @@ export function convertDocumentColorMode(document: SpriteDocument, target: Color
   document.colorMode = target
 }
 
-export function compositeRegion(document: SpriteDocument, startX: number, startY: number, width: number, height: number): Uint8ClampedArray {
+const normalCompositeLayers = (document: SpriteDocument): RasterLayer[] | null => {
+  if (document.layers.some((layer) => layer.blendMode !== 'normal')) return null
+  if (document.groups.some((group) => group.blendMode !== 'normal' || group.opacity !== 1)) return null
+
+  const groupById = new Map(document.groups.map((group) => [group.id, group]))
+  const layerOrder = new Map(document.layers.map((layer, order) => [layer.id, order]))
+  const groupOrder = new Map(document.groups.map((group, order) => [group.id, order]))
+  const anchorCache = new Map<string, number>()
+  const groupAnchor = (groupId: string, visiting = new Set<string>()): number => {
+    const cached = anchorCache.get(groupId)
+    if (cached !== undefined) return cached
+    if (visiting.has(groupId)) return Number.POSITIVE_INFINITY
+    const nextVisiting = new Set(visiting).add(groupId)
+    let anchor = Number.POSITIVE_INFINITY
+    for (const layer of document.layers) if (layer.groupId === groupId) anchor = Math.min(anchor, layerOrder.get(layer.id) ?? anchor)
+    for (const child of document.groups) if (child.parentGroupId === groupId) anchor = Math.min(anchor, groupAnchor(child.id, nextVisiting))
+    anchorCache.set(groupId, anchor)
+    return anchor
+  }
+  const flatten = (parentGroupId: string | null, visiting: Set<string>): RasterLayer[] => {
+    const items: Array<
+      | { kind: 'layer'; layer: RasterLayer; order: number; tie: number }
+      | { kind: 'group'; group: LayerGroup; order: number; tie: number }
+    > = []
+    for (const layer of document.layers) {
+      const directParent = layer.groupId && groupById.has(layer.groupId) ? layer.groupId : null
+      if (directParent === parentGroupId) items.push({ kind: 'layer', layer, order: layerOrder.get(layer.id) ?? 0, tie: 0 })
+    }
+    for (const group of document.groups) {
+      const directParent = group.parentGroupId && groupById.has(group.parentGroupId) && group.parentGroupId !== group.id ? group.parentGroupId : null
+      if (directParent === parentGroupId) items.push({ kind: 'group', group, order: groupAnchor(group.id), tie: groupOrder.get(group.id) ?? 0 })
+    }
+    items.sort((left, right) => left.order - right.order || left.tie - right.tie)
+    return items.flatMap((item): RasterLayer[] => {
+      if (item.kind === 'layer') return item.layer.visible && item.layer.opacity > 0 ? [item.layer] : []
+      if (!item.group.visible || visiting.has(item.group.id)) return []
+      return flatten(item.group.id, new Set(visiting).add(item.group.id))
+    })
+  }
+  return flatten(null, new Set())
+}
+
+export class DocumentCompositeCache {
+  private rowRanges = new WeakMap<object, Map<string, Int32Array>>()
+
+  rowsFor(layer: RasterLayer, palette: readonly PaletteEntry[], _revision: number): Int32Array {
+    const paletteKey = layer.format === 'rgba' ? 'rgba' : palette.map((entry) => `${entry.id}:${entry.color.a}`).join(',')
+    const key = `${layer.format}:${layer.width}:${layer.height}:${getLayerContentRevision(layer)}:${paletteKey}`
+    const entries = this.rowRanges.get(layer.pixels) ?? new Map<string, Int32Array>()
+    const cached = entries.get(key)
+    if (cached) return cached
+    const ranges = new Int32Array(layer.height * 2)
+    const opaqueIds = layer.format === 'indexed' ? new Set(palette.filter((entry) => entry.color.a > 0).map((entry) => entry.id)) : null
+    for (let y = 0; y < layer.height; y += 1) {
+      let left = layer.width
+      let right = 0
+      for (let x = 0; x < layer.width; x += 1) {
+        const index = y * layer.width + x
+        const visible = layer.format === 'rgba' ? layer.pixels[index * 4 + 3] > 0 : opaqueIds!.has(layer.pixels[index])
+        if (!visible) continue
+        left = Math.min(left, x)
+        right = x + 1
+      }
+      ranges[y * 2] = left
+      ranges[y * 2 + 1] = right
+    }
+    entries.set(key, ranges)
+    this.rowRanges.set(layer.pixels, entries)
+    return ranges
+  }
+}
+
+const compositeNormalLayers = (document: SpriteDocument, layers: readonly RasterLayer[], startX: number, startY: number, width: number, height: number, cache?: DocumentCompositeCache, revision = 0): Uint8ClampedArray => {
+  const output = new Uint8ClampedArray(width * height * 4)
+  const paletteById = new Map(document.palette.map((entry) => [entry.id, entry.color]))
+  for (const layer of layers) {
+    const layerLeft = Math.max(startX, layer.offsetX)
+    const top = Math.max(startY, layer.offsetY)
+    const layerRight = Math.min(startX + width, layer.offsetX + layer.width)
+    const bottom = Math.min(startY + height, layer.offsetY + layer.height)
+    if (layerRight <= layerLeft || bottom <= top) continue
+    const opacity = layer.opacity
+    const rowRanges = cache?.rowsFor(layer, document.palette, revision)
+    for (let documentY = top; documentY < bottom; documentY += 1) {
+      const localY = documentY - layer.offsetY
+      const left = rowRanges ? Math.max(layerLeft, layer.offsetX + rowRanges[localY * 2]) : layerLeft
+      const right = rowRanges ? Math.min(layerRight, layer.offsetX + rowRanges[localY * 2 + 1]) : layerRight
+      if (right <= left) continue
+      let sourceIndex = (documentY - layer.offsetY) * layer.width + left - layer.offsetX
+      let outputOffset = ((documentY - startY) * width + left - startX) * 4
+      for (let documentX = left; documentX < right; documentX += 1, sourceIndex += 1, outputOffset += 4) {
+        let sourceR: number
+        let sourceG: number
+        let sourceB: number
+        let sourceA: number
+        if (layer.format === 'rgba') {
+          const sourceOffset = sourceIndex * 4
+          sourceR = layer.pixels[sourceOffset]
+          sourceG = layer.pixels[sourceOffset + 1]
+          sourceB = layer.pixels[sourceOffset + 2]
+          sourceA = layer.pixels[sourceOffset + 3]
+        } else {
+          const source = paletteById.get(layer.pixels[sourceIndex]) ?? TRANSPARENT
+          sourceR = source.r
+          sourceG = source.g
+          sourceB = source.b
+          sourceA = source.a
+        }
+        if (sourceA === 0) continue
+        const bottomA = output[outputOffset + 3]
+        if (opacity === 1 && (bottomA === 0 || sourceA === 255)) {
+          output[outputOffset] = sourceR
+          output[outputOffset + 1] = sourceG
+          output[outputOffset + 2] = sourceB
+          output[outputOffset + 3] = sourceA
+          continue
+        }
+        const topAlpha = sourceA / 255 * opacity
+        const bottomAlpha = bottomA / 255
+        const outputAlpha = topAlpha + bottomAlpha * (1 - topAlpha)
+        if (outputAlpha <= 0) continue
+        output[outputOffset] = Math.round((sourceR * topAlpha + output[outputOffset] * bottomAlpha * (1 - topAlpha)) / outputAlpha)
+        output[outputOffset + 1] = Math.round((sourceG * topAlpha + output[outputOffset + 1] * bottomAlpha * (1 - topAlpha)) / outputAlpha)
+        output[outputOffset + 2] = Math.round((sourceB * topAlpha + output[outputOffset + 2] * bottomAlpha * (1 - topAlpha)) / outputAlpha)
+        output[outputOffset + 3] = Math.round(outputAlpha * 255)
+      }
+    }
+  }
+  return output
+}
+
+export function compositeRegion(document: SpriteDocument, startX: number, startY: number, width: number, height: number, cache?: DocumentCompositeCache, revision = 0): Uint8ClampedArray {
   const output = new Uint8ClampedArray(width * height * 4)
   if (document.groups.length === 0 && document.layers.length === 1) {
     const layer = document.layers[0]
@@ -455,6 +644,8 @@ export function compositeRegion(document: SpriteDocument, startX: number, startY
       return output
     }
   }
+  const normalLayers = normalCompositeLayers(document)
+  if (normalLayers) return compositeNormalLayers(document, normalLayers, startX, startY, width, height, cache, revision)
   const sample = createCompositePointSampler(document)
   for (let y = 0; y < height; y += 1) for (let x = 0; x < width; x += 1) {
     writeRgbaPixel(output, y * width + x, sample(startX + x, startY + y))
@@ -488,7 +679,13 @@ export function createCompositePointSampler(document: SpriteDocument, layerId?: 
   type CompiledItem = { kind: 'layer'; layer: RasterLayer; read: (x: number, y: number) => RgbaColor } | { kind: 'group'; group: LayerGroup; children: CompiledItem[] }
   const compileLayer = (layer: RasterLayer): CompiledItem => {
     const readIndex = (x: number, y: number): number | null => layerIndexAt(layer, x, y)
-    if (layer.id === layerId && replacement) return { kind: 'layer', layer, read: (x, y) => readIndex(x, y) === null ? TRANSPARENT : replacement }
+    if (layer.id === layerId && replacement) {
+      return {
+        kind: 'layer',
+        layer,
+        read: (x, y) => x >= 0 && y >= 0 && x < document.width && y < document.height ? replacement : TRANSPARENT
+      }
+    }
     if (layer.format === 'rgba') {
       const pixels = layer.pixels
       return { kind: 'layer', layer, read: (x, y) => { const local = readIndex(x, y); return local === null ? TRANSPARENT : readRgbaPixel(pixels, local) } }

@@ -7,10 +7,10 @@ export const COLOR_SQUARE_DOCK_STORAGE_KEY = 'moonsprite.color-picker-square-doc
 export const COLOR_SQUARE_ANCHOR_STORAGE_KEY = 'moonsprite.color-picker-square-anchor'
 
 export const DEFAULT_INSPECTOR_ORDER: WorkspacePanelId[] = ['color', 'palette', 'layers', 'preview']
-export const DEFAULT_INSPECTOR_SIZES: Record<WorkspacePanelId, number> = { color: 370, palette: 90, layers: 150, preview: 180 }
-export const MINIMUM_INSPECTOR_SIZES: Record<WorkspacePanelId, number> = { color: 128, palette: 52, layers: 130, preview: 120 }
-export const DEFAULT_BOTTOM_WIDTHS: Record<WorkspacePanelId, number> = { color: 280, palette: 280, layers: 320, preview: 280 }
-export const MINIMUM_BOTTOM_WIDTHS: Record<WorkspacePanelId, number> = { color: 96, palette: 180, layers: 200, preview: 180 }
+export const DEFAULT_INSPECTOR_SIZES: Record<WorkspacePanelId, number> = { color: 370, palette: 90, layers: 230, preview: 180 }
+export const MINIMUM_INSPECTOR_SIZES: Record<WorkspacePanelId, number> = { color: 128, palette: 52, layers: 180, preview: 120 }
+export const DEFAULT_BOTTOM_WIDTHS: Record<WorkspacePanelId, number> = { color: 280, palette: 280, layers: 720, preview: 280 }
+export const MINIMUM_BOTTOM_WIDTHS: Record<WorkspacePanelId, number> = { color: 96, palette: 180, layers: 360, preview: 180 }
 
 export interface InspectorLayout {
   order: WorkspacePanelId[]
@@ -47,4 +47,9 @@ export function moveInspectorPanel(order: WorkspacePanelId[], movingId: Workspac
   if (targetIndex < 0) return order
   next.splice(targetIndex + (insertAfter ? 1 : 0), 0, movingId)
   return next
+}
+
+export function verticalInspectorPanelFlex(size: number, hasFollowingPanel: boolean, fillsRemainingSpace: boolean): string {
+  if (fillsRemainingSpace || !hasFollowingPanel) return `1 1 ${size}px`
+  return `0 1 ${size + 7}px`
 }

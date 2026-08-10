@@ -1,4 +1,4 @@
-import { createElement, useMemo, type FormEventHandler, type HTMLAttributes, type ReactElement, type ReactNode } from 'react'
+import { createElement, useLayoutEffect, useMemo, type FormEventHandler, type HTMLAttributes, type ReactElement, type ReactNode } from 'react'
 import { PortalResizeHandles, useFloatingPanel } from './floating-panel'
 
 type ModalPlacement = 'center' | 'right'
@@ -10,6 +10,7 @@ interface ModalShellProps extends Omit<HTMLAttributes<HTMLElement>, 'onSubmit'> 
   defaultHeight?: number
   defaultWidth?: number
   fitContent?: boolean
+  fitContentKey?: string
   minHeight?: number
   minWidth?: number
   maxHeight?: number
@@ -43,6 +44,7 @@ export function ModalShell({
   defaultHeight = 360,
   defaultWidth = 420,
   fitContent = true,
+  fitContentKey,
   minHeight = 220,
   minWidth = 300,
   maxHeight = 760,
@@ -52,17 +54,20 @@ export function ModalShell({
   storageKey,
   ...props
 }: ModalShellProps): ReactElement {
-  const layoutMinWidth = className.includes('settings-modal') ? Math.max(minWidth, 620)
-    : className.includes('component-library') ? Math.max(minWidth, 700)
-      : className.includes('outline-modal') ? Math.max(minWidth, 500)
+  const classNames = new Set(className.split(/\s+/).filter(Boolean))
+  const fullSettingsDialog = classNames.has('settings-modal')
+  const effectiveFitContent = fullSettingsDialog ? false : fitContent
+  const layoutMinWidth = fullSettingsDialog ? Math.max(minWidth, 620)
+    : classNames.has('component-library') ? Math.max(minWidth, 700)
+      : classNames.has('outline-modal') ? Math.max(minWidth, 500)
         : minWidth
-  const layoutMinHeight = className.includes('settings-modal') ? Math.max(minHeight, 440)
-    : className.includes('component-library') ? Math.max(minHeight, 500)
-      : className.includes('outline-modal') ? Math.max(minHeight, 400)
+  const layoutMinHeight = fullSettingsDialog ? Math.max(minHeight, 440)
+    : classNames.has('component-library') ? Math.max(minHeight, 500)
+      : classNames.has('outline-modal') ? Math.max(minHeight, 400)
         : minHeight
   const initialPosition = useMemo(
-    () => initialModalPosition(defaultWidth, defaultHeight, placement, fitContent),
-    [defaultHeight, defaultWidth, fitContent, placement]
+    () => initialModalPosition(defaultWidth, defaultHeight, placement, effectiveFitContent),
+    [defaultHeight, defaultWidth, effectiveFitContent, placement]
   )
   const floating = useFloatingPanel(
     initialPosition,
@@ -74,6 +79,9 @@ export function ModalShell({
     false,
     { minWidth: layoutMinWidth, minHeight: layoutMinHeight, maxWidth, maxHeight }
   )
+  useLayoutEffect(() => {
+    if (effectiveFitContent && fitContentKey !== undefined) floating.clearHeight()
+  }, [effectiveFitContent, fitContentKey])
 
   return createElement(as, {
     ...props,

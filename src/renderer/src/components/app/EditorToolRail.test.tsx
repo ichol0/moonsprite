@@ -16,10 +16,10 @@ afterEach(cleanup)
 describe('EditorToolRail', () => {
   it('keeps every child-tool icon mounted for immediate decoding', () => {
     const { container } = render(<EditorToolRail side="left" onGripPointerDown={vi.fn()} />)
-    const preloaded = [...container.querySelectorAll<HTMLImageElement>('.tool-icon-preload img')].map((image) => image.getAttribute('src'))
+    const preloaded = [...container.querySelectorAll<HTMLElement>('.tool-icon-preload .pixel-asset-icon')].map((icon) => icon.style.getPropertyValue('--pixel-icon-source'))
 
     expect(preloaded).toHaveLength(ALL_EDITOR_TOOL_ICONS.length)
-    expect(preloaded).toEqual(expect.arrayContaining(ALL_EDITOR_TOOL_ICONS))
+    expect(preloaded).toEqual(expect.arrayContaining(ALL_EDITOR_TOOL_ICONS.map((source) => `url("${source}")`)))
   })
 
   it('updates the main tool button in the same click that selects a child tool', () => {
@@ -28,11 +28,11 @@ describe('EditorToolRail', () => {
     fireEvent.click(screen.getByRole('button', { name: '矩形框选工具' }))
     fireEvent.click(screen.getByRole('button', { name: '多边形套索工具' }))
     const polygonButton = screen.getByRole('button', { name: '多边形套索工具' })
-    expect(polygonButton.querySelector('img')).toHaveAttribute('src', SELECTION_KIND_ICONS['polygon-lasso'])
+    expect(polygonButton.querySelector('.pixel-asset-icon')).toHaveStyle({ '--pixel-icon-source': `url("${SELECTION_KIND_ICONS['polygon-lasso']}")` })
 
     fireEvent.click(screen.getByRole('button', { name: '矩形填充工具' }))
     fireEvent.click(screen.getByRole('button', { name: '椭圆工具' }))
     const ellipseButton = screen.getByRole('button', { name: '椭圆工具' })
-    expect(ellipseButton.querySelector('img')).toHaveAttribute('src', SHAPE_KIND_DEFINITIONS.find((item) => item.id === 'ellipse-outline')?.icon)
+    expect(ellipseButton.querySelector('.pixel-asset-icon')).toHaveStyle({ '--pixel-icon-source': `url("${SHAPE_KIND_DEFINITIONS.find((item) => item.id === 'ellipse-outline')?.icon}")` })
   })
 })

@@ -1,17 +1,34 @@
-import { ChevronDown, ChevronUp } from 'lucide-react'
 import { useLayoutEffect, useState, type CSSProperties, type InputHTMLAttributes } from 'react'
 import { evaluateNumericExpression } from '@/core/numeric-expression'
+import { useI18n } from './I18nProvider'
+import { PixelUtilityIcon } from './PixelUtilityIcon'
 
 interface NumberInputProps extends Omit<InputHTMLAttributes<HTMLInputElement>, 'type' | 'value' | 'onChange' | 'min' | 'max' | 'step'> {
   value: number | ''
   onValueChange(value: number): void
+  live?: boolean
   min?: number
   max?: number
   step?: number
   suffix?: string
 }
 
-export function NumberInput({ value, onValueChange, min, max, step = 1, suffix, className = '', onFocus, onKeyDown, ...inputProps }: NumberInputProps) {
+const filterNumericExpression = (source: string): string => {
+  let filtered = ''
+  for (const character of source) {
+    if (/[0-9+\-*\/().\s]/.test(character)) {
+      filtered += character
+      continue
+    }
+    if (character !== 'e' && character !== 'E') continue
+    const token = filtered.split(/[+\-*\/()\s]/).at(-1) ?? ''
+    if (/^(?:\d+(?:\.\d*)?|\.\d+)$/.test(token)) filtered += character
+  }
+  return filtered
+}
+
+export function NumberInput({ value, onValueChange, live = false, min, max, step = 1, suffix, className = '', onFocus, onBlur, onKeyDown, ...inputProps }: NumberInputProps) {
+  const { t } = useI18n()
   const [draft, setDraft] = useState(String(value))
   useLayoutEffect(() => setDraft(String(value)), [value])
   const normalize = (next: number): number => {
@@ -27,15 +44,24 @@ export function NumberInput({ value, onValueChange, min, max, step = 1, suffix, 
     setDraft(String(next))
     if (next !== value) onValueChange(next)
   }
+  const updateDraft = (source: string): void => {
+    const nextDraft = filterNumericExpression(source)
+    setDraft(nextDraft)
+    if (!live || !nextDraft.trim()) return
+    const evaluated = evaluateNumericExpression(nextDraft)
+    if (evaluated === null) return
+    const next = normalize(evaluated)
+    if (next !== value) onValueChange(next)
+  }
 
   const control = <span className={`number-input ${suffix ? 'has-suffix' : ''} ${className}`.trim()}>
     <span className="number-input-editor" style={suffix ? { '--number-input-value-chars': Math.max(1, draft.length) } as CSSProperties : undefined}>
-      <input {...inputProps} type="text" inputMode="decimal" role="spinbutton" aria-valuemin={min} aria-valuemax={max} aria-valuenow={typeof value === 'number' ? value : undefined} value={draft} style={inputProps.style} onFocus={onFocus} onChange={(event) => setDraft(event.target.value)} onBlur={commit} onKeyDown={(event) => { onKeyDown?.(event); if (event.defaultPrevented || event.key !== 'Enter') return; event.preventDefault(); const form = event.currentTarget.form; commit(); if (form) window.queueMicrotask(() => form.requestSubmit()); else event.currentTarget.blur() }} />
+      <input {...inputProps} type="text" inputMode="decimal" role="spinbutton" aria-valuemin={min} aria-valuemax={max} aria-valuenow={typeof value === 'number' ? value : undefined} value={draft} style={inputProps.style} onFocus={onFocus} onChange={(event) => updateDraft(event.target.value)} onBlur={(event) => { commit(); onBlur?.(event) }} onKeyDown={(event) => { onKeyDown?.(event); if (event.defaultPrevented || event.key !== 'Enter') return; event.preventDefault(); const form = event.currentTarget.form; commit(); if (form) window.queueMicrotask(() => form.requestSubmit()); else event.currentTarget.blur() }} />
       {suffix && <span className="number-input-suffix" aria-hidden="true">{suffix}</span>}
     </span>
     <span className="number-input-stepper">
-      <button type="button" tabIndex={-1} aria-label="增加数值" disabled={inputProps.disabled} onClick={() => adjust(step)}><ChevronUp size={10} /></button>
-      <button type="button" tabIndex={-1} aria-label="减少数值" disabled={inputProps.disabled} onClick={() => adjust(-step)}><ChevronDown size={10} /></button>
+      <button type="button" tabIndex={-1} aria-label={t('numberInput.increment')} disabled={inputProps.disabled} onClick={() => adjust(step)}><PixelUtilityIcon kind="up" /></button>
+      <button type="button" tabIndex={-1} aria-label={t('numberInput.decrement')} disabled={inputProps.disabled} onClick={() => adjust(-step)}><PixelUtilityIcon kind="down" /></button>
     </span>
   </span>
   return control

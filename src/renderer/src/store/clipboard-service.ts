@@ -24,6 +24,17 @@ export interface LayerClipboard {
   description?: string
   groupKey?: string | null
   pixels: Uint8ClampedArray
+  animationCels?: Array<{
+    frameIndex: number
+    width: number
+    height: number
+    offsetX: number
+    offsetY: number
+    storageOriginX?: number
+    storageOriginY?: number
+    opacity?: number
+    pixels: Uint8ClampedArray
+  }>
 }
 
 export interface LayerGroupClipboard {
@@ -36,10 +47,12 @@ export interface LayerGroupClipboard {
   displayColor?: RasterLayer['displayColor']
   description?: string
   parentKey?: string | null
+  collapsed?: boolean
 }
 
 export interface LayerCollectionClipboard {
   sourceDocumentId?: string
+  animationFrames?: Array<{ duration: number }>
   layers: LayerClipboard[]
   groups: LayerGroupClipboard[]
 }
@@ -58,11 +71,13 @@ const cloneSelectionClipboard = (clipboard: SelectionClipboard): SelectionClipbo
 const cloneLayerClipboard = (clipboard: LayerClipboard): LayerClipboard => ({
   ...clipboard,
   displayColor: clipboard.displayColor ? { ...clipboard.displayColor } : undefined,
-  pixels: clipboard.pixels.slice()
+  pixels: clipboard.pixels.slice(),
+  animationCels: clipboard.animationCels?.map((cel) => ({ ...cel, pixels: cel.pixels.slice() }))
 })
 
 const cloneLayerCollectionClipboard = (clipboard: LayerCollectionClipboard): LayerCollectionClipboard => ({
   sourceDocumentId: clipboard.sourceDocumentId,
+  animationFrames: clipboard.animationFrames?.map((frame) => ({ ...frame })),
   layers: clipboard.layers.map(cloneLayerClipboard),
   groups: clipboard.groups.map((group) => ({ ...group, displayColor: group.displayColor ? { ...group.displayColor } : undefined }))
 })

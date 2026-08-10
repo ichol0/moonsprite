@@ -1,8 +1,9 @@
 import { useEffect, useState, type FormEvent } from 'react'
-import { Lock, LockOpen, X } from 'lucide-react'
 import type { ImageResizeInterpolation } from '@shared/types'
 import { ModalShell } from './ModalShell'
 import { NumberInput } from './NumberInput'
+import { useI18n } from './I18nProvider'
+import { PixelUtilityIcon } from './PixelUtilityIcon'
 
 export function ImageResizeDialog({ open, currentWidth, currentHeight, onClose, onResize }: {
   open: boolean
@@ -11,6 +12,7 @@ export function ImageResizeDialog({ open, currentWidth, currentHeight, onClose, 
   onClose: () => void
   onResize: (width: number, height: number, interpolation: ImageResizeInterpolation) => Promise<void>
 }) {
+  const { t } = useI18n()
   const [width, setWidth] = useState(currentWidth)
   const [height, setHeight] = useState(currentHeight)
   const [widthPercent, setWidthPercent] = useState(100)
@@ -56,31 +58,31 @@ export function ImageResizeDialog({ open, currentWidth, currentHeight, onClose, 
   }
 
   return <div className="modal-backdrop" role="presentation">
-    <ModalShell as="form" storageKey="image-resize-v3" placement="right" defaultWidth={450} defaultHeight={500} minWidth={400} minHeight={430} maxWidth={600} maxHeight={720} className="image-resize-modal" onSubmit={submit} aria-label="调整图像尺寸">
+    <ModalShell as="form" storageKey="image-resize-v3" placement="right" defaultWidth={450} defaultHeight={500} minWidth={400} minHeight={430} maxWidth={600} maxHeight={720} className="image-resize-modal" onSubmit={submit} aria-label={t('imageResize.title')}>
       <header>
-        <div><span className="eyebrow">IMAGE SIZE</span><h2>调整图像尺寸</h2></div>
-        <button type="button" className="icon-button" aria-label="关闭" onClick={onClose}><X size={16} /></button>
+        <div><span className="eyebrow">{t('imageResize.eyebrow')}</span><h2>{t('imageResize.title')}</h2></div>
+        <button type="button" className="icon-button" aria-label={t('common.close')} onClick={onClose}><PixelUtilityIcon kind="close" /></button>
       </header>
       <div className="modal-body image-resize-body">
-        <div className="image-resize-current"><span>当前图像</span><strong>{currentWidth} x {currentHeight} px</strong></div>
+        <div className="image-resize-current"><span>{t('imageResize.current')}</span><strong>{currentWidth} x {currentHeight} px</strong></div>
         <section className="image-resize-section">
-          <div className="image-resize-section-heading"><h3>像素尺寸</h3><small>{locked ? '已锁定长宽比' : '自由调整'}</small></div>
+          <div className="image-resize-section-heading"><h3>{t('imageResize.pixelSize')}</h3><small>{t(locked ? 'imageResize.locked' : 'imageResize.free')}</small></div>
           <div className="image-resize-fields">
-            <label><span>宽</span><div className="image-resize-input"><NumberInput aria-label="图像宽度" min={1} max={16384} value={width} onValueChange={updateWidth} /><small>px</small></div></label>
-            <button type="button" className="image-resize-lock" aria-label={locked ? '解除锁定长宽比' : '锁定长宽比'} title={locked ? '解除锁定长宽比' : '锁定长宽比'} onClick={() => setLocked((value) => !value)}>{locked ? <Lock size={15} /> : <LockOpen size={15} />}</button>
-            <label><span>高</span><div className="image-resize-input"><NumberInput aria-label="图像高度" min={1} max={16384} value={height} onValueChange={updateHeight} /><small>px</small></div></label>
+            <label><span>{t('common.width')}</span><div className="image-resize-input"><NumberInput autoFocus onFocus={(event) => event.currentTarget.select()} aria-label={t('newDocument.widthAria')} min={1} max={16384} value={width} onValueChange={updateWidth} /><small>px</small></div></label>
+            <button type="button" className="image-resize-lock" aria-label={t(locked ? 'imageResize.unlockRatio' : 'imageResize.lockRatio')} title={t(locked ? 'imageResize.unlockRatio' : 'imageResize.lockRatio')} onClick={() => setLocked((value) => !value)}>{locked ? <PixelUtilityIcon kind="lock" /> : <PixelUtilityIcon kind="unlock" />}</button>
+            <label><span>{t('common.height')}</span><div className="image-resize-input"><NumberInput aria-label={t('newDocument.heightAria')} min={1} max={16384} value={height} onValueChange={updateHeight} /><small>px</small></div></label>
           </div>
         </section>
         <section className="image-resize-section">
-          <div className="image-resize-section-heading"><h3>按比例缩放</h3><small>相对于当前图像</small></div>
+          <div className="image-resize-section-heading"><h3>{t('imageResize.scale')}</h3><small>{t('imageResize.relative')}</small></div>
           <div className="image-resize-percent-fields">
-            <label><span>宽</span><div className="image-resize-input"><NumberInput aria-label="图像宽度百分比" min={1} max={6400} value={widthPercent} onValueChange={updateWidthPercent} /><small>%</small></div></label>
-            <label><span>高</span><div className="image-resize-input"><NumberInput aria-label="图像高度百分比" min={1} max={6400} value={heightPercent} onValueChange={updateHeightPercent} /><small>%</small></div></label>
+            <label><span>{t('common.width')}</span><div className="image-resize-input"><NumberInput aria-label={t('imageResize.widthPercentAria')} min={1} max={6400} value={widthPercent} onValueChange={updateWidthPercent} /><small>%</small></div></label>
+            <label><span>{t('common.height')}</span><div className="image-resize-input"><NumberInput aria-label={t('imageResize.heightPercentAria')} min={1} max={6400} value={heightPercent} onValueChange={updateHeightPercent} /><small>%</small></div></label>
           </div>
         </section>
-        <label className="image-resize-interpolation"><span>插值算法</span><select value={interpolation} onChange={(event) => setInterpolation(event.target.value as ImageResizeInterpolation)}><option value="nearest">最近邻（像素）</option><option value="smooth">平滑（双线性）</option></select></label>
+        <label className="image-resize-interpolation"><span>{t('imageResize.interpolation')}</span><select value={interpolation} onChange={(event) => setInterpolation(event.target.value as ImageResizeInterpolation)}><option value="nearest">{t('imageResize.nearest')}</option><option value="smooth">{t('imageResize.smooth')}</option></select></label>
       </div>
-      <footer><button type="button" className="quiet-button" onClick={onClose}>取消</button><button className="primary-button" type="submit">完成</button></footer>
+      <footer><button type="button" className="quiet-button" onClick={onClose}>{t('common.cancel')}</button><button className="primary-button" type="submit">{t('common.done')}</button></footer>
     </ModalShell>
   </div>
 }

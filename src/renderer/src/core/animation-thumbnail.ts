@@ -1,0 +1,185 @@
+import type { AnimationCelSurface, PaletteEntry } from '@shared/types'
+
+export interface AnimationThumbnailRect { x: number; y: number; width: number; height: number }
+
+export interface AnimationCelThumbnailLayout {
+  canvas: AnimationThumbnailRect
+  surface: AnimationThumbnailRect
+  content: AnimationThumbnailRect
+}
+
+const thumbnailBackground = { r: 201, g: 206, b: 214 }
+const thumbnailChecker = { r: 143, g: 150, b: 161 }
+
+const clampUnit = (value: number): number => Math.max(0, Math.min(1, value))
+
+const fillThumbnailBackground = (pixels: Uint8ClampedArray, size: number): void => {
+  const checkerSize = Math.max(2, Math.round(size / 8))
+  for (let y = 0; y < size; y += 1) for (let x = 0; x < size; x += 1) {
+    const checker = Math.floor(x / checkerSize) + Math.floor(y / checkerSize)
+    const color = checker % 2 === 0 ? thumbnailChecker : thumbnailBackground
+    const index = (y * size + x) * 4
+    pixels[index] = color.r
+    pixels[index + 1] = color.g
+    pixels[index + 2] = color.b
+    pixels[index + 3] = 255
+  }
+}
+
+const blendThumbnailPixel = (pixels: Uint8ClampedArray, index: number, r: number, g: number, b: number, alpha: number): void => {
+  const sourceAlpha = clampUnit(alpha)
+  if (sourceAlpha <= 0) return
+  if (sourceAlpha >= 1) {
+    pixels[index] = r
+    pixels[index + 1] = g
+    pixels[index + 2] = b
+    pixels[index + 3] = 255
+    return
+  }
+  const inverse = 1 - sourceAlpha
+  pixels[index] = Math.round(r * sourceAlpha + pixels[index] * inverse)
+  pixels[index + 1] = Math.round(g * sourceAlpha + pixels[index + 1] * inverse)
+  pixels[index + 2] = Math.round(b * sourceAlpha + pixels[index + 2] * inverse)
+  pixels[index + 3] = 255
+}
+
+/** Quantize pixel-art preview scale so every source pixel gets the same size. */
+export const pixelPerfectThumbnailScale = (scale: number): number => {
+  if (!Number.isFinite(scale) || scale <= 0) return 1
+  return scale >= 1 ? Math.max(1, Math.floor(scale)) : 1 / Math.ceil(1 / scale)
+}
+
+export const animationCelContentBounds = (
+  surface: AnimationCelSurface,
+  palette: readonly PaletteEntry[] = []
+): AnimationThumbnailRect | null => {
+  const opaqueIds = surface.format === 'indexed' && palette.length > 0
+    ? new Set(palette.filter((entry) => entry.color.a > 0).map((entry) => entry.id))
+    : null
+  let minX = surface.width
+  let minY = surface.height
+  let maxX = -1
+  let maxY = -1
+  for (let y = 0; y < surface.height; y += 1) for (let x = 0; x < surface.width; x += 1) {
+    const index = y * surface.width + x
+    const visible = surface.format === 'rgba'
+      ? surface.pixels[index * 4 + 3] > 0
+      : opaqueIds ? opaqueIds.has(surface.pixels[index]) : surface.pixels[index] !== 0
+    if (!visible) continue
+    minX = Math.min(minX, x)
+    minY = Math.min(minY, y)
+    maxX = Math.max(maxX, x)
+    maxY = Math.max(maxY, y)
+  }
+  return maxX < minX || maxY < minY ? null : { x: minX, y: minY, width: maxX - minX + 1, height: maxY - minY + 1 }
+}
+
+/** Fits document-space cel geometry into a square thumbnail without cropping to painted pixels. */
+export const animationCelThumbnailLayout = (
+  documentWidth: number,
+  documentHeight: number,
+  thumbnailSize: number,
+  surface: AnimationCelSurface,
+  contentBounds: AnimationThumbnailRect | null = null
+): AnimationCelThumbnailLayout => {
+  const safeWidth = Math.max(1, documentWidth)
+  const safeHeight = Math.max(1, documentHeight)
+  const safeSize = Math.max(1, thumbnailSize)
+  const fitScale = Math.min(safeSize / safeWidth, safeSize / safeHeight)
+  const contentPadding = Math.min(6, Math.max(2, safeSize / 10))
+  const contentScale = contentBounds
+    ? Math.min((safeSize - contentPadding * 2) / Math.max(1, contentBounds.width), (safeSize - contentPadding * 2) / Math.max(1, contentBounds.height))
+    : fitScale
+  const scale = pixelPerfectThumbnailScale(Math.max(fitScale, contentScale))
+  const centerX = contentBounds ? surface.offsetX + contentBounds.x + contentBounds.width / 2 : safeWidth / 2
+  const centerY = contentBounds ? surface.offsetY + contentBounds.y + contentBounds.height / 2 : safeHeight / 2
+  const canvas = {
+    x: safeSize / 2 - centerX * scale,
+    y: safeSize / 2 - centerY * scale,
+    width: safeWidth * scale,
+    height: safeHeight * scale
+  }
+  const surfaceRect = {
+    x: canvas.x + surface.offsetX * scale,
+    y: canvas.y + surface.offsetY * scale,
+    width: surface.width * scale,
+    height: surface.height * scale
+  }
+  const content = contentBounds ? {
+    x: surfaceRect.x + contentBounds.x * scale,
+    y: surfaceRect.y + contentBounds.y * scale,
+    width: contentBounds.width * scale,
+    height: contentBounds.height * scale
+  } : { ...canvas }
+  return {
+    canvas,
+    surface: surfaceRect,
+    content
+  }
+}
+
+/**
+ * Render a cel into a fixed-size thumbnail without allocating a source canvas.
+ * Sampling the final pixels keeps enlarged layer views reliable for large and
+ * offset cels, where an intermediate browser canvas can fail or be clipped.
+ */
+export const renderAnimationCelThumbnailPixels = (
+  documentWidth: number,
+  documentHeight: number,
+  thumbnailSize: number,
+  surface: AnimationCelSurface,
+  palette: readonly PaletteEntry[] = [],
+  opacity = 1
+): Uint8ClampedArray => {
+  const size = Math.max(1, Math.trunc(thumbnailSize))
+  const output = new Uint8ClampedArray(size * size * 4)
+  fillThumbnailBackground(output, size)
+
+  const width = Math.trunc(surface.width)
+  const height = Math.trunc(surface.height)
+  const expectedPixels = surface.format === 'rgba' ? width * height * 4 : width * height
+  if (!Number.isSafeInteger(width) || !Number.isSafeInteger(height) || width < 1 || height < 1 || !Number.isSafeInteger(expectedPixels) || surface.pixels.length < expectedPixels) return output
+
+  const contentBounds = animationCelContentBounds(surface, palette)
+  const layout = animationCelThumbnailLayout(documentWidth, documentHeight, size, surface, contentBounds)
+  const scale = layout.canvas.width / Math.max(1, documentWidth)
+  if (!Number.isFinite(scale) || scale <= 0) return output
+  const paletteById = new Map(palette.map((entry) => [entry.id, entry.color]))
+  const celOpacity = clampUnit(Number.isFinite(opacity) ? opacity : 1)
+  const offsetX = Math.trunc(surface.offsetX)
+  const offsetY = Math.trunc(surface.offsetY)
+  const canvasWidth = Math.max(1, Math.trunc(documentWidth))
+  const canvasHeight = Math.max(1, Math.trunc(documentHeight))
+
+  for (let y = 0; y < size; y += 1) for (let x = 0; x < size; x += 1) {
+    const canvasX = (x + 0.5 - layout.canvas.x) / scale
+    const canvasY = (y + 0.5 - layout.canvas.y) / scale
+    if (canvasX < 0 || canvasY < 0 || canvasX >= canvasWidth || canvasY >= canvasHeight) continue
+    const sourceX = Math.floor(canvasX - offsetX)
+    const sourceY = Math.floor(canvasY - offsetY)
+    if (sourceX < 0 || sourceY < 0 || sourceX >= width || sourceY >= height) continue
+
+    let r = 0
+    let g = 0
+    let b = 0
+    let alpha = 0
+    if (surface.format === 'rgba') {
+      const sourceIndex = (sourceY * width + sourceX) * 4
+      r = surface.pixels[sourceIndex]
+      g = surface.pixels[sourceIndex + 1]
+      b = surface.pixels[sourceIndex + 2]
+      alpha = surface.pixels[sourceIndex + 3] / 255
+    } else {
+      const color = paletteById.get(surface.pixels[sourceY * width + sourceX])
+      if (color) {
+        r = color.r
+        g = color.g
+        b = color.b
+        alpha = color.a / 255
+      }
+    }
+    const targetIndex = (y * size + x) * 4
+    blendThumbnailPixel(output, targetIndex, r, g, b, alpha * celOpacity)
+  }
+  return output
+}

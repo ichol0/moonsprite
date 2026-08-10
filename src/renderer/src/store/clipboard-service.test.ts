@@ -56,12 +56,13 @@ describe('ClipboardService', () => {
     const pixels = new Uint8ClampedArray([255, 0, 0, 255])
     service.setLayers({
       layers: [{ name: 'top', width: 1, height: 1, offsetX: 3, offsetY: -2, visible: true, locked: false, opacity: 0.5, blendMode: 'multiply', description: 'note', displayColor: { r: 1, g: 2, b: 3, a: 255 }, groupKey: 'group-a', pixels }],
-      groups: [{ key: 'group-a', name: 'group', visible: true, locked: false, opacity: 1, blendMode: 'normal', parentKey: null }]
+      groups: [{ key: 'group-a', name: 'group', visible: true, locked: false, opacity: 1, blendMode: 'normal', parentKey: null, collapsed: true }]
     })
     pixels[0] = 0
 
     const copied = service.getLayers()
     expect(copied?.layers[0].pixels[0]).toBe(255)
+    expect(copied?.groups[0].collapsed).toBe(true)
     copied!.layers[0].pixels[0] = 0
     expect(service.getLayers()?.layers[0].pixels[0]).toBe(255)
   })

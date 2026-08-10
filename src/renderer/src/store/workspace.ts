@@ -1,32 +1,37 @@
 import { create } from 'zustand'
-import type { BlendMode, BrushPaintMode, BrushShape, BrushTexture, CanvasAnchor, ColorMode, FillMode, ImageBrush, ImageBrushSettings, ImageResizeInterpolation, LayerGroup, OutlineDirections, OutlineKernel, OutlinePosition, ProceduralBrushId, ProceduralBrushSettings, RasterLayer, RecoveryRecord, RgbaColor, SelectionKind, SelectionMask, SelectionMode, SelectionRect, ShapeKind, ShapeRatio, SpriteDocument, ToolId, ViewState } from '@shared/types'
+import type { AnimationCel, BlendMode, BrushPaintMode, BrushShape, BrushTexture, CanvasAnchor, ColorMode, FillKind, FillMode, GradientDither, ImageBrush, ImageBrushSettings, ImageResizeInterpolation, LayerGroup, OutlineDirections, OutlineKernel, OutlinePosition, ProceduralBrushId, ProceduralBrushSettings, RasterLayer, RecoveryRecord, RgbaColor, SelectionKind, SelectionMask, SelectionMode, SelectionRect, ShapeKind, ShapeRatio, SpriteDocument, TimelapseSettings, TimelapseVideoFormat, ToolId, ViewState } from '@shared/types'
 import { checkResourceLimit } from '@/core/resource-policy'
 import { beginPixelEdit, commitPixelEdit, HistoryStack, recordPixel, revertPixelEdit, type HistoryEntry, type PixelEdit } from '@/core/history'
 import { convertDocumentColorMode, createDocument, createId, createLayer, duplicateLayer, findOrAddPaletteColor, getDescendantGroupIds, getGroup, getGroupLockingAncestor, getLayerIdsInGroup, getLayer, getActiveLayer, getLayerLockingGroup, isGroupEffectivelyLocked, isLayerEffectivelyLocked, isLayerEffectivelyVisible, layerContentBounds, readLayerColor, readLayerColorAt, resizeDocumentAt, resizeDocumentImage, writeLayerColor } from '@/core/document'
 import { decodeProject, encodeProject } from '@/core/project-format'
+import { activateAnimationFrame, addBlankAnimationFrame, animationCelKey, cloneAnimationCel, cloneAnimationCelSurface, cloneAnimationCelsForLayer, connectAnimationCels, deleteAnimationFrame, disconnectAnimationCels, duplicateAnimationFrame, ensureAnimationDocument, mapAnimationCelBlock, nextAnimationFrameId, parseAnimationCelKey, refreshActiveAnimationFrame, removeAnimationCelsForLayers, resolveAnimationCel, resizeAnimationCelsAt, restoreAnimationCels, setAnimationFrameDuration, setAnimationLoop, syncActiveAnimationFrame } from '@/core/animation'
 import { flushViewPreview } from '@/core/view-preview-lifecycle'
 import { fileNameFromPath } from '@/core/document-files'
 import { createSelectionBrush } from '@/core/brushes'
-import { applySelectionTransform, clampSelection, clearSelection, fillSelectionOrCanvas, flipLayer, flipSelection, moveSelection, outlineSelection, transformSelectionCopy, type SelectionTransformSource } from '@/core/tools'
+import { applySelectionTransform, clampSelection, clearSelection, fillSelectionOrCanvas, flipLayer, flipSelection, flipSelectionTransformSource, moveSelection, outlineSelection, transformSelectionCopy, type SelectionTransformSource } from '@/core/tools'
 import { colorEquals, packColor, pixelIndex, unpackColor } from '@/core/raster'
 import { flipSelectionMask, invertSelectionMask, selectionContains, shiftSelection } from '@/core/selection'
 import { recordRecentProject } from '@/core/home-history'
 import { createProceduralBrush, isProceduralBrushId, normalizeProceduralBrushSettings, PROCEDURAL_BRUSH_IDS } from '@/core/brushes'
 import { mergeLayerDown, mergeLayerGroup, mergeRasterLayers, mergeVisibleLayers as mergeVisibleDocumentLayers, type LayerMergeSuccess } from '@/core/layer-merge'
 import { applyColorAdjustment, type ColorAdjustment } from '@/core/adjustments'
-import { assignGroupToGroup as assignGroupToGroupOperation, assignGroupToRoot as assignGroupToRootOperation, assignLayersAboveGroup as assignLayersAboveGroupOperation, assignLayersToGroup as assignLayersToGroupOperation, assignLayersToRoot as assignLayersToRootOperation, canMoveGroupInto, createLayerGroup as createLayerGroupOperation, moveGroupToRootEdge as moveGroupToRootEdgeOperation, moveLayersToRootEdge as moveLayersToRootEdgeOperation, positionGroupNextToLayer as positionGroupNextToLayerOperation, reorderGroup as reorderGroupOperation, reorderLayers as reorderLayersOperation, ungroupSelected as ungroupSelectedOperation } from '@/core/layer-operations'
+import { assignGroupToGroup as assignGroupToGroupOperation, assignGroupToRoot as assignGroupToRootOperation, assignLayersAboveGroup as assignLayersAboveGroupOperation, assignLayersToGroup as assignLayersToGroupOperation, assignLayersToRoot as assignLayersToRootOperation, canMoveGroupInto, createLayerGroup as createLayerGroupOperation, moveGroupToRootEdge as moveGroupToRootEdgeOperation, moveLayerPanelRows as moveLayerPanelRowsOperation, moveLayersToRootEdge as moveLayersToRootEdgeOperation, positionGroupNextToLayer as positionGroupNextToLayerOperation, reorderGroup as reorderGroupOperation, reorderLayers as reorderLayersOperation, ungroupSelected as ungroupSelectedOperation, type LayerPanelRowMoveTarget } from '@/core/layer-operations'
 import { buildLayerPanelTree } from '@/core/layer-panel-layout'
 import { loadEditorPreferences, SAVE_FORMAT_PREFERENCE_KEY, saveImageKindForPreference } from '@/core/file-preferences'
+import { normalizeProjectDisplaySettings, normalizeProjectStatistics, normalizeTimelapseSettings } from '@/core/project-metadata'
+import { captureTimelapseSnapshot, createTimelapseCaptureCache, type TimelapseCaptureCache, type TimelapseExportOptions } from '@/core/timelapse'
+import { translate, type TranslationKey, type TranslationParams } from '@/core/localization'
 import { resolveClipboardPlacement } from '@/core/clipboard-placement'
 import { cloneProceduralSettings, defaultToolSettings, loadToolSettings, normalizePersistedBrushProfile, saveToolSettings, type BrushTool, type PersistedBrushProfile, type PersistedToolSettings } from '@/core/tool-preferences'
 import { readStoredString } from '@/core/storage'
-import { exportDocumentFile, openDocumentFile, saveDocumentFile, type ExportOptions, type SaveAsOptions } from './document-file-service'
+import { moveSymmetryCenter, type SymmetryAxes, type SymmetryCenter } from '@/core/symmetry'
+import { exportDocumentFile, exportTimelapseFile, openDocumentFile, saveDocumentFile, type ExportOptions, type SaveAsOptions } from './document-file-service'
 import { RecoveryService } from './recovery-service'
 import { ClipboardService, selectionClipboardImage, type LayerClipboard, type LayerCollectionClipboard } from './clipboard-service'
 import { captureAdjustmentSnapshot, captureLayerUi, commitLayerMerge, restoreAdjustmentSnapshot, restoreDocumentSnapshot } from './workspace-history'
 import { applyBrushProfile, brushProfileFromSession, clearSelectionBrushPaintColors, cloneSelectionMask, isBrushTool, persistToolSettings, remapSelectionBrushColors, rememberBrushProfile, sessionFromDocument, touch } from './workspace-session'
-import { addPaletteColor as addPaletteColorCommand, applyPalette as applyPaletteCommand, deletePaletteColors as deletePaletteColorsCommand, movePaletteColor as movePaletteColorCommand, reorderPaletteColors as reorderPaletteColorsCommand, selectPaletteColor as selectPaletteColorCommand } from './workspace-palette'
-import type { AdjustmentSnapshot, AppDialog, CanvasResizePreview, DocumentSession, OutlinePreview } from './workspace-types'
+import { addPaletteColor as addPaletteColorCommand, applyPalette as applyPaletteCommand, deletePaletteColors as deletePaletteColorsCommand, movePaletteColor as movePaletteColorCommand, reorderPaletteColors as reorderPaletteColorsCommand, selectPaletteColor as selectPaletteColorCommand, updatePaletteColor as updatePaletteColorCommand } from './workspace-palette'
+import type { AdjustmentSnapshot, AnimationFrameClipboardItem, AppDialog, CanvasResizePreview, DocumentSession, OutlinePreview } from './workspace-types'
 
 export type { ExportOptions, SaveAsOptions } from './document-file-service'
 export type { AdjustmentSnapshot, AppDialog, CanvasResizePreview, DialogChoice, DocumentSession, FloatingPaste, OutlinePreview } from './workspace-types'
@@ -37,11 +42,12 @@ interface WorkspaceState {
   sharedPrimaryColor: RgbaColor
   sharedSecondaryColor: RgbaColor
   message: string | null
-  saveProgress: { title: string; value: number; label: string } | null
+  saveProgress: { title: string; value: number; label: string; requiresConfirmation?: boolean } | null
   dialog: AppDialog | null
   recoveryRecords: RecoveryRecord[]
   newDocument(name: string, width: number, height: number, colorMode: ColorMode): Promise<void>
   addSession(document: SpriteDocument): void
+  reorderSessions(documentIds: string[]): void
   setActive(id: string): void
   setTool(tool: ToolId): void
   setBrushSize(size: number): void
@@ -60,12 +66,17 @@ interface WorkspaceState {
   setShapeKind(kind: ShapeKind): void
   setShapeRatio(ratio: ShapeRatio | null): void
   setFillMode(mode: FillMode): void
+  setFillKind(kind: FillKind): void
+  setGradientDither(dither: GradientDither): void
   setMoveAutoSelect(enabled: boolean): void
   setPrimaryColor(color: RgbaColor): void
   setSecondaryColor(color: RgbaColor): void
+  selectSecondaryPaletteColor(id: number): void
   swapPrimarySecondaryColors(): void
   setView(view: Partial<ViewState>): void
+  setViewForDocument(documentId: string, view: Partial<ViewState>): void
   setViewportSize(size: { width: number; height: number }): void
+  setViewportSizeForDocument(documentId: string, size: { width: number; height: number }): void
   setSelection(selection: SelectionMask | null): void
   invertSelection(): void
   toggleSelectionOutline(): void
@@ -76,25 +87,58 @@ interface WorkspaceState {
   setWandTolerance(tolerance: number): void
   setWandContiguous(contiguous: boolean): void
   setPerfectPixels(enabled: boolean): void
+  setSymmetryAxis(axis: keyof SymmetryAxes, enabled: boolean): void
+  setSymmetryCenter(center: SymmetryCenter): void
+  resetSymmetryCenter(): void
   setLastPencilPoint(point: { x: number; y: number } | null): void
   setLastEraserPoint(point: { x: number; y: number } | null): void
   setCanvasResizePreview(preview: CanvasResizePreview | null): void
+  togglePixelGrid(): void
   toggleGrid(): void
   selectPaletteColor(id: number, additive?: boolean): void
-  addPaletteColor(): void
+  addPaletteColor(color?: RgbaColor): void
+  updatePaletteColor(id: number, color: RgbaColor): void
   applyPalette(colors: RgbaColor[]): void
   deletePaletteColor(id: number): void
   deletePaletteColors(ids: number[]): void
   movePaletteColor(direction: -1 | 1): void
   reorderPaletteColors(ids: number[], targetId: number, insertAfter?: boolean): void
   mutateActive(mutator: (session: DocumentSession) => void, dirty?: boolean): void
-  commitPixelEdit(edit: PixelEdit, label: string): void
+  commitPixelEdit(edit: PixelEdit, label: string, activity?: { stroke?: boolean; durationMs?: number }): void
+  setTimelapseSettings(settings: Partial<Omit<TimelapseSettings, 'snapshots'>>): void
+  clearTimelapse(): void
+  exportTimelapse(format: TimelapseVideoFormat, options: TimelapseExportOptions): Promise<boolean>
   pushHistory(entry: HistoryEntry): void
   undo(): void
   redo(): void
+  setActiveAnimationFrame(frameId: string): void
+  stepAnimationFrame(delta: number): void
+  selectAnimationFrame(frameId: string, mode?: 'replace' | 'toggle' | 'range'): void
+  selectAnimationCell(key: string, mode?: 'replace' | 'toggle' | 'range'): void
+  clearAnimationSelection(): void
+  setAnimationCelOpacity(layerId: string, frameId: string, opacity: number): void
+  connectSelectedAnimationCels(): void
+  disconnectSelectedAnimationCels(): void
+  copySelectedAnimationCels(): void
+  pasteAnimationCels(): void
+  moveSelectedAnimationCels(layerId: string, frameId: string, sourceAnchorKey: string): void
+  copySelectedAnimationFrames(): void
+  pasteAnimationFrames(): void
+  moveSelectedAnimationFrames(targetFrameId: string, insertAfter: boolean): void
+  deleteSelectedAnimationItems(): void
+  setAnimationPlaying(playing: boolean, completed?: boolean): void
+  setAnimationPlaybackRate(rate: number): void
+  setAnimationReturnToStart(enabled: boolean): void
+  advanceAnimationFrame(): void
+  addAnimationFrame(): void
+  duplicateAnimationFrame(): void
+  deleteAnimationFrame(): void
+  setActiveAnimationFrameDuration(duration: number): void
+  setAnimationLoop(loop: boolean): void
   addLayer(): Promise<void>
   duplicateActiveLayer(): void
   duplicateLayers(layerIds: string[]): string[]
+  duplicateSelectedLayerRows(): { layerIds: string[]; groupIds: string[] }
   deleteActiveLayer(): void
   deleteSelectedLayers(): void
   mergeSelectedLayers(): void
@@ -115,9 +159,11 @@ interface WorkspaceState {
   assignGroupToRoot(groupId: string): void
   moveLayersToRootEdge(layerIds: string[], edge: 'top' | 'bottom'): void
   moveGroupToRootEdge(groupId: string, edge: 'top' | 'bottom'): void
+  moveLayerRows(layerIds: string[], groupIds: string[], target: LayerPanelRowMoveTarget): void
   createLayerGroup(): void
   ungroupSelected(): void
   selectGroup(groupId: string, mode?: boolean | 'replace' | 'toggle' | 'range'): void
+  selectLayerRows(layerIds: string[], groupIds: string[]): void
   clearLayerSelection(): void
   toggleGroupCollapsed(groupId: string): void
   toggleGroupVisibility(groupId: string): void
@@ -130,7 +176,7 @@ interface WorkspaceState {
   setLayerPropertiesWithBlend(layerId: string, name: string, opacity: number, blendMode: BlendMode, locked?: boolean, displayColor?: RgbaColor | null, description?: string): void
   applyActiveLayerAdjustment(adjustment: ColorAdjustment): void
   captureActiveLayerAdjustmentSnapshot(): AdjustmentSnapshot | null
-  previewActiveLayerAdjustment(adjustment: ColorAdjustment, baseline: AdjustmentSnapshot): void
+  previewActiveLayerAdjustment(adjustment: ColorAdjustment, baseline: AdjustmentSnapshot, selection?: SelectionMask | null): void
   restoreActiveDocumentSnapshot(snapshot: AdjustmentSnapshot): void
   applyActiveLayerAdjustmentFromSnapshot(adjustment: ColorAdjustment, baseline: AdjustmentSnapshot): void
   deleteSelection(): void
@@ -175,6 +221,105 @@ interface WorkspaceState {
 
 function activeSession(state: WorkspaceState): DocumentSession | null {
   return state.sessions.find((session) => session.document.id === state.activeId) ?? null
+}
+
+const TIMELAPSE_CAPTURE_IDLE_MS = 300
+const TIMELAPSE_CAPTURE_MIN_INTERVAL_MS = 1000
+const TIMELAPSE_CAPTURE_MAX_WAIT_MS = 1200
+interface PendingTimelapseCapture { timer: number; idleCallback?: number }
+const pendingTimelapseCaptures = new Map<string, PendingTimelapseCapture>()
+const timelapseCaptureCaches = new WeakMap<SpriteDocument, TimelapseCaptureCache>()
+
+const captureCacheFor = (document: SpriteDocument): TimelapseCaptureCache => {
+  const cached = timelapseCaptureCaches.get(document)
+  if (cached) return cached
+  const created = createTimelapseCaptureCache()
+  timelapseCaptureCaches.set(document, created)
+  return created
+}
+
+const cancelTimelapseCapture = (documentId: string): void => {
+  const pending = pendingTimelapseCaptures.get(documentId)
+  if (pending) {
+    window.clearTimeout(pending.timer)
+    if (pending.idleCallback !== undefined && typeof window.cancelIdleCallback === 'function') window.cancelIdleCallback(pending.idleCallback)
+  }
+  pendingTimelapseCaptures.delete(documentId)
+}
+
+const scheduleTimelapseCapture = (session: DocumentSession): void => {
+  const settings = normalizeTimelapseSettings(session.document.timelapse, session.document.timelapse?.snapshots ?? [])
+  session.document.timelapse = settings
+  cancelTimelapseCapture(session.document.id)
+  if (!settings.enabled) return
+  const document = session.document
+  const lastSnapshotAt = settings.snapshots.at(-1)?.capturedAt ?? 0
+  const elapsedSinceLastSnapshot = lastSnapshotAt > 0 ? Math.max(0, Date.now() - lastSnapshotAt) : Number.POSITIVE_INFINITY
+  const captureDelay = Math.max(TIMELAPSE_CAPTURE_IDLE_MS, TIMELAPSE_CAPTURE_MIN_INTERVAL_MS - elapsedSinceLastSnapshot)
+  const pending: PendingTimelapseCapture = { timer: 0 }
+  const capture = (): void => {
+    if (pendingTimelapseCaptures.get(document.id) !== pending) return
+    pendingTimelapseCaptures.delete(document.id)
+    const current = useWorkspace.getState().sessions.find((candidate) => candidate.document === document)
+    if (!current || !normalizeTimelapseSettings(document.timelapse, document.timelapse?.snapshots ?? []).enabled) return
+    if (current.animationPlaying) {
+      scheduleTimelapseCapture(current)
+      return
+    }
+    captureTimelapseSnapshot(document, Date.now(), {
+      cache: captureCacheFor(document),
+      contentRevision: current.contentRevision,
+      contentInvalidation: current.contentInvalidation
+    })
+    useWorkspace.setState({ sessions: [...useWorkspace.getState().sessions] })
+  }
+  pending.timer = window.setTimeout(() => {
+    if (pendingTimelapseCaptures.get(document.id) !== pending) return
+    if (typeof window.requestIdleCallback === 'function') pending.idleCallback = window.requestIdleCallback(capture, { timeout: TIMELAPSE_CAPTURE_MAX_WAIT_MS })
+    else capture()
+  }, captureDelay)
+  pendingTimelapseCaptures.set(document.id, pending)
+}
+
+const flushTimelapseCapture = (session: DocumentSession): void => {
+  if (!pendingTimelapseCaptures.has(session.document.id) || session.animationPlaying) return
+  cancelTimelapseCapture(session.document.id)
+  if (normalizeTimelapseSettings(session.document.timelapse, session.document.timelapse?.snapshots ?? []).enabled) {
+    captureTimelapseSnapshot(session.document, Date.now(), {
+      cache: captureCacheFor(session.document),
+      contentRevision: session.contentRevision,
+      contentInvalidation: session.contentInvalidation
+    })
+  }
+}
+
+const recordDocumentOperation = (session: DocumentSession, activity?: { stroke?: boolean; durationMs?: number }): void => {
+  const statistics = normalizeProjectStatistics(session.document.statistics)
+  statistics.operationCount += 1
+  if (activity?.stroke) statistics.strokeCount += 1
+  if (activity?.durationMs) statistics.drawingTimeMs += Math.max(0, Math.round(activity.durationMs))
+  session.document.statistics = statistics
+  scheduleTimelapseCapture(session)
+}
+
+const persistDisplaySettings = (session: DocumentSession, view: Partial<ViewState>): boolean => {
+  if (!('showPixelGrid' in view) && !('showGrid' in view) && !('grid' in view)) return false
+  const current = normalizeProjectDisplaySettings(session.document.displaySettings)
+  session.document.displaySettings = normalizeProjectDisplaySettings({
+    ...current,
+    ...('showPixelGrid' in view ? { showPixelGrid: view.showPixelGrid } : {}),
+    ...('showGrid' in view ? { showGrid: view.showGrid } : {}),
+    ...('grid' in view ? { grid: view.grid } : {})
+  })
+  return true
+}
+
+const cloneAnimationCelsForLayerIds = (document: SpriteDocument, layerIds: readonly string[], frameId?: string): AnimationCel[] => {
+  syncActiveAnimationFrame(document)
+  const ids = new Set(layerIds)
+  return ensureAnimationDocument(document).cels
+    .filter((cel) => ids.has(cel.layerId) && (!frameId || cel.frameId === frameId))
+    .map((cel) => ({ ...cel, surface: cel.surface ? cloneAnimationCelSurface(cel.surface) : undefined }))
 }
 
 type LayerRowSelectionMode = boolean | 'replace' | 'toggle' | 'range'
@@ -235,6 +380,23 @@ const targetContainerTopIndex = (document: SpriteDocument, groupId: string | nul
   return document.layers.reduce((last, layer, index) => members.has(layer.id) ? index + 1 : last, 0)
 }
 
+const selectedRowInsertionTarget = (session: DocumentSession): LayerPanelRowMoveTarget => {
+  const selectedGroups = new Set(selectedGroupRows(session))
+  const selectedLayers = new Set(selectedDirectLayerRows(session))
+  const row = buildLayerPanelTree({ layers: session.document.layers, groups: session.document.groups })
+    .find((node) => node.kind === 'group' ? selectedGroups.has(node.id) : selectedLayers.has(node.id))
+  return row
+    ? { kind: 'row', rowKind: row.kind, id: row.id, position: 'above' }
+    : { kind: 'edge', edge: 'top' }
+}
+
+const insertionTargetParent = (document: SpriteDocument, target: LayerPanelRowMoveTarget): string | null => {
+  if (target.kind !== 'row' || !target.id || !target.rowKind) return null
+  return target.rowKind === 'group'
+    ? document.groups.find((group) => group.id === target.id)?.parentGroupId ?? null
+    : document.layers.find((layer) => layer.id === target.id)?.groupId ?? null
+}
+
 const lockedLayerStructure = (document: SpriteDocument, layerIds: readonly string[]): boolean =>
   document.layers.some((layer) => layerIds.includes(layer.id) && isLayerEffectivelyLocked(document, layer))
 
@@ -247,6 +409,9 @@ const lockedGroupStructure = (document: SpriteDocument, groupId: string): boolea
 const recoveryService = new RecoveryService()
 const clipboardService = new ClipboardService()
 
+const tr = (key: TranslationKey, params?: TranslationParams): string => translate(loadEditorPreferences().language, key, params)
+const paletteEditSynchronizationLocked = (): boolean => readStoredString('moonsprite.palette-edit-locked') !== 'false'
+
 function layerClipboardFromDocument(document: SpriteDocument, layer: RasterLayer, groupKey: string | null = null): LayerClipboard {
   const pixels = new Uint8ClampedArray(layer.width * layer.height * 4)
   for (let y = 0; y < layer.height; y += 1) for (let x = 0; x < layer.width; x += 1) {
@@ -257,6 +422,34 @@ function layerClipboardFromDocument(document: SpriteDocument, layer: RasterLayer
     pixels[offset + 2] = color.b
     pixels[offset + 3] = color.a
   }
+  const timeline = ensureAnimationDocument(document)
+  const paletteById = new Map(document.palette.map((entry) => [entry.id, entry.color]))
+  const animationCels = timeline.frames.flatMap((frame, frameIndex) => {
+    const cel = timeline.cels.find((candidate) => candidate.layerId === layer.id && candidate.frameId === frame.id)
+    const surface = cel?.surface
+    if (!surface) return []
+    const rgba = new Uint8ClampedArray(surface.width * surface.height * 4)
+    if (surface.format === 'rgba') rgba.set(surface.pixels)
+    else for (let index = 0; index < surface.pixels.length; index += 1) {
+      const color = paletteById.get(surface.pixels[index]) ?? { r: 0, g: 0, b: 0, a: 0 }
+      const offset = index * 4
+      rgba[offset] = color.r
+      rgba[offset + 1] = color.g
+      rgba[offset + 2] = color.b
+      rgba[offset + 3] = color.a
+    }
+    return [{
+      frameIndex,
+      width: surface.width,
+      height: surface.height,
+      offsetX: surface.offsetX,
+      offsetY: surface.offsetY,
+      storageOriginX: surface.storageOriginX,
+      storageOriginY: surface.storageOriginY,
+      opacity: cel.opacity,
+      pixels: rgba
+    }]
+  })
   return {
     name: layer.name,
     width: layer.width,
@@ -270,8 +463,26 @@ function layerClipboardFromDocument(document: SpriteDocument, layer: RasterLayer
     displayColor: layer.displayColor ? { ...layer.displayColor } : undefined,
     description: layer.description ?? '',
     groupKey,
-    pixels
+    pixels,
+    animationCels
   }
+}
+
+function applyLayerClipboardAnimationCel(document: SpriteDocument, layer: RasterLayer, source: NonNullable<LayerClipboard['animationCels']>[number]): void {
+  const timeline = ensureAnimationDocument(document)
+  const frame = timeline.frames[source.frameIndex]
+  const cel = frame ? timeline.cels.find((candidate) => candidate.layerId === layer.id && candidate.frameId === frame.id) : null
+  if (!cel) return
+  cel.opacity = source.opacity ?? layer.opacity
+  cel.surface = layer.format === 'rgba'
+    ? { format: 'rgba', width: source.width, height: source.height, offsetX: source.offsetX, offsetY: source.offsetY, storageOriginX: source.storageOriginX, storageOriginY: source.storageOriginY, pixels: source.pixels.slice() }
+    : {
+        format: 'indexed', width: source.width, height: source.height, offsetX: source.offsetX, offsetY: source.offsetY, storageOriginX: source.storageOriginX, storageOriginY: source.storageOriginY,
+        pixels: Uint32Array.from({ length: source.width * source.height }, (_, index) => {
+          const offset = index * 4
+          return findOrAddPaletteColor(document, { r: source.pixels[offset], g: source.pixels[offset + 1], b: source.pixels[offset + 2], a: source.pixels[offset + 3] })
+        })
+      }
 }
 
 export const useWorkspace = create<WorkspaceState>((set, get) => ({
@@ -289,15 +500,15 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       const resource = await window.moonSprite.getResourceInfo()
       const check = checkResourceLimit(width, height, 1, colorMode, resource)
       if (!check.allowed) throw new Error(check.reason)
-      get().addSession(createDocument(name || '未命名作品', width, height, colorMode))
+      get().addSession(createDocument(name || tr('workspace.defaultName'), width, height, colorMode))
     } catch (error) {
-      set({ message: error instanceof Error ? error.message : '无法创建画布。' })
+      set({ message: error instanceof Error ? error.message : tr('workspace.canvasCreateError') })
     }
   },
 
   async resizeActiveCanvas(width, height, anchor, offsetX, offsetY, trimOutside = false) {
     const current = activeSession(get())
-    if (!current || !Number.isSafeInteger(width) || !Number.isSafeInteger(height) || width < 1 || height < 1) { set({ message: '画布尺寸必须为正整数。' }); return }
+    if (!current || !Number.isSafeInteger(width) || !Number.isSafeInteger(height) || width < 1 || height < 1) { set({ message: tr('workspace.canvasSizePositive') }); return }
     try {
       const resource = await window.moonSprite.getResourceInfo()
       const check = checkResourceLimit(width, height, current.document.layers.length, current.document.colorMode, resource)
@@ -308,23 +519,27 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
         const horizontal = offsetX ?? (anchor === 'nw' || anchor === 'w' || anchor === 'sw' ? 0 : anchor === 'ne' || anchor === 'e' || anchor === 'se' ? width - session.document.width : Math.floor((width - session.document.width) / 2))
         const vertical = offsetY ?? (anchor === 'nw' || anchor === 'n' || anchor === 'ne' ? 0 : anchor === 'sw' || anchor === 's' || anchor === 'se' ? height - session.document.height : Math.floor((height - session.document.height) / 2))
         const resized = resizeDocumentAt(session.document, width, height, horizontal, vertical, trimOutside)
+        resizeAnimationCelsAt(session.document, resized.offsetX, resized.offsetY, trimOutside)
         session.selection = shiftSelection(beforeSelection, resized.offsetX, resized.offsetY, width, height)
+        session.canvasResizePreview = null
+        session.lastPencilPoint = null
+        session.lastEraserPoint = null
         const after = encodeProject(session.document)
         const afterSelection = session.selection ? { ...session.selection, mask: session.selection.mask?.slice() } : null
         session.history.push({
-          label: '调整画布尺寸', bytes: before.byteLength + after.byteLength + (beforeSelection?.mask?.byteLength ?? 0) + (afterSelection?.mask?.byteLength ?? 0),
+          label: tr('canvasResize.title'), bytes: before.byteLength + after.byteLength + (beforeSelection?.mask?.byteLength ?? 0) + (afterSelection?.mask?.byteLength ?? 0),
           undo: () => { restoreDocumentSnapshot(session.document, before); session.selection = beforeSelection ? { ...beforeSelection, mask: beforeSelection.mask?.slice() } : null },
           redo: () => { restoreDocumentSnapshot(session.document, after); session.selection = afterSelection ? { ...afterSelection, mask: afterSelection.mask?.slice() } : null }
         })
       })
     } catch (error) {
-      set({ message: error instanceof Error ? error.message : '无法调整画布尺寸。' })
+      set({ message: error instanceof Error ? error.message : tr('workspace.canvasResizeError') })
     }
   },
 
   async resizeActiveImage(width, height, interpolation) {
     const current = activeSession(get())
-    if (!current || !Number.isSafeInteger(width) || !Number.isSafeInteger(height) || width < 1 || height < 1) { set({ message: '图像尺寸必须为正整数。' }); return }
+    if (!current || !Number.isSafeInteger(width) || !Number.isSafeInteger(height) || width < 1 || height < 1) { set({ message: tr('workspace.imageSizePositive') }); return }
     try {
       const resource = await window.moonSprite.getResourceInfo()
       const check = checkResourceLimit(width, height, current.document.layers.length, current.document.colorMode, resource)
@@ -355,13 +570,13 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
         const after = encodeProject(session.document)
         const afterSelection = session.selection ? { ...session.selection, mask: session.selection.mask?.slice() } : null
         session.history.push({
-          label: '调整图像尺寸', bytes: before.byteLength + after.byteLength + (beforeSelection?.mask?.byteLength ?? 0) + (afterSelection?.mask?.byteLength ?? 0),
+          label: tr('imageResize.title'), bytes: before.byteLength + after.byteLength + (beforeSelection?.mask?.byteLength ?? 0) + (afterSelection?.mask?.byteLength ?? 0),
           undo: () => { restoreDocumentSnapshot(session.document, before); session.selection = beforeSelection ? { ...beforeSelection, mask: beforeSelection.mask?.slice() } : null },
           redo: () => { restoreDocumentSnapshot(session.document, after); session.selection = afterSelection ? { ...afterSelection, mask: afterSelection.mask?.slice() } : null }
         })
       })
     } catch (error) {
-      set({ message: error instanceof Error ? error.message : '无法调整图像尺寸。' })
+      set({ message: error instanceof Error ? error.message : tr('workspace.imageResizeError') })
     }
   },
 
@@ -372,6 +587,21 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     session.primaryColor = { ...get().sharedPrimaryColor }
     session.secondaryColor = { ...get().sharedSecondaryColor }
     set((state) => ({ sessions: [...state.sessions, session], activeId: document.id, message: null }))
+  },
+
+  reorderSessions(documentIds) {
+    set((state) => {
+      const byId = new Map(state.sessions.map((session) => [session.document.id, session]))
+      const seen = new Set<string>()
+      const ordered = documentIds.flatMap((documentId) => {
+        const session = byId.get(documentId)
+        if (!session || seen.has(documentId)) return []
+        seen.add(documentId)
+        return [session]
+      })
+      for (const session of state.sessions) if (!seen.has(session.document.id)) ordered.push(session)
+      return { sessions: ordered }
+    })
   },
 
   setActive(id) { get().commitFloatingPaste(); set({ activeId: id }) },
@@ -429,11 +659,11 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
   createBrushFromSelection() {
     get().commitFloatingPaste()
     const session = activeSession(get())
-    if (!session?.selection) { set({ message: '请先创建选区。' }); return }
-    const brush = createSelectionBrush(session.document, session.selection, `project-brush-${createId('brush')}`, '自定义笔刷')
-    if (!brush) { set({ message: '选区内没有可用的非透明像素。' }); return }
+    if (!session?.selection) { set({ message: tr('workspace.selectionRequired') }); return }
+    const brush = createSelectionBrush(session.document, session.selection, `project-brush-${createId('brush')}`, tr('brush.defaultName'))
+    if (!brush) { set({ message: tr('workspace.brushEmpty') }); return }
     get().setTemporaryBrush(brush)
-    set({ message: '已将选区保存为当前工程中的自定义笔刷。' })
+    set({ message: tr('workspace.brushSaved') })
   },
   setBrushImageSettings(settings) {
     get().mutateActive((session) => {
@@ -475,13 +705,21 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       persistToolSettings(session)
     }, false)
   },
+  setFillKind(kind) { get().mutateActive((session) => { session.fillKind = kind; persistToolSettings(session) }, false) },
+  setGradientDither(dither) { get().mutateActive((session) => { session.gradientDither = dither; persistToolSettings(session) }, false) },
   setMoveAutoSelect(enabled) { get().mutateActive((session) => { session.moveAutoSelect = enabled; persistToolSettings(session) }, false) },
   setPrimaryColor(color) {
     const state = get()
     for (const session of state.sessions) {
+      const previous = { ...session.primaryColor }
+      const paletteId = session.paletteSelectionId
+      const paletteEntry = paletteId === null ? null : session.document.palette.find((entry) => entry.id === paletteId)
+      if (paletteId !== null && paletteEntry && !paletteEditSynchronizationLocked() && colorEquals(paletteEntry.color, previous)) updatePaletteColorCommand(session, paletteId, color)
       session.primaryColor = { ...color }
       if (session.brushImage?.intrinsicSize) session.brushImage = remapSelectionBrushColors(session.brushImage, session.primaryColor, session.secondaryColor)
-      const matching = session.document.palette.find((entry) => session.document.paletteOrder.includes(entry.id) && colorEquals(entry.color, color))
+      const matching = paletteEntry && colorEquals(paletteEntry.color, color)
+        ? paletteEntry
+        : session.document.palette.find((entry) => session.document.paletteOrder.includes(entry.id) && colorEquals(entry.color, color))
       session.paletteSelectionId = matching?.id ?? null
       session.selectedPaletteIds = matching ? [matching.id] : []
     }
@@ -490,10 +728,28 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
   setSecondaryColor(color) {
     const state = get()
     for (const session of state.sessions) {
+      const previous = { ...session.secondaryColor }
+      const paletteId = session.paletteSecondarySelectionId
+      const paletteEntry = paletteId === null ? null : session.document.palette.find((entry) => entry.id === paletteId)
+      if (paletteId !== null && paletteEntry && !paletteEditSynchronizationLocked() && colorEquals(paletteEntry.color, previous)) updatePaletteColorCommand(session, paletteId, color)
       session.secondaryColor = { ...color }
       if (session.brushImage?.intrinsicSize) session.brushImage = remapSelectionBrushColors(session.brushImage, session.primaryColor, session.secondaryColor)
+      const matching = paletteEntry && colorEquals(paletteEntry.color, color)
+        ? paletteEntry
+        : session.document.palette.find((entry) => session.document.paletteOrder.includes(entry.id) && colorEquals(entry.color, color))
+      session.paletteSecondarySelectionId = matching?.id ?? null
     }
     set({ sharedSecondaryColor: { ...color }, sessions: [...state.sessions] })
+  },
+  selectSecondaryPaletteColor(id) {
+    get().mutateActive((session) => {
+      const entry = session.document.palette.find((candidate) => candidate.id === id)
+      if (!entry) return
+      session.paletteSecondarySelectionId = id
+      session.secondaryColor = { ...entry.color }
+    }, false)
+    const session = activeSession(get())
+    if (session) set({ sharedSecondaryColor: { ...session.secondaryColor } })
   },
   swapPrimarySecondaryColors() {
     const state = get()
@@ -502,6 +758,8 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     for (const session of state.sessions) {
       session.primaryColor = { ...secondary }
       session.secondaryColor = { ...primary }
+      const previousPrimaryId = session.paletteSelectionId
+      session.paletteSecondarySelectionId = previousPrimaryId
       if (session.brushImage?.intrinsicSize) session.brushImage = remapSelectionBrushColors(session.brushImage, session.primaryColor, session.secondaryColor)
       const matching = session.document.palette.find((entry) => session.document.paletteOrder.includes(entry.id) && colorEquals(entry.color, session.primaryColor))
       session.paletteSelectionId = matching?.id ?? null
@@ -509,23 +767,47 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     }
     set({ sharedPrimaryColor: secondary, sharedSecondaryColor: primary, sessions: [...state.sessions] })
   },
-  setView(view) { get().mutateActive((session) => { Object.assign(session.view, view) }, false) },
+  setView(view) {
+    const state = get()
+    const session = activeSession(state)
+    if (!session) return
+    Object.assign(session.view, view)
+    if (persistDisplaySettings(session, view)) touch(session)
+    set({ sessions: [...state.sessions] })
+  },
+  setViewForDocument(documentId, view) {
+    const state = get()
+    const session = state.sessions.find((item) => item.document.id === documentId)
+    if (!session) return
+    Object.assign(session.view, view)
+    if (persistDisplaySettings(session, view)) touch(session)
+    set({ sessions: [...state.sessions] })
+  },
   setViewportSize(size) {
     get().mutateActive((session) => {
       session.viewportSize = { width: Math.max(0, size.width), height: Math.max(0, size.height) }
     }, false)
   },
+  setViewportSizeForDocument(documentId, size) {
+    const state = get()
+    const session = state.sessions.find((item) => item.document.id === documentId)
+    if (!session) return
+    session.viewportSize = { width: Math.max(0, size.width), height: Math.max(0, size.height) }
+    set({ sessions: [...state.sessions] })
+  },
   setSelection(selection) { get().mutateActive((session) => { session.selection = selection ? { ...selection, mask: selection.mask?.slice() } : null }, false) },
   invertSelection() {
     const session = activeSession(get())
-    if (!session?.selection) { set({ message: '请先创建选区。' }); return }
+    if (!session?.selection) { set({ message: tr('workspace.selectionRequired') }); return }
     const before = cloneSelectionMask(session.selection)
     const after = invertSelectionMask(session.selection, session.document.width, session.document.height)
-    get().commitSelectionChange(before, after, '反选选区')
+    get().commitSelectionChange(before, after, tr('app.menu.edit.invertSelection'))
   },
   toggleSelectionOutline() {
     get().mutateActive((session) => {
       session.view.showSelectionOutline = session.view.showSelectionOutline === false
+      // 选区描边是视图状态，但切换时必须让合成缓存重新读取浮动粘贴的当前像素。
+      session.revision += 1
     }, false)
   },
   beginLayerTransform() {
@@ -533,30 +815,30 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     const session = activeSession(get())
     if (!session) return
     if (session.selectedGroupId || session.selectedLayerIds.length !== 1) {
-      set({ message: '请选择一个图层后再使用变换。' })
+      set({ message: tr('workspace.transform.selectLayer') })
       return
     }
     const layer = session.document.layers.find((candidate) => candidate.id === session.selectedLayerIds[0])
     if (!layer) {
-      set({ message: '当前没有可变换的图层。' })
+      set({ message: tr('workspace.transform.noLayer') })
       return
     }
     if (!isLayerEffectivelyVisible(session.document, layer)) {
-      set({ message: '隐藏的图层无法变换。' })
+      set({ message: tr('workspace.transform.hidden') })
       return
     }
     if (isLayerEffectivelyLocked(session.document, layer)) {
-      set({ message: '锁定的图层无法变换。' })
+      set({ message: tr('workspace.transform.locked') })
       return
     }
     const contentBounds = layerContentBounds(session.document, layer)
     if (!contentBounds) {
-      set({ message: '当前图层没有可变换的内容。' })
+      set({ message: tr('workspace.transform.empty') })
       return
     }
     const visibleBounds = clampSelection(session.document, contentBounds)
     if (!visibleBounds) {
-      set({ message: '当前图层的内容位于画布外，请先使用移动工具将其移回画布。' })
+      set({ message: tr('workspace.transform.outside') })
       return
     }
     get().setTool('selection')
@@ -569,13 +851,16 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       active.selectionKind = 'rectangle'
       active.selectionMode = 'replace'
     }, false)
-    set({ message: '已进入变换，可拖动选区或使用边缘手柄缩放、旋转。' })
+    set({ message: tr('workspace.transform.started') })
   },
   setSelectionKind(kind) { get().mutateActive((session) => { session.selectionKind = kind; persistToolSettings(session) }, false) },
   setSelectionMode(mode) { get().mutateActive((session) => { session.selectionMode = mode; persistToolSettings(session) }, false) },
   setWandTolerance(tolerance) { get().mutateActive((session) => { session.wandTolerance = Math.max(0, Math.min(255, Math.round(tolerance) || 0)); persistToolSettings(session) }, false) },
   setWandContiguous(contiguous) { get().mutateActive((session) => { session.wandContiguous = contiguous; persistToolSettings(session) }, false) },
   setPerfectPixels(enabled) { get().mutateActive((session) => { session.perfectPixels = enabled; persistToolSettings(session) }, false) },
+  setSymmetryAxis(axis, enabled) { get().mutateActive((session) => { session.symmetryAxes = { ...session.symmetryAxes, [axis]: enabled }; persistToolSettings(session) }, false) },
+  setSymmetryCenter(center) { get().mutateActive((session) => { session.symmetryCenter = { ...center }; }, false) },
+  resetSymmetryCenter() { get().mutateActive((session) => { session.symmetryCenter = { x: session.document.width / 2, y: session.document.height / 2 }; }, false) },
   setLastPencilPoint(point) { get().mutateActive((session) => { session.lastPencilPoint = point ? { ...point } : null }, false) },
   setLastEraserPoint(point) { get().mutateActive((session) => { session.lastEraserPoint = point ? { ...point } : null }, false) },
   setCanvasResizePreview(preview) {
@@ -597,14 +882,24 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       session.history.push({ label, bytes: 48 + (before?.mask?.byteLength ?? 0) + (after?.mask?.byteLength ?? 0), undo: () => { session.selection = clone(before) }, redo: () => { session.selection = clone(after) } })
     }, false)
   },
-  toggleGrid() { get().mutateActive((session) => { session.view.showGrid = !session.view.showGrid }, false) },
+  togglePixelGrid() {
+    const session = activeSession(get())
+    if (session) get().setView({ showPixelGrid: !session.view.showPixelGrid })
+  },
+  toggleGrid() {
+    const session = activeSession(get())
+    if (session) get().setView({ showGrid: !session.view.showGrid })
+  },
   selectPaletteColor(id, additive = false) {
     get().mutateActive((session) => selectPaletteColorCommand(session, id, additive), false)
     const session = activeSession(get())
     if (session && session.paletteSelectionId !== null) get().setPrimaryColor(session.primaryColor)
   },
-  addPaletteColor() {
-    get().mutateActive(addPaletteColorCommand)
+  addPaletteColor(color) {
+    get().mutateActive((session) => addPaletteColorCommand(session, color))
+  },
+  updatePaletteColor(id, color) {
+    get().mutateActive((session) => updatePaletteColorCommand(session, id, color))
   },
   applyPalette(colors) {
     get().mutateActive((session) => applyPaletteCommand(session, colors))
@@ -627,18 +922,70 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     const session = activeSession(state)
     if (!session) return
     mutator(session)
+    if (dirty) syncActiveAnimationFrame(session.document)
     touch(session, dirty)
+    if (dirty) recordDocumentOperation(session)
     set({ sessions: [...state.sessions] })
   },
 
-  commitPixelEdit(edit, label) {
+  commitPixelEdit(edit, label, activity) {
     get().mutateActive((session) => {
       const entry = commitPixelEdit(session.document, edit, label)
       if (entry) {
         session.history.push(entry)
-        touch(session)
+        syncActiveAnimationFrame(session.document)
+        touch(session, true, entry.invalidation)
+        recordDocumentOperation(session, activity)
       }
     }, false)
+  },
+
+  setTimelapseSettings(settings) {
+    const state = get()
+    const session = activeSession(state)
+    if (!session) return
+    const current = normalizeTimelapseSettings(session.document.timelapse, session.document.timelapse?.snapshots ?? [])
+    const next = normalizeTimelapseSettings({ ...current, ...settings }, current.snapshots)
+    session.document.timelapse = next
+    if (next.enabled && next.snapshots.length === 0) scheduleTimelapseCapture(session)
+    else if (!next.enabled) cancelTimelapseCapture(session.document.id)
+    touch(session)
+    set({ sessions: [...state.sessions] })
+  },
+
+  clearTimelapse() {
+    const state = get()
+    const session = activeSession(state)
+    if (!session) return
+    cancelTimelapseCapture(session.document.id)
+    session.document.timelapse = { ...normalizeTimelapseSettings(session.document.timelapse), snapshots: [] }
+    touch(session)
+    set({ sessions: [...state.sessions] })
+  },
+
+  async exportTimelapse(format, options) {
+    const session = activeSession(get())
+    if (!session) return false
+    flushTimelapseCapture(session)
+    let progressStarted = false
+    const updateProgress = (value: number, label: string): void => {
+      if (progressStarted && !get().saveProgress) return
+      progressStarted = true
+      set({ saveProgress: { title: tr('workspace.export.progressTitle'), value: Math.max(0, Math.min(100, Math.round(value))), label } })
+    }
+    try {
+      const message = await exportTimelapseFile(window.moonSprite, session.document, format, options, {
+        onEncodeStart: () => updateProgress(8, tr('workspace.export.videoEncoding')),
+        onEncodeProgress: (value) => updateProgress(8 + value * 0.7, tr('workspace.export.videoEncoding')),
+        onWriteStart: () => updateProgress(82, tr('workspace.save.writing'))
+      })
+      if (!message) return false
+      set({ message, saveProgress: progressStarted ? { title: tr('workspace.export.progressTitle'), value: 100, label: tr('workspace.export.done'), requiresConfirmation: true } : null })
+      return true
+    } catch (error) {
+      set({ message: error instanceof Error ? error.message : tr('timelapse.exportFailed'), ...(progressStarted ? { saveProgress: null } : {}) })
+      return false
+    }
   },
 
   pushHistory(entry) {
@@ -653,9 +1000,13 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     if (!session?.history.canUndo) return
     get().mutateActive((session) => {
       const view = { ...session.view }
-      session.history.undo()
+      const entry = session.history.undo()
       Object.assign(session.view, view)
-    })
+      if (!entry) return
+      syncActiveAnimationFrame(session.document)
+      touch(session, true, entry.invalidation)
+      recordDocumentOperation(session)
+    }, false)
   },
 
   redo() {
@@ -665,8 +1016,562 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     if (!session?.history.canRedo) return
     get().mutateActive((session) => {
       const view = { ...session.view }
-      session.history.redo()
+      const entry = session.history.redo()
       Object.assign(session.view, view)
+      if (!entry) return
+      syncActiveAnimationFrame(session.document)
+      touch(session, true, entry.invalidation)
+      recordDocumentOperation(session)
+    }, false)
+  },
+
+  setActiveAnimationFrame(frameId) {
+    get().commitFloatingPaste()
+    get().mutateActive((session) => {
+      if (!activateAnimationFrame(session.document, frameId)) return
+      session.selection = null
+      session.lastPencilPoint = null
+      session.lastEraserPoint = null
+      session.revision += 1
+    }, false)
+  },
+
+  stepAnimationFrame(delta) {
+    const session = activeSession(get())
+    if (!session) return
+    const timeline = ensureAnimationDocument(session.document)
+    const current = timeline.frames.findIndex((frame) => frame.id === timeline.activeFrameId)
+    const target = Math.max(0, Math.min(timeline.frames.length - 1, current + Math.sign(delta)))
+    const frame = timeline.frames[target]
+    if (!frame || frame.id === timeline.activeFrameId) return
+    get().selectAnimationFrame(frame.id)
+  },
+
+  selectAnimationFrame(frameId, mode = 'replace') {
+    get().mutateActive((session) => {
+      const timeline = ensureAnimationDocument(session.document)
+      if (!timeline.frames.some((frame) => frame.id === frameId)) return
+      session.selectedAnimationCellKeys = []
+      session.animationCellSelectionAnchorKey = null
+      const current = new Set(session.selectedAnimationFrameIds)
+      if (mode === 'range' && session.animationFrameSelectionAnchorId) {
+        const start = timeline.frames.findIndex((frame) => frame.id === session.animationFrameSelectionAnchorId)
+        const end = timeline.frames.findIndex((frame) => frame.id === frameId)
+        if (start >= 0 && end >= 0) {
+          const [from, to] = start <= end ? [start, end] : [end, start]
+          session.selectedAnimationFrameIds = timeline.frames.slice(from, to + 1).map((frame) => frame.id)
+        }
+      } else if (mode === 'toggle') {
+        if (current.has(frameId)) current.delete(frameId)
+        else current.add(frameId)
+        session.selectedAnimationFrameIds = timeline.frames.map((frame) => frame.id).filter((id) => current.has(id))
+      } else {
+        session.selectedAnimationFrameIds = [frameId]
+      }
+      session.animationFrameSelectionAnchorId = frameId
+    }, false)
+    get().setActiveAnimationFrame(frameId)
+  },
+
+  selectAnimationCell(key, mode = 'replace') {
+    get().mutateActive((session) => {
+      const target = parseAnimationCelKey(key)
+      const timeline = ensureAnimationDocument(session.document)
+      if (!target || !timeline.frames.some((frame) => frame.id === target.frameId) || !session.document.layers.some((layer) => layer.id === target.layerId)) return
+      session.selectedAnimationFrameIds = []
+      session.animationFrameSelectionAnchorId = null
+      session.document.activeLayerId = target.layerId
+      session.selectedLayerIds = [target.layerId]
+      session.selectedGroupId = null
+      session.selectedGroupIds = []
+      const current = new Set(session.selectedAnimationCellKeys)
+      if (mode === 'toggle') {
+        if (current.has(key)) current.delete(key)
+        else current.add(key)
+      } else if (mode === 'range') {
+        const anchor = session.animationCellSelectionAnchorKey ?? session.selectedAnimationCellKeys.at(-1)
+        const parsedAnchor = anchor ? parseAnimationCelKey(anchor) : null
+        if (parsedAnchor) {
+          const frames = timeline.frames
+          const layers = session.document.layers
+          const startFrame = frames.findIndex((frame) => frame.id === parsedAnchor.frameId)
+          const endFrame = frames.findIndex((frame) => frame.id === target.frameId)
+          const startLayer = layers.findIndex((layer) => layer.id === parsedAnchor.layerId)
+          const endLayer = layers.findIndex((layer) => layer.id === target.layerId)
+          if (startFrame >= 0 && endFrame >= 0 && startLayer >= 0 && endLayer >= 0) {
+            const [fromFrame, toFrame] = startFrame <= endFrame ? [startFrame, endFrame] : [endFrame, startFrame]
+            const [fromLayer, toLayer] = startLayer <= endLayer ? [startLayer, endLayer] : [endLayer, startLayer]
+            for (const layer of layers.slice(fromLayer, toLayer + 1)) for (const frame of frames.slice(fromFrame, toFrame + 1)) current.add(animationCelKey(layer.id, frame.id))
+          } else current.add(key)
+        } else current.add(key)
+      } else {
+        current.clear()
+        current.add(key)
+      }
+      session.selectedAnimationCellKeys = [...current]
+      session.animationCellSelectionAnchorKey = key
+    }, false)
+    const parsed = parseAnimationCelKey(key)
+    if (parsed) get().setActiveAnimationFrame(parsed.frameId)
+  },
+
+  clearAnimationSelection() {
+    get().mutateActive((session) => {
+      session.selectedAnimationFrameIds = []
+      session.selectedAnimationCellKeys = []
+      session.animationFrameSelectionAnchorId = null
+      session.animationCellSelectionAnchorKey = null
+    }, false)
+  },
+
+  setAnimationCelOpacity(layerId, frameId, opacity) {
+    get().mutateActive((session) => {
+      const timeline = ensureAnimationDocument(session.document)
+      const cel = timeline.cels.find((candidate) => candidate.layerId === layerId && candidate.frameId === frameId)
+      const source = resolveAnimationCel(timeline, cel ?? null)
+      if (!cel || !source) return
+      const linked = timeline.cels.filter((candidate) => resolveAnimationCel(timeline, candidate)?.id === source.id)
+      const before = source.opacity ?? 1
+      const after = Math.max(0, Math.min(1, opacity))
+      if (before === after) return
+      const apply = (value: number): void => {
+        for (const candidate of linked) candidate.opacity = value
+        if (timeline.activeFrameId === cel.frameId) {
+          const layer = session.document.layers.find((candidate) => candidate.id === cel.layerId)
+          if (layer) layer.opacity = value
+        }
+      }
+      apply(after)
+      session.history.push({ label: tr('workspace.history.animationCelOpacity'), bytes: 16, undo: () => apply(before), redo: () => apply(after) })
+    })
+  },
+
+  connectSelectedAnimationCels() {
+    get().mutateActive((session) => {
+      const timeline = ensureAnimationDocument(session.document)
+      const selected = new Set(session.selectedAnimationCellKeys)
+      const targets = timeline.cels.filter((cel) => selected.has(animationCelKey(cel.layerId, cel.frameId)))
+      const layerCounts = new Map<string, number>()
+      for (const cel of targets) layerCounts.set(cel.layerId, (layerCounts.get(cel.layerId) ?? 0) + 1)
+      if (![...layerCounts.values()].some((count) => count > 1)) return
+      syncActiveAnimationFrame(session.document)
+      const before = timeline.cels.map(cloneAnimationCel)
+      if (!connectAnimationCels(session.document, targets.map((cel) => cel.id))) return
+      const after = ensureAnimationDocument(session.document).cels.map(cloneAnimationCel)
+      const restore = (snapshot: AnimationCel[]): void => {
+        restoreAnimationCels(session.document, snapshot)
+        refreshActiveAnimationFrame(session.document)
+      }
+      session.history.push({
+        label: tr('workspace.history.animationCelLink'),
+        bytes: [...before, ...after].reduce((sum, cel) => sum + (cel.surface?.pixels.byteLength ?? 0) + 24, 0),
+        undo: () => restore(before),
+        redo: () => restore(after)
+      })
+    })
+  },
+
+  disconnectSelectedAnimationCels() {
+    get().mutateActive((session) => {
+      const timeline = ensureAnimationDocument(session.document)
+      const selected = new Set(session.selectedAnimationCellKeys)
+      const targets = timeline.cels.filter((cel) => selected.has(animationCelKey(cel.layerId, cel.frameId)))
+      syncActiveAnimationFrame(session.document)
+      const before = timeline.cels.map(cloneAnimationCel)
+      if (!disconnectAnimationCels(session.document, targets.map((cel) => cel.id))) return
+      const after = ensureAnimationDocument(session.document).cels.map(cloneAnimationCel)
+      const restore = (snapshot: AnimationCel[]): void => {
+        restoreAnimationCels(session.document, snapshot)
+        refreshActiveAnimationFrame(session.document)
+      }
+      session.history.push({
+        label: tr('workspace.history.animationCelUnlink'),
+        bytes: [...before, ...after].reduce((sum, cel) => sum + (cel.surface?.pixels.byteLength ?? 0) + 24, 0),
+        undo: () => restore(before),
+        redo: () => restore(after)
+      })
+    })
+  },
+
+  copySelectedAnimationCels() {
+    get().mutateActive((session) => {
+      const timeline = ensureAnimationDocument(session.document)
+      const keys = new Set(session.selectedAnimationCellKeys)
+      const layerIndexes = new Map(session.document.layers.map((layer, index) => [layer.id, index]))
+      const frameIndexes = new Map(timeline.frames.map((frame, index) => [frame.id, index]))
+      const cels = timeline.cels
+        .filter((cel) => keys.has(animationCelKey(cel.layerId, cel.frameId)))
+        .sort((left, right) => (layerIndexes.get(left.layerId) ?? 0) - (layerIndexes.get(right.layerId) ?? 0) || (frameIndexes.get(left.frameId) ?? 0) - (frameIndexes.get(right.frameId) ?? 0))
+        .map((cel) => ({ ...cloneAnimationCel(cel), linkedCelId: null }))
+      session.animationCellClipboard = cels
+      session.animationCellClipboardAnchorKey = cels[0] ? animationCelKey(cels[0].layerId, cels[0].frameId) : null
+    }, false)
+  },
+
+  copySelectedAnimationFrames() {
+    get().mutateActive((session) => {
+      const timeline = ensureAnimationDocument(session.document)
+      syncActiveAnimationFrame(session.document)
+      const selectedIds = new Set(session.selectedAnimationFrameIds.length ? session.selectedAnimationFrameIds : [timeline.activeFrameId])
+      session.animationFrameClipboard = timeline.frames.filter((frame) => selectedIds.has(frame.id)).map((frame): AnimationFrameClipboardItem => ({
+        frameId: frame.id,
+        duration: frame.duration,
+        cels: timeline.cels.filter((cel) => cel.frameId === frame.id).map((cel) => ({ ...cloneAnimationCel(cel), linkedCelId: null }))
+      }))
+    }, false)
+  },
+
+  pasteAnimationFrames() {
+    get().mutateActive((session) => {
+      const timeline = ensureAnimationDocument(session.document)
+      const clipboard = session.animationFrameClipboard
+      if (!clipboard.length) return
+      const selectedIds = new Set(session.selectedAnimationFrameIds.length ? session.selectedAnimationFrameIds : [timeline.activeFrameId])
+      const anchorIndex = Math.max(-1, ...timeline.frames.map((frame, index) => selectedIds.has(frame.id) ? index : -1))
+      const insertIndex = anchorIndex + 1
+      const insertedFrames = clipboard.map((item) => ({ id: createId('frame'), duration: item.duration }))
+      const insertedCels = clipboard.flatMap((item, index) => item.cels.map((cel) => ({ ...cloneAnimationCel(cel), id: createId('cel'), frameId: insertedFrames[index].id })))
+      const previousActiveFrameId = timeline.activeFrameId
+      const previousSelectedFrameIds = [...session.selectedAnimationFrameIds]
+      const insertedIds = new Set(insertedFrames.map((frame) => frame.id))
+      const restoreInserted = (): void => {
+        const current = ensureAnimationDocument(session.document)
+        current.frames = current.frames.filter((frame) => !insertedIds.has(frame.id))
+        current.cels = current.cels.filter((cel) => !insertedIds.has(cel.frameId))
+        const fallback = current.frames.find((frame) => frame.id === previousActiveFrameId)?.id ?? current.frames[0]?.id
+        if (fallback) activateAnimationFrame(session.document, fallback)
+        session.selectedAnimationFrameIds = previousSelectedFrameIds
+        session.selectedAnimationCellKeys = []
+      }
+      const reapplyInserted = (): void => {
+        const current = ensureAnimationDocument(session.document)
+        const index = Math.min(insertIndex, current.frames.length)
+        current.frames.splice(index, 0, ...insertedFrames.map((frame) => ({ ...frame })))
+        current.cels.push(...insertedCels.map((cel) => cloneAnimationCel(cel)))
+        activateAnimationFrame(session.document, insertedFrames[0].id)
+        session.selectedAnimationFrameIds = insertedFrames.map((frame) => frame.id)
+        session.selectedAnimationCellKeys = []
+      }
+      timeline.frames.splice(insertIndex, 0, ...insertedFrames)
+      timeline.cels.push(...insertedCels)
+      activateAnimationFrame(session.document, insertedFrames[0].id)
+      session.selectedAnimationFrameIds = insertedFrames.map((frame) => frame.id)
+      session.selectedAnimationCellKeys = []
+      session.history.push({ label: tr('workspace.history.pasteAnimationFrame'), bytes: insertedCels.reduce((sum, cel) => sum + (cel.surface?.pixels.byteLength ?? 0), 0) + insertedFrames.length * 64, undo: restoreInserted, redo: reapplyInserted })
+    })
+  },
+
+  moveSelectedAnimationFrames(targetFrameId, insertAfter) {
+    get().mutateActive((session) => {
+      const timeline = ensureAnimationDocument(session.document)
+      const selected = new Set(session.selectedAnimationFrameIds.length ? session.selectedAnimationFrameIds : [timeline.activeFrameId])
+      if (selected.has(targetFrameId)) return
+      const beforeIds = timeline.frames.map((frame) => frame.id)
+      const moving = timeline.frames.filter((frame) => selected.has(frame.id))
+      const remaining = timeline.frames.filter((frame) => !selected.has(frame.id))
+      const targetIndex = remaining.findIndex((frame) => frame.id === targetFrameId)
+      if (targetIndex < 0 || moving.length === 0) return
+      remaining.splice(targetIndex + (insertAfter ? 1 : 0), 0, ...moving)
+      const afterIds = remaining.map((frame) => frame.id)
+      if (beforeIds.join('|') === afterIds.join('|')) return
+      const apply = (ids: readonly string[]): void => {
+        const current = ensureAnimationDocument(session.document)
+        const byId = new Map(current.frames.map((frame) => [frame.id, frame]))
+        current.frames = ids.flatMap((id) => { const frame = byId.get(id); return frame ? [frame] : [] })
+      }
+      apply(afterIds)
+      session.selectedAnimationFrameIds = afterIds.filter((id) => selected.has(id))
+      session.history.push({ label: tr('workspace.history.moveAnimationFrame'), bytes: 64, undo: () => apply(beforeIds), redo: () => apply(afterIds) })
+    })
+  },
+
+  pasteAnimationCels() {
+    get().mutateActive((session) => {
+      const timeline = ensureAnimationDocument(session.document)
+      if (!session.animationCellClipboard.length) return
+      const targetKey = session.selectedAnimationCellKeys.at(-1) ?? animationCelKey(session.document.activeLayerId, timeline.activeFrameId)
+      const target = parseAnimationCelKey(targetKey)
+      const sourceAnchorKey = session.animationCellClipboardAnchorKey ?? animationCelKey(session.animationCellClipboard[0].layerId, session.animationCellClipboard[0].frameId)
+      const sourceAnchor = parseAnimationCelKey(sourceAnchorKey)
+      if (!target || !sourceAnchor) return
+      const sourceAnchorFrameIndex = timeline.frames.findIndex((frame) => frame.id === sourceAnchor.frameId)
+      const targetFrameIndex = timeline.frames.findIndex((frame) => frame.id === target.frameId)
+      const sourceFrameIndexes = session.animationCellClipboard.map((cel) => timeline.frames.findIndex((frame) => frame.id === cel.frameId))
+      if (sourceAnchorFrameIndex < 0 || targetFrameIndex < 0 || sourceFrameIndexes.some((index) => index < 0)) return
+      const minimumDestination = targetFrameIndex + Math.min(...sourceFrameIndexes.map((index) => index - sourceAnchorFrameIndex))
+      if (minimumDestination < 0) return
+      const maximumDestination = targetFrameIndex + Math.max(...sourceFrameIndexes.map((index) => index - sourceAnchorFrameIndex))
+      const appendedFrames = Array.from({ length: Math.max(0, maximumDestination - timeline.frames.length + 1) }, () => ({ id: createId('frame'), duration: 100 }))
+      const previousSelection = [...session.selectedAnimationCellKeys]
+      if (appendedFrames.length > 0) timeline.frames.push(...appendedFrames)
+      ensureAnimationDocument(session.document)
+      const appendedFrameIds = new Set(appendedFrames.map((frame) => frame.id))
+      const appendedBaseCels = timeline.cels.filter((cel) => appendedFrameIds.has(cel.frameId)).map(cloneAnimationCel)
+      const placements = mapAnimationCelBlock(timeline, session.document.layers.map((layer) => layer.id), session.animationCellClipboard, sourceAnchorKey, target.layerId, target.frameId)
+      if (placements.length !== session.animationCellClipboard.length) {
+        timeline.frames = timeline.frames.filter((frame) => !appendedFrameIds.has(frame.id))
+        timeline.cels = timeline.cels.filter((cel) => !appendedFrameIds.has(cel.frameId))
+        return
+      }
+      const writeTargets = [...new Map(placements.map(({ target: destination }) => {
+        const shared = resolveAnimationCel(timeline, destination) ?? destination
+        return [shared.id, shared] as const
+      })).values()]
+      const before = writeTargets.filter((cel) => !appendedFrameIds.has(cel.frameId)).map(cloneAnimationCel)
+      for (const { source, target: destination } of placements) {
+        const shared = resolveAnimationCel(timeline, destination) ?? destination
+        shared.surface = source.surface ? cloneAnimationCelSurface(source.surface) : undefined
+        shared.opacity = source.opacity
+      }
+      refreshActiveAnimationFrame(session.document)
+      session.selectedAnimationCellKeys = placements.map(({ target: destination }) => animationCelKey(destination.layerId, destination.frameId))
+      const after = writeTargets.map(cloneAnimationCel)
+      const afterSelection = [...session.selectedAnimationCellKeys]
+      if (after.length) session.history.push({
+        label: tr('workspace.history.pasteAnimationCel'),
+        bytes: [...before, ...after, ...appendedBaseCels].reduce((sum, cel) => sum + (cel.surface?.pixels.byteLength ?? 0), 0) + appendedFrames.length * 32,
+        undo: () => {
+          restoreAnimationCels(session.document, before)
+          const current = ensureAnimationDocument(session.document)
+          current.frames = current.frames.filter((frame) => !appendedFrameIds.has(frame.id))
+          current.cels = current.cels.filter((cel) => !appendedFrameIds.has(cel.frameId))
+          session.selectedAnimationCellKeys = previousSelection
+          refreshActiveAnimationFrame(session.document)
+        },
+        redo: () => {
+          const current = ensureAnimationDocument(session.document)
+          for (const frame of appendedFrames) if (!current.frames.some((candidate) => candidate.id === frame.id)) current.frames.push({ ...frame })
+          ensureAnimationDocument(session.document)
+          restoreAnimationCels(session.document, [...appendedBaseCels, ...after])
+          session.selectedAnimationCellKeys = afterSelection
+          refreshActiveAnimationFrame(session.document)
+        }
+      })
+    })
+  },
+
+  moveSelectedAnimationCels(layerId, frameId, sourceAnchorKey) {
+    get().mutateActive((session) => {
+      const timeline = ensureAnimationDocument(session.document)
+      const selected = new Set(session.selectedAnimationCellKeys)
+      const sources = timeline.cels.filter((candidate) => selected.has(animationCelKey(candidate.layerId, candidate.frameId))).map(cloneAnimationCel)
+      const placements = mapAnimationCelBlock(timeline, session.document.layers.map((layer) => layer.id), sources, sourceAnchorKey, layerId, frameId)
+      const affected = new Map<string, AnimationCel>()
+      if (!placements.length || placements.length !== sources.length || placements.every(({ source, target }) => source.layerId === target.layerId && source.frameId === target.frameId)) return
+      for (const source of sources) {
+        const original = timeline.cels.find((cel) => cel.layerId === source.layerId && cel.frameId === source.frameId)
+        if (original) affected.set(animationCelKey(original.layerId, original.frameId), cloneAnimationCel(original))
+      }
+      for (const { target: destination } of placements) affected.set(animationCelKey(destination.layerId, destination.frameId), cloneAnimationCel(destination))
+      for (const source of sources) {
+        const original = timeline.cels.find((cel) => cel.layerId === source.layerId && cel.frameId === source.frameId)
+        if (original?.surface) original.surface = original.surface.format === 'rgba' ? { ...original.surface, pixels: new Uint8ClampedArray(original.surface.pixels.length) } : { ...original.surface, pixels: new Uint32Array(original.surface.pixels.length) }
+      }
+      for (const { source, target: destination } of placements) {
+        destination.linkedCelId = null
+        destination.surface = source.surface ? cloneAnimationCelSurface(source.surface) : undefined
+        destination.opacity = source.opacity
+      }
+      refreshActiveAnimationFrame(session.document)
+      if (ensureAnimationDocument(session.document).activeFrameId !== frameId) activateAnimationFrame(session.document, frameId)
+      session.selectedAnimationCellKeys = placements.map(({ target: destination }) => animationCelKey(destination.layerId, destination.frameId))
+      const after = [...affected.keys()].flatMap((key) => {
+        const parsed = parseAnimationCelKey(key)
+        const cel = parsed ? timeline.cels.find((candidate) => candidate.layerId === parsed.layerId && candidate.frameId === parsed.frameId) : null
+        return cel ? [cloneAnimationCel(cel)] : []
+      })
+      const before = [...affected.values()]
+      if (after.length) session.history.push({ label: tr('workspace.history.moveAnimationCel'), bytes: [...before, ...after].reduce((sum, cel) => sum + (cel.surface?.pixels.byteLength ?? 0), 0), undo: () => restoreAnimationCels(session.document, before), redo: () => restoreAnimationCels(session.document, after) })
+    })
+  },
+
+  deleteSelectedAnimationItems() {
+    const current = activeSession(get())
+    if (!current) return
+    const timeline = ensureAnimationDocument(current.document)
+    if (current.selectedAnimationCellKeys.length) {
+      get().mutateActive((session) => {
+        const timeline = ensureAnimationDocument(session.document)
+        const selected = new Set(session.selectedAnimationCellKeys)
+        const selectedCels = timeline.cels.filter((cel) => selected.has(animationCelKey(cel.layerId, cel.frameId)))
+        const linkedSourceIds = new Set(selectedCels.flatMap((cel) => {
+          const source = resolveAnimationCel(timeline, cel)
+          if (!source) return []
+          const linked = Boolean(cel.linkedCelId) || timeline.cels.some((candidate) => candidate.linkedCelId === source.id)
+          return linked ? [source.id] : []
+        }))
+        const affected = timeline.cels.filter((cel) => selected.has(animationCelKey(cel.layerId, cel.frameId)) || (() => {
+          const source = resolveAnimationCel(timeline, cel)
+          return Boolean(source && linkedSourceIds.has(source.id))
+        })())
+        const before = affected.map(cloneAnimationCel)
+        if (linkedSourceIds.size > 0) {
+          for (const cel of timeline.cels) {
+            const source = resolveAnimationCel(timeline, cel)
+            if (!source || !linkedSourceIds.has(source.id)) continue
+            cel.surface = source.surface ? cloneAnimationCelSurface(source.surface) : undefined
+            cel.opacity = source.opacity
+            cel.linkedCelId = null
+          }
+        }
+        for (const cel of selectedCels) {
+          cel.surface = cel.surface?.format === 'rgba' ? { ...cel.surface, pixels: new Uint8ClampedArray(cel.surface.pixels.length) } : cel.surface ? { ...cel.surface, pixels: new Uint32Array(cel.surface.pixels.length) } : undefined
+          cel.linkedCelId = null
+        }
+        refreshActiveAnimationFrame(session.document)
+        const after = affected.map((cel) => cloneAnimationCel(timeline.cels.find((candidate) => candidate.id === cel.id) ?? cel))
+        session.selectedAnimationCellKeys = []
+        if (before.length) session.history.push({ label: tr('workspace.history.deleteAnimationCel'), bytes: [...before, ...after].reduce((sum, cel) => sum + (cel.surface?.pixels.byteLength ?? 0), 0), undo: () => restoreAnimationCels(session.document, before), redo: () => restoreAnimationCels(session.document, after) })
+      })
+      return
+    }
+    const selectedFrames = current.selectedAnimationFrameIds.length ? [...current.selectedAnimationFrameIds] : [timeline.activeFrameId]
+    current.history.beginCompound()
+    for (const frameId of selectedFrames) {
+      if (ensureAnimationDocument(current.document).frames.length <= 1) break
+      get().setActiveAnimationFrame(frameId)
+      get().deleteAnimationFrame()
+    }
+    current.history.endCompound(tr('workspace.history.deleteAnimationFrame'))
+    get().mutateActive((session) => { session.selectedAnimationFrameIds = [] }, false)
+  },
+
+  setAnimationPlaying(playing, completed = false) {
+    get().mutateActive((session) => {
+      if (session.animationPlaying === playing) return
+      const timeline = ensureAnimationDocument(session.document)
+      if (playing) {
+        session.animationPlaybackStartFrameId = timeline.activeFrameId
+        if (!timeline.loop && timeline.frames[0] && timeline.activeFrameId !== timeline.frames[0].id) {
+          activateAnimationFrame(session.document, timeline.frames[0].id)
+          session.selection = null
+          session.lastPencilPoint = null
+          session.lastEraserPoint = null
+          session.revision += 1
+        }
+        session.animationPlaying = true
+        return
+      }
+      session.animationPlaying = false
+      const startFrameId = session.animationPlaybackStartFrameId
+      session.animationPlaybackStartFrameId = null
+      const returnFrameId = session.animationReturnToStart
+        ? startFrameId
+        : completed && !timeline.loop ? timeline.frames[0]?.id : null
+      if (returnFrameId && returnFrameId !== timeline.activeFrameId && activateAnimationFrame(session.document, returnFrameId)) {
+        session.selection = null
+        session.lastPencilPoint = null
+        session.lastEraserPoint = null
+        session.revision += 1
+      }
+    }, false)
+  },
+
+  setAnimationPlaybackRate(rate) {
+    const normalized = [0.25, 0.5, 1, 1.5, 2, 3].includes(rate) ? rate : 1
+    get().mutateActive((session) => { session.animationPlaybackRate = normalized }, false)
+  },
+
+  setAnimationReturnToStart(enabled) {
+    get().mutateActive((session) => { session.animationReturnToStart = enabled }, false)
+  },
+
+  advanceAnimationFrame() {
+    const session = activeSession(get())
+    if (!session) return
+    const timeline = ensureAnimationDocument(session.document)
+    get().setActiveAnimationFrame(nextAnimationFrameId(timeline, timeline.activeFrameId))
+  },
+
+  addAnimationFrame() {
+    get().mutateActive((session) => {
+      const timeline = ensureAnimationDocument(session.document)
+      const previousFrameId = timeline.activeFrameId
+      const frameId = addBlankAnimationFrame(session.document)
+      const frameIndex = timeline.frames.findIndex((frame) => frame.id === frameId)
+      const frame = { ...timeline.frames[frameIndex] }
+      const cels = cloneAnimationCelsForLayerIds(session.document, session.document.layers.map((layer) => layer.id), frameId)
+      const restore = (): void => {
+        const current = ensureAnimationDocument(session.document)
+        if (!current.frames.some((candidate) => candidate.id === frameId)) current.frames.splice(Math.min(frameIndex, current.frames.length), 0, { ...frame })
+        restoreAnimationCels(session.document, cels)
+        activateAnimationFrame(session.document, frameId)
+      }
+      session.history.push({ label: tr('workspace.history.addAnimationFrame'), bytes: cels.reduce((sum, cel) => sum + (cel.surface?.pixels.byteLength ?? 0), 0) + 64, undo: () => { deleteAnimationFrame(session.document, frameId); activateAnimationFrame(session.document, previousFrameId) }, redo: restore })
+      session.animationPlaying = false
+      session.selection = null
+    })
+  },
+
+  duplicateAnimationFrame() {
+    get().mutateActive((session) => {
+      const timeline = ensureAnimationDocument(session.document)
+      const previousFrameId = timeline.activeFrameId
+      const frameId = duplicateAnimationFrame(session.document)
+      const frameIndex = timeline.frames.findIndex((frame) => frame.id === frameId)
+      const frame = { ...timeline.frames[frameIndex] }
+      const cels = cloneAnimationCelsForLayerIds(session.document, session.document.layers.map((layer) => layer.id), frameId)
+      const restore = (): void => {
+        const current = ensureAnimationDocument(session.document)
+        if (!current.frames.some((candidate) => candidate.id === frameId)) current.frames.splice(Math.min(frameIndex, current.frames.length), 0, { ...frame })
+        restoreAnimationCels(session.document, cels)
+        activateAnimationFrame(session.document, frameId)
+      }
+      session.history.push({ label: tr('workspace.history.duplicateAnimationFrame'), bytes: cels.reduce((sum, cel) => sum + (cel.surface?.pixels.byteLength ?? 0), 0) + 64, undo: () => { deleteAnimationFrame(session.document, frameId); activateAnimationFrame(session.document, previousFrameId) }, redo: restore })
+      session.animationPlaying = false
+      session.selection = null
+    })
+  },
+
+  deleteAnimationFrame() {
+    get().mutateActive((session) => {
+      const timeline = ensureAnimationDocument(session.document)
+      const frameId = timeline.activeFrameId
+      const frameIndex = timeline.frames.findIndex((frame) => frame.id === frameId)
+      const frame = { ...timeline.frames[frameIndex] }
+      const cels = cloneAnimationCelsForLayerIds(session.document, session.document.layers.map((layer) => layer.id), frameId)
+      if (!deleteAnimationFrame(session.document, frameId)) { set({ message: tr('workspace.animation.minimumFrame') }); return }
+      const nextFrameId = ensureAnimationDocument(session.document).activeFrameId
+      const restore = (): void => {
+        const current = ensureAnimationDocument(session.document)
+        if (!current.frames.some((candidate) => candidate.id === frameId)) current.frames.splice(Math.min(frameIndex, current.frames.length), 0, { ...frame })
+        restoreAnimationCels(session.document, cels)
+        activateAnimationFrame(session.document, frameId)
+      }
+      session.history.push({ label: tr('workspace.history.deleteAnimationFrame'), bytes: cels.reduce((sum, cel) => sum + (cel.surface?.pixels.byteLength ?? 0), 0) + 64, undo: restore, redo: () => { deleteAnimationFrame(session.document, frameId); activateAnimationFrame(session.document, nextFrameId) } })
+      session.animationPlaying = false
+      session.selection = null
+    })
+  },
+
+  setActiveAnimationFrameDuration(duration) {
+    get().mutateActive((session) => {
+      const timeline = ensureAnimationDocument(session.document)
+      const selected = session.selectedAnimationFrameIds.includes(timeline.activeFrameId) ? new Set(session.selectedAnimationFrameIds) : new Set([timeline.activeFrameId])
+      const frames = timeline.frames.filter((frame) => selected.has(frame.id))
+      const nextDuration = Math.max(1, Math.min(60_000, Math.trunc(duration) || 100))
+      const before = frames.map((frame) => ({ id: frame.id, duration: frame.duration }))
+      if (!before.some((frame) => frame.duration !== nextDuration)) return
+      for (const frame of frames) setAnimationFrameDuration(session.document, frame.id, nextDuration)
+      const apply = (values: Array<{ id: string; duration: number }>): void => {
+        const current = ensureAnimationDocument(session.document)
+        for (const value of values) {
+          const target = current.frames.find((frame) => frame.id === value.id)
+          if (target) target.duration = value.duration
+        }
+      }
+      const after = frames.map((frame) => ({ id: frame.id, duration: frame.duration }))
+      session.history.push({ label: tr('workspace.history.animationFrameDuration'), bytes: frames.length * 32, undo: () => apply(before), redo: () => apply(after) })
+    })
+  },
+
+  setAnimationLoop(loop) {
+    get().mutateActive((session) => {
+      const timeline = ensureAnimationDocument(session.document)
+      const before = timeline.loop
+      if (before === loop) return
+      setAnimationLoop(session.document, loop)
+      session.history.push({ label: tr('workspace.history.animationLoop'), bytes: 16, undo: () => { ensureAnimationDocument(session.document).loop = before }, redo: () => { ensureAnimationDocument(session.document).loop = loop } })
     })
   },
 
@@ -679,25 +1584,29 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     if (!check.allowed) { set({ message: check.reason }); return }
     get().mutateActive((session) => {
       const document = session.document
-      const layer = createLayer(`图层 ${document.layers.length + 1}`, document.width, document.height, document.colorMode)
-      const selectedLayer = session.selectedGroupId
-        ? null
-        : document.layers.find((candidate) => candidate.id === document.activeLayerId && session.selectedLayerIds.includes(candidate.id))
-      const targetGroupId = session.selectedGroupId ?? selectedLayer?.groupId ?? null
+      const placement = selectedRowInsertionTarget(session)
+      const layer = createLayer(tr('workspace.layer.defaultName', { index: document.layers.length + 1 }), document.width, document.height, document.colorMode)
+      const targetGroupId = insertionTargetParent(document, placement)
       if (targetGroupId) layer.groupId = targetGroupId
       const groupMemberIds = targetGroupId ? new Set(getLayerIdsInGroup(document, targetGroupId)) : null
       const lastGroupMember = groupMemberIds ? document.layers.reduce((last, item, index) => groupMemberIds.has(item.id) ? index : last, -1) : -1
       const index = lastGroupMember >= 0 ? lastGroupMember + 1 : document.layers.length
       document.layers.splice(index, 0, layer)
+      ensureAnimationDocument(document)
+      const animationCels = cloneAnimationCelsForLayerIds(document, [layer.id])
       document.activeLayerId = layer.id
       session.selectedGroupId = null
       session.selectedGroupIds = []
       session.selectedLayerIds = [layer.id]
+      session.history.beginCompound()
       session.history.push({
-        label: '新建图层', bytes: layer.pixels.byteLength,
-        undo: () => { document.layers = document.layers.filter((item) => item.id !== layer.id); document.activeLayerId = document.layers[Math.max(0, index - 1)].id },
-        redo: () => { document.layers.splice(index, 0, layer); document.activeLayerId = layer.id }
+        label: tr('workspace.history.newLayer'), bytes: layer.pixels.byteLength,
+        undo: () => { document.layers = document.layers.filter((item) => item.id !== layer.id); removeAnimationCelsForLayers(document, [layer.id]); document.activeLayerId = document.layers[Math.max(0, index - 1)].id },
+        redo: () => { document.layers.splice(index, 0, layer); restoreAnimationCels(document, animationCels); document.activeLayerId = layer.id }
       })
+      const placementHistory = moveLayerPanelRowsOperation(session, [layer.id], [], placement)
+      if (placementHistory) session.history.push(placementHistory)
+      session.history.endCompound(tr('workspace.history.newLayer'))
     })
   },
 
@@ -705,15 +1614,18 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     get().mutateActive((session) => {
       const document = session.document
       const priorId = document.activeLayerId
+      syncActiveAnimationFrame(document)
       const copy = duplicateLayer(document, priorId)
+      cloneAnimationCelsForLayer(document, priorId, copy)
+      const animationCels = cloneAnimationCelsForLayerIds(document, [copy.id])
       session.selectedGroupId = null
       session.selectedGroupIds = []
       session.selectedLayerIds = [copy.id]
       const index = document.layers.findIndex((item) => item.id === copy.id)
       session.history.push({
-        label: '复制图层', bytes: copy.pixels.byteLength,
-        undo: () => { document.layers = document.layers.filter((item) => item.id !== copy.id); document.activeLayerId = priorId },
-        redo: () => { document.layers.splice(index, 0, copy); document.activeLayerId = copy.id }
+        label: tr('workspace.history.copyLayer'), bytes: copy.pixels.byteLength,
+        undo: () => { document.layers = document.layers.filter((item) => item.id !== copy.id); removeAnimationCelsForLayers(document, [copy.id]); document.activeLayerId = priorId },
+        redo: () => { document.layers.splice(index, 0, copy); restoreAnimationCels(document, animationCels); document.activeLayerId = copy.id }
       })
     })
   },
@@ -727,20 +1639,27 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       const orderedIds = [...new Set(layerIds)]
         .filter((id) => document.layers.some((layer) => layer.id === id))
         .sort((left, right) => document.layers.findIndex((layer) => layer.id === left) - document.layers.findIndex((layer) => layer.id === right))
-      const copies = orderedIds.map((id) => duplicateLayer(document, id))
+      syncActiveAnimationFrame(document)
+      const copies = orderedIds.map((id) => {
+        const copy = duplicateLayer(document, id)
+        cloneAnimationCelsForLayer(document, id, copy)
+        return copy
+      })
       if (copies.length === 0) return
       createdIds.push(...copies.map((copy) => copy.id))
       const placements = copies.map((copy) => ({ copy, index: document.layers.indexOf(copy) }))
+      const animationCels = cloneAnimationCelsForLayerIds(document, createdIds)
       document.activeLayerId = copies.at(-1)!.id
       session.selectedGroupId = null
       session.selectedGroupIds = []
       session.selectedLayerIds = [...createdIds]
       session.history.push({
-        label: '复制图层',
+        label: tr('workspace.history.copyLayer'),
         bytes: copies.reduce((sum, copy) => sum + copy.pixels.byteLength, 0),
         undo: () => {
           const ids = new Set(createdIds)
           document.layers = document.layers.filter((layer) => !ids.has(layer.id))
+          removeAnimationCelsForLayers(document, createdIds)
           document.activeLayerId = priorActiveId
           session.selectedLayerIds = priorSelection
           session.selectedGroupId = null
@@ -748,6 +1667,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
         },
         redo: () => {
           for (const { copy, index } of placements) if (!document.layers.some((layer) => layer.id === copy.id)) document.layers.splice(Math.min(index, document.layers.length), 0, copy)
+          restoreAnimationCels(document, animationCels)
           document.activeLayerId = copies.at(-1)!.id
           session.selectedLayerIds = [...createdIds]
           session.selectedGroupId = null
@@ -758,6 +1678,96 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     return createdIds
   },
 
+  duplicateSelectedLayerRows() {
+    const result = { layerIds: [] as string[], groupIds: [] as string[] }
+    const current = activeSession(get())
+    if (!current) return result
+    const selectedGroups = new Set(selectedGroupRows(current))
+    const rootGroupIds = [...selectedGroups].filter((groupId) => !current.document.groups.some((candidate) => selectedGroups.has(candidate.id) && getDescendantGroupIds(current.document, candidate.id).includes(groupId)))
+    const copiedGroupIds = new Set<string>()
+    for (const rootGroupId of rootGroupIds) {
+      copiedGroupIds.add(rootGroupId)
+      for (const descendantId of getDescendantGroupIds(current.document, rootGroupId)) copiedGroupIds.add(descendantId)
+    }
+    const directLayerIds = selectedDirectLayerRows(current).filter((layerId) => {
+      const layer = current.document.layers.find((candidate) => candidate.id === layerId)
+      return Boolean(layer && (!layer.groupId || !copiedGroupIds.has(layer.groupId)))
+    })
+    if (rootGroupIds.length === 0 && directLayerIds.length === 0) return result
+    get().mutateActive((session) => {
+      const document = session.document
+      const placement = selectedRowInsertionTarget(session)
+      const previousActiveId = document.activeLayerId
+      const previousLayerIds = [...session.selectedLayerIds]
+      const previousGroupId = session.selectedGroupId
+      const previousGroupIds = [...session.selectedGroupIds]
+      const previousCollapsedGroupIds = [...session.collapsedGroupIds]
+      const groupIdMap = new Map([...copiedGroupIds].map((id) => [id, createId('group')]))
+      const groups = document.groups.filter((group) => copiedGroupIds.has(group.id)).map((group): LayerGroup => ({
+        ...group,
+        id: groupIdMap.get(group.id)!,
+        name: `${group.name} ${tr('canvas.history.copySuffix')}`,
+        parentGroupId: group.parentGroupId && groupIdMap.has(group.parentGroupId) ? groupIdMap.get(group.parentGroupId)! : group.parentGroupId ?? null,
+        panelOrder: typeof group.panelOrder === 'number' ? group.panelOrder + 0.01 : group.panelOrder,
+        displayColor: group.displayColor ? { ...group.displayColor } : undefined
+      }))
+      const copiedCollapsedGroupIds = [...copiedGroupIds]
+        .filter((id) => previousCollapsedGroupIds.includes(id))
+        .map((id) => groupIdMap.get(id)!)
+      const allLayerIds = new Set(directLayerIds)
+      for (const groupId of copiedGroupIds) for (const layerId of getLayerIdsInGroup(document, groupId)) allLayerIds.add(layerId)
+      syncActiveAnimationFrame(document)
+      const sourceLayers = document.layers.filter((layer) => allLayerIds.has(layer.id))
+      const layers = sourceLayers.map((source): RasterLayer => source.format === 'rgba'
+        ? { ...source, id: createId('layer'), name: `${source.name} ${tr('canvas.history.copySuffix')}`, groupId: source.groupId && groupIdMap.has(source.groupId) ? groupIdMap.get(source.groupId)! : source.groupId, pixels: new Uint8ClampedArray(source.pixels), displayColor: source.displayColor ? { ...source.displayColor } : undefined }
+        : { ...source, id: createId('layer'), name: `${source.name} ${tr('canvas.history.copySuffix')}`, groupId: source.groupId && groupIdMap.has(source.groupId) ? groupIdMap.get(source.groupId)! : source.groupId, pixels: new Uint32Array(source.pixels), displayColor: source.displayColor ? { ...source.displayColor } : undefined })
+      const directSourceIds = new Set(directLayerIds)
+      result.layerIds = layers.filter((_, index) => directSourceIds.has(sourceLayers[index].id)).map((layer) => layer.id)
+      result.groupIds = rootGroupIds.map((id) => groupIdMap.get(id)!).filter(Boolean)
+      const insertionIndex = Math.max(0, ...sourceLayers.map((layer) => document.layers.indexOf(layer))) + 1
+      document.groups.push(...groups)
+      document.layers.splice(insertionIndex, 0, ...layers)
+      layers.forEach((layer, index) => cloneAnimationCelsForLayer(document, sourceLayers[index].id, layer))
+      const animationCels = cloneAnimationCelsForLayerIds(document, layers.map((layer) => layer.id))
+      document.activeLayerId = layers.at(-1)?.id ?? previousActiveId
+      session.collapsedGroupIds = [...new Set([...previousCollapsedGroupIds, ...copiedCollapsedGroupIds])]
+      applyLayerRowSelection(session, layers.map((layer) => layer.id), result.groupIds, layers.length > 0 ? { kind: 'layer', id: layers.at(-1)!.id } : { kind: 'group', id: result.groupIds.at(-1)! })
+      const createdLayerIds = new Set(layers.map((layer) => layer.id))
+      const createdGroupIds = new Set(groups.map((group) => group.id))
+      const creationHistory: HistoryEntry = {
+        label: tr('workspace.history.copyLayer'),
+        bytes: layers.reduce((sum, layer) => sum + layer.pixels.byteLength, 0) + groups.length * 96,
+        undo: () => {
+          document.layers = document.layers.filter((layer) => !createdLayerIds.has(layer.id))
+          removeAnimationCelsForLayers(document, layers.map((layer) => layer.id))
+          document.groups = document.groups.filter((group) => !createdGroupIds.has(group.id))
+          document.activeLayerId = previousActiveId
+          session.selectedLayerIds = previousLayerIds
+          session.selectedGroupId = previousGroupId
+          session.selectedGroupIds = previousGroupIds
+          session.collapsedGroupIds = previousCollapsedGroupIds
+        },
+        redo: () => {
+          for (const group of groups) if (!document.groups.includes(group)) document.groups.push(group)
+          const missing = layers.filter((layer) => !document.layers.includes(layer))
+          if (missing.length > 0) document.layers.splice(Math.min(insertionIndex, document.layers.length), 0, ...missing)
+          restoreAnimationCels(document, animationCels)
+          document.activeLayerId = layers.at(-1)?.id ?? previousActiveId
+          session.collapsedGroupIds = [...new Set([...previousCollapsedGroupIds, ...copiedCollapsedGroupIds])]
+          applyLayerRowSelection(session, layers.map((layer) => layer.id), result.groupIds, layers.length > 0 ? { kind: 'layer', id: layers.at(-1)!.id } : { kind: 'group', id: result.groupIds.at(-1)! })
+        }
+      }
+      const placementHistory = moveLayerPanelRowsOperation(session, result.layerIds, result.groupIds, placement)
+      session.history.push(placementHistory ? {
+        label: creationHistory.label,
+        bytes: creationHistory.bytes + placementHistory.bytes,
+        undo: () => { placementHistory.undo(); creationHistory.undo() },
+        redo: () => { creationHistory.redo(); placementHistory.redo() }
+      } : creationHistory)
+    })
+    return result
+  },
+
   deleteActiveLayer() {
     if ((activeSession(get())?.selectedLayerIds.length ?? 0) > 1) {
       get().deleteSelectedLayers()
@@ -765,20 +1775,22 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     }
     get().mutateActive((session) => {
       const document = session.document
-      if (document.layers.length === 1) { set({ message: '至少保留一个图层。' }); return }
+      if (document.layers.length === 1) { set({ message: tr('workspace.layer.minimum') }); return }
       const index = document.layers.findIndex((item) => item.id === document.activeLayerId)
       const removed = document.layers[index]
-      if (!removed || isLayerEffectivelyLocked(document, removed)) { set({ message: '锁定的图层无法删除。' }); return }
+      if (!removed || isLayerEffectivelyLocked(document, removed)) { set({ message: tr('workspace.layer.lockedDelete') }); return }
+      const animationCels = cloneAnimationCelsForLayerIds(document, [removed.id])
       document.layers.splice(index, 1)
+      removeAnimationCelsForLayers(document, [removed.id])
       const nextId = document.layers[Math.max(0, index - 1)].id
       document.activeLayerId = nextId
       session.selectedGroupId = null
       session.selectedGroupIds = []
       session.selectedLayerIds = [nextId]
       session.history.push({
-        label: '删除图层', bytes: removed.pixels.byteLength,
-        undo: () => { document.layers.splice(index, 0, removed); document.activeLayerId = removed.id },
-        redo: () => { document.layers = document.layers.filter((item) => item.id !== removed.id); document.activeLayerId = nextId }
+        label: tr('workspace.history.deleteLayer'), bytes: removed.pixels.byteLength,
+        undo: () => { document.layers.splice(index, 0, removed); restoreAnimationCels(document, animationCels); document.activeLayerId = removed.id },
+        redo: () => { document.layers = document.layers.filter((item) => item.id !== removed.id); removeAnimationCelsForLayers(document, [removed.id]); document.activeLayerId = nextId }
       })
     })
   },
@@ -798,15 +1810,17 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     if (removed.length === 0 && removedGroups.length === 0) return
     const locked = removed.some(({ layer }) => isLayerEffectivelyLocked(current.document, layer))
       || removedGroups.some(({ group }) => isGroupEffectivelyLocked(current.document, group))
-    if (locked) { set({ message: '锁定的图层或图层组无法删除。' }); return }
-    if (removed.length >= current.document.layers.length) { set({ message: '至少保留一个图层。' }); return }
+    if (locked) { set({ message: tr('workspace.layer.structureLocked') }); return }
+    if (removed.length >= current.document.layers.length) { set({ message: tr('workspace.layer.minimum') }); return }
     get().mutateActive((session) => {
       const document = session.document
       const previousActiveId = document.activeLayerId
       const previousSelection = [...session.selectedLayerIds]
       const previousGroupId = session.selectedGroupId
       const previousGroupIds = [...session.selectedGroupIds]
+      const animationCels = cloneAnimationCelsForLayerIds(document, [...selectedIds])
       document.layers = document.layers.filter((layer) => !selectedIds.has(layer.id))
+      removeAnimationCelsForLayers(document, [...selectedIds])
       if (removedGroups.length > 0) document.groups = document.groups.filter((group) => !selectedGroupIdSet.has(group.id))
       const nearestIndex = removed.length > 0 ? Math.max(0, Math.min(document.layers.length - 1, removed[0].index - 1)) : document.layers.findIndex((layer) => layer.id === previousActiveId)
       const nextId = document.layers[Math.max(0, nearestIndex)]?.id ?? previousActiveId
@@ -815,11 +1829,12 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       session.selectedGroupIds = []
       session.selectedLayerIds = [nextId]
       session.history.push({
-        label: removedGroups.length > 0 ? '删除图层组' : removed.length === 1 ? '删除图层' : '删除所选图层',
+        label: removedGroups.length > 0 ? tr('workspace.history.deleteGroup') : removed.length === 1 ? tr('workspace.history.deleteLayer') : tr('workspace.history.deleteLayers'),
         bytes: removed.reduce((sum, item) => sum + item.layer.pixels.byteLength, 0) + removedGroups.length * 96,
         undo: () => {
           for (const item of removedGroups) if (!document.groups.some((group) => group.id === item.group.id)) document.groups.splice(Math.min(item.index, document.groups.length), 0, item.group)
           for (const item of removed) if (!document.layers.some((layer) => layer.id === item.layer.id)) document.layers.splice(Math.min(item.index, document.layers.length), 0, item.layer)
+          restoreAnimationCels(document, animationCels)
           document.activeLayerId = previousActiveId
           session.selectedLayerIds = previousSelection
           session.selectedGroupId = previousGroupId
@@ -827,6 +1842,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
         },
         redo: () => {
           document.layers = document.layers.filter((layer) => !selectedIds.has(layer.id))
+          removeAnimationCelsForLayers(document, [...selectedIds])
           document.groups = document.groups.filter((group) => !selectedGroupIdSet.has(group.id))
           document.activeLayerId = nextId
           session.selectedLayerIds = [nextId]
@@ -846,8 +1862,8 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     const beforeUi = captureLayerUi(session)
     const result = mergeRasterLayers(session.document, session.selectedLayerIds)
     if (!result.ok) { set({ message: result.reason }); return }
-    commitLayerMerge(session, beforeDocument, beforeUi, result, '合并所选图层')
-    set({ sessions: [...state.sessions], message: '已合并所选图层。' })
+    commitLayerMerge(session, beforeDocument, beforeUi, result, tr('workspace.history.mergeSelected'))
+    set({ sessions: [...state.sessions], message: tr('workspace.layer.mergedSelected') })
   },
 
   mergeActiveLayerDown() {
@@ -859,21 +1875,21 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     const beforeUi = captureLayerUi(session)
     const result = mergeLayerDown(session.document, session.document.activeLayerId)
     if (!result.ok) { set({ message: result.reason }); return }
-    commitLayerMerge(session, beforeDocument, beforeUi, result, '向下合并图层')
-    set({ sessions: [...state.sessions], message: '已向下合并图层。' })
+    commitLayerMerge(session, beforeDocument, beforeUi, result, tr('workspace.history.mergeDown'))
+    set({ sessions: [...state.sessions], message: tr('workspace.layer.mergedDown') })
   },
 
   mergeSelectedGroup() {
     get().commitFloatingPaste()
     const state = get()
     const session = activeSession(state)
-    if (!session?.selectedGroupId) { set({ message: '请先选择一个图层组。' }); return }
+    if (!session?.selectedGroupId) { set({ message: tr('workspace.group.selectFirst') }); return }
     const beforeDocument = encodeProject(session.document)
     const beforeUi = captureLayerUi(session)
     const result = mergeLayerGroup(session.document, session.selectedGroupId)
     if (!result.ok) { set({ message: result.reason }); return }
-    commitLayerMerge(session, beforeDocument, beforeUi, result, '合并图层组')
-    set({ sessions: [...state.sessions], message: '已将图层组合并为单个图层。' })
+    commitLayerMerge(session, beforeDocument, beforeUi, result, tr('workspace.history.mergeGroup'))
+    set({ sessions: [...state.sessions], message: tr('workspace.group.merged') })
   },
 
   mergeVisibleLayers() {
@@ -885,8 +1901,8 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     const beforeUi = captureLayerUi(session)
     const result = mergeVisibleDocumentLayers(session.document)
     if (!result.ok) { set({ message: result.reason }); return }
-    commitLayerMerge(session, beforeDocument, beforeUi, result, '合并可见图层')
-    set({ sessions: [...state.sessions], message: '已合并可见图层，隐藏图层保持不变。' })
+    commitLayerMerge(session, beforeDocument, beforeUi, result, tr('workspace.history.mergeVisible'))
+    set({ sessions: [...state.sessions], message: tr('workspace.layers.visibleMerged') })
   },
 
   moveLayer(direction) {
@@ -897,14 +1913,14 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       if (target < 0 || target >= document.layers.length) return
       ;[document.layers[index], document.layers[target]] = [document.layers[target], document.layers[index]]
       session.history.push({
-        label: '移动图层', bytes: 32,
+        label: tr('canvas.history.moveLayer'), bytes: 32,
         undo: () => { ;[document.layers[index], document.layers[target]] = [document.layers[target], document.layers[index]] },
         redo: () => { ;[document.layers[index], document.layers[target]] = [document.layers[target], document.layers[index]] }
       })
     })
   },
 
-  moveLayerBy(layerId, deltaX, deltaY, label = '移动图层内容') {
+  moveLayerBy(layerId, deltaX, deltaY, label = tr('canvas.history.moveLayer')) {
     get().mutateActive((session) => {
       const layer = session.document.layers.find((candidate) => candidate.id === layerId)
       if (!layer || isLayerEffectivelyLocked(session.document, layer)) return
@@ -927,7 +1943,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
 
   reorderLayers(layerIds, targetLayerId, insertAfterTarget = true) {
     const current = activeSession(get())
-    if (current && lockedLayerStructure(current.document, layerIds)) { set({ message: '锁定的图层无法移动。' }); return }
+    if (current && lockedLayerStructure(current.document, layerIds)) { set({ message: tr('workspace.layer.lockedMove') }); return }
     get().mutateActive((session) => {
       const history = reorderLayersOperation(session, layerIds, targetLayerId, insertAfterTarget)
       if (history) session.history.push(history)
@@ -940,7 +1956,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
 
   assignLayersToGroup(layerIds, groupId, targetLayerId, insertAfterTarget = true) {
     const current = activeSession(get())
-    if (current && lockedLayerStructure(current.document, layerIds)) { set({ message: '锁定的图层无法移动。' }); return }
+    if (current && lockedLayerStructure(current.document, layerIds)) { set({ message: tr('workspace.layer.lockedMove') }); return }
     get().mutateActive((session) => {
       const history = assignLayersToGroupOperation(session, layerIds, groupId, targetLayerId, insertAfterTarget)
       if (history) session.history.push(history)
@@ -949,7 +1965,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
 
   assignLayersToRoot(layerIds, targetLayerId, insertAfterTarget = true) {
     const current = activeSession(get())
-    if (current && lockedLayerStructure(current.document, layerIds)) { set({ message: '锁定的图层无法移动。' }); return }
+    if (current && lockedLayerStructure(current.document, layerIds)) { set({ message: tr('workspace.layer.lockedMove') }); return }
     get().mutateActive((session) => {
       const history = assignLayersToRootOperation(session, layerIds, targetLayerId, insertAfterTarget)
       if (history) session.history.push(history)
@@ -958,7 +1974,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
 
   assignLayersAboveGroup(layerIds, groupId) {
     const current = activeSession(get())
-    if (current && lockedLayerStructure(current.document, layerIds)) { set({ message: '锁定的图层无法移动。' }); return }
+    if (current && lockedLayerStructure(current.document, layerIds)) { set({ message: tr('workspace.layer.lockedMove') }); return }
     get().mutateActive((session) => {
       const history = assignLayersAboveGroupOperation(session, layerIds, groupId)
       if (history) session.history.push(history)
@@ -968,10 +1984,10 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
   reorderGroup(groupId, targetGroupId, insertAfterTarget = true) {
     if (groupId === targetGroupId) return
     const current = activeSession(get())
-    if (current && lockedGroupStructure(current.document, groupId)) { set({ message: '锁定的图层组无法移动。' }); return }
+    if (current && lockedGroupStructure(current.document, groupId)) { set({ message: tr('workspace.group.lockedMove') }); return }
     get().mutateActive((session) => {
       if (!canMoveGroupInto(session.document, groupId, targetGroupId)) {
-        set({ message: '不能把图层组移动到自己的子组旁。' })
+        set({ message: tr('workspace.group.moveNextToChild') })
         return
       }
       const history = reorderGroupOperation(session, groupId, targetGroupId, insertAfterTarget)
@@ -981,7 +1997,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
 
   positionGroupNextToLayer(groupId, targetLayerId, insertAfterTarget = true) {
     const current = activeSession(get())
-    if (current && lockedGroupStructure(current.document, groupId)) { set({ message: '锁定的图层组无法移动。' }); return }
+    if (current && lockedGroupStructure(current.document, groupId)) { set({ message: tr('workspace.group.lockedMove') }); return }
     get().mutateActive((session) => {
       const history = positionGroupNextToLayerOperation(session, groupId, targetLayerId, insertAfterTarget)
       if (history) session.history.push(history)
@@ -991,9 +2007,9 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
   assignGroupToGroup(groupId, parentGroupId) {
     if (groupId === parentGroupId) return
     const current = activeSession(get())
-    if (current && lockedGroupStructure(current.document, groupId)) { set({ message: '锁定的图层组无法移动。' }); return }
+    if (current && lockedGroupStructure(current.document, groupId)) { set({ message: tr('workspace.group.lockedMove') }); return }
     get().mutateActive((session) => {
-      if (!canMoveGroupInto(session.document, groupId, parentGroupId)) { set({ message: '不能把图层组移动到自己的子组中。' }); return }
+      if (!canMoveGroupInto(session.document, groupId, parentGroupId)) { set({ message: tr('workspace.group.moveIntoChild') }); return }
       const history = assignGroupToGroupOperation(session, groupId, parentGroupId)
       if (history) session.history.push(history)
     })
@@ -1001,7 +2017,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
 
   assignGroupToRoot(groupId) {
     const current = activeSession(get())
-    if (current && lockedGroupStructure(current.document, groupId)) { set({ message: '锁定的图层组无法移动。' }); return }
+    if (current && lockedGroupStructure(current.document, groupId)) { set({ message: tr('workspace.group.lockedMove') }); return }
     get().mutateActive((session) => {
       const history = assignGroupToRootOperation(session, groupId)
       if (history) session.history.push(history)
@@ -1010,7 +2026,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
 
   moveLayersToRootEdge(layerIds, edge) {
     const current = activeSession(get())
-    if (current && lockedLayerStructure(current.document, layerIds)) { set({ message: '锁定的图层无法移动。' }); return }
+    if (current && lockedLayerStructure(current.document, layerIds)) { set({ message: tr('workspace.layer.lockedMove') }); return }
     get().mutateActive((session) => {
       const history = moveLayersToRootEdgeOperation(session, layerIds, edge)
       if (history) session.history.push(history)
@@ -1019,24 +2035,44 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
 
   moveGroupToRootEdge(groupId, edge) {
     const current = activeSession(get())
-    if (current && lockedGroupStructure(current.document, groupId)) { set({ message: '锁定的图层组无法移动。' }); return }
+    if (current && lockedGroupStructure(current.document, groupId)) { set({ message: tr('workspace.group.lockedMove') }); return }
     get().mutateActive((session) => {
       const history = moveGroupToRootEdgeOperation(session, groupId, edge)
       if (history) session.history.push(history)
     })
   },
 
+  moveLayerRows(layerIds, groupIds, target) {
+    const current = activeSession(get())
+    if (current && (lockedLayerStructure(current.document, layerIds) || groupIds.some((groupId) => lockedGroupStructure(current.document, groupId)))) {
+      set({ message: tr('workspace.layer.lockedMove') })
+      return
+    }
+    get().mutateActive((session) => {
+      const history = moveLayerPanelRowsOperation(session, layerIds, groupIds, target)
+      if (history) session.history.push(history)
+    })
+  },
+
   createLayerGroup() {
     get().mutateActive((session) => {
-      const history = createLayerGroupOperation(session, createId('group'), `组 ${session.document.groups.length + 1}`)
+      const placement = selectedRowInsertionTarget(session)
+      const placeRelativeToSelectedGroup = Boolean(session.selectedGroupId)
+      session.history.beginCompound()
+      const history = createLayerGroupOperation(session, createId('group'), tr('workspace.group.defaultName', { index: session.document.groups.length + 1 }))
       if (history) session.history.push(history)
+      if (history && placeRelativeToSelectedGroup && session.selectedGroupId) {
+        const placementHistory = moveLayerPanelRowsOperation(session, [], [session.selectedGroupId], placement)
+        if (placementHistory) session.history.push(placementHistory)
+      }
+      session.history.endCompound(history?.label ?? tr('workspace.history.newLayer'))
     })
   },
 
   ungroupSelected() {
     const current = activeSession(get())
     const groupIds = current?.selectedGroupId ? [current.selectedGroupId] : current?.document.layers.filter((layer) => current.selectedLayerIds.includes(layer.id) && layer.groupId).map((layer) => layer.groupId!) ?? []
-    if (current && groupIds.some((groupId) => lockedGroupStructure(current.document, groupId))) { set({ message: '锁定的图层组无法解组。' }); return }
+    if (current && groupIds.some((groupId) => lockedGroupStructure(current.document, groupId))) { set({ message: tr('workspace.group.lockedUngroup') }); return }
     get().mutateActive((session) => {
       const history = ungroupSelectedOperation(session)
       if (history) session.history.push(history)
@@ -1048,7 +2084,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       const layer = getLayer(session.document, layerId)
       const before = layer.visible
       layer.visible = !before
-      session.history.push({ label: '显示图层', bytes: 8, undo: () => { layer.visible = before }, redo: () => { layer.visible = !before } })
+      session.history.push({ label: tr('workspace.history.showLayer'), bytes: 8, undo: () => { layer.visible = before }, redo: () => { layer.visible = !before } })
     })
   },
 
@@ -1088,6 +2124,13 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     }, false)
   },
 
+  selectLayerRows(layerIds, groupIds) {
+    get().mutateActive((session) => {
+      const focus = layerIds.length > 0 ? { kind: 'layer' as const, id: layerIds.at(-1)! } : { kind: 'group' as const, id: groupIds.at(-1)! }
+      applyLayerRowSelection(session, layerIds, groupIds, focus)
+    }, false)
+  },
+
   clearLayerSelection() {
     get().commitFloatingPaste()
     get().mutateActive((session) => {
@@ -1112,7 +2155,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       const group = getGroup(session.document, groupId)
       const before = group.visible
       group.visible = !before
-      session.history.push({ label: '显示图层组', bytes: 8, undo: () => { group.visible = before }, redo: () => { group.visible = !before } })
+      session.history.push({ label: tr('workspace.history.showGroup'), bytes: 8, undo: () => { group.visible = before }, redo: () => { group.visible = !before } })
     })
   },
 
@@ -1123,14 +2166,14 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       const group = getGroup(session.document, groupId)
       const lockingAncestor = getGroupLockingAncestor(session.document, group)
       if (!locked && lockingAncestor) {
-        set({ message: '父级图层组已锁定，无法解锁。' })
+        set({ message: tr('workspace.group.lockedUnlock') })
         return
       }
       const before = { name: group.name, opacity: group.opacity, blendMode: group.blendMode, locked: group.locked, displayColor: group.displayColor, description: group.description ?? '' }
       const visualLocked = group.locked || Boolean(lockingAncestor)
       const after = { name: trimmed, opacity: visualLocked ? group.opacity : Math.max(0, Math.min(1, opacity)), blendMode: visualLocked ? group.blendMode : blendMode, locked: lockingAncestor ? group.locked : locked, displayColor: displayColor === undefined ? group.displayColor : displayColor ?? undefined, description: description ?? group.description ?? '' }
       Object.assign(group, after)
-      session.history.push({ label: '修改图层组属性', bytes: 48 + before.name.length + after.name.length, undo: () => Object.assign(group, before), redo: () => Object.assign(group, after) })
+      session.history.push({ label: tr('workspace.history.groupProperties'), bytes: 48 + before.name.length + after.name.length, undo: () => Object.assign(group, before), redo: () => Object.assign(group, after) })
     })
   },
 
@@ -1141,7 +2184,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       const layer = getLayer(session.document, layerId)
       const before = layer.name
       layer.name = trimmed
-      session.history.push({ label: '重命名图层', bytes: before.length + trimmed.length, undo: () => { layer.name = before }, redo: () => { layer.name = trimmed } })
+      session.history.push({ label: tr('workspace.history.renameLayer'), bytes: before.length + trimmed.length, undo: () => { layer.name = before }, redo: () => { layer.name = trimmed } })
     })
   },
 
@@ -1156,7 +2199,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       const layer = getLayer(session.document, layerId)
       const before = layer.opacity
       layer.opacity = after
-      session.history.push({ label: '图层不透明度', bytes: 16, undo: () => { layer.opacity = before }, redo: () => { layer.opacity = after } })
+      session.history.push({ label: tr('workspace.history.layerOpacity'), bytes: 16, undo: () => { layer.opacity = before }, redo: () => { layer.opacity = after } })
     })
   },
 
@@ -1174,7 +2217,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       const after = { name: trimmed, opacity: nextOpacity }
       layer.name = after.name
       layer.opacity = after.opacity
-      session.history.push({ label: '修改图层属性', bytes: 32 + before.name.length + after.name.length, undo: () => { layer.name = before.name; layer.opacity = before.opacity }, redo: () => { layer.name = after.name; layer.opacity = after.opacity } })
+      session.history.push({ label: tr('workspace.history.layerProperties'), bytes: 32 + before.name.length + after.name.length, undo: () => { layer.name = before.name; layer.opacity = before.opacity }, redo: () => { layer.name = after.name; layer.opacity = after.opacity } })
     })
   },
 
@@ -1185,20 +2228,20 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       const layer = getLayer(session.document, layerId)
       const lockingGroup = getLayerLockingGroup(session.document, layer)
       if (locked === false && lockingGroup) {
-        set({ message: '父级图层组已锁定，无法解锁。' })
+        set({ message: tr('workspace.group.lockedUnlock') })
         return
       }
       const before = { name: layer.name, opacity: layer.opacity, blendMode: layer.blendMode, locked: layer.locked, displayColor: layer.displayColor, description: layer.description ?? '' }
       const visualLocked = layer.locked || Boolean(lockingGroup)
       const after = { name: trimmed, opacity: visualLocked ? layer.opacity : Math.max(0, Math.min(1, opacity)), blendMode: visualLocked ? layer.blendMode : blendMode, locked: lockingGroup ? layer.locked : locked ?? layer.locked, displayColor: displayColor === undefined ? layer.displayColor : displayColor ?? undefined, description: description ?? layer.description ?? '' }
       Object.assign(layer, after)
-      session.history.push({ label: '修改图层属性', bytes: 40 + before.name.length + after.name.length, undo: () => Object.assign(layer, before), redo: () => Object.assign(layer, after) })
+      session.history.push({ label: tr('workspace.history.layerProperties'), bytes: 40 + before.name.length + after.name.length, undo: () => Object.assign(layer, before), redo: () => Object.assign(layer, after) })
     })
   },
   applyActiveLayerAdjustment(adjustment) {
     get().mutateActive((session) => {
       const labels: Record<ColorAdjustment['kind'], string> = {
-        'color-balance': '色彩平衡', 'brightness-contrast': '亮度/对比度', 'hue-saturation': '色相/饱和度', curves: '曲线'
+        'color-balance': tr('adjustment.title.colorBalance'), 'brightness-contrast': tr('adjustment.title.brightnessContrast'), 'hue-saturation': tr('adjustment.title.hueSaturation'), curves: tr('adjustment.title.curves')
       }
       const targetIds = session.selection
         ? [getActiveLayer(session.document).id]
@@ -1218,20 +2261,23 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     const session = activeSession(get())
     return session ? captureAdjustmentSnapshot(session) : null
   },
-  previewActiveLayerAdjustment(adjustment, baseline) {
+  previewActiveLayerAdjustment(adjustment, baseline, selection) {
     get().mutateActive((session) => {
       restoreAdjustmentSnapshot(session, baseline)
+      const targetSelection = selection === undefined ? session.selection : selection
       for (const layerSnapshot of baseline.layers) {
         const layer = session.document.layers.find((candidate) => candidate.id === layerSnapshot.layerId)
-        if (layer && !isLayerEffectivelyLocked(session.document, layer)) applyColorAdjustment(session.document, layer, adjustment, session.selection)
+        if (layer && !isLayerEffectivelyLocked(session.document, layer)) applyColorAdjustment(session.document, layer, adjustment, targetSelection)
       }
       session.revision += 1
+      session.contentRevision += 1
     }, false)
   },
   restoreActiveDocumentSnapshot(snapshot) {
     get().mutateActive((session) => {
       restoreAdjustmentSnapshot(session, snapshot)
       session.revision += 1
+      session.contentRevision += 1
     }, false)
   },
   applyActiveLayerAdjustmentFromSnapshot(adjustment, baseline) {
@@ -1248,13 +2294,13 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       }
       const after = captureAdjustmentSnapshot(session, before.layers.map((layer) => layer.layerId))
       const labels: Record<ColorAdjustment['kind'], string> = {
-        'color-balance': '色彩平衡', 'brightness-contrast': '亮度/对比度', 'hue-saturation': '色相/饱和度', curves: '曲线'
+        'color-balance': tr('adjustment.title.colorBalance'), 'brightness-contrast': tr('adjustment.title.brightnessContrast'), 'hue-saturation': tr('adjustment.title.hueSaturation'), curves: tr('adjustment.title.curves')
       }
       session.history.push({
         label: labels[adjustment.kind],
         bytes: before.layers.reduce((bytes, layer) => bytes + layer.pixels.byteLength, 0) + after.layers.reduce((bytes, layer) => bytes + layer.pixels.byteLength, 0) + (before.palette.length + after.palette.length) * 24,
-        undo: () => { restoreAdjustmentSnapshot(session, before); session.revision += 1 },
-        redo: () => { restoreAdjustmentSnapshot(session, after); session.revision += 1 }
+        undo: () => { restoreAdjustmentSnapshot(session, before); session.revision += 1; session.contentRevision += 1 },
+        redo: () => { restoreAdjustmentSnapshot(session, after); session.revision += 1; session.contentRevision += 1 }
       })
     })
   },
@@ -1265,7 +2311,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     get().mutateActive((session) => {
       if (!session.selection) return
       const edit = clearSelection(session.document, session.selection)
-      const entry = edit && commitPixelEdit(session.document, edit, '删除选区')
+      const entry = edit && commitPixelEdit(session.document, edit, tr('workspace.history.deleteSelection'))
       if (entry) session.history.push(entry)
     })
   },
@@ -1277,21 +2323,21 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     const session = activeSession(get())
     if (!session) return
     const layer = getActiveLayer(session.document)
-    if (!isLayerEffectivelyVisible(session.document, layer)) { set({ message: '当前图层不可见，无法填充。' }); return }
-    if (isLayerEffectivelyLocked(session.document, layer)) { set({ message: '当前图层已锁定，无法填充。' }); return }
+    if (!isLayerEffectivelyVisible(session.document, layer)) { set({ message: tr('workspace.fill.invisible') }); return }
+    if (isLayerEffectivelyLocked(session.document, layer)) { set({ message: tr('workspace.fill.locked') }); return }
     const edit = fillSelectionOrCanvas(session.document, layer, session.primaryColor, session.selection)
-    if (!edit) { set({ message: '没有可填充的像素区域。' }); return }
-    get().commitPixelEdit(edit, session.selection ? '填充选区前景色' : '填充画布前景色')
+    if (!edit) { set({ message: tr('workspace.fill.empty') }); return }
+    get().commitPixelEdit(edit, session.selection ? tr('workspace.history.fillSelectionForeground') : tr('workspace.history.fillCanvasForeground'))
   },
 
   outlineActiveSelection(color, thickness, position, directions, kernel = 'round', previewEnabled = true) {
     const session = activeSession(get())
-    if (!session?.selection) { set({ message: '请先创建选区。' }); return false }
+    if (!session?.selection) { set({ message: tr('workspace.selectionRequired') }); return false }
     const layer = getActiveLayer(session.document)
-    if (isLayerEffectivelyLocked(session.document, layer)) { set({ message: '当前图层已锁定。' }); return false }
+    if (isLayerEffectivelyLocked(session.document, layer)) { set({ message: tr('workspace.clipboard.layerLocked') }); return false }
     try {
       const edit = outlineSelection(session.document, layer, session.selection, color, thickness, position, directions, kernel)
-      if (!edit) { set({ message: '选区内没有可描边的内容。' }); return false }
+      if (!edit) { set({ message: tr('workspace.outline.noContent') }); return false }
       session.document.outlineSettings = {
         color: { ...color },
         thickness: Math.max(1, Math.min(64, Math.round(thickness))),
@@ -1300,11 +2346,11 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
         directions: directions ? { ...directions } : { nw: false, n: true, ne: false, w: true, e: true, sw: false, s: true, se: false },
         previewEnabled
       }
-      get().commitPixelEdit(edit, position === 'inside' ? '内部描边' : '外部描边')
-      set({ message: `已应用 ${Math.max(1, Math.min(64, Math.round(thickness)))} px ${position === 'inside' ? '内部' : '外部'}描边。` })
+      get().commitPixelEdit(edit, position === 'inside' ? tr('workspace.history.outlineInside') : tr('workspace.history.outlineOutside'))
+      set({ message: tr('workspace.outline.applied', { thickness: Math.max(1, Math.min(64, Math.round(thickness))), position: position === 'inside' ? tr('outline.inside') : tr('outline.outside') }) })
       return true
     } catch (error) {
-      set({ message: error instanceof Error ? error.message : '无法应用描边。' })
+      set({ message: error instanceof Error ? error.message : tr('workspace.outline.applyError') })
       return false
     }
   },
@@ -1318,6 +2364,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     const session = activeSession(get())
     if (!session) return
     const document = session.document
+    syncActiveAnimationFrame(document)
     const selectedGroupIdSet = new Set<string>()
     for (const groupId of selectedGroupRows(session)) {
       selectedGroupIdSet.add(groupId)
@@ -1327,11 +2374,12 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     for (const groupId of selectedGroupIdSet) for (const layerId of getLayerIdsInGroup(document, groupId)) selectedLayerIdSet.add(layerId)
     const layers = document.layers.filter((layer) => selectedLayerIdSet.has(layer.id))
     if (layers.length === 0) {
-      set({ message: '请先选择要复制的图层或图层组。' })
+      set({ message: tr('workspace.copy.layerRequired') })
       return
     }
     const clipboard: LayerCollectionClipboard = {
       sourceDocumentId: document.id,
+      animationFrames: ensureAnimationDocument(document).frames.map((frame) => ({ duration: frame.duration })),
       layers: layers.map((layer) => layerClipboardFromDocument(document, layer, layer.groupId && selectedGroupIdSet.has(layer.groupId) ? layer.groupId : null)),
       groups: document.groups.filter((group) => selectedGroupIdSet.has(group.id)).map((group) => ({
         key: group.id,
@@ -1342,11 +2390,12 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
         blendMode: group.blendMode,
         displayColor: group.displayColor ? { ...group.displayColor } : undefined,
         description: group.description ?? '',
-        parentKey: group.parentGroupId ?? null
+        parentKey: group.parentGroupId ?? null,
+        collapsed: session.collapsedGroupIds.includes(group.id)
       }))
     }
     clipboardService.setLayers(clipboard)
-    set({ message: clipboard.groups.length > 0 ? `已复制图层组“${clipboard.groups[0].name}”，共 ${layers.length} 个图层。` : layers.length === 1 ? `已复制图层“${layers[0].name}”。` : `已复制 ${layers.length} 个图层。` })
+    set({ message: clipboard.groups.length > 0 ? tr('workspace.copy.group', { name: clipboard.groups[0].name, count: layers.length }) : layers.length === 1 ? tr('workspace.copy.layer', { name: layers[0].name }) : tr('workspace.copy.layers', { count: layers.length }) })
   },
 
   pasteLayerFromClipboard() {
@@ -1359,11 +2408,23 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     if (!clipboard || clipboard.layers.length === 0 || !current) return false
     get().mutateActive((session) => {
       const document = session.document
-      const selectedGroup = session.selectedGroupId ? document.groups.find((group) => group.id === session.selectedGroupId) : null
-      const selectedLayer = session.selectedGroupId ? null : document.layers.find((layer) => layer.id === document.activeLayerId && session.selectedLayerIds.includes(layer.id))
-      const targetGroupId = clipboard.groups.length > 0
-        ? selectedGroup?.parentGroupId ?? selectedLayer?.groupId ?? null
-        : selectedGroup?.id ?? selectedLayer?.groupId ?? null
+      const timeline = ensureAnimationDocument(document)
+      syncActiveAnimationFrame(document)
+      const clipboardFrameCount = Math.max(
+        clipboard.animationFrames?.length ?? 0,
+        ...clipboard.layers.flatMap((layer) => layer.animationCels?.map((cel) => cel.frameIndex + 1) ?? []),
+        1
+      )
+      const appendedFrames = Array.from({ length: Math.max(0, clipboardFrameCount - timeline.frames.length) }, (_, index) => ({
+        id: createId('frame'),
+        duration: clipboard.animationFrames?.[timeline.frames.length + index]?.duration ?? 100
+      }))
+      if (appendedFrames.length > 0) {
+        timeline.frames.push(...appendedFrames)
+        ensureAnimationDocument(document)
+      }
+      const placement = selectedRowInsertionTarget(session)
+      const targetGroupId = insertionTargetParent(document, placement)
       const groupIdByKey = new Map(clipboard.groups.map((group) => [group.key, createId('group')]))
       const resolveGroupParent = (parentKey?: string | null): string | null => {
         if (!parentKey) return targetGroupId
@@ -1373,7 +2434,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       }
       const groups: LayerGroup[] = clipboard.groups.map((group) => ({
         id: groupIdByKey.get(group.key)!,
-        name: `${group.name} 副本`,
+        name: `${group.name} ${tr('canvas.history.copySuffix')}`,
         description: group.description ?? '',
         displayColor: group.displayColor ? { ...group.displayColor } : undefined,
         parentGroupId: resolveGroupParent(group.parentKey),
@@ -1383,7 +2444,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
         blendMode: group.blendMode
       }))
       const layers = clipboard.layers.map((source) => {
-        const layer = createLayer(`${source.name} 副本`, source.width, source.height, document.colorMode)
+        const layer = createLayer(`${source.name} ${tr('canvas.history.copySuffix')}`, source.width, source.height, document.colorMode)
         layer.offsetX = source.offsetX
         layer.offsetY = source.offsetY
         layer.visible = source.visible
@@ -1405,48 +2466,75 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       const previousSelection = [...session.selectedLayerIds]
       const previousGroupId = session.selectedGroupId
       const previousGroupIds = [...session.selectedGroupIds]
+      const previousCollapsedGroupIds = [...session.collapsedGroupIds]
       document.groups.push(...groups)
       document.layers.splice(index, 0, ...layers)
+      ensureAnimationDocument(document)
+      layers.forEach((layer, layerIndex) => {
+        for (const cel of clipboard.layers[layerIndex].animationCels ?? []) applyLayerClipboardAnimationCel(document, layer, cel)
+      })
+      refreshActiveAnimationFrame(document)
       const pastedIds = layers.map((layer) => layer.id)
       const pastedGroupIds = new Set(groups.map((group) => group.id))
+      const appendedFrameIds = new Set(appendedFrames.map((frame) => frame.id))
+      const animationCels = ensureAnimationDocument(document).cels
+        .filter((cel) => pastedIds.includes(cel.layerId) || appendedFrameIds.has(cel.frameId))
+        .map(cloneAnimationCel)
+      const pastedCollapsedGroupIds = clipboard.groups
+        .filter((group) => group.collapsed)
+        .map((group) => groupIdByKey.get(group.key)!)
       document.activeLayerId = layers.at(-1)!.id
-      session.selectedGroupId = null
-      session.selectedGroupIds = groups.map((group) => group.id)
-      session.selectedLayerIds = pastedIds
+      session.collapsedGroupIds = [...new Set([...previousCollapsedGroupIds, ...pastedCollapsedGroupIds])]
+      applyLayerRowSelection(session, pastedIds, groups.map((group) => group.id), { kind: 'layer', id: layers.at(-1)!.id })
+      session.history.beginCompound()
       session.history.push({
-        label: layers.length === 1 && groups.length === 0 ? '粘贴图层' : '粘贴图层集合',
-        bytes: layers.reduce((sum, layer) => sum + layer.pixels.byteLength, 0) + groups.length * 96,
+        label: layers.length === 1 && groups.length === 0 ? tr('workspace.history.pasteLayer') : tr('workspace.history.pasteCollection'),
+        bytes: layers.reduce((sum, layer) => sum + layer.pixels.byteLength, 0) + animationCels.reduce((sum, cel) => sum + (cel.surface?.pixels.byteLength ?? 0), 0) + groups.length * 96 + appendedFrames.length * 32,
         undo: () => {
+          const currentTimeline = ensureAnimationDocument(document)
+          currentTimeline.cels = currentTimeline.cels.filter((cel) => !pastedIds.includes(cel.layerId) && !appendedFrameIds.has(cel.frameId))
+          currentTimeline.frames = currentTimeline.frames.filter((frame) => !appendedFrameIds.has(frame.id))
+          if (appendedFrameIds.has(currentTimeline.activeFrameId)) currentTimeline.activeFrameId = currentTimeline.frames[0].id
           document.layers = document.layers.filter((candidate) => !pastedIds.includes(candidate.id))
           document.groups = document.groups.filter((candidate) => !pastedGroupIds.has(candidate.id))
           document.activeLayerId = previousActiveId
           session.selectedLayerIds = previousSelection
           session.selectedGroupId = previousGroupId
           session.selectedGroupIds = previousGroupIds
+          session.collapsedGroupIds = previousCollapsedGroupIds
+          refreshActiveAnimationFrame(document)
         },
         redo: () => {
+          const currentTimeline = ensureAnimationDocument(document)
+          for (const frame of appendedFrames) if (!currentTimeline.frames.some((candidate) => candidate.id === frame.id)) currentTimeline.frames.push({ ...frame })
           for (const group of groups) if (!document.groups.some((candidate) => candidate.id === group.id)) document.groups.push(group)
           const missingLayers = layers.filter((layer) => !document.layers.some((candidate) => candidate.id === layer.id))
           if (missingLayers.length > 0) document.layers.splice(Math.min(index, document.layers.length), 0, ...missingLayers)
+          restoreAnimationCels(document, animationCels)
           document.activeLayerId = layers.at(-1)!.id
-          session.selectedGroupId = null
-          session.selectedGroupIds = groups.map((group) => group.id)
-          session.selectedLayerIds = pastedIds
+          session.collapsedGroupIds = [...new Set([...previousCollapsedGroupIds, ...pastedCollapsedGroupIds])]
+          applyLayerRowSelection(session, pastedIds, groups.map((group) => group.id), { kind: 'layer', id: layers.at(-1)!.id })
         }
       })
+      const createdGroupIds = new Set(groups.map((group) => group.id))
+      const rootGroupIds = groups.filter((group) => !group.parentGroupId || !createdGroupIds.has(group.parentGroupId)).map((group) => group.id)
+      const directLayerIds = layers.filter((layer) => !layer.groupId || !createdGroupIds.has(layer.groupId)).map((layer) => layer.id)
+      const placementHistory = moveLayerPanelRowsOperation(session, directLayerIds, rootGroupIds, placement)
+      if (placementHistory) session.history.push(placementHistory)
+      session.history.endCompound(layers.length === 1 && groups.length === 0 ? tr('workspace.history.pasteLayer') : tr('workspace.history.pasteCollection'))
     })
-    set({ message: clipboard.groups.length > 0 ? `已粘贴图层组，共 ${clipboard.layers.length} 个图层。` : clipboard.layers.length === 1 ? `已粘贴图层“${clipboard.layers[0].name}”。` : `已粘贴 ${clipboard.layers.length} 个图层。` })
+    set({ message: clipboard.groups.length > 0 ? tr('workspace.clipboard.pastedLayer') : clipboard.layers.length === 1 ? tr('workspace.copy.layer', { name: clipboard.layers[0].name }) : tr('workspace.copy.layers', { count: clipboard.layers.length }) })
     return true
   },
 
   copySelection() {
     get().commitFloatingPaste()
     const session = activeSession(get())
-    if (!session?.selection) { set({ message: '请先创建选区。' }); return }
+    if (!session?.selection) { set({ message: tr('workspace.selectionRequired') }); return }
     const layer = getActiveLayer(session.document)
     const document = session.document
     const selection = clampSelection(document, session.selection)
-    if (!selection) { set({ message: '选区不在画布内。' }); return }
+    if (!selection) { set({ message: tr('workspace.clipboard.outside') }); return }
     const pixels = new Uint32Array(selection.width * selection.height)
     const mask = new Uint8Array(selection.width * selection.height)
     let copied = 0
@@ -1459,14 +2547,14 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       mask[clipboardIndex] = 1
       copied += 1
     }
-    if (copied === 0) { clipboardService.clearSelection(); set({ message: '选区内没有可复制的非透明像素。' }); return }
+    if (copied === 0) { clipboardService.clearSelection(); set({ message: tr('workspace.copyContent.empty') }); return }
     clipboardService.setSelection({ width: selection.width, height: selection.height, originX: selection.x, originY: selection.y, pixels, mask })
     const clipboard = clipboardService.getSelection()
     if (!clipboard) return
     void window.moonSprite.writeClipboardImage(selectionClipboardImage(clipboard)).catch(() => {
-      set({ message: '已复制到软件内部剪贴板，但无法写入系统剪贴板。' })
+      set({ message: tr('workspace.copyContent.internalOnly') })
     })
-    set({ message: `已复制 ${copied} 个非透明像素。` })
+    set({ message: tr('workspace.copyContent.done', { count: copied }) })
   },
 
   cutSelection() {
@@ -1479,10 +2567,10 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     get().commitFloatingPaste()
     const clipboard = await clipboardService.readSelection(() => window.moonSprite.readClipboardImage())
     get().mutateActive((session) => {
-      if (!clipboard) { set({ message: '剪贴板中没有像素内容。' }); return }
+      if (!clipboard) { set({ message: tr('workspace.clipboard.emptyPixels') }); return }
       const document = session.document
       const layer = getActiveLayer(document)
-      if (isLayerEffectivelyLocked(document, layer)) { set({ message: '当前图层已锁定。' }); return }
+      if (isLayerEffectivelyLocked(document, layer)) { set({ message: tr('workspace.clipboard.layerLocked') }); return }
       const beforeSelection = cloneSelectionMask(session.selection)
       // Keep the entire clipboard image, even when it is larger than the
       // document. The floating selection can then be moved until any part of
@@ -1513,7 +2601,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
           pasted += 1
         }
       }
-      if (pasted === 0) { set({ message: '粘贴内容位于画布之外。' }); return }
+      if (pasted === 0) { set({ message: tr('workspace.clipboard.outside') }); return }
       const target: SelectionMask = { x, y, width, height, mask: pastedMask }
       const source: SelectionTransformSource = {
         selection: cloneSelectionMask(target)!,
@@ -1528,12 +2616,13 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       }
       const edit = applySelectionTransform(document, source, target, 0, true) ?? beginPixelEdit(layer.id)
       session.selection = cloneSelectionMask(target)
-      session.pendingPaste = { layerId: layer.id, beforeSelection, source, target: cloneSelectionMask(target)!, previewEdit: edit, copy: true, label: '粘贴到当前图层' }
+      session.pendingPaste = { layerId: layer.id, beforeSelection, source, target: cloneSelectionMask(target)!, previewEdit: edit, copy: true, label: tr('workspace.history.pasteToLayer') }
       // A paste remains floating until confirmed, so its first drag should move
       // the pasted pixels instead of beginning a new pencil stroke.
       session.tool = 'selection'
       session.revision += 1
-      set({ message: `已粘贴 ${pasted} 个非透明像素，可移动后按 Enter 确认。` })
+      session.contentRevision += 1
+      set({ message: tr('workspace.clipboard.pastedPixels', { count: pasted }) })
     }, false)
   },
 
@@ -1541,7 +2630,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     if (clipboardService.getLayers()) return get().pasteLayersFromClipboard()
     const clipboard = await clipboardService.readSelection(() => window.moonSprite.readClipboardImage())
     const current = activeSession(get())
-    if (!clipboard || !current) { set({ message: '剪贴板中没有可粘贴的内容。' }); return false }
+    if (!clipboard || !current) { set({ message: tr('workspace.clipboard.noContent') }); return false }
     get().mutateActive((session) => {
       const document = session.document
       const placement = resolveClipboardPlacement({
@@ -1556,7 +2645,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
         view: session.view,
         rotationIndicatorPosition: loadEditorPreferences().rotationIndicatorPosition
       })
-      const layer = createLayer('粘贴图层', clipboard.width, clipboard.height, document.colorMode)
+      const layer = createLayer(tr('layers.pasteLayer'), clipboard.width, clipboard.height, document.colorMode)
       layer.offsetX = placement.x
       layer.offsetY = placement.y
       for (let index = 0; index < clipboard.mask.length; index += 1) {
@@ -1573,7 +2662,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       session.selectedLayerIds = [layer.id]
       session.layerSelectionAnchorId = layer.id
       session.history.push({
-        label: '粘贴为新图层',
+        label: tr('workspace.history.pasteAsLayer'),
         bytes: layer.pixels.byteLength + 64,
         undo: () => {
           document.layers = document.layers.filter((candidate) => candidate.id !== layer.id)
@@ -1587,21 +2676,21 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
         }
       })
     })
-    set({ message: '已粘贴为新图层。' })
+    set({ message: tr('workspace.clipboard.pastedLayer') })
     return true
   },
 
   async pasteAsNewDocument() {
     const clipboard = await clipboardService.readSelection(() => window.moonSprite.readClipboardImage())
-    if (!clipboard) { set({ message: '剪贴板中没有可粘贴的图片。' }); return false }
-    const document = createDocument('粘贴的图像', clipboard.width, clipboard.height, 'rgba')
+    if (!clipboard) { set({ message: tr('workspace.clipboard.noImage') }); return false }
+    const document = createDocument(tr('document.pastedImage'), clipboard.width, clipboard.height, 'rgba')
     const layer = getActiveLayer(document)
     for (let index = 0; index < clipboard.mask.length; index += 1) {
       if (clipboard.mask[index] === 1) writeLayerColor(document, layer, index, unpackColor(clipboard.pixels[index]))
     }
     document.dirty = true
     get().addSession(document)
-    set({ message: '已将剪贴板图片粘贴为新项目。' })
+    set({ message: tr('workspace.clipboard.pastedDocument') })
     return true
   },
 
@@ -1612,6 +2701,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       session.pendingPaste.target = cloneSelectionMask(target)!
       session.selection = cloneSelectionMask(target)
       session.revision += 1
+      session.contentRevision += 1
     }, false)
   },
 
@@ -1629,6 +2719,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       }
       session.selection = cloneSelectionMask(target)
       session.revision += 1
+      session.contentRevision += 1
     }, false)
   },
 
@@ -1662,6 +2753,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       session.selection = cloneSelectionMask(pending.beforeSelection)
       session.pendingPaste = null
       session.revision += 1
+      session.contentRevision += 1
     }, false)
   },
 
@@ -1674,7 +2766,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       const actualX = nextX - beforeSelection.x
       const actualY = nextY - beforeSelection.y
       const edit = moveSelection(session.document, beforeSelection, actualX, actualY)
-      const entry = edit && commitPixelEdit(session.document, edit, '移动选区内容')
+      const entry = edit && commitPixelEdit(session.document, edit, tr('workspace.history.moveSelectionContent'))
       if (!entry) return
       const afterSelection = { ...beforeSelection, x: nextX, y: nextY }
       session.selection = afterSelection
@@ -1684,12 +2776,26 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
 
   flipActiveSelection(axis) {
     get().mutateActive((session) => {
+      if (session.pendingPaste) {
+        const pending = session.pendingPaste
+        revertPixelEdit(session.document, pending.previewEdit)
+        pending.source = flipSelectionTransformSource(pending.source, axis)
+        pending.target = flipSelectionMask(pending.target, axis)
+        session.selection = cloneSelectionMask(pending.target)
+        const preview = applySelectionTransform(session.document, pending.source, pending.target, 0, pending.copy)
+        if (preview) {
+          pending.previewEdit = preview
+          session.revision += 1
+          session.contentRevision += 1
+        }
+        return
+      }
       const layer = getActiveLayer(session.document)
       if (isLayerEffectivelyLocked(session.document, layer)) return
       const beforeSelection = cloneSelectionMask(session.selection)
       const afterSelection = session.selection ? flipSelectionMask(session.selection, axis) : null
       const edit = session.selection ? flipSelection(session.document, session.selection, axis) : flipLayer(session.document, axis)
-      const entry = edit && commitPixelEdit(session.document, edit, axis === 'horizontal' ? '水平翻转选区' : '垂直翻转选区')
+      const entry = edit && commitPixelEdit(session.document, edit, axis === 'horizontal' ? tr('workspace.history.flipSelectionHorizontal') : tr('workspace.history.flipSelectionVertical'))
       const sameMask = beforeSelection?.mask === afterSelection?.mask
         || (beforeSelection?.mask?.length === afterSelection?.mask?.length && beforeSelection?.mask?.every((value, index) => value === afterSelection?.mask?.[index]))
       const selectionChanged = !sameMask
@@ -1699,7 +2805,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       if (entry) {
         session.history.push({ ...entry, bytes: entry.bytes + (beforeSelection?.mask?.byteLength ?? 0) + (afterSelection?.mask?.byteLength ?? 0), undo: () => { entry.undo(); session.selection = cloneSelectionMask(beforeSelection) }, redo: () => { entry.redo(); session.selection = cloneSelectionMask(afterSelection) } })
       } else if (selectionChanged) {
-        session.history.push({ label: axis === 'horizontal' ? '水平翻转选区' : '垂直翻转选区', bytes: (beforeSelection?.mask?.byteLength ?? 0) + (afterSelection?.mask?.byteLength ?? 0), undo: () => { session.selection = cloneSelectionMask(beforeSelection) }, redo: () => { session.selection = cloneSelectionMask(afterSelection) } })
+        session.history.push({ label: axis === 'horizontal' ? tr('workspace.history.flipSelectionHorizontal') : tr('workspace.history.flipSelectionVertical'), bytes: (beforeSelection?.mask?.byteLength ?? 0) + (afterSelection?.mask?.byteLength ?? 0), undo: () => { session.selection = cloneSelectionMask(beforeSelection) }, redo: () => { session.selection = cloneSelectionMask(afterSelection) } })
       }
     })
   },
@@ -1707,14 +2813,14 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
   transformActiveSelection(beforeSelection, afterSelection, angle = 0) {
     get().mutateActive((session) => {
       const edit = transformSelectionCopy(session.document, beforeSelection, afterSelection, angle)
-      const entry = edit && commitPixelEdit(session.document, edit, angle === 0 ? '变换选区内容' : '旋转选区内容')
+      const entry = edit && commitPixelEdit(session.document, edit, angle === 0 ? tr('workspace.history.transformSelectionContent') : tr('workspace.history.rotateSelectionContent'))
       const before = { ...beforeSelection }
       const after = { ...afterSelection }
       session.selection = after
       if (entry) {
         session.history.push({ ...entry, bytes: entry.bytes + 64, undo: () => { entry.undo(); session.selection = { ...before } }, redo: () => { entry.redo(); session.selection = { ...after } } })
       } else if (before.x !== after.x || before.y !== after.y || before.width !== after.width || before.height !== after.height) {
-        session.history.push({ label: '变换选区', bytes: 48, undo: () => { session.selection = { ...before } }, redo: () => { session.selection = { ...after } } })
+        session.history.push({ label: tr('workspace.history.transformSelection'), bytes: 48, undo: () => { session.selection = { ...before } }, redo: () => { session.selection = { ...after } } })
       }
     })
   },
@@ -1740,7 +2846,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     get().mutateActive((session) => {
       if (!session.selection) return
       const edit = moveSelection(session.document, session.selection, deltaX, deltaY)
-      const entry = edit && commitPixelEdit(session.document, edit, '移动选区')
+      const entry = edit && commitPixelEdit(session.document, edit, tr('workspace.history.moveSelection'))
       if (entry) session.history.push(entry)
       if (entry) session.selection = { ...session.selection, x: session.selection.x + deltaX, y: session.selection.y + deltaY }
     })
@@ -1758,7 +2864,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       convertDocumentColorMode(session.document, mode)
       const after = encodeProject(session.document)
       session.history.push({
-        label: '转换颜色模式', bytes: before.byteLength + after.byteLength,
+        label: tr('workspace.history.convertColorMode'), bytes: before.byteLength + after.byteLength,
         undo: () => restoreDocumentSnapshot(session.document, before),
         redo: () => restoreDocumentSnapshot(session.document, after)
       })
@@ -1770,13 +2876,14 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     if (!session) return false
     const documentId = session.document.id
     get().commitFloatingPaste()
+    flushTimelapseCapture(session)
     const showProgress = saveAs || Boolean(options)
     let progressStarted = false
     const updateProgress = (value: number, label: string): void => {
       if (!showProgress) return
       if (progressStarted && !get().saveProgress) return
       progressStarted = true
-      set({ saveProgress: { title: '正在另存为', value, label } })
+      set({ saveProgress: { title: tr('workspace.save.progressTitle'), value, label } })
     }
     try {
       const filePath = await saveDocumentFile({
@@ -1787,8 +2894,8 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
         options,
         preferredImageFormat: saveImageKindForPreference(readStoredString(SAVE_FORMAT_PREFERENCE_KEY)),
         lifecycle: {
-          onEncodeStart: () => updateProgress(12, '正在生成工程数据…'),
-          onWriteStart: () => updateProgress(72, '正在写入文件…')
+          onEncodeStart: () => updateProgress(12, tr('workspace.save.encodingProject')),
+          onWriteStart: () => updateProgress(72, tr('workspace.save.writing'))
         }
       })
       if (!filePath) { if (progressStarted) set({ saveProgress: null }); return false }
@@ -1802,11 +2909,11 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       await get().autosaveDirty()
       await recoveryService.delete(window.moonSprite, documentId)
       const progressVisible = progressStarted && Boolean(get().saveProgress)
-      set({ message: '工程已保存。', ...(progressVisible ? { saveProgress: { title: '正在另存为', value: 100, label: '另存为完成' } } : {}) })
+      set({ message: tr('workspace.save.done'), ...(progressVisible ? { saveProgress: { title: tr('workspace.save.progressTitle'), value: 100, label: tr('workspace.save.progressDone') } } : {}) })
       if (progressVisible) window.setTimeout(() => { if (get().saveProgress?.value === 100) set({ saveProgress: null }) }, 180)
       return true
     } catch (error) {
-      set({ message: error instanceof Error ? error.message : '保存工程失败。', ...(progressStarted ? { saveProgress: null } : {}) })
+      set({ message: error instanceof Error ? error.message : tr('workspace.save.error'), ...(progressStarted ? { saveProgress: null } : {}) })
       return false
     }
   },
@@ -1819,20 +2926,20 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     const updateProgress = (value: number, label: string): void => {
       if (progressStarted && !get().saveProgress) return
       progressStarted = true
-      set({ saveProgress: { title: '正在导出', value, label } })
+      set({ saveProgress: { title: tr('workspace.export.progressTitle'), value, label } })
     }
     try {
       const message = await exportDocumentFile(window.moonSprite, session.document, options, {
-        onEncodeStart: () => updateProgress(12, '正在生成图像数据…'),
-        onWriteStart: () => updateProgress(72, '正在写入文件…')
+        onEncodeStart: () => updateProgress(12, tr('workspace.export.encoding')),
+        onWriteStart: () => updateProgress(72, tr('workspace.save.writing'))
       })
       if (!message) { if (progressStarted) set({ saveProgress: null }); return false }
       const progressVisible = progressStarted && Boolean(get().saveProgress)
-      set({ message, ...(progressVisible ? { saveProgress: { title: '正在导出', value: 100, label: '导出完成' } } : {}) })
+      set({ message, ...(progressVisible ? { saveProgress: { title: tr('workspace.export.progressTitle'), value: 100, label: tr('workspace.export.done') } } : {}) })
       if (progressVisible) window.setTimeout(() => { if (get().saveProgress?.value === 100) set({ saveProgress: null }) }, 180)
       return true
     } catch (error) {
-      set({ message: error instanceof Error ? error.message : '导出图像失败。', ...(progressStarted ? { saveProgress: null } : {}) })
+      set({ message: error instanceof Error ? error.message : tr('workspace.export.error'), ...(progressStarted ? { saveProgress: null } : {}) })
       return false
     }
   },
@@ -1850,7 +2957,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       recordRecentProject(filePath, parsed.name)
       return true
     } catch (error) {
-      set({ message: error instanceof Error ? `${fileNameFromPath(filePath)}：${error.message}` : '打开文件失败。' })
+      set({ message: error instanceof Error ? `${fileNameFromPath(filePath)}: ${error.message}` : tr('workspace.open.error') })
       return false
     }
   },
@@ -1859,7 +2966,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     const session = get().sessions.find((item) => item.document.id === id)
     if (!session) return
     if (session.document.dirty) {
-      const choice = await get().requestDialog({ title: '未保存的作品', message: `“${session.document.name}”包含未保存的修改。`, detail: '保存修改后关闭、放弃修改，或返回继续编辑。', choices: [{ id: 'cancel', label: '取消', tone: 'quiet' }, { id: 'discard', label: '放弃', tone: 'danger' }, { id: 'save', label: '保存', tone: 'primary' }] })
+      const choice = await get().requestDialog({ title: tr('workspace.unsaved.title'), message: tr('workspace.unsaved.message', { name: session.document.name }), detail: tr('workspace.unsaved.detail'), choices: [{ id: 'cancel', label: tr('common.cancel'), tone: 'quiet' }, { id: 'discard', label: tr('app.discard'), tone: 'danger' }, { id: 'save', label: tr('common.save'), tone: 'primary' }] })
       if (choice === 'cancel') return
       if (choice === 'save') {
         get().setActive(id)
@@ -1869,6 +2976,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       if (choice === 'discard') await get().discardRecovery(id)
     }
     if (!session.document.dirty) await get().discardRecovery(id)
+    cancelTimelapseCapture(id)
     set((state) => {
       const sessions = state.sessions.filter((item) => item.document.id !== id)
       return { sessions, activeId: state.activeId === id ? (sessions.at(-1)?.document.id ?? null) : state.activeId }
@@ -1880,7 +2988,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       const recoveries = await recoveryService.list(window.moonSprite)
       set({ recoveryRecords: recoveries })
     } catch {
-      set({ recoveryRecords: [], message: '读取恢复栏目时出现问题。' })
+      set({ recoveryRecords: [], message: tr('workspace.recovery.readError') })
     }
   },
 
@@ -1891,10 +2999,10 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       const document = await recoveryService.restore(window.moonSprite, record)
       get().addSession(document)
       await recoveryService.delete(window.moonSprite, record.id)
-      set((state) => ({ recoveryRecords: state.recoveryRecords.filter((item) => item.id !== record.id), message: `已恢复“${record.name}”。` }))
+      set((state) => ({ recoveryRecords: state.recoveryRecords.filter((item) => item.id !== record.id), message: tr('workspace.recovery.restored', { name: record.name }) }))
       return true
     } catch {
-      set({ message: `无法恢复“${record.name}”，草稿仍保留在恢复栏目。` })
+      set({ message: tr('workspace.recovery.restoreError', { name: record.name }) })
       return false
     }
   },

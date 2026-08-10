@@ -47,6 +47,8 @@ interface DrawSelectionOptions {
   viewportHeight: number
   rotationIndicatorPosition: RotationIndicatorPosition
   cache: SelectionBoundaryCache | null
+  outlineDark: string
+  outlineLight: string
   showOutline?: boolean
   showHandles?: boolean
 }
@@ -60,6 +62,8 @@ export function drawSelectionOutline({
   viewportHeight,
   rotationIndicatorPosition,
   cache,
+  outlineDark,
+  outlineLight,
   showOutline = true,
   showHandles = true
 }: DrawSelectionOptions): SelectionBoundaryCache {
@@ -111,10 +115,10 @@ export function drawSelectionOutline({
     context.lineJoin = 'miter'
     context.setLineDash([4, 4])
     context.lineDashOffset = -phase
-    context.strokeStyle = '#111318'
+    context.strokeStyle = outlineDark
     context.stroke(screenPath)
     context.lineDashOffset = -(phase + 4)
-    context.strokeStyle = '#f7f7f7'
+    context.strokeStyle = outlineLight
     context.stroke(screenPath)
     context.restore()
   }
@@ -126,9 +130,9 @@ export function drawSelectionOutline({
     ['sw', box.x, box.y + box.height], ['s', box.x + box.width / 2, box.y + box.height], ['se', box.x + box.width, box.y + box.height]
   ]
   for (const [, x, y] of handles) {
-    context.fillStyle = '#f7f7f7'
+    context.fillStyle = outlineLight
     context.fillRect(Math.round(x) - 4, Math.round(y) - 4, 8, 8)
-    context.strokeStyle = '#111318'
+    context.strokeStyle = outlineDark
     context.strokeRect(Math.round(x) - 4.5, Math.round(y) - 4.5, 9, 9)
   }
   return nextCache

@@ -1,13 +1,22 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { cleanup, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { MoonSpriteApi } from '@shared/types'
 import { getWindowsFileNameError, NewDocumentDialog } from './NewDocumentDialog'
 
 afterEach(() => {
+  cleanup()
   vi.restoreAllMocks()
+  localStorage.clear()
 })
 
 describe('getWindowsFileNameError', () => {
+  it('uses a default width that keeps the built-in size presets on one row', () => {
+    render(<NewDocumentDialog open onClose={vi.fn()} onCreate={vi.fn()} />)
+
+    expect(screen.getByRole('form', { name: '新建画布' })).toHaveStyle({ width: '480px', minWidth: '440px' })
+    expect(screen.getByLabelText('常用画布尺寸').querySelectorAll('button')).toHaveLength(6)
+  })
+
   it('rejects Windows filename characters and reserved names', () => {
     expect(getWindowsFileNameError('8*8')).toContain('“*”')
     expect(getWindowsFileNameError('CON')).toContain('保留设备名')

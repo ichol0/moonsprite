@@ -1,8 +1,9 @@
 import { execFileSync } from 'node:child_process'
-import { readFile } from 'node:fs/promises'
+import { access, readFile } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 
 const CHANGELOG_PATH = 'CHANGELOG.md'
+const MAX_CHANGELOG_BYTES = 64 * 1024
 const SOFTWARE_ROOTS = ['src/', 'src-tauri/', 'scripts/', '.github/workflows/']
 const SOFTWARE_FILES = new Set([
   'package.json',
@@ -27,6 +28,12 @@ export const validateChangelogUpdate = (changedFiles, changelog) => {
   if (!/^## 未发布\s*$/m.test(changelog)) {
     errors.push('CHANGELOG.md 必须保留“## 未发布”区。')
   }
+  if (!/^## 版本索引\s*$/m.test(changelog)) {
+    errors.push('CHANGELOG.md 必须保留“## 版本索引”区。')
+  }
+  if (Buffer.byteLength(changelog, 'utf8') > MAX_CHANGELOG_BYTES) {
+    errors.push('CHANGELOG.md 已超过 64 KiB，请先把已发布内容归档到 docs/changelog/。')
+  }
 
   const softwareChanges = normalizedFiles.filter(isSoftwareChange)
   if (softwareChanges.length > 0 && !normalizedFiles.includes(CHANGELOG_PATH)) {
@@ -34,6 +41,10 @@ export const validateChangelogUpdate = (changedFiles, changelog) => {
   }
   return errors
 }
+
+export const changelogArchivePaths = (changelog) => [
+  ...new Set([...changelog.matchAll(/\]\((docs\/changelog\/[^)]+\.md)\)/g)].map((match) => match[1])),
+]
 
 const git = (args) => execFileSync('git', args, { encoding: 'utf8' }).trim()
 const splitLines = (value) => value ? value.split(/\r?\n/).filter(Boolean) : []
@@ -60,6 +71,13 @@ const run = async () => {
   const changedFiles = [...new Set(changedFilesForCurrentContext())]
   const changelog = await readFile(CHANGELOG_PATH, 'utf8')
   const errors = validateChangelogUpdate(changedFiles, changelog)
+  for (const archivePath of changelogArchivePaths(changelog)) {
+    try {
+      await access(archivePath)
+    } catch {
+      errors.push(`更新日志索引指向不存在的归档：${archivePath}`)
+    }
+  }
   if (errors.length > 0) {
     console.error('完整更新日志检查失败：')
     for (const error of errors) console.error(`- ${error}`)

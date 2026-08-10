@@ -1,6 +1,6 @@
-import type { RasterLayer, RgbaColor, SelectionMask, SelectionMode, SelectionRect, ShapeRatio } from '@shared/types'
-import type { PixelEdit } from './history'
-import type { SelectionTransformSource, SelectionTranslationPreview } from './tools'
+import type { RasterLayer, RgbaColor, SelectionMask, SelectionMode, SelectionRect, ShapeRatio, SpriteDocument } from '@shared/types'
+import { revertPixelEdit, type PixelEdit } from './history'
+import { restoreSelectionTranslationPreview, type SelectionTransformSource, type SelectionTranslationPreview } from './tools'
 import { rasterLinePoints, selectionBoundarySegments, selectionContains } from './selection'
 import { balancedStairLinePoints } from './pixel-line'
 
@@ -19,9 +19,38 @@ export interface CanvasPoint {
   y: number
 }
 
+export interface PointerClientPoint {
+  clientX: number
+  clientY: number
+}
+
+export interface CoalescedPointerEvent extends PointerClientPoint {
+  getCoalescedEvents?: () => PointerClientPoint[]
+}
+
+export const coalescedPointerClientPoints = (event: CoalescedPointerEvent): PointerClientPoint[] => {
+  let coalesced: PointerClientPoint[] = []
+  try {
+    coalesced = event.getCoalescedEvents?.() ?? []
+  } catch {
+    coalesced = []
+  }
+  const points: PointerClientPoint[] = []
+  const append = (point: PointerClientPoint): void => {
+    if (!Number.isFinite(point.clientX) || !Number.isFinite(point.clientY)) return
+    const previous = points.at(-1)
+    if (previous?.clientX === point.clientX && previous.clientY === point.clientY) return
+    points.push({ clientX: point.clientX, clientY: point.clientY })
+  }
+  for (const point of coalesced) append(point)
+  append(event)
+  return points
+}
+
 export type SelectionHandle = 'nw' | 'n' | 'ne' | 'w' | 'e' | 'sw' | 's' | 'se'
 export type SelectionRotationHandle = 'rotate-ne' | 'rotate-se' | 'rotate-sw' | 'rotate-nw'
-export type SelectionHit = 'inside' | 'edge' | 'outside' | SelectionRotationHandle | SelectionHandle
+export type SelectionShearHandle = 'shear-n' | 'shear-e' | 'shear-s' | 'shear-w'
+export type SelectionHit = 'inside' | 'edge' | 'outside' | SelectionRotationHandle | SelectionShearHandle | SelectionHandle
 export const SELECTION_RESIZE_HIT_RADIUS = 12
 export const SELECTION_CORNER_RESIZE_HIT_RADIUS = 18
 export const SELECTION_CORNER_OUTWARD_RESIZE_HIT_RADIUS = 5
@@ -75,7 +104,7 @@ export const selectionResizeHit = (
 }
 
 export interface CanvasDragState {
-  kind: 'draw' | 'shape' | 'marquee' | 'lasso' | 'polygon-lasso' | 'magic-preview' | 'sample-color' | 'move-content' | 'move-selection' | 'transform-content' | 'rotate-content' | 'move-layer' | 'brush-size' | 'canvas-resize' | 'canvas-move' | 'zoom-drag' | 'rotate-view' | 'pan'
+  kind: 'draw' | 'shape' | 'gradient' | 'marquee' | 'lasso' | 'polygon-lasso' | 'magic-preview' | 'sample-color' | 'move-content' | 'move-selection' | 'transform-content' | 'rotate-content' | 'shear-content' | 'move-layer' | 'brush-size' | 'canvas-resize' | 'canvas-move' | 'zoom-drag' | 'rotate-view' | 'pan'
   start: CanvasPoint
   last: CanvasPoint
   edit?: PixelEdit
@@ -83,6 +112,7 @@ export interface CanvasDragState {
   selectionMode?: SelectionMode
   startPan?: CanvasPoint
   handle?: SelectionHandle
+  shearHandle?: SelectionShearHandle
   angle?: number
   selectionSource?: SelectionTransformSource
   previewEdit?: PixelEdit | null
@@ -102,6 +132,7 @@ export interface CanvasDragState {
   appliedSelection?: SelectionMask | null
   previewTarget?: SelectionRect
   previewAngle?: number
+  previewShear?: { axis: 'x' | 'y'; edge: 'n' | 'e' | 's' | 'w'; amount: number }
   previewPending?: boolean
   translationPreview?: SelectionTranslationPreview | null
   layerId?: string
@@ -114,18 +145,36 @@ export interface CanvasDragState {
   duplicatedLayerIndex?: number
   originalSelectedLayerIds?: string[]
   color?: RgbaColor
+  gradientEndColor?: RgbaColor
   axisLock?: 'x' | 'y'
   sampleSecondary?: boolean
   temporarySampling?: boolean
   moved?: boolean
+  startedAt?: number
   resumeDrag?: CanvasDragState
+  /** Raw pointer endpoint retained while a gradient is direction-constrained. */
+  rawLast?: CanvasPoint
+}
+
+export const revertCancelledCanvasDragPixelChanges = (document: SpriteDocument, drag: CanvasDragState): boolean => {
+  if (drag.floatingPaste) return false
+  if (drag.translationPreview) {
+    const changed = drag.translationPreview.count > 0
+    restoreSelectionTranslationPreview(document, drag.translationPreview)
+    return changed
+  }
+  const edit = drag.kind === 'draw' ? drag.edit : drag.previewEdit
+  if (!edit) return false
+  const changed = edit.before.size > 0 || Boolean(edit.runs?.length)
+  revertPixelEdit(document, edit)
+  return changed
 }
 
 export const selectionGestureMoved = (start: CanvasPoint | undefined, end: CanvasPoint, threshold = 3): boolean =>
   Boolean(start && (Math.abs(end.x - start.x) > threshold || Math.abs(end.y - start.y) > threshold))
 
 const selectionCreationKinds = new Set<CanvasDragState['kind']>(['marquee', 'lasso', 'polygon-lasso'])
-const selectionPreviewKinds = new Set<CanvasDragState['kind']>(['magic-preview', 'move-selection', 'move-content', 'transform-content', 'rotate-content'])
+const selectionPreviewKinds = new Set<CanvasDragState['kind']>(['magic-preview', 'move-selection', 'move-content', 'transform-content', 'rotate-content', 'shear-content'])
 
 export const canvasGestureForPreview = (drag: CanvasDragState | null | undefined): CanvasDragState | null =>
   drag?.kind === 'pan' && drag.resumeDrag?.kind === 'polygon-lasso' ? drag.resumeDrag : drag ?? null
@@ -257,6 +306,19 @@ export class CanvasInputState {
     this.modifierBrushSize = null
   }
 
+  resetInteraction(): CanvasDragState | null {
+    const drag = this.finish()
+    this.pointer.visible = false
+    this.sampling = false
+    this.altHeld = false
+    this.ctrlHeld = false
+    this.shiftHeld = false
+    this.spaceHeld = false
+    this.shiftLinePreview = false
+    this.modifierBrushSize = null
+    return drag
+  }
+
   syncModifierKeys(event: Pick<PointerEvent, 'altKey' | 'ctrlKey' | 'shiftKey'>): void {
     this.altHeld = event.altKey
     this.ctrlHeld = event.ctrlKey
@@ -306,6 +368,25 @@ export const rotationHandles = (box: { x: number; y: number; width: number; heig
 
 // 旋转只占用角点附近的紧凑区域，避免阻挡套索继续选择周边像素。
 export const ROTATION_HANDLE_HIT_RADIUS = 28
+
+export const selectionShearHit = (
+  box: { x: number; y: number; width: number; height: number },
+  point: CanvasPoint,
+  scale = 1
+): SelectionShearHandle | null => {
+  const safeScale = Math.max(0.0001, scale)
+  const inner = SELECTION_RESIZE_HIT_RADIUS * safeScale
+  const outer = ROTATION_HANDLE_HIT_RADIUS * safeScale
+  const centerX = box.x + box.width / 2
+  const centerY = box.y + box.height / 2
+  const right = box.x + box.width
+  const bottom = box.y + box.height
+  if (point.y < box.y - inner && point.y >= box.y - outer && Math.abs(point.x - centerX) <= outer) return 'shear-n'
+  if (point.y > bottom + inner && point.y <= bottom + outer && Math.abs(point.x - centerX) <= outer) return 'shear-s'
+  if (point.x < box.x - inner && point.x >= box.x - outer && Math.abs(point.y - centerY) <= outer) return 'shear-w'
+  if (point.x > right + inner && point.x <= right + outer && Math.abs(point.y - centerY) <= outer) return 'shear-e'
+  return null
+}
 
 export const selectionRotationHit = (
   box: { x: number; y: number; width: number; height: number },
@@ -358,6 +439,9 @@ export const selectionInteractionHit = (
   )
   if (resizeHit) return resizeHit
 
+  const shearHit = selectionShearHit(selection, point, 1 / safeZoom)
+  if (shearHit) return shearHit
+
   const rotationHit = selectionRotationHit(selection, point, 1 / safeZoom)
   if (rotationHit) return rotationHit
 
@@ -385,6 +469,18 @@ export const selectionTransformModifiers = (
     integerScale: Boolean(modifiers.ctrlKey || modifiers.metaKey),
     copy: false
   }
+}
+
+export const selectionShapeUsesConstraint = (modifiers: { ctrlKey: boolean; metaKey?: boolean }): boolean =>
+  Boolean(modifiers.ctrlKey || modifiers.metaKey)
+
+export const selectionMarqueeUsesConstraint = (
+  modifiers: { ctrlKey: boolean; metaKey?: boolean; shiftKey: boolean },
+  hasSelection: boolean,
+  mode: SelectionMode
+): boolean => {
+  if (modifiers.ctrlKey || modifiers.metaKey) return true
+  return modifiers.shiftKey && (!hasSelection || mode !== 'add')
 }
 
 export const snapSelectionRotation = (angle: number, enabled: boolean): number =>
@@ -429,7 +525,7 @@ export const resizeSelectionBounds = (
   start: SelectionRect,
   point: CanvasPoint,
   handle: SelectionHandle,
-  bounds: { width: number; height: number },
+  _bounds: { width: number; height: number },
   proportional = false,
   integerScale = false
 ): SelectionRect => {
@@ -437,8 +533,8 @@ export const resizeSelectionBounds = (
   const originalTop = start.y
   const originalRight = start.x + start.width
   const originalBottom = start.y + start.height
-  const clampedX = Math.max(0, Math.min(bounds.width, point.x))
-  const clampedY = Math.max(0, Math.min(bounds.height, point.y))
+  const targetX = point.x
+  const targetY = point.y
   let left = originalLeft
   let top = originalTop
   let right = originalRight
@@ -450,32 +546,32 @@ export const resizeSelectionBounds = (
   let crossedHorizontal = false
   let crossedVertical = false
   if (handle.includes('w')) {
-    crossedHorizontal = clampedX > originalRight
-    left = crossedHorizontal ? originalRight : Math.min(originalRight - 1, clampedX)
-    right = crossedHorizontal ? Math.max(originalRight + 1, clampedX) : originalRight
+    crossedHorizontal = targetX > originalRight
+    left = crossedHorizontal ? originalRight : Math.min(originalRight - 1, targetX)
+    right = crossedHorizontal ? Math.max(originalRight + 1, targetX) : originalRight
     flipHorizontal = crossedHorizontal ? !Boolean(start.flipHorizontal) : Boolean(start.flipHorizontal)
-    flipOriginX = crossedHorizontal ? clampedX : (flipHorizontal ? start.flipOriginX : undefined)
+    flipOriginX = crossedHorizontal ? targetX : (flipHorizontal ? start.flipOriginX : undefined)
   }
   if (handle.includes('e')) {
-    crossedHorizontal = clampedX < originalLeft
-    left = crossedHorizontal ? Math.min(originalLeft - 1, clampedX) : originalLeft
-    right = crossedHorizontal ? originalLeft : Math.max(originalLeft + 1, clampedX)
+    crossedHorizontal = targetX < originalLeft
+    left = crossedHorizontal ? Math.min(originalLeft - 1, targetX) : originalLeft
+    right = crossedHorizontal ? originalLeft : Math.max(originalLeft + 1, targetX)
     flipHorizontal = crossedHorizontal ? !Boolean(start.flipHorizontal) : Boolean(start.flipHorizontal)
-    flipOriginX = crossedHorizontal ? clampedX : (flipHorizontal ? start.flipOriginX : undefined)
+    flipOriginX = crossedHorizontal ? targetX : (flipHorizontal ? start.flipOriginX : undefined)
   }
   if (handle.includes('n')) {
-    crossedVertical = clampedY > originalBottom
-    top = crossedVertical ? originalBottom : Math.min(originalBottom - 1, clampedY)
-    bottom = crossedVertical ? Math.max(originalBottom + 1, clampedY) : originalBottom
+    crossedVertical = targetY > originalBottom
+    top = crossedVertical ? originalBottom : Math.min(originalBottom - 1, targetY)
+    bottom = crossedVertical ? Math.max(originalBottom + 1, targetY) : originalBottom
     flipVertical = crossedVertical ? !Boolean(start.flipVertical) : Boolean(start.flipVertical)
-    flipOriginY = crossedVertical ? clampedY : (flipVertical ? start.flipOriginY : undefined)
+    flipOriginY = crossedVertical ? targetY : (flipVertical ? start.flipOriginY : undefined)
   }
   if (handle.includes('s')) {
-    crossedVertical = clampedY < originalTop
-    top = crossedVertical ? Math.min(originalTop - 1, clampedY) : originalTop
-    bottom = crossedVertical ? originalTop : Math.max(originalTop + 1, clampedY)
+    crossedVertical = targetY < originalTop
+    top = crossedVertical ? Math.min(originalTop - 1, targetY) : originalTop
+    bottom = crossedVertical ? originalTop : Math.max(originalTop + 1, targetY)
     flipVertical = crossedVertical ? !Boolean(start.flipVertical) : Boolean(start.flipVertical)
-    flipOriginY = crossedVertical ? clampedY : (flipVertical ? start.flipOriginY : undefined)
+    flipOriginY = crossedVertical ? targetY : (flipVertical ? start.flipOriginY : undefined)
   }
 
   if (proportional || integerScale) {

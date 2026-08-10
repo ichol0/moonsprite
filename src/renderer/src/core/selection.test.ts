@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { invertSelectionMask, rasterLinePoints, selectionContains } from './selection'
+import { invertSelectionMask, rasterLinePoints, selectionContains, transformSelectionMask } from './selection'
 
 describe('selection preview geometry', () => {
   it('terminates at the requested endpoint for uneven diagonal segments', () => {
@@ -23,5 +23,31 @@ describe('selection preview geometry', () => {
     expect(selectionContains(inverted, 2, 1)).toBe(false)
     expect(selectionContains(inverted, 0, 0)).toBe(true)
     expect(selectionContains(inverted, 3, 2)).toBe(true)
+  })
+
+  it('preserves transformed selection bounds and masks outside the canvas', () => {
+    const rectangle = transformSelectionMask(
+      { x: 1, y: 1, width: 2, height: 2 },
+      { x: -3, y: 4, width: 7, height: 5 },
+      6,
+      6,
+      0,
+      undefined,
+      false
+    )
+    expect(rectangle).toEqual({ x: -3, y: 4, width: 7, height: 5 })
+
+    const irregular = transformSelectionMask(
+      { x: 1, y: 1, width: 2, height: 2, mask: Uint8Array.from([1, 0, 0, 1]) },
+      { x: -2, y: -1, width: 2, height: 2 },
+      6,
+      6,
+      0,
+      undefined,
+      false
+    )
+    expect(irregular).toMatchObject({ x: -2, y: -1, width: 2, height: 2 })
+    expect(selectionContains(irregular, -2, -1)).toBe(true)
+    expect(selectionContains(irregular, -1, 0)).toBe(true)
   })
 })

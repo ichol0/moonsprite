@@ -1,8 +1,6 @@
 name: MoonSprite Performance
 
 on:
-  schedule:
-    - cron: '0 18 * * 0'
   workflow_dispatch:
 
 permissions:
@@ -26,4 +24,10 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm bench:canvas -- --full
+      - run: pnpm check:release-performance -- --ci
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: moonsprite-performance-${{ github.run_id }}
+          path: artifacts/performance/
+          if-no-files-found: warn

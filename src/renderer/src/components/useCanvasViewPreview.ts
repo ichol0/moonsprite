@@ -49,7 +49,7 @@ export function useCanvasViewPreview({ documentId, sessionView, activeViewDrag, 
     zoomPreviewStartRef.current = null
     liveViewRef.current = view
     applyRotationStyle(view)
-    useWorkspace.getState().setView({ zoom: view.zoom, panX: view.panX, panY: view.panY })
+    useWorkspace.getState().setViewForDocument(documentId, { zoom: view.zoom, panX: view.panX, panY: view.panY })
     pendingViewRef.current = null
     if (needsFinalDraw) drawRef.current()
     return view
@@ -95,7 +95,7 @@ export function useCanvasViewPreview({ documentId, sessionView, activeViewDrag, 
     panPreviewFrameRef.current = null
     pendingPanPreviewOffsetRef.current = null
     applyRotationStyle(view)
-    useWorkspace.getState().setView({ panX: view.panX, panY: view.panY })
+    useWorkspace.getState().setViewForDocument(documentId, { panX: view.panX, panY: view.panY })
     pendingViewRef.current = null
     return view
   }
@@ -104,8 +104,6 @@ export function useCanvasViewPreview({ documentId, sessionView, activeViewDrag, 
     if (zoomPreviewStartRef.current) finishZoomPreview()
     else if (pendingViewRef.current) finishPanPreview()
   }
-
-  useEffect(() => registerViewPreviewFlusher(documentId, () => flushPreviewRef.current()), [documentId])
 
   const cancelViewPreviews = (): void => {
     if (viewFrameRef.current !== null) window.cancelAnimationFrame(viewFrameRef.current)
@@ -118,6 +116,17 @@ export function useCanvasViewPreview({ documentId, sessionView, activeViewDrag, 
     pendingPanPreviewOffsetRef.current = null
     pendingViewRef.current = null
   }
+
+  useEffect(() => {
+    const unregister = registerViewPreviewFlusher(documentId, () => flushPreviewRef.current())
+    return () => {
+      unregister()
+      cancelViewPreviews()
+    }
+  // The refs owned by this hook survive ordinary redraws. Only a document
+  // switch or unmount may discard its pending view preview.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [documentId])
 
   return {
     pendingViewRef,

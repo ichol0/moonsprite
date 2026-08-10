@@ -33,6 +33,8 @@ describe('drawSelectionOutline', () => {
       viewportHeight: 200,
       rotationIndicatorPosition: 'view',
       cache: null,
+      outlineDark: '#123456',
+      outlineLight: '#abcdef',
       showOutline: false,
       showHandles: true
     })

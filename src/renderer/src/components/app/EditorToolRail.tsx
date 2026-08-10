@@ -1,11 +1,12 @@
 import { memo, useEffect, useState, type PointerEvent as ReactPointerEvent } from 'react'
-import { GripVertical } from 'lucide-react'
 import { PerformanceProfiler } from '@/components/PerformanceProfiler'
+import { PixelUtilityIcon } from '@/components/PixelUtilityIcon'
 import { Tooltip } from '@/components/Tooltip'
+import { useI18n } from '@/components/I18nProvider'
 import { toolRailRenderKey } from '@/core/app-render-keys'
 import { loadShortcuts } from '@/core/shortcuts'
 import { useWorkspace } from '@/store/workspace'
-import { ALL_EDITOR_TOOL_ICONS, PixelAssetIcon, SELECTION_KIND_DEFINITIONS, SELECTION_KIND_ICONS, SHAPE_KIND_DEFINITIONS, TOOL_DEFINITIONS, activeToolPresentation } from './editor-tools'
+import { ALL_EDITOR_TOOL_ICONS, FILL_KIND_ICONS, PixelAssetIcon, SELECTION_KIND_ICONS, activeToolPresentation, fillKindDefinitions, selectionKindDefinitions, shapeKindDefinitions, toolDefinitions } from './editor-tools'
 
 interface EditorToolRailProps {
   side: 'left' | 'right'
@@ -13,11 +14,13 @@ interface EditorToolRailProps {
 }
 
 export const EditorToolRail = memo(function EditorToolRail({ side, onGripPointerDown }: EditorToolRailProps) {
+  const { locale, t } = useI18n()
   const renderKey = useWorkspace((state) => toolRailRenderKey(
     state.sessions.find((item) => item.document.id === state.activeId) ?? null
   ))
   const [shapeFlyoutOpen, setShapeFlyoutOpen] = useState(false)
   const [selectionFlyoutOpen, setSelectionFlyoutOpen] = useState(false)
+  const [fillFlyoutOpen, setFillFlyoutOpen] = useState(false)
   const [shortcuts, setShortcuts] = useState(() => loadShortcuts())
   const state = useWorkspace.getState()
   const session = state.sessions.find((item) => item.document.id === state.activeId) ?? null
@@ -33,6 +36,7 @@ export const EditorToolRail = memo(function EditorToolRail({ side, onGripPointer
       if (event.target instanceof Element && !event.target.closest('.tool-slot')) {
         setShapeFlyoutOpen(false)
         setSelectionFlyoutOpen(false)
+        setFillFlyoutOpen(false)
       }
     }
     const closeAll = (event: Event): void => {
@@ -40,6 +44,7 @@ export const EditorToolRail = memo(function EditorToolRail({ side, onGripPointer
       if (target && target !== 'popover') return
       setShapeFlyoutOpen(false)
       setSelectionFlyoutOpen(false)
+      setFillFlyoutOpen(false)
     }
     window.addEventListener('pointerdown', closeOutside, true)
     window.addEventListener('moonsprite:close-dialog', closeAll)
@@ -52,37 +57,47 @@ export const EditorToolRail = memo(function EditorToolRail({ side, onGripPointer
   useEffect(() => {
     if (session?.tool !== 'shape') setShapeFlyoutOpen(false)
     if (session?.tool !== 'selection') setSelectionFlyoutOpen(false)
+    if (session?.tool !== 'fill') setFillFlyoutOpen(false)
     const focused = document.activeElement
     if (focused instanceof HTMLElement && focused.closest('.tool-rail')) focused.blur()
   }, [renderKey, session?.tool])
 
   if (!session) return null
   const workspace = useWorkspace.getState()
-  const flyoutTooltip = (label: string, description: string, shortcut: string) => <><strong>{label}</strong><span>{description}</span><small>快捷键：{shortcut || '未设置'}</small></>
+  const tools = toolDefinitions(locale)
+  const selectionKinds = selectionKindDefinitions(locale)
+  const shapeKinds = shapeKindDefinitions(locale)
+  const fillKinds = fillKindDefinitions(locale)
+  const fillKind = session.fillKind ?? 'bucket'
+  const flyoutTooltip = (label: string, description: string, shortcut: string) => <><strong>{label}</strong><span>{description}</span><small>{t('tools.shortcut', { shortcut: shortcut || t('common.unset') })}</small></>
 
-  return <PerformanceProfiler id="EditorToolRail"><aside className={`tool-rail side-${side}`} aria-label="工具栏">
+  return <PerformanceProfiler id="EditorToolRail"><aside className={`tool-rail side-${side}`} aria-label={t('tools.toolbar')}>
     <span className="tool-icon-preload" aria-hidden="true">
-      {ALL_EDITOR_TOOL_ICONS.map((source) => <img key={source} src={source} alt="" decoding="sync" draggable={false} />)}
+      {ALL_EDITOR_TOOL_ICONS.map((source) => <PixelAssetIcon key={source} src={source} />)}
     </span>
-    <button className="tool-rail-grip" type="button" aria-label="移动工具栏" title="拖动工具栏到左侧或右侧" onPointerDown={onGripPointerDown}><GripVertical size={14} /></button>
-    {TOOL_DEFINITIONS.map((tool) => {
-      const presentation = activeToolPresentation(tool.id, session.selectionKind, session.shapeKind)
+    <button className="tool-rail-grip" type="button" aria-label={t('tools.moveToolbar')} title={t('tools.moveToolbarHint')} onPointerDown={onGripPointerDown}><PixelUtilityIcon kind="move" /></button>
+    {tools.map((tool) => {
+      const presentation = activeToolPresentation(tool.id, session.selectionKind, session.shapeKind, locale, fillKind)
       const shortcut = shortcuts[presentation.shortcutId] ?? ''
       const openToolFlyout = (): void => {
         workspace.setTool(tool.id)
         setShapeFlyoutOpen(tool.id === 'shape' ? !shapeFlyoutOpen : false)
         setSelectionFlyoutOpen(tool.id === 'selection' ? !selectionFlyoutOpen : false)
+        setFillFlyoutOpen(tool.id === 'fill' ? !fillFlyoutOpen : false)
       }
       return <div className="tool-slot" key={tool.id}>
         <Tooltip className="rail-tool-tooltip" content={flyoutTooltip(presentation.label, presentation.description, shortcut)}><button className={session.tool === tool.id ? 'selected' : ''} aria-label={presentation.label} onClick={openToolFlyout}>
           <PixelAssetIcon src={presentation.icon} className="rail-tool-icon" />
           <small>{shortcut}</small>
         </button></Tooltip>
-        {tool.id === 'selection' && selectionFlyoutOpen && <div className="tool-flyout selection-flyout" role="dialog" aria-label="选择选区方式">
-          {SELECTION_KIND_DEFINITIONS.map((definition) => <Tooltip key={definition.id} className="tool-flyout-tooltip" content={flyoutTooltip(definition.label, definition.description, shortcuts[definition.shortcutId] ?? '')}><button className={session.selectionKind === definition.id ? 'selected' : ''} aria-label={definition.label} onClick={() => { workspace.setSelectionKind(definition.id); setSelectionFlyoutOpen(false) }}><PixelAssetIcon src={SELECTION_KIND_ICONS[definition.id]} /></button></Tooltip>)}
+        {tool.id === 'selection' && selectionFlyoutOpen && <div className="tool-flyout selection-flyout" role="dialog" aria-label={t('tools.chooseSelectionTool')}>
+          {selectionKinds.map((definition) => <Tooltip key={definition.id} className="tool-flyout-tooltip" content={flyoutTooltip(definition.label, definition.description, shortcuts[definition.shortcutId] ?? '')}><button className={session.selectionKind === definition.id ? 'selected' : ''} aria-label={definition.label} onClick={() => { workspace.setSelectionKind(definition.id); setSelectionFlyoutOpen(false) }}><PixelAssetIcon src={SELECTION_KIND_ICONS[definition.id]} /></button></Tooltip>)}
         </div>}
-        {tool.id === 'shape' && shapeFlyoutOpen && <div className="tool-flyout shape-flyout" role="dialog" aria-label="快速选择形状">
-          {SHAPE_KIND_DEFINITIONS.map((definition) => <Tooltip key={definition.id} className="tool-flyout-tooltip" content={flyoutTooltip(definition.label, definition.description, `${shortcuts[definition.shortcutId] || '未设置'}（进入形状工具）`)}><button className={session.shapeKind === definition.id ? 'selected' : ''} aria-label={definition.label} onClick={() => { workspace.setShapeKind(definition.id); setShapeFlyoutOpen(false) }}><PixelAssetIcon src={definition.icon} /></button></Tooltip>)}
+        {tool.id === 'shape' && shapeFlyoutOpen && <div className="tool-flyout shape-flyout" role="dialog" aria-label={t('tools.chooseShape')}>
+          {shapeKinds.map((definition) => <Tooltip key={definition.id} className="tool-flyout-tooltip" content={flyoutTooltip(definition.label, definition.description, t('tools.shapeShortcut', { shortcut: shortcuts[definition.shortcutId] || t('common.unset') }))}><button className={session.shapeKind === definition.id ? 'selected' : ''} aria-label={definition.label} onClick={() => { workspace.setShapeKind(definition.id); setShapeFlyoutOpen(false) }}><PixelAssetIcon src={definition.icon} /></button></Tooltip>)}
+        </div>}
+        {tool.id === 'fill' && fillFlyoutOpen && <div className="tool-flyout fill-flyout" role="dialog" aria-label={t('tools.chooseFillTool')}>
+          {fillKinds.map((definition) => <Tooltip key={definition.id} className="tool-flyout-tooltip" content={flyoutTooltip(definition.label, definition.description, shortcuts[definition.shortcutId] ?? '')}><button className={fillKind === definition.id ? 'selected' : ''} aria-label={definition.label} onClick={() => { workspace.setFillKind(definition.id); setFillFlyoutOpen(false) }}><PixelAssetIcon src={FILL_KIND_ICONS[definition.id]} /></button></Tooltip>)}
         </div>}
       </div>
     })}

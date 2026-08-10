@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -13,9 +14,26 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  windows:
+  main-audit:
+    if: github.event_name == 'push'
     runs-on: windows-latest
-    timeout-minutes: 30
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.9.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: pnpm check:maintenance
+
+  windows:
+    if: github.event_name != 'push'
+    runs-on: windows-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
         with:
@@ -27,13 +45,28 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - run: pnpm install --frozen-lockfile
+      - id: scope
+        run: node scripts/ci-scope.mjs
       - run: pnpm check:maintenance
-      - run: pnpm typecheck
-      - run: pnpm test
-      - run: cargo fmt --check --manifest-path src-tauri/Cargo.toml
-      - run: pnpm build:thumbnail
-      - run: cargo check --manifest-path src-tauri/Cargo.toml
-      - run: pnpm build
+      - if: steps.scope.outputs.web == 'true'
+        run: pnpm install --frozen-lockfile
+      - if: steps.scope.outputs.web == 'true'
+        run: pnpm check:boundaries
+      - if: steps.scope.outputs.web == 'true'
+        run: pnpm typecheck
+      - if: steps.scope.outputs.web == 'true'
+        run: pnpm test
+      - if: steps.scope.outputs.rust == 'true' || steps.scope.outputs.thumbnail == 'true'
+        uses: dtolnay/rust-toolchain@stable
+      - if: steps.scope.outputs.rust == 'true' || steps.scope.outputs.thumbnail == 'true'
+        uses: Swatinem/rust-cache@v2
+      - if: steps.scope.outputs.thumbnail == 'true'
+        run: pnpm build:thumbnail
+      - if: steps.scope.outputs.rust == 'true'
+        run: cargo fmt --check --manifest-path src-tauri/Cargo.toml
+      - if: steps.scope.outputs.rust == 'true'
+        run: cargo check --manifest-path src-tauri/Cargo.toml
+      - if: steps.scope.outputs.thumbnail == 'true'
+        run: cargo fmt --check --manifest-path src-tauri/thumbnail-provider/Cargo.toml
+      - if: steps.scope.outputs.web == 'true'
+        run: pnpm build:web

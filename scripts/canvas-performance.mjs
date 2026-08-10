@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process'
 import { existsSync } from 'node:fs'
-import { resolve } from 'node:path'
+import { mkdir, writeFile } from 'node:fs/promises'
+import { dirname, resolve } from 'node:path'
 import { chromium } from 'playwright'
 import { parseCanvasPerformanceOptions } from './canvas-performance-options.mjs'
 
@@ -138,23 +139,116 @@ async function createDocument(page, size) {
   await page.waitForTimeout(300)
 }
 
+async function createComplexDocument(page, size) {
+  await page.goto(performanceUrl.href, { waitUntil: 'domcontentloaded', timeout: 30_000 })
+  await page.waitForSelector('button.start-action.primary-button', { timeout: 30_000 })
+  await page.evaluate(async (canvasSize) => {
+    const [{ useWorkspace }, { createDocument, createLayer }] = await Promise.all([
+      import('/src/store/workspace.ts'),
+      import('/src/core/document.ts')
+    ])
+    const document = createDocument('Complex performance project', canvasSize, canvasSize, 'rgba')
+    document.groups = Array.from({ length: 6 }, (_, index) => ({
+      id: `perf-group-${index}`,
+      name: `Group ${index}`,
+      parentGroupId: index >= 3 ? `perf-group-${index - 3}` : null,
+      visible: true,
+      locked: false,
+      opacity: 1,
+      blendMode: 'normal'
+    }))
+    document.layers = Array.from({ length: 24 }, (_, layerIndex) => {
+      const layer = createLayer(`Layer ${layerIndex}`, canvasSize, canvasSize, 'rgba')
+      layer.groupId = `perf-group-${layerIndex % 6}`
+      const channel = layerIndex % 3
+      for (let y = layerIndex % 8; y < canvasSize; y += 8) {
+        for (let x = 0; x < canvasSize; x += 1) {
+          const offset = (y * canvasSize + x) * 4
+          layer.pixels[offset + channel] = 64 + layerIndex * 7
+          layer.pixels[offset + 3] = 96 + layerIndex * 5
+        }
+      }
+      return layer
+    })
+    document.activeLayerId = document.layers.at(-1).id
+    const frames = Array.from({ length: 12 }, (_, index) => ({ id: `perf-frame-${index}`, duration: 80 }))
+    document.animation = {
+      frames,
+      activeFrameId: frames[0].id,
+      loop: true,
+      cels: frames.flatMap((frame, frameIndex) => document.layers.map((layer, layerIndex) => ({
+        id: `perf-cel-${frameIndex}-${layerIndex}`,
+        layerId: layer.id,
+        frameId: frame.id,
+        opacity: layer.opacity,
+        surface: {
+          format: 'rgba',
+          width: layer.width,
+          height: layer.height,
+          offsetX: frameIndex % 3 - 1,
+          offsetY: frameIndex % 2,
+          pixels: layer.pixels
+        }
+      })))
+    }
+    document.timelapse = { ...document.timelapse, enabled: false, snapshots: [] }
+    useWorkspace.getState().addSession(document)
+  }, size)
+  await page.waitForSelector('canvas.stage-canvas', { timeout: 30_000 })
+  await page.waitForTimeout(500)
+}
+
 async function runScenario(page, size, label, action) {
   await startFrameProbe(page)
   await action()
   return summarize(label, size, await stopFrameProbe(page))
 }
 
+async function resetSimpleScenario(page, initialView) {
+  await page.evaluate(async (view) => {
+    const { useWorkspace } = await import('/src/store/workspace.ts')
+    const state = useWorkspace.getState()
+    state.setView(view)
+    state.setSelection(null)
+  }, initialView)
+  await page.waitForTimeout(50)
+}
+
+async function prepareToolScenario(page, initialView, tool, fillKind = null, shapeKind = null) {
+  await resetSimpleScenario(page, initialView)
+  await page.evaluate(async ({ activeTool, activeFillKind, activeShapeKind }) => {
+    const { useWorkspace } = await import('/src/store/workspace.ts')
+    const state = useWorkspace.getState()
+    state.setTool(activeTool)
+    if (activeFillKind) state.setFillKind(activeFillKind)
+    if (activeShapeKind) state.setShapeKind(activeShapeKind)
+    state.setPrimaryColor({ r: 41, g: 121, b: 255, a: 255 })
+    state.setSecondaryColor({ r: 245, g: 86, b: 74, a: 255 })
+    state.setGradientDither('none')
+  }, { activeTool: tool, activeFillKind: fillKind, activeShapeKind: shapeKind })
+  await page.waitForTimeout(50)
+}
+
 async function benchmarkDocument(browser, size, scenarios) {
   const context = await browser.newContext({ viewport: { width: 1280, height: 800 } })
   const page = await context.newPage()
-  await createDocument(page, size)
+  const complex = [...scenarios].some((scenario) => scenario.startsWith('complex-'))
+  if (complex) await createComplexDocument(page, size)
+  else await createDocument(page, size)
   const canvas = page.locator('canvas.stage-canvas')
   const box = await canvas.boundingBox()
   if (!box) throw new Error(`无法读取 ${size} x ${size} 画布区域。`)
   const center = { x: box.x + box.width / 2, y: box.y + box.height / 2 }
   const results = []
+  const initialView = complex ? null : await page.evaluate(async () => {
+    const { useWorkspace } = await import('/src/store/workspace.ts')
+    const state = useWorkspace.getState()
+    const session = state.sessions.find((candidate) => candidate.document.id === state.activeId)
+    return session ? { ...session.view } : null
+  })
 
   if (scenarios.has('pan')) {
+    if (initialView) await resetSimpleScenario(page, initialView)
     results.push(await runScenario(page, size, 'pan', async () => {
       await page.mouse.move(center.x - 90, center.y - 45)
       await page.mouse.down({ button: 'middle' })
@@ -168,6 +262,7 @@ async function benchmarkDocument(browser, size, scenarios) {
   }
 
   if (scenarios.has('zoom')) {
+    if (initialView) await resetSimpleScenario(page, initialView)
     results.push(await runScenario(page, size, 'zoom', async () => {
       await page.mouse.move(center.x, center.y)
       for (let index = 0; index < 54; index += 1) {
@@ -178,6 +273,7 @@ async function benchmarkDocument(browser, size, scenarios) {
   }
 
   if (scenarios.has('rotated-zoom')) {
+    if (initialView) await resetSimpleScenario(page, initialView)
     await page.keyboard.press('R')
     const rotationInput = page.locator('.rotate-view-options input')
     await rotationInput.fill('37')
@@ -193,7 +289,7 @@ async function benchmarkDocument(browser, size, scenarios) {
   }
 
   if (scenarios.has('draw')) {
-    await page.keyboard.press('B')
+    if (initialView) await prepareToolScenario(page, initialView, 'pencil')
     results.push(await runScenario(page, size, 'draw', async () => {
       await page.mouse.move(center.x - 120, center.y - 70)
       await page.mouse.down({ button: 'left' })
@@ -203,6 +299,100 @@ async function benchmarkDocument(browser, size, scenarios) {
         await page.waitForTimeout(12)
       }
       await page.mouse.up({ button: 'left' })
+    }))
+  }
+
+  if (scenarios.has('shape')) {
+    if (initialView) await prepareToolScenario(page, initialView, 'shape', null, 'ellipse')
+    results.push(await runScenario(page, size, 'shape', async () => {
+      await page.mouse.move(center.x - 120, center.y - 80)
+      await page.mouse.down({ button: 'left' })
+      for (let index = 0; index < 48; index += 1) {
+        const progress = index / 47
+        await page.mouse.move(center.x - 120 + progress * 240, center.y - 80 + progress * 160)
+        await page.waitForTimeout(12)
+      }
+      await page.mouse.up({ button: 'left' })
+    }))
+  }
+
+  if (scenarios.has('marquee')) {
+    if (initialView) await prepareToolScenario(page, initialView, 'selection')
+    results.push(await runScenario(page, size, 'marquee', async () => {
+      await page.mouse.move(center.x - 120, center.y - 80)
+      await page.mouse.down({ button: 'left' })
+      for (let index = 0; index < 48; index += 1) {
+        const progress = index / 47
+        await page.mouse.move(center.x - 120 + progress * 240, center.y - 80 + progress * 160)
+        await page.waitForTimeout(12)
+      }
+      await page.mouse.up({ button: 'left' })
+    }))
+  }
+
+  if (scenarios.has('bucket-fill')) {
+    if (initialView) await prepareToolScenario(page, initialView, 'fill', 'bucket')
+    results.push(await runScenario(page, size, 'bucket-fill', async () => {
+      await page.mouse.click(center.x, center.y, { button: 'left' })
+    }))
+  }
+
+  if (scenarios.has('gradient')) {
+    if (initialView) await prepareToolScenario(page, initialView, 'fill', 'gradient')
+    results.push(await runScenario(page, size, 'gradient', async () => {
+      await page.mouse.move(center.x - 140, center.y - 90)
+      await page.mouse.down({ button: 'left' })
+      for (let index = 0; index < 48; index += 1) {
+        const progress = index / 47
+        await page.mouse.move(center.x - 140 + progress * 280, center.y - 90 + progress * 180)
+        await page.waitForTimeout(12)
+      }
+      await page.mouse.up({ button: 'left' })
+    }))
+  }
+
+  if (scenarios.has('complex-draw')) {
+    await page.keyboard.press('B')
+    results.push(await runScenario(page, size, 'complex-draw', async () => {
+      await page.mouse.move(center.x - 120, center.y - 70)
+      await page.mouse.down({ button: 'left' })
+      for (let index = 0; index < 72; index += 1) {
+        const progress = index / 71
+        await page.mouse.move(center.x - 120 + progress * 240, center.y - 70 + Math.sin(progress * Math.PI * 4) * 95)
+        await page.waitForTimeout(12)
+      }
+      await page.mouse.up({ button: 'left' })
+    }))
+  }
+
+  if (scenarios.has('complex-undo')) {
+    results.push(await runScenario(page, size, 'complex-undo', async () => {
+      await page.evaluate(async () => {
+        const { useWorkspace } = await import('/src/store/workspace.ts')
+        for (let index = 0; index < 6; index += 1) {
+          useWorkspace.getState().undo()
+          await new Promise((resolve) => setTimeout(resolve, 60))
+          useWorkspace.getState().redo()
+          await new Promise((resolve) => setTimeout(resolve, 60))
+        }
+      })
+    }))
+  }
+
+  if (scenarios.has('complex-playback')) {
+    results.push(await runScenario(page, size, 'complex-playback', async () => {
+      await page.evaluate(async () => {
+        const { useWorkspace } = await import('/src/store/workspace.ts')
+        const session = useWorkspace.getState().sessions.find((candidate) => candidate.document.id === useWorkspace.getState().activeId)
+        const frameIds = session?.document.animation?.frames.map((frame) => frame.id) ?? []
+        useWorkspace.getState().setAnimationPlaying(true)
+        for (const frameId of frameIds) {
+          useWorkspace.getState().setActiveAnimationFrame(frameId)
+          await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))
+          await new Promise((resolve) => setTimeout(resolve, 40))
+        }
+        useWorkspace.getState().setAnimationPlaying(false)
+      })
     }))
   }
 
@@ -225,7 +415,12 @@ try {
   const results = []
   const scenarios = new Set(options.scenarios)
   console.log(`画布性能范围：尺寸 ${options.sizes.join(', ')}；场景 ${options.scenarios.join(', ')}`)
-  for (const size of options.sizes) results.push(...await benchmarkDocument(browser, size, scenarios))
+  for (let iteration = 1; iteration <= options.repetitions; iteration += 1) {
+    for (const size of options.sizes) {
+      const iterationResults = await benchmarkDocument(browser, size, scenarios)
+      results.push(...iterationResults.map((result) => ({ ...result, iteration })))
+    }
+  }
   console.table(results.map((result) => ({
     canvas: `${result.canvasSize}x${result.canvasSize}`,
     scenario: result.scenario,
@@ -244,7 +439,14 @@ try {
     reactP95: result.reactCommitP95.toFixed(2),
     longestReact: result.longestReactCommit.toFixed(2)
   })))
-  console.log(`MOONSPRITE_CANVAS_PERF=${JSON.stringify(results)}`)
+  const report = { schemaVersion: 1, suite: 'canvas', createdAt: new Date().toISOString(), results }
+  if (options.outputJson) {
+    const outputPath = resolve(options.outputJson)
+    await mkdir(dirname(outputPath), { recursive: true })
+    await writeFile(outputPath, `${JSON.stringify(report, null, 2)}\n`, 'utf8')
+    console.log(`画布性能报告已写入 ${outputPath}`)
+  }
+  console.log(`MOONSPRITE_CANVAS_PERF=${JSON.stringify(report)}`)
 } finally {
   await browser?.close().catch(() => undefined)
   if (previewProcess && !previewProcess.killed) previewProcess.kill()

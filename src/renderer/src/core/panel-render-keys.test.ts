@@ -11,18 +11,27 @@ const session = () => ({
   selectedGroupId: null as string | null,
   selectedGroupIds: [] as string[],
   collapsedGroupIds: [] as string[],
+  animationPlaying: false,
+  animationPlaybackRate: 1,
+  animationReturnToStart: false,
   revision: 0,
+  contentRevision: 0,
+  layersPanelRevision: 0,
   view: { relativeLuminance: false }
 })
 
 describe('panel render keys', () => {
-  it('keeps color, palette and layer panels stable for pixel-only edits', () => {
+  it('keeps the layer panel structure stable while refreshing active cel content after pixel edits', () => {
     const current = session()
     const before = [colorPanelRenderKey(current), palettePanelRenderKey(current), layersPanelRenderKey(current)]
     current.document.layers[0].pixels[0] = 0xff00ffff
     current.revision += 1
-    expect([colorPanelRenderKey(current), palettePanelRenderKey(current), layersPanelRenderKey(current)]).toEqual(before)
-    expect(previewPanelRenderKey(current)).toBe(`${current.document.id}:1:0`)
+    current.contentRevision += 1
+    expect([colorPanelRenderKey(current), palettePanelRenderKey(current)]).toEqual(before.slice(0, 2))
+    expect(layersPanelRenderKey(current)).toBe(before[2])
+    current.layersPanelRevision += 1
+    expect(layersPanelRenderKey(current)).not.toBe(before[2])
+    expect(previewPanelRenderKey(current)).toBe(`${current.document.id}:1:0:0:1:0:1`)
   })
 
   it('invalidates only keys whose visible panel data changed', () => {
@@ -46,5 +55,23 @@ describe('panel render keys', () => {
     expect(previewPanelRenderKey(panned)).toBe(before)
     current.view.relativeLuminance = true
     expect(previewPanelRenderKey(current)).not.toBe(before)
+  })
+
+  it('invalidates the preview controls when animation playback state changes', () => {
+    const current = session()
+    const before = previewPanelRenderKey(current)
+    current.animationPlaying = true
+    expect(previewPanelRenderKey(current)).not.toBe(before)
+  })
+
+  it('keeps the layer panel tree stable while playback advances frames', () => {
+    const current = session()
+    current.animationPlaying = true
+    const before = layersPanelRenderKey(current)
+    current.document.animation!.activeFrameId = 'playback-frame'
+    current.revision += 1
+    expect(layersPanelRenderKey(current)).toBe(before)
+    current.animationPlaying = false
+    expect(layersPanelRenderKey(current)).not.toBe(before)
   })
 })

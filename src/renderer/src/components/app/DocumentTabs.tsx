@@ -1,47 +1,233 @@
-import { createPortal } from 'react-dom'
+import { createPortal, flushSync } from 'react-dom'
 import { memo, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
-import { Copy, FileImage, FolderOpen, Plus, X } from 'lucide-react'
 import { PerformanceProfiler } from '@/components/PerformanceProfiler'
+import { useI18n } from '@/components/I18nProvider'
 import { documentTabsRenderKey } from '@/core/app-render-keys'
+import type { DocumentPaneDirection, DocumentPanePlacement } from '@/core/document-pane-layout'
+import { paneDockTargetAtPoint, type DocumentPaneDockTarget } from './document-pane-hit-test'
 import { useWorkspace } from '@/store/workspace'
+import { PixelUtilityIcon } from '@/components/PixelUtilityIcon'
 
 interface DocumentTabsProps {
   homeOpen: boolean
+  hiddenDocumentIds: readonly string[]
   onNew: () => void
   onActivate: (documentId: string) => void
   onContextActivate: (documentId: string) => void
-  onSplit: (documentId: string) => void
+  onSplitPreview: (placement: DocumentPanePlacement | null) => void
+  onSplit: (documentId: string, targetPaneId: string, direction: DocumentPaneDirection) => void
 }
 
-export const DocumentTabs = memo(function DocumentTabs({ homeOpen, onNew, onActivate, onContextActivate, onSplit }: DocumentTabsProps) {
+interface DocumentTabDragPreview {
+  name: string
+  pointerX: number
+  pointerY: number
+  width: number
+  height: number
+  pointerOffsetX: number
+  pointerOffsetY: number
+}
+
+const captureTabPositions = (): Map<string, number> => new Map(
+  [...document.querySelectorAll<HTMLButtonElement>('.document-tab')]
+    .flatMap((tab) => tab.dataset.documentId ? [[tab.dataset.documentId, tab.getBoundingClientRect().left] as const] : [])
+)
+
+const documentTabById = (documentId: string): HTMLButtonElement | null =>
+  [...document.querySelectorAll<HTMLButtonElement>('.document-tab')].find((tab) => tab.dataset.documentId === documentId) ?? null
+
+const draggedTabGhost = (): HTMLElement | null => document.querySelector<HTMLElement>('[data-document-tab-drag-ghost="true"]')
+
+const positionDraggedTabGhost = (pointerX: number, pointerY: number, pointerOffsetX: number, pointerOffsetY: number): void => {
+  const ghost = draggedTabGhost()
+  if (!ghost) return
+  ghost.style.left = `${pointerX - pointerOffsetX}px`
+  ghost.style.top = `${pointerY - pointerOffsetY}px`
+}
+
+const resetDraggedTabPosition = (documentId: string): void => {
+  const tab = documentTabById(documentId)
+  if (!tab) return
+  tab.style.transform = ''
+}
+
+const positionDraggedTab = (documentId: string, pointerX: number, pointerOffsetX: number, tabStrip: HTMLElement): void => {
+  const tab = documentTabById(documentId)
+  if (!tab) return
+  const stripBounds = tabStrip.getBoundingClientRect()
+  const baseLeft = stripBounds.left + tab.offsetLeft - tabStrip.scrollLeft
+  tab.style.transform = `translateX(${pointerX - pointerOffsetX - baseLeft}px)`
+}
+
+const animateTabPositions = (before: Map<string, number>, draggedDocumentId: string): void => {
+  window.requestAnimationFrame(() => {
+    for (const tab of document.querySelectorAll<HTMLButtonElement>('.document-tab')) {
+      const documentId = tab.dataset.documentId
+      if (documentId === draggedDocumentId) continue
+      const previousLeft = documentId ? before.get(documentId) : undefined
+      if (previousLeft === undefined || typeof tab.animate !== 'function') continue
+      const offset = previousLeft - tab.getBoundingClientRect().left
+      if (Math.abs(offset) < 0.5) continue
+      for (const animation of tab.getAnimations()) animation.cancel()
+      tab.animate(
+        [{ transform: `translateX(${offset}px)` }, { transform: 'translateX(0)' }],
+        { duration: 75, easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)' }
+      )
+    }
+  })
+}
+
+export const DocumentTabs = memo(function DocumentTabs({ homeOpen, hiddenDocumentIds, onNew, onActivate, onContextActivate, onSplitPreview, onSplit }: DocumentTabsProps) {
+  const { t } = useI18n()
   const renderKey = useWorkspace(documentTabsRenderKey)
   const [contextMenu, setContextMenu] = useState<{ documentId: string; x: number; y: number } | null>(null)
-  const dragRef = useRef<{ id: string; startX: number; startY: number; moved: boolean } | null>(null)
+  const [dragPreview, setDragPreview] = useState<DocumentTabDragPreview | null>(null)
+  const [dragVisual, setDragVisual] = useState<{ id: string; detached: boolean } | null>(null)
+  const dragRef = useRef<{ id: string; name: string; pointerId: number; startX: number; startY: number; lastX: number; lastY: number; direction: -1 | 1; pointerOffsetX: number; pointerOffsetY: number; width: number; height: number; moved: boolean; insideTabStrip: boolean; detached: boolean; insertIndex: number | null; splitPreview: DocumentPanePlacement | null; dockTarget: DocumentPaneDockTarget | null; captureTarget: HTMLElement | null; previewVisible: boolean } | null>(null)
   const suppressClickRef = useRef(false)
   const state = useWorkspace.getState()
 
   useEffect(() => {
     const move = (event: PointerEvent): void => {
       const drag = dragRef.current
-      if (!drag || drag.moved) return
-      if (Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY) >= 5) drag.moved = true
+      if (!drag || drag.pointerId !== event.pointerId) return
+      if (!drag.moved && Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY) >= 5) {
+        drag.moved = true
+        setDragVisual({ id: drag.id, detached: false })
+        document.documentElement.classList.add('document-tabs-dragging')
+        drag.captureTarget?.setPointerCapture?.(event.pointerId)
+      }
+      if (!drag.moved) return
+      event.preventDefault()
+      if (event.clientX > drag.lastX + 0.5) drag.direction = 1
+      else if (event.clientX < drag.lastX - 0.5) drag.direction = -1
+      const previousPoint = { x: drag.lastX, y: drag.lastY }
+      drag.lastX = event.clientX
+      drag.lastY = event.clientY
+      const tabStrip = document.querySelector<HTMLElement>('.tab-strip')
+      const tabStripBounds = tabStrip?.getBoundingClientRect()
+      const insideTabStrip = Boolean(tabStripBounds && event.clientX >= tabStripBounds.left && event.clientX <= tabStripBounds.right && event.clientY >= tabStripBounds.top && event.clientY <= tabStripBounds.bottom)
+      if (insideTabStrip && tabStrip) {
+        if (drag.detached) {
+          drag.detached = false
+          setDragVisual({ id: drag.id, detached: false })
+        }
+        drag.previewVisible = false
+        setDragPreview(null)
+        if (drag.splitPreview) {
+          drag.splitPreview = null
+          onSplitPreview(null)
+        }
+        drag.dockTarget = null
+        drag.insideTabStrip = true
+        const tabs = [...document.querySelectorAll<HTMLButtonElement>('.document-tab')].filter((tab) => tab.dataset.documentId !== drag.id)
+        const threshold = drag.direction > 0 ? 0.3 : 0.7
+        const insertIndex = tabs.findIndex((tab) => event.clientX < tab.getBoundingClientRect().left + tab.getBoundingClientRect().width * threshold)
+        drag.insertIndex = insertIndex < 0 ? tabs.length : insertIndex
+        const sessions = useWorkspace.getState().sessions
+        const hidden = new Set(hiddenDocumentIds)
+        const visible = sessions.filter((item) => !hidden.has(item.document.id))
+        const source = visible.find((item) => item.document.id === drag.id)
+        if (source) {
+          const remaining = visible.filter((item) => item.document.id !== drag.id)
+          remaining.splice(Math.max(0, Math.min(remaining.length, drag.insertIndex)), 0, source)
+          const nextVisibleIds = remaining.map((item) => item.document.id)
+          const currentVisibleIds = visible.map((item) => item.document.id)
+          if (nextVisibleIds.some((id, index) => id !== currentVisibleIds[index])) {
+            const positions = captureTabPositions()
+            const hiddenSessions = sessions.filter((item) => hidden.has(item.document.id))
+            flushSync(() => useWorkspace.getState().reorderSessions([...remaining, ...hiddenSessions].map((item) => item.document.id)))
+            animateTabPositions(positions, drag.id)
+          }
+        }
+        positionDraggedTab(drag.id, event.clientX, drag.pointerOffsetX, tabStrip)
+        return
+      }
+      drag.insideTabStrip = false
+      drag.insertIndex = null
+      if (!drag.detached) {
+        drag.detached = true
+        setDragVisual({ id: drag.id, detached: true })
+      }
+      const hit = paneDockTargetAtPoint(event.clientX, event.clientY, { currentTarget: drag.dockTarget, previousPoint })
+      const workspace = useWorkspace.getState()
+      const fallbackTargetId = hit.target?.paneId === drag.id && hit.direction
+        ? workspace.sessions.find((item) => item.document.id !== drag.id && !hiddenDocumentIds.includes(item.document.id))?.document.id ?? null
+        : null
+      const targetId = fallbackTargetId ?? hit.target?.paneId ?? null
+      const canSplit = Boolean(targetId && targetId !== drag.id)
+      const nextSplitPreview = hit.target && hit.direction && canSplit && targetId
+        ? { documentId: drag.id, targetPaneId: targetId, direction: hit.direction }
+        : null
+      drag.dockTarget = nextSplitPreview && hit.target ? { ...hit.target, paneId: nextSplitPreview.targetPaneId } : null
+      if (nextSplitPreview?.documentId !== drag.splitPreview?.documentId || nextSplitPreview?.targetPaneId !== drag.splitPreview?.targetPaneId || nextSplitPreview?.direction !== drag.splitPreview?.direction) {
+        drag.splitPreview = nextSplitPreview
+        onSplitPreview(nextSplitPreview)
+      }
+      if (!drag.previewVisible) {
+        drag.previewVisible = true
+        setDragPreview({
+          name: drag.name,
+          pointerX: event.clientX,
+          pointerY: event.clientY,
+          width: drag.width,
+          height: drag.height,
+          pointerOffsetX: drag.pointerOffsetX,
+          pointerOffsetY: drag.pointerOffsetY
+        })
+      } else {
+        positionDraggedTabGhost(event.clientX, event.clientY, drag.pointerOffsetX, drag.pointerOffsetY)
+      }
     }
-    const up = (event: PointerEvent): void => {
+    const end = (event: PointerEvent, cancelled = false): void => {
       const drag = dragRef.current
+      if (!drag || drag.pointerId !== event.pointerId) return
       dragRef.current = null
-      if (!drag?.moved) return
-      const overWorkspace = document.elementFromPoint(event.clientX, event.clientY)?.closest('.stage-wrap')
-      if (overWorkspace) onSplit(drag.id)
-      suppressClickRef.current = true
-      window.setTimeout(() => { suppressClickRef.current = false }, 0)
+      const splitPreview = drag.splitPreview
+      const commitSplit = !cancelled && drag.moved && !drag.insideTabStrip && Boolean(splitPreview)
+      drag.previewVisible = false
+      if (drag.moved) {
+        suppressClickRef.current = true
+        window.setTimeout(() => { suppressClickRef.current = false }, 0)
+      }
+      if (drag.captureTarget && typeof drag.captureTarget.hasPointerCapture === 'function' && drag.captureTarget.hasPointerCapture(event.pointerId)) drag.captureTarget.releasePointerCapture(event.pointerId)
+      resetDraggedTabPosition(drag.id)
+      document.documentElement.classList.remove('document-tabs-dragging')
+      flushSync(() => {
+        if (splitPreview) onSplitPreview(null)
+        setDragPreview(null)
+        setDragVisual(null)
+        if (commitSplit && splitPreview) onSplit(drag.id, splitPreview.targetPaneId, splitPreview.direction)
+      })
     }
     window.addEventListener('pointermove', move)
-    window.addEventListener('pointerup', up)
+    const up = (event: PointerEvent): void => end(event)
+    const cancel = (event: PointerEvent): void => end(event, true)
+    const mouseUp = (event: MouseEvent): void => {
+      const drag = dragRef.current
+      if (!drag) return
+      end({ pointerId: drag.pointerId, clientX: event.clientX, clientY: event.clientY } as PointerEvent)
+    }
+    const blur = (): void => {
+      const drag = dragRef.current
+      if (!drag) return
+      end({ pointerId: drag.pointerId, clientX: drag.lastX, clientY: drag.lastY } as PointerEvent, true)
+    }
+    window.addEventListener('pointerup', up, true)
+    window.addEventListener('pointercancel', cancel, true)
+    window.addEventListener('mouseup', mouseUp, true)
+    window.addEventListener('blur', blur)
     return () => {
       window.removeEventListener('pointermove', move)
-      window.removeEventListener('pointerup', up)
+      window.removeEventListener('pointerup', up, true)
+      window.removeEventListener('pointercancel', cancel, true)
+      window.removeEventListener('mouseup', mouseUp, true)
+      window.removeEventListener('blur', blur)
+      if (dragRef.current) resetDraggedTabPosition(dragRef.current.id)
+      if (dragRef.current?.splitPreview) onSplitPreview(null)
+      document.documentElement.classList.remove('document-tabs-dragging')
     }
-  }, [onSplit])
+  }, [hiddenDocumentIds, onSplit, onSplitPreview])
 
   useEffect(() => {
     const closeOutside = (event: PointerEvent): void => {
@@ -63,7 +249,10 @@ export const DocumentTabs = memo(function DocumentTabs({ homeOpen, onNew, onActi
 
   const beginDrag = (event: ReactPointerEvent<HTMLButtonElement>, documentId: string): void => {
     if (event.button !== 0 || (event.target as HTMLElement).closest('.tab-close')) return
-    dragRef.current = { id: documentId, startX: event.clientX, startY: event.clientY, moved: false }
+    const documentName = useWorkspace.getState().sessions.find((item) => item.document.id === documentId)?.document.name ?? ''
+    const bounds = event.currentTarget.getBoundingClientRect()
+    const captureTarget = event.currentTarget.closest<HTMLElement>('.tab-strip') ?? event.currentTarget
+    dragRef.current = { id: documentId, name: documentName, pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, lastX: event.clientX, lastY: event.clientY, direction: 1, pointerOffsetX: event.clientX - bounds.left, pointerOffsetY: event.clientY - bounds.top, width: bounds.width, height: bounds.height, moved: false, insideTabStrip: true, detached: false, insertIndex: null, splitPreview: null, dockTarget: null, captureTarget, previewVisible: false }
   }
   const openProjectFolder = (documentId: string): void => {
     const workspace = useWorkspace.getState()
@@ -71,13 +260,13 @@ export const DocumentTabs = memo(function DocumentTabs({ homeOpen, onNew, onActi
     const sourcePath = target?.document.filePath ?? target?.document.sourceFilePath
     setContextMenu(null)
     if (!sourcePath) {
-      workspace.setMessage('该工程尚未保存到本地文件。')
+      workspace.setMessage(t('tabs.unsavedFolder'))
       return
     }
     void window.moonSprite.openProjectInFolder(sourcePath).then(() => {
-      workspace.setMessage('已打开工程所在文件夹。')
+      workspace.setMessage(t('tabs.openedFolder'))
     }).catch((error) => {
-      workspace.setMessage(error instanceof Error ? error.message : '无法打开工程所在文件夹。')
+      workspace.setMessage(error instanceof Error ? error.message : t('tabs.openFolderFailed'))
     })
   }
   const duplicateDocumentView = async (documentId: string): Promise<void> => {
@@ -86,33 +275,37 @@ export const DocumentTabs = memo(function DocumentTabs({ homeOpen, onNew, onActi
     const sourcePath = target?.document.filePath ?? target?.document.sourceFilePath
     setContextMenu(null)
     if (!sourcePath) {
-      workspace.setMessage('该工程没有可重新打开的本地路径。')
+      workspace.setMessage(t('tabs.noDuplicatePath'))
       return
     }
     onContextActivate(documentId)
     const opened = await workspace.openPath(sourcePath, { duplicate: true })
-    if (!opened) workspace.setMessage('无法复制打开该工程。')
+    if (!opened) workspace.setMessage(t('tabs.duplicateFailed'))
   }
 
   return <PerformanceProfiler id="DocumentTabs"><>
-    {state.sessions.map((item) => <button
+    {state.sessions.filter((item) => !hiddenDocumentIds.includes(item.document.id)).map((item) => <button
       key={item.document.id}
-      className={`document-tab ${item.document.id === state.activeId && !homeOpen ? 'active' : ''}`}
+      className={`document-tab ${item.document.id === state.activeId && !homeOpen ? 'active' : ''} ${dragVisual?.id === item.document.id ? 'dragging' : ''} ${dragVisual?.id === item.document.id && dragVisual.detached ? 'detached' : ''}`}
+      data-document-id={item.document.id}
       onPointerDown={(event) => { if (event.button === 1) { event.preventDefault(); return }; beginDrag(event, item.document.id) }}
       onAuxClick={(event) => { if (event.button !== 1) return; event.preventDefault(); event.stopPropagation(); setContextMenu(null); void useWorkspace.getState().closeDocument(item.document.id) }}
       onContextMenu={(event) => { event.preventDefault(); event.stopPropagation(); onContextActivate(item.document.id); setContextMenu({ documentId: item.document.id, x: event.clientX, y: event.clientY }) }}
-      onClick={(event) => { if (suppressClickRef.current) { event.preventDefault(); return }; onActivate(item.document.id) }}
+      onClick={(event) => { if (suppressClickRef.current || dragRef.current?.moved) { event.preventDefault(); return }; onActivate(item.document.id) }}
     >
-      <FileImage size={14} />
+      <PixelUtilityIcon kind="project" />
       <span>{item.document.name}</span>
       {item.document.dirty && <i />}
-      <span className="tab-close" role="button" tabIndex={0} aria-label={`关闭 ${item.document.name}`} onClick={(event) => { event.stopPropagation(); void useWorkspace.getState().closeDocument(item.document.id) }}><X size={12} /></span>
+      <span className="tab-close" role="button" tabIndex={0} aria-label={t('tabs.closeAria', { name: item.document.name })} onClick={(event) => { event.stopPropagation(); void useWorkspace.getState().closeDocument(item.document.id) }}><PixelUtilityIcon kind="close" /></span>
     </button>)}
-    <button className="new-tab-button" aria-label="新建作品" title="新建作品" onClick={onNew}><Plus size={16} /></button>
-    {contextMenu && createPortal(<div className="context-menu document-tab-context-menu" role="menu" aria-label="项目标签操作" style={{ left: Math.min(contextMenu.x, Math.max(8, window.innerWidth - 232)), top: Math.min(contextMenu.y, Math.max(8, window.innerHeight - 150)) }}>
-      <button className="context-menu-item" role="menuitem" onClick={() => { void useWorkspace.getState().closeDocument(contextMenu.documentId); setContextMenu(null) }}><X size={15} /><span>关闭</span></button>
-      <button className="context-menu-item" role="menuitem" onClick={() => { void duplicateDocumentView(contextMenu.documentId) }}><Copy size={15} /><span>复制视图</span></button>
-      <button className="context-menu-item" role="menuitem" onClick={() => openProjectFolder(contextMenu.documentId)}><FolderOpen size={15} /><span>在文件夹中打开</span></button>
+      <button className="new-tab-button" aria-label={t('tabs.newProject')} title={t('tabs.newProject')} onClick={onNew}><PixelUtilityIcon kind="plus" /></button>
+    {contextMenu && createPortal(<div className="context-menu document-tab-context-menu" role="menu" aria-label={t('tabs.contextAria')} style={{ left: Math.min(contextMenu.x, Math.max(8, window.innerWidth - 232)), top: Math.min(contextMenu.y, Math.max(8, window.innerHeight - 150)) }}>
+      <button className="context-menu-item" role="menuitem" onClick={() => { void useWorkspace.getState().closeDocument(contextMenu.documentId); setContextMenu(null) }}><PixelUtilityIcon kind="close" /><span>{t('common.close')}</span></button>
+      <button className="context-menu-item" role="menuitem" onClick={() => { void duplicateDocumentView(contextMenu.documentId) }}><PixelUtilityIcon kind="copy" /><span>{t('tabs.duplicateView')}</span></button>
+      <button className="context-menu-item" role="menuitem" onClick={() => openProjectFolder(contextMenu.documentId)}><PixelUtilityIcon kind="folderOpen" /><span>{t('app.menu.file.openFolder')}</span></button>
+    </div>, document.body)}
+    {dragPreview && createPortal(<div className="document-tab-drag-layer" aria-hidden="true">
+      <div className="document-tab-drag-ghost" data-document-tab-drag-ghost="true" style={{ left: dragPreview.pointerX - dragPreview.pointerOffsetX, top: dragPreview.pointerY - dragPreview.pointerOffsetY, width: dragPreview.width, height: dragPreview.height }}><PixelUtilityIcon kind="project" /><span>{dragPreview.name}</span></div>
     </div>, document.body)}
   </></PerformanceProfiler>
 })

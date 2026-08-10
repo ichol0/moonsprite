@@ -43,6 +43,21 @@ describe('tool preferences persistence boundary', () => {
     const storage = createStorage()
     saveToolSettings(defaultToolSettings, storage)
     expect(storage.getItem(TOOL_SETTINGS_KEY)).toContain('moveAutoSelect')
-    expect(loadToolSettings(storage)).toMatchObject({ brushSize: 1, moveAutoSelect: true, selectionMode: 'replace' })
+    expect(loadToolSettings(storage)).toMatchObject({ brushSize: 1, moveAutoSelect: true, selectionMode: 'replace', fillKind: 'bucket', gradientDither: 'none' })
+  })
+
+  it('persists the selected fill child tool and gradient preset', () => {
+    const storage = createStorage()
+    saveToolSettings({ ...defaultToolSettings, fillKind: 'gradient', gradientDither: 'bayer-4' }, storage)
+    expect(loadToolSettings(storage)).toMatchObject({ fillKind: 'gradient', gradientDither: 'bayer-4' })
+  })
+
+  it('persists independent symmetry axes and defaults legacy data to disabled', () => {
+    const storage = createStorage()
+    expect(loadToolSettings(storage).symmetryAxes).toEqual({ horizontal: false, vertical: false, diagonalUp: false, diagonalDown: false })
+    saveToolSettings({ ...defaultToolSettings, symmetryAxes: { horizontal: true, vertical: false, diagonalUp: true, diagonalDown: false } }, storage)
+    expect(loadToolSettings(storage).symmetryAxes).toEqual({ horizontal: true, vertical: false, diagonalUp: true, diagonalDown: false })
+    storage.setItem(TOOL_SETTINGS_KEY, JSON.stringify({ symmetryAxes: { horizontal: false, vertical: false, diagonal: true } }))
+    expect(loadToolSettings(storage).symmetryAxes).toEqual({ horizontal: false, vertical: false, diagonalUp: false, diagonalDown: true })
   })
 })

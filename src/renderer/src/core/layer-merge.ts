@@ -1,5 +1,6 @@
 import type { BlendMode, LayerGroup, RasterLayer, SpriteDocument } from '@shared/types'
 import { compositeDocument, createLayer, findOrAddPaletteColor, getDescendantGroupIds, isLayerEffectivelyLocked } from './document'
+import { translateCurrent as tr } from './localization'
 
 export interface LayerMergeSuccess {
   ok: true
@@ -54,17 +55,17 @@ function compositeLayers(document: SpriteDocument, layers: RasterLayer[]): Uint8
 export function mergeRasterLayers(document: SpriteDocument, layerIds: string[]): LayerMergeResult {
   const requested = new Set(layerIds)
   const layers = document.layers.filter((layer) => requested.has(layer.id))
-  if (layers.length < 2) return { ok: false, reason: '请至少选择两个图层。' }
+  if (layers.length < 2) return { ok: false, reason: tr('core.layerMerge.needTwo') }
   const parentGroupId = layers[0].groupId ?? null
-  if (!layers.every((layer) => (layer.groupId ?? null) === parentGroupId)) return { ok: false, reason: '只能合并同一层级中的图层。' }
-  if (layers.some((layer) => !layer.visible)) return { ok: false, reason: '选中的图层中包含隐藏图层，请先显示后再合并。' }
-  if (layers.some((layer) => isLayerEffectivelyLocked(document, layer))) return { ok: false, reason: '选中的图层中包含锁定图层，无法合并。' }
+  if (!layers.every((layer) => (layer.groupId ?? null) === parentGroupId)) return { ok: false, reason: tr('core.layerMerge.sameLevel') }
+  if (layers.some((layer) => !layer.visible)) return { ok: false, reason: tr('core.layerMerge.hidden') }
+  if (layers.some((layer) => isLayerEffectivelyLocked(document, layer))) return { ok: false, reason: tr('core.layerMerge.locked') }
   const indexes = layers.map((layer) => document.layers.indexOf(layer)).sort((left, right) => left - right)
-  if (indexes.at(-1)! - indexes[0] + 1 !== indexes.length) return { ok: false, reason: '只能合并连续排列的图层。' }
+  if (indexes.at(-1)! - indexes[0] + 1 !== indexes.length) return { ok: false, reason: tr('core.layerMerge.contiguous') }
 
   const pixels = compositeLayers(document, layers)
   const topLayer = layers.at(-1)!
-  const merged = createMergedLayer(document, `${topLayer.name} 合并`, pixels, {
+  const merged = createMergedLayer(document, tr('core.layerMerge.nameSuffix', { name: topLayer.name }), pixels, {
     groupId: parentGroupId,
     visible: true,
     locked: false,
@@ -80,21 +81,21 @@ export function mergeRasterLayers(document: SpriteDocument, layerIds: string[]):
 
 export function mergeLayerDown(document: SpriteDocument, layerId: string): LayerMergeResult {
   const active = document.layers.find((layer) => layer.id === layerId)
-  if (!active) return { ok: false, reason: '当前图层不存在。' }
+  if (!active) return { ok: false, reason: tr('core.layerMerge.activeMissing') }
   const siblings = document.layers.filter((layer) => (layer.groupId ?? null) === (active.groupId ?? null))
   const index = siblings.findIndex((layer) => layer.id === active.id)
-  if (index <= 0) return { ok: false, reason: '当前图层下方没有可合并的图层。' }
+  if (index <= 0) return { ok: false, reason: tr('core.layerMerge.belowMissing') }
   return mergeRasterLayers(document, [siblings[index - 1].id, active.id])
 }
 
 export function mergeLayerGroup(document: SpriteDocument, groupId: string): LayerMergeResult {
   const group = document.groups.find((candidate) => candidate.id === groupId)
-  if (!group) return { ok: false, reason: '图层组不存在。' }
+  if (!group) return { ok: false, reason: tr('core.layerMerge.groupMissing') }
   const removedGroupIds = [groupId, ...getDescendantGroupIds(document, groupId)]
   const groupIds = new Set(removedGroupIds)
   const layers = document.layers.filter((layer) => Boolean(layer.groupId && groupIds.has(layer.groupId)))
-  if (layers.length === 0) return { ok: false, reason: '空图层组无法合并。' }
-  if (group.locked || layers.some((layer) => isLayerEffectivelyLocked(document, layer))) return { ok: false, reason: '图层组中包含锁定内容，无法合并。' }
+  if (layers.length === 0) return { ok: false, reason: tr('core.layerMerge.emptyGroup') }
+  if (group.locked || layers.some((layer) => isLayerEffectivelyLocked(document, layer))) return { ok: false, reason: tr('core.layerMerge.groupLocked') }
 
   const groupCopies = document.groups
     .filter((candidate) => groupIds.has(candidate.id))
@@ -156,11 +157,11 @@ export function mergeVisibleLayers(document: SpriteDocument): LayerMergeResult {
     }
     return true
   })
-  if (visibleLayers.length < 2) return { ok: false, reason: '至少需要两个可见图层才能合并。' }
-  if (visibleLayers.some((layer) => isLayerEffectivelyLocked(document, layer))) return { ok: false, reason: '可见图层中包含锁定内容，无法合并。' }
+  if (visibleLayers.length < 2) return { ok: false, reason: tr('core.layerMerge.visibleNeedTwo') }
+  if (visibleLayers.some((layer) => isLayerEffectivelyLocked(document, layer))) return { ok: false, reason: tr('core.layerMerge.visibleLocked') }
 
   const pixels = compositeDocument(document)
-  const merged = createMergedLayer(document, '合并可见图层', pixels, {
+  const merged = createMergedLayer(document, tr('core.layerMerge.visibleName'), pixels, {
     groupId: null,
     visible: true,
     locked: false,

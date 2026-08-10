@@ -1,7 +1,10 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { useState } from 'react'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ColorValueControl } from './ColorValueControl'
+import { COLOR_EDITOR_MODES_PREFERENCE_KEY } from '@/core/file-preferences'
 
+beforeEach(() => localStorage.clear())
 afterEach(() => cleanup())
 
 describe('ColorValueControl', () => {
@@ -25,6 +28,81 @@ describe('ColorValueControl', () => {
     fireEvent.change(screen.getByRole('slider', { name: '颜色值 H滑块' }), { target: { value: '180' } })
 
     expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ r: 0, g: 255, b: 255, a: 255 }))
+  })
+
+  it('keeps the other values stable while editing one value in a color mode', () => {
+    function ControlledColorValue() {
+      const [color, setColor] = useState({ r: 41, g: 121, b: 255, a: 255 })
+      return <ColorValueControl color={color} onChange={setColor} label="Color" />
+    }
+
+    render(<ControlledColorValue />)
+    fireEvent.click(screen.getByRole('button', { name: 'Color' }))
+    fireEvent.click(screen.getByRole('tab', { name: 'HSV' }))
+
+    const sliders = Array.from(document.querySelectorAll<HTMLInputElement>('.color-editor-range'))
+    const saturationBefore = sliders[1].value
+    const valueBefore = sliders[2].value
+    fireEvent.change(sliders[0], { target: { value: '180' } })
+
+    expect(sliders[1]).toHaveValue(saturationBefore)
+    expect(sliders[2]).toHaveValue(valueBefore)
+    expect(document.querySelector('.color-editor-previous-swatch')).toBeInTheDocument()
+    expect(document.querySelector('.color-editor-current-swatch')).toBeInTheDocument()
+  })
+
+  it('records the new color preview after a slider edit is confirmed', () => {
+    render(<ColorValueControl color={{ r: 41, g: 121, b: 255, a: 255 }} onChange={vi.fn()} label="Color" />)
+    fireEvent.click(screen.getByRole('button', { name: 'Color' }))
+    const slider = screen.getByRole('slider', { name: /Color R/ })
+    const currentSwatch = document.querySelector('.color-editor-current-swatch i') as HTMLElement
+    const previousStyle = currentSwatch.style.background
+
+    fireEvent.change(slider, { target: { value: '200' } })
+    expect(currentSwatch.style.background).toBe(previousStyle)
+
+    fireEvent.pointerUp(slider)
+    expect(currentSwatch.style.background).not.toBe(previousStyle)
+  })
+
+  it('copies the confirmed color HEX from the comparison swatch', () => {
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText }
+    })
+    render(<ColorValueControl color={{ r: 41, g: 121, b: 255, a: 255 }} onChange={vi.fn()} label="Color" />)
+    fireEvent.click(screen.getByRole('button', { name: 'Color' }))
+
+    fireEvent.click(screen.getByRole('button', { name: '当前颜色' }))
+
+    expect(writeText).toHaveBeenCalledWith('#2979FFFF')
+  })
+
+  it('commits a HEX edit when the field loses focus', () => {
+    const onChange = vi.fn()
+    render(<ColorValueControl color={{ r: 255, g: 0, b: 0, a: 255 }} onChange={onChange} label="颜色值" />)
+    fireEvent.click(screen.getByRole('button', { name: '颜色值' }))
+    const hexInput = document.querySelector<HTMLInputElement>('.color-editor-hex input')
+    expect(hexInput).not.toBeNull()
+
+    fireEvent.change(hexInput!, { target: { value: '00ff00' } })
+    fireEvent.blur(hexInput!)
+
+    expect(onChange).toHaveBeenLastCalledWith({ r: 0, g: 255, b: 0, a: 255 })
+  })
+
+  it('commits a HEX edit before an unmoved editor closes from an outside click', () => {
+    const onChange = vi.fn()
+    render(<ColorValueControl color={{ r: 255, g: 0, b: 0, a: 255 }} onChange={onChange} label="Color" storageKey="outside-commit" />)
+    fireEvent.click(screen.getByRole('button', { name: 'Color' }))
+    const hexInput = document.querySelector<HTMLInputElement>('.color-editor-hex input')!
+
+    fireEvent.change(hexInput, { target: { value: '00ff00' } })
+    fireEvent.pointerDown(document.body)
+
+    expect(onChange).toHaveBeenLastCalledWith({ r: 0, g: 255, b: 0, a: 255 })
+    expect(document.querySelector('.color-editor-popover')).not.toBeInTheDocument()
   })
 
   it('keeps each channel in one row with its colored slider and numeric input', () => {
@@ -83,5 +161,30 @@ describe('ColorValueControl', () => {
     fireEvent.click(trigger)
 
     expect(screen.getByRole('dialog', { name: '颜色编辑 前景色' }).style.left).toBe(defaultLeft)
+  })
+
+  it('uses the enabled color mode order from preferences', () => {
+    localStorage.setItem(COLOR_EDITOR_MODES_PREFERENCE_KEY, JSON.stringify([{ mode: 'lab', enabled: true }, { mode: 'rgb', enabled: true }, { mode: 'hsv', enabled: false }]))
+    render(<ColorValueControl color={{ r: 41, g: 121, b: 255, a: 255 }} onChange={vi.fn()} label="颜色" />)
+    fireEvent.click(screen.getByRole('button', { name: '颜色' }))
+
+    expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual(['LAB', 'RGB', 'HSL', 'Gray', 'CMYK'])
+    expect(screen.getByRole('tab', { name: 'LAB', selected: true })).toBeInTheDocument()
+  })
+
+  it('only shows the add-to-palette action for a missing color', () => {
+    const add = vi.fn()
+    const { container, rerender } = render(<ColorValueControl color={{ r: 41, g: 121, b: 255, a: 255 }} onChange={vi.fn()} label="颜色" inPalette={false} onAddToPalette={add} />)
+    const button = container.querySelector<HTMLButtonElement>('.color-value-add-button')!
+    const actionRow = container.querySelector('.color-value-action-row')
+    expect(actionRow).toHaveClass('supports-palette-action', 'has-add-action')
+    expect(button).not.toBeNull()
+    fireEvent.click(button)
+    expect(add).toHaveBeenCalledOnce()
+
+    rerender(<ColorValueControl color={{ r: 41, g: 121, b: 255, a: 255 }} onChange={vi.fn()} label="颜色" inPalette onAddToPalette={add} />)
+    expect(container.querySelector('.color-value-add-button')).not.toBeInTheDocument()
+    expect(actionRow).toHaveClass('supports-palette-action')
+    expect(actionRow).not.toHaveClass('has-add-action')
   })
 })

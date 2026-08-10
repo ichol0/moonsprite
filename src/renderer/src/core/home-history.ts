@@ -8,8 +8,8 @@ export interface RecentProject {
   pinned: boolean
 }
 
-const recentStorageKey = 'moonsprite.recent-projects.v1'
-const galleryPinsStorageKey = 'moonsprite.gallery-pins.v1'
+export const RECENT_PROJECTS_STORAGE_KEY = 'moonsprite.recent-projects.v1'
+export const GALLERY_PINS_STORAGE_KEY = 'moonsprite.gallery-pins.v1'
 export const RECENT_FILE_EXTENSIONS = ['moonsprite', 'ase', 'aseprite', 'png', 'jpg', 'jpeg', 'webp', 'bmp', 'gif'] as const
 
 const readJson = <T>(key: string, fallback: T): T => {
@@ -26,13 +26,13 @@ const normalizeRecentProjects = (projects: RecentProject[]): RecentProject[] => 
 
 const writeRecentProjects = (projects: RecentProject[]): RecentProject[] => {
   const next = normalizeRecentProjects(projects).slice(0, 24)
-  writeStoredJson(recentStorageKey, next)
+  writeStoredJson(RECENT_PROJECTS_STORAGE_KEY, next)
   if (typeof window !== 'undefined') window.dispatchEvent(new Event('moonsprite:recent-files-changed'))
   return next
 }
 
 export function getRecentProjects(): RecentProject[] {
-  const value = readJson<unknown>(recentStorageKey, [])
+  const value = readJson<unknown>(RECENT_PROJECTS_STORAGE_KEY, [])
   if (!Array.isArray(value)) return []
   const projects = value.flatMap((item): RecentProject[] => {
     if (typeof item?.filePath !== 'string' || typeof item?.lastOpened !== 'number') return []
@@ -86,7 +86,7 @@ export function clearRecentProjects(): RecentProject[] {
 }
 
 export function getGalleryPins(): string[] {
-  const value = readJson<unknown>(galleryPinsStorageKey, [])
+  const value = readJson<unknown>(GALLERY_PINS_STORAGE_KEY, [])
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : []
 }
 
@@ -95,12 +95,12 @@ export function toggleGalleryPin(filePath: string): string[] {
   if (current.has(filePath)) current.delete(filePath)
   else current.add(filePath)
   const next = [...current]
-  writeStoredJson(galleryPinsStorageKey, next)
+  writeStoredJson(GALLERY_PINS_STORAGE_KEY, next)
   return next
 }
 
 export function removeGalleryPin(filePath: string): string[] {
   const next = getGalleryPins().filter((path) => path !== filePath)
-  writeStoredJson(galleryPinsStorageKey, next)
+  writeStoredJson(GALLERY_PINS_STORAGE_KEY, next)
   return next
 }

@@ -41,6 +41,13 @@ describe('app render keys', () => {
     expect(documentTabsRenderKey(state)).toBe(tabs)
     expect(statusBarRenderKey(session, null)).toBe(status)
 
+    const fillRail = toolRailRenderKey(session)
+    const fillOptions = toolOptionsRenderKey(session)
+    session.fillKind = 'gradient'
+    session.gradientDither = 'bayer-4'
+    expect(toolRailRenderKey(session)).not.toBe(fillRail)
+    expect(toolOptionsRenderKey(session)).not.toBe(fillOptions)
+
     const menu = appMenuRenderKey(session)
     session.history.push({ label: 'edit', bytes: 1, undo: () => undefined, redo: () => undefined })
     expect(appMenuRenderKey(session)).not.toBe(menu)
@@ -69,9 +76,24 @@ describe('app render keys', () => {
     session.view.showGrid = true
     expect(appCoordinatorRenderKey(state)).not.toBe(before)
 
+    const defaultGrid = appCoordinatorRenderKey(state)
+    session.view.showPixelGrid = true
+    expect(appCoordinatorRenderKey(state)).not.toBe(defaultGrid)
+    const pixelGrid = appCoordinatorRenderKey(state)
+    session.view.grid = { x: 2, y: 3, width: 8, height: 6 }
+    expect(appCoordinatorRenderKey(state)).not.toBe(pixelGrid)
+
     const hiddenOutline = appCoordinatorRenderKey(state)
     session.view.showSelectionOutline = false
     expect(appCoordinatorRenderKey(state)).not.toBe(hiddenOutline)
     expect(appMenuRenderKey(session)).toContain(';0;')
+
+    const toolKey = appCoordinatorRenderKey(state)
+    session.tool = 'eyedropper'
+    expect(appCoordinatorRenderKey(state)).not.toBe(toolKey)
+    const eyedropperKey = appCoordinatorRenderKey(state)
+    session.tool = 'fill'
+    session.fillKind = 'gradient'
+    expect(appCoordinatorRenderKey(state)).not.toBe(eyedropperKey)
   })
 })

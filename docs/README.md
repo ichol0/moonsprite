@@ -8,6 +8,7 @@
 - [架构概览](architecture/overview.md)：模块职责和依赖方向。
 - [状态与历史](architecture/state-history.md)：会话、dirty、撤销和视图状态。
 - [坐标与渲染](architecture/coordinates-rendering.md)：屏幕、视图、画布和图层坐标。
+- [多语言架构](architecture/localization.md)：语言资源、回退、持久化和新增语言门禁。
 - [文件格式](file-format.md)：`.moonsprite` v2 容器。
 
 ## 交互契约
@@ -23,6 +24,8 @@
 - [性能基线](testing/performance-baseline.md)
 - [性能更新记录](testing/performance-history.md)
 - [完整更新日志规则](release/changelog-policy.md)
+- [开发版本周期](release/development-cycle.md)
+- [历史更新日志归档](changelog/README.md)
 - [发布检查表](release/release-checklist.md)
 - [架构决策记录](adr/README.md)
 
@@ -30,9 +33,9 @@
 
 - 行为变化：更新产品或交互契约。
 - 状态、历史、坐标或文件格式变化：更新架构文档并新增 ADR。
-- Bug 修复：在回归矩阵中增加自动化场景。
-- 性能验证：先按 [性能基线](testing/performance-baseline.md) 判断 P0-P4 影响等级；P0/P1 不跑性能基准，P2 定向验证，P3/P4 才运行完整基准。仅 P2-P4 或实际性能变化需要更新性能记录。
-- 所有软件变化：按完整更新日志规则逐项追加到根目录 `CHANGELOG.md`，不得只在发布时概括补写。
+- Bug 修复：曾复发、难以人工发现、共享算法以及坐标、撤销、文件数据和平台安全问题需要增加回归场景；普通视觉问题由用户验收。
+- 性能验证：普通需求不运行基准；每次 `dev.X` 或正式版本发布至少按 P3 审计一次，性能专项、实际退化或用户明确要求时按 [性能基线](testing/performance-baseline.md) 加强验证并记录。
+- 软件变化：在 `dev.X` 发布时根据本周期基线后的完整 diff 集中更新根目录 `CHANGELOG.md`，每个独立有效变化仍保留独立条目。
 - 发布：逐项执行发布检查表。
 
 文档应描述当前有效规则，不记录逐日聊天过程。过期但有追溯价值的内容移入 `archive/`。

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { LayerGroup } from '@shared/types'
 import { createDocument, createLayer, getActiveLayer } from './document'
 import { HistoryStack } from './history'
-import { assignLayersToGroup, assignLayersToRoot, canMoveGroupInto, createLayerGroup, moveGroupToRootEdge, moveLayersToRootEdge, positionGroupNextToLayer, reorderGroup, reorderLayers, ungroupSelected, type LayerOperationState } from './layer-operations'
+import { assignLayersToGroup, assignLayersToRoot, canMoveGroupInto, createLayerGroup, moveGroupToRootEdge, moveLayerPanelRows, moveLayersToRootEdge, positionGroupNextToLayer, reorderGroup, reorderLayers, ungroupSelected, type LayerOperationState } from './layer-operations'
 import { buildLayerPanelTree } from './layer-panel-layout'
 
 const group = (id: string, parentGroupId: string | null = null): LayerGroup => ({ id, name: id, parentGroupId, visible: true, locked: false, opacity: 1, blendMode: 'normal' })
@@ -146,6 +146,27 @@ describe('layer operations', () => {
     expect(state.document.groups.map((item) => item.id)).toEqual(['first', 'second'])
   })
 
+  it('moves mixed panel rows atomically without changing their visible order or selection', () => {
+    const state = createState()
+    const layer = getActiveLayer(state.document)
+    state.document.groups.push({ ...group('source'), panelOrder: 1 }, { ...group('target'), panelOrder: -1 })
+    state.selectedLayerIds = [layer.id]
+    state.selectedGroupIds = ['source']
+    const beforeSelection = { layers: [...state.selectedLayerIds], groups: [...state.selectedGroupIds] }
+
+    const move = moveLayerPanelRows(state, [layer.id], ['source'], { kind: 'group', id: 'target' })
+
+    expect(buildLayerPanelTree(state.document).map((node) => node.id)).toEqual(['target', 'source', layer.id])
+    expect(state.document.groups.find((item) => item.id === 'source')?.parentGroupId).toBe('target')
+    expect(state.document.layers.find((item) => item.id === layer.id)?.groupId).toBe('target')
+    expect(state.selectedLayerIds).toEqual(beforeSelection.layers)
+    expect(state.selectedGroupIds).toEqual(beforeSelection.groups)
+    move?.undo()
+    expect(buildLayerPanelTree(state.document).filter((node) => node.depth === 0).map((node) => node.id)).toEqual(['source', layer.id, 'target'])
+    move?.redo()
+    expect(buildLayerPanelTree(state.document).map((node) => node.id)).toEqual(['target', 'source', layer.id])
+  })
+
   it('moves a root layer above a group with a persisted panel anchor', () => {
     const state = createState()
     const member = getActiveLayer(state.document)
@@ -208,5 +229,25 @@ describe('layer operations', () => {
     expect(state.document.groups.find((item) => item.id === 'first')?.panelOrder).toBeTypeOf('number')
     move?.undo()
     expect(state.document.groups.find((item) => item.id === 'first')?.panelOrder).toBeUndefined()
+  })
+
+  it('moves a group beside a layer at any nested depth', () => {
+    const state = createState()
+    const target = getActiveLayer(state.document)
+    target.groupId = 'nested'
+    state.document.groups.push(
+      group('parent'),
+      group('nested', 'parent'),
+      group('moving')
+    )
+
+    const history = moveLayerPanelRows(state, [], ['moving'], { kind: 'row', rowKind: 'layer', id: target.id, position: 'above' })
+
+    expect(state.document.groups.find((item) => item.id === 'moving')?.parentGroupId).toBe('nested')
+    expect(buildLayerPanelTree(state.document).map((node) => `${node.depth}:${node.id}`)).toEqual([
+      '0:parent', '1:nested', '2:moving', `2:${target.id}`
+    ])
+    history?.undo()
+    expect(state.document.groups.find((item) => item.id === 'moving')?.parentGroupId).toBeNull()
   })
 })

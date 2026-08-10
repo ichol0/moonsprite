@@ -1,3 +1,5 @@
+import { CANVAS_PERFORMANCE_SCENARIOS } from './canvas-performance-options.mjs'
+
 const normalized = (file) => file.replaceAll('\\', '/')
 
 const p4Patterns = [
@@ -9,7 +11,7 @@ const p4Patterns = [
 const p3Patterns = [
   /\/CanvasStage\.tsx$/,
   /\/canvas-(composite-cache|render-plan)\.(ts|tsx)$/,
-  /\/core\/(document|raster|tools)\.ts$/,
+  /\/core\/(animation|animation-thumbnail|document|gif|onion-skin|raster|tools)\.ts$/,
   /\/store\/workspace(-session|-history|-palette)?\.ts$/,
   /\/components\/(WorkspacePanels|PerformanceProfiler)\.tsx$/,
   /\/components\/app\/(EditorCanvasHost|EditorWorkspaceShell)\.tsx$/,
@@ -31,6 +33,15 @@ const isTestOrMaintenance = (file) => file.endsWith('.md')
   || /\.(test|bench)\.[cm]?[jt]sx?$/.test(file)
 
 export function classifyPerformanceImpact(files) {
+  return classifyPerformanceAudit(files)
+}
+
+const levelRank = { P0: 0, P1: 1, P2: 2, P3: 3, P4: 4 }
+
+const canvasSuite = (id, sizes, scenarios, repetitions = 1) => ({ id, kind: 'canvas', sizes, scenarios, repetitions })
+const benchmarkSuite = (id, file) => ({ id, kind: 'vitest-benchmark', file })
+
+export function classifyPerformanceAudit(files, options = {}) {
   const paths = files.map(normalized).filter(Boolean)
   const matched = (patterns) => paths.some((file) => patterns.some((pattern) => pattern.test(file)))
   let level = 'P0'
@@ -39,18 +50,46 @@ export function classifyPerformanceImpact(files) {
   else if (matched(p2Patterns)) level = 'P2'
   else if (paths.some((file) => !isTestOrMaintenance(file))) level = 'P1'
 
+  const minimumLevel = options.minimumLevel ?? 'P0'
+  if (levelRank[minimumLevel] > levelRank[level]) level = minimumLevel
+
   const selectionAlgorithm = paths.some((file) => /\/core\/selection(?:-performance)?\.(?:ts|tsx)$/.test(file))
   const canvasInteraction = paths.some((file) => /\/(canvas-input|view-geometry|canvas-selection-renderer|useCanvasViewPreview)/.test(file))
-  const commands = level === 'P4'
-    ? ['pnpm bench:canvas -- --full（连续三次取中位数）', 'pnpm bench:selection', 'pnpm test:desktop']
-    : level === 'P3'
-      ? ['pnpm bench:canvas -- --full']
-      : level === 'P2'
-        ? [selectionAlgorithm
-            ? 'pnpm bench:selection'
-            : canvasInteraction
-              ? 'pnpm bench:canvas -- --size=512 --scenario=pan,zoom'
-              : '暂无对应自动基准：运行相关测试，并在性能历史标记未覆盖']
-        : []
-  return { level, files: paths, commands }
+  const complexDocument = paths.some((file) => /\/(animation|animation-thumbnail|document|layer-operations|onion-skin|workspace|LayersPanel|PreviewPanel)/.test(file))
+  const includeReleaseComplexSuite = options.releaseAudit === true
+  const suites = []
+
+  if (level === 'P4') {
+    suites.push(
+      canvasSuite('canvas-full', [128, 512, 1024], [...CANVAS_PERFORMANCE_SCENARIOS], 3),
+      canvasSuite('canvas-complex', [128, 512, 1024], ['complex-draw', 'complex-undo', 'complex-playback'], 3),
+      benchmarkSuite('selection', 'src/renderer/src/core/selection-performance.bench.ts'),
+      benchmarkSuite('document-composite', 'src/renderer/src/core/document-performance.bench.ts'),
+      { id: 'bundle', kind: 'bundle' },
+      { id: 'desktop', kind: 'desktop' },
+    )
+  } else if (level === 'P3') {
+    suites.push(canvasSuite('canvas-full', [128, 512, 1024], [...CANVAS_PERFORMANCE_SCENARIOS]))
+    if (includeReleaseComplexSuite || complexDocument) {
+      suites.push(canvasSuite('canvas-complex', [1024], ['complex-draw', 'complex-undo', 'complex-playback']))
+    }
+    if (complexDocument) suites.push(benchmarkSuite('document-composite', 'src/renderer/src/core/document-performance.bench.ts'))
+    if (selectionAlgorithm) suites.push(benchmarkSuite('selection', 'src/renderer/src/core/selection-performance.bench.ts'))
+    suites.push({ id: 'bundle', kind: 'bundle' })
+  } else if (level === 'P2') {
+    if (selectionAlgorithm) suites.push(benchmarkSuite('selection', 'src/renderer/src/core/selection-performance.bench.ts'))
+    else if (canvasInteraction) suites.push(canvasSuite('canvas-interaction', [512], ['pan', 'zoom']))
+    else if (complexDocument) suites.push(canvasSuite('canvas-complex', [512], ['complex-draw', 'complex-undo', 'complex-playback']))
+    else suites.push({ id: 'uncovered', kind: 'uncovered' })
+  }
+
+  const commands = suites.map((suite) => {
+    if (suite.kind === 'canvas' && suite.id === 'canvas-full') return `pnpm bench:canvas -- --full${suite.repetitions > 1 ? `（连续 ${suite.repetitions} 次取中位数）` : ''}`
+    if (suite.kind === 'canvas') return `pnpm bench:canvas -- --size=${suite.sizes.join(',')} --scenario=${suite.scenarios.join(',')}`
+    if (suite.kind === 'vitest-benchmark') return `pnpm exec vitest bench ${suite.file} --run`
+    if (suite.kind === 'bundle') return 'pnpm build:web（记录包体积）'
+    if (suite.kind === 'desktop') return 'pnpm test:desktop'
+    return '暂无对应自动基准：运行相关测试，并在性能历史标记未覆盖'
+  })
+  return { level, files: paths, suites, commands }
 }

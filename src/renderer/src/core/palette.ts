@@ -1,11 +1,62 @@
 import type { RgbaColor, SpriteDocument } from '@shared/types'
 import { compositeDocument } from './document'
 import { encodePng } from './png'
+import { translateCurrent as tr } from './localization'
 
 interface WeightedColor extends RgbaColor { count: number }
 
 const colorKey = (color: RgbaColor): number =>
   (color.r | (color.g << 8) | (color.b << 16) | (color.a << 24)) >>> 0
+
+export function countUsedPaletteColors(document: SpriteDocument): number {
+  const opaqueEntries = document.palette.filter((entry) => entry.color.a > 0)
+  if (opaqueEntries.length === 0) return 0
+
+  const paletteIds = new Set(opaqueEntries.map((entry) => entry.id))
+  const paletteIdsByColor = new Map<number, number[]>()
+  for (const entry of opaqueEntries) {
+    const key = colorKey(entry.color)
+    const ids = paletteIdsByColor.get(key)
+    if (ids) ids.push(entry.id)
+    else paletteIdsByColor.set(key, [entry.id])
+  }
+
+  const usedIds = new Set<number>()
+  const visitedPixels = new Set<Uint8ClampedArray | Uint32Array>()
+  const surfaces = [
+    ...document.layers,
+    ...(document.animation?.cels.flatMap((cel) => cel.surface ? [cel.surface] : []) ?? [])
+  ]
+
+  for (const surface of surfaces) {
+    if (visitedPixels.has(surface.pixels)) continue
+    visitedPixels.add(surface.pixels)
+
+    if (surface.format === 'indexed') {
+      for (const id of surface.pixels) {
+        if (paletteIds.has(id)) usedIds.add(id)
+        if (usedIds.size === opaqueEntries.length) return usedIds.size
+      }
+      continue
+    }
+
+    for (let offset = 0; offset < surface.pixels.length; offset += 4) {
+      if (surface.pixels[offset + 3] === 0) continue
+      const key = (
+        surface.pixels[offset]
+        | (surface.pixels[offset + 1] << 8)
+        | (surface.pixels[offset + 2] << 16)
+        | (surface.pixels[offset + 3] << 24)
+      ) >>> 0
+      const ids = paletteIdsByColor.get(key)
+      if (!ids) continue
+      for (const id of ids) usedIds.add(id)
+      if (usedIds.size === opaqueEntries.length) return usedIds.size
+    }
+  }
+
+  return usedIds.size
+}
 
 const channelValue = (color: RgbaColor, channel: keyof RgbaColor): number => color[channel]
 
@@ -119,7 +170,7 @@ export function mergePaletteColors(current: RgbaColor[], incoming: RgbaColor[]):
 }
 
 export function encodePalettePng(colors: RgbaColor[], tileSize = 16, maximumColumns = 8): { bytes: Uint8Array; width: number; height: number } {
-  if (colors.length === 0) throw new Error('当前调色板没有可保存的颜色。')
+  if (colors.length === 0) throw new Error(tr('core.palette.empty'))
   const size = Math.max(1, Math.min(64, Math.round(tileSize)))
   const columns = Math.max(1, Math.min(Math.round(maximumColumns), colors.length))
   const rows = Math.ceil(colors.length / columns)

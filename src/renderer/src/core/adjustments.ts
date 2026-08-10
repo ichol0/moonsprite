@@ -1,6 +1,7 @@
 import type { RasterLayer, RgbaColor, SelectionMask, SpriteDocument } from '@shared/types'
 import { getPaletteEntry, readLayerColor, writeLayerColor } from './document'
 import { beginPixelEdit, recordPixel, type PixelEdit } from './history'
+import { translateCurrent as tr } from './localization'
 import { packColor, unpackColor } from './raster'
 import { selectionContains } from './selection'
 
@@ -225,7 +226,7 @@ export function applyColorAdjustment(document: SpriteDocument, layer: RasterLaye
       const existing = document.palette.find((entry) => entry.color.r === next.r && entry.color.g === next.g && entry.color.b === next.b && entry.color.a === next.a)
       if (existing) return existing.id
       const id = document.nextColorId++
-      document.palette.push({ id, name: `颜色 ${id}`, color: next })
+      document.palette.push({ id, name: tr('core.document.colorName', { id }), color: next })
       return id
     })()
     recordPixel(document, layer, edit, index, packed)

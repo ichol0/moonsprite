@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { HistoryStack } from './history'
+import { createDocument, getActiveLayer, readLayerPacked } from './document'
+import { beginPixelEdit, commitPixelEdit, HistoryStack, recordPixel, recordPixelKnownCurrent } from './history'
 
 const entry = (state: { value: number }, next: number, label = 'edit') => ({
   label,
@@ -9,6 +10,29 @@ const entry = (state: { value: number }, next: number, label = 'edit') => ({
 })
 
 describe('HistoryStack', () => {
+  it('commits known-current pixel writes without retaining reverted pixels', () => {
+    const document = createDocument('pixel history', 3, 2, 'rgba')
+    const layer = getActiveLayer(document)
+    const edit = beginPixelEdit(layer.id)
+    const blue = 0xfff07929
+
+    recordPixelKnownCurrent(document, layer, edit, 0, 0, blue)
+    recordPixel(document, layer, edit, 1, blue)
+    recordPixel(document, layer, edit, 0, 0)
+
+    expect(edit.dirtyRect).toEqual({ x: 0, y: 0, width: 2, height: 1 })
+    const committed = commitPixelEdit(document, edit, 'paint')!
+    expect(committed.bytes).toBe(16)
+    expect(committed.invalidation).toEqual({ kind: 'region', frameId: document.animation?.activeFrameId, rect: { x: 0, y: 0, width: 2, height: 1 } })
+
+    committed.undo()
+    expect(readLayerPacked(document, layer, 0)).toBe(0)
+    expect(readLayerPacked(document, layer, 1)).toBe(0)
+    committed.redo()
+    expect(readLayerPacked(document, layer, 0)).toBe(0)
+    expect(readLayerPacked(document, layer, 1)).toBe(blue)
+  })
+
   it('keeps memory accounting consistent across undo and redo', () => {
     const state = { value: 1 }
     const history = new HistoryStack()

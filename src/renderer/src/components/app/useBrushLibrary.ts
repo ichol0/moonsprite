@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { ImageBrush, ProjectBrush, StoredBrush } from '@shared/types'
 import { createProceduralBrushes, decodeImageBrush, encodeBrushPng } from '@/core/brushes'
 import { useWorkspace, type DocumentSession } from '@/store/workspace'
+import { useI18n } from '@/components/I18nProvider'
 
 export interface LoadedBrush {
   stored: StoredBrush | null
@@ -11,7 +12,8 @@ export interface LoadedBrush {
 }
 
 export function useBrushLibrary(session: DocumentSession | null) {
-  const [brushSaveName, setBrushSaveName] = useState('选区笔刷')
+  const { t } = useI18n()
+  const [brushSaveName, setBrushSaveName] = useState(() => t('brush.defaultName'))
   const [localBrushes, setLocalBrushes] = useState<LoadedBrush[]>([])
   const [brushLibraryLoaded, setBrushLibraryLoaded] = useState(false)
 
@@ -48,7 +50,7 @@ export function useBrushLibrary(session: DocumentSession | null) {
     try {
       listing = await window.moonSprite.listBrushes()
     } catch (error) {
-      useWorkspace.getState().setMessage(error instanceof Error ? error.message : '无法读取笔刷文件夹。')
+      useWorkspace.getState().setMessage(error instanceof Error ? error.message : t('brush.folderReadError'))
       setBrushLibraryLoaded(true)
       return
     }
@@ -57,13 +59,13 @@ export function useBrushLibrary(session: DocumentSession | null) {
         const bytes = await window.moonSprite.readBinary(stored.filePath)
         return { stored, brush: decodeImageBrush(stored, bytes) }
       } catch (error) {
-        useWorkspace.getState().setMessage(error instanceof Error ? `无法载入笔刷 ${stored.name}：${error.message}` : `无法载入笔刷 ${stored.name}。`)
+        useWorkspace.getState().setMessage(error instanceof Error ? t('brush.loadError', { name: stored.name, error: error.message }) : t('brush.loadErrorSimple', { name: stored.name }))
         return null
       }
     }))
     setLocalBrushes(loaded.filter((item): item is LoadedBrush => item !== null))
     setBrushLibraryLoaded(true)
-  }, [])
+  }, [t])
 
   useEffect(() => {
     void loadLocalBrushes()
@@ -79,26 +81,26 @@ export function useBrushLibrary(session: DocumentSession | null) {
   const saveTemporaryBrush = async (): Promise<void> => {
     if (!session?.brushImage || !session.brushImageTemporary) return
     const workspace = useWorkspace.getState()
-    const name = brushSaveName.trim() || '选区笔刷'
+    const name = brushSaveName.trim() || t('brush.defaultName')
     try {
       const bytes = encodeBrushPng(session.brushImage)
       const stored = await window.moonSprite.saveBrush(name, bytes, session.brushImage.intrinsicSize, session.brushImage.sourceX, session.brushImage.sourceY)
       workspace.setBrushImage(decodeImageBrush(stored, bytes))
-      setBrushSaveName('选区笔刷')
+      setBrushSaveName(t('brush.defaultName'))
       await loadLocalBrushes()
-      workspace.setMessage(`笔刷“${name}”已永久保存。`)
+      workspace.setMessage(t('brush.saved', { name }))
     } catch (error) {
-      workspace.setMessage(error instanceof Error ? error.message : '无法保存笔刷。')
+      workspace.setMessage(error instanceof Error ? error.message : t('brush.saveError'))
     }
   }
 
   const deleteLocalBrush = async (item: LoadedBrush): Promise<void> => {
     const workspace = useWorkspace.getState()
     const choice = await workspace.requestDialog({
-      title: '删除笔刷',
-      message: `确定删除“${item.brush.name}”吗？`,
-      detail: '删除后无法从 MoonSprite 中恢复。',
-      choices: [{ id: 'cancel', label: '取消', tone: 'quiet' }, { id: 'delete', label: '删除', tone: 'danger' }]
+      title: t('brush.deleteTitle'),
+      message: t('brush.deleteMessage', { name: item.brush.name }),
+      detail: t('brush.deleteDetail'),
+      choices: [{ id: 'cancel', label: t('common.cancel'), tone: 'quiet' }, { id: 'delete', label: t('common.delete'), tone: 'danger' }]
     })
     if (choice !== 'delete') return
     try {
@@ -106,9 +108,9 @@ export function useBrushLibrary(session: DocumentSession | null) {
       else if (item.stored) await window.moonSprite.deleteBrush(item.stored.id)
       if (session?.brushImageId === item.brush.id) workspace.setBrushImage(null)
       if (!item.project) await loadLocalBrushes()
-      workspace.setMessage(`已删除笔刷“${item.brush.name}”。`)
+      workspace.setMessage(t('brush.deleted', { name: item.brush.name }))
     } catch (error) {
-      workspace.setMessage(error instanceof Error ? error.message : '无法删除笔刷。')
+      workspace.setMessage(error instanceof Error ? error.message : t('brush.deleteError'))
     }
   }
 

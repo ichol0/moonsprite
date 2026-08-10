@@ -5,14 +5,15 @@ import { encodeAseprite } from './aseprite'
 import { createDocument } from './document'
 import { compositeDocument } from './document'
 import { TRANSPARENT } from './raster'
+import { translateCurrent as tr } from './localization'
 
 export interface PngExport {
   bytes: Uint8Array
   indexed: boolean
 }
 
-export type ImageExportKind = 'png-auto' | 'png-rgba' | 'jpeg' | 'webp' | 'svg'
-export type SaveImageKind = ImageExportKind | 'ase' | 'aseprite'
+export type ImageExportKind = 'png-auto' | 'png-rgba' | 'jpeg' | 'webp' | 'svg' | 'gif'
+export type SaveImageKind = Exclude<ImageExportKind, 'gif'> | 'ase' | 'aseprite'
 export interface ImageExport {
   bytes: Uint8Array
   extension: 'png' | 'jpg' | 'webp' | 'svg' | 'ase' | 'aseprite'
@@ -53,12 +54,14 @@ const writeUint32 = (view: DataView, offset: number, value: number): void => vie
 export function encodePng(rgba: Uint8ClampedArray, width: number, height: number, forceRgba = false): PngExport {
   const colors: number[] = []
   const colorIds = new Map<number, number>()
-  for (let offset = 0; offset < rgba.length; offset += 4) {
-    const color = (rgba[offset] | (rgba[offset + 1] << 8) | (rgba[offset + 2] << 16) | (rgba[offset + 3] << 24)) >>> 0
-    if (!colorIds.has(color)) {
-      colorIds.set(color, colors.length)
-      colors.push(color)
-      if (colors.length > 256) break
+  if (!forceRgba) {
+    for (let offset = 0; offset < rgba.length; offset += 4) {
+      const color = (rgba[offset] | (rgba[offset + 1] << 8) | (rgba[offset + 2] << 16) | (rgba[offset + 3] << 24)) >>> 0
+      if (!colorIds.has(color)) {
+        colorIds.set(color, colors.length)
+        colors.push(color)
+        if (colors.length > 256) break
+      }
     }
   }
   const indexed = !forceRgba && colors.length <= 256
@@ -120,22 +123,22 @@ const unpackIndexedSamples = (bytes: Uint8Array, depth: number, count: number): 
   return output
 }
 
-export function decodePng(input: Uint8Array, fallbackName = '导入图像'): SpriteDocument {
+export function decodePng(input: Uint8Array, fallbackName = tr('core.document.importedImage')): SpriteDocument {
   let image
   try {
     image = decode(new Uint8Array(input).buffer)
   } catch {
-    throw new Error('无法读取 PNG 文件。')
+    throw new Error(tr('core.png.readFailed'))
   }
-  if (!image.width || !image.height) throw new Error('PNG 图像尺寸无效。')
+  if (!image.width || !image.height) throw new Error(tr('core.png.invalidSize'))
   if (image.ctype === 3 && image.tabs.PLTE) {
     const document = createDocument(fallbackName, image.width, image.height, 'indexed')
     const layer = document.layers[0]
-    if (layer.format !== 'indexed') throw new Error('无法创建索引图层。')
+    if (layer.format !== 'indexed') throw new Error(tr('core.png.createIndexed'))
     const paletteValues = image.tabs.PLTE
     const transparencyValues = image.tabs.tRNS
     const transparency = Array.isArray(transparencyValues) ? new Uint8Array(transparencyValues) : new Uint8Array()
-    const palette: PaletteEntry[] = [{ id: 0, name: '透明', color: TRANSPARENT }]
+    const palette: PaletteEntry[] = [{ id: 0, name: tr('core.document.transparentColor'), color: TRANSPARENT }]
     const paletteLookup: number[] = []
     for (let offset = 0, colorIndex = 0; offset < paletteValues.length; offset += 3, colorIndex += 1) {
       const alpha = Number(transparency[colorIndex] ?? 255)
@@ -144,7 +147,7 @@ export function decodePng(input: Uint8Array, fallbackName = '导入图像'): Spr
       } else {
         const id = palette.length
         paletteLookup[colorIndex] = id
-        palette.push({ id, name: `颜色 ${id}`, color: { r: paletteValues[offset], g: paletteValues[offset + 1], b: paletteValues[offset + 2], a: alpha } })
+        palette.push({ id, name: tr('core.document.colorName', { id }), color: { r: paletteValues[offset], g: paletteValues[offset + 1], b: paletteValues[offset + 2], a: alpha } })
       }
     }
     const samples = unpackIndexedSamples(new Uint8Array(image.data), image.depth, image.width * image.height)
@@ -157,7 +160,7 @@ export function decodePng(input: Uint8Array, fallbackName = '导入图像'): Spr
   const rgba = new Uint8ClampedArray(toRGBA8(image)[0])
   const document = createDocument(fallbackName, image.width, image.height, 'rgba')
   const layer = document.layers[0]
-  if (layer.format !== 'rgba') throw new Error('无法创建 RGBA 图层。')
+  if (layer.format !== 'rgba') throw new Error(tr('core.png.createRgba'))
   layer.pixels.set(rgba)
   return document
 }
@@ -242,7 +245,7 @@ export async function exportDocumentImage(document: SpriteDocument, scalePercent
   }
   const canvas = new OffscreenCanvas(scaled.width, scaled.height)
   const context = canvas.getContext('2d')
-  if (!context) throw new Error('当前系统无法创建图像编码画布。')
+  if (!context) throw new Error(tr('core.png.encoderCanvas'))
   if (format === 'jpeg') {
     context.fillStyle = '#ffffff'
     context.fillRect(0, 0, scaled.width, scaled.height)

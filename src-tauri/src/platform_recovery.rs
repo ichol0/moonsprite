@@ -52,7 +52,9 @@ pub(crate) fn initialize_session_marker(
     app: &AppHandle,
     state: &RecoveryState,
 ) -> Result<(), String> {
-    migrate_legacy_data(app)?;
+    if let Err(error) = migrate_legacy_data(app) {
+        eprintln!("无法迁移恢复数据，继续启动 MoonSprite：{error}");
+    }
     let marker = session_marker(app)?;
     let crashed = fs::read_to_string(marker)
         .ok()
@@ -64,7 +66,10 @@ pub(crate) fn initialize_session_marker(
         .previous_session_crashed
         .lock()
         .map_err(|_| "恢复状态锁不可用")? = crashed;
-    mark_session(app, false)
+    if let Err(error) = mark_session(app, false) {
+        eprintln!("无法写入恢复会话标记，继续启动 MoonSprite：{error}");
+    }
+    Ok(())
 }
 
 fn migrate_legacy_data(app: &AppHandle) -> Result<(), String> {

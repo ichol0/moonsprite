@@ -18,8 +18,8 @@ describe('canvas visual rules', () => {
   })
 
   it('uses one contrasting color for all canvas status labels', () => {
-    expect(canvasStatusTextColor([{ r: 18, g: 20, b: 24, a: 255 }, { r: 70, g: 72, b: 76, a: 255 }])).toBe('#f1f4f8')
-    expect(canvasStatusTextColor([{ r: 245, g: 245, b: 245, a: 255 }, { r: 210, g: 214, b: 220, a: 255 }])).toBe('#111318')
+    expect(canvasStatusTextColor([{ r: 18, g: 20, b: 24, a: 255 }, { r: 70, g: 72, b: 76, a: 255 }], 'dark', 'light')).toBe('light')
+    expect(canvasStatusTextColor([{ r: 245, g: 245, b: 245, a: 255 }, { r: 210, g: 214, b: 220, a: 255 }], 'dark', 'light')).toBe('dark')
   })
 
   it('places compact selection marks at all four corners of the current pixel', () => {
@@ -41,6 +41,7 @@ describe('canvas visual rules', () => {
   it('uses the move cursor while dragging a selection transform', () => {
     expect(selectionTransformDragCursor('transform-content')).toBe(canvasCursors.move)
     expect(selectionTransformDragCursor('rotate-content')).toBe(canvasCursors.move)
+    expect(selectionTransformDragCursor('shear-content')).toBe(canvasCursors.move)
     expect(selectionTransformDragCursor('marquee')).toBeNull()
   })
 

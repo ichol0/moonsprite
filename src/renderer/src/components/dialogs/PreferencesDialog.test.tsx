@@ -2,6 +2,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { PreferencesDialog } from './PreferencesDialog'
 import { useWorkspace } from '@/store/workspace'
+import { THEME_PREFERENCE_KEY } from '@/core/file-preferences'
 
 afterEach(() => {
   cleanup()
@@ -46,11 +47,20 @@ describe('PreferencesDialog', () => {
   it('separates system cursor behavior from tool previews', () => {
     render(<PreferencesDialog onClose={vi.fn()} onPresetChange={vi.fn()} />)
     fireEvent.click(screen.getByRole('button', { name: '光标' }))
-    expect(screen.getByText('使用本地指针')).toBeInTheDocument()
+    const localCursor = screen.getByText('使用本地指针').closest('label')?.querySelector('input')
+    expect(localCursor).not.toBeChecked()
+    expect(screen.getByRole('button', { name: '鼠标光标比例' })).toBeEnabled()
+    fireEvent.click(localCursor!)
+    expect(screen.getByRole('button', { name: '鼠标光标比例' })).toBeDisabled()
     expect(screen.queryByText('笔刷预览')).not.toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: '工具预览' }))
     expect(screen.getByText('笔刷预览')).toBeInTheDocument()
+    expect(screen.getByText('完整预览')).toBeInTheDocument()
+    expect(screen.queryByText('绘制时显示笔刷边缘')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '笔刷预览' }))
+    fireEvent.click(screen.getByRole('option', { name: '完整预览并显示边缘' }))
+    expect(screen.getByText('绘制时显示笔刷边缘')).toBeInTheDocument()
     expect(screen.getByText('框选时显示十字指针')).toBeInTheDocument()
   })
 
@@ -63,7 +73,7 @@ describe('PreferencesDialog', () => {
     const initialPresetCount = screen.getAllByLabelText(/图层显示颜色预设 \d+/).length
     fireEvent.click(screen.getByRole('button', { name: '新增颜色' }))
     expect(screen.getAllByLabelText(/图层显示颜色预设 \d+/)).toHaveLength(initialPresetCount + 1)
-    fireEvent.click(screen.getByRole('button', { name: '恢复默认颜色' }))
+    fireEvent.click(screen.getByRole('button', { name: '恢复默认' }))
     expect(screen.getAllByLabelText(/图层显示颜色预设 \d+/)).toHaveLength(initialPresetCount)
     expect(screen.getAllByRole('button', { name: /删除图层颜色预设/ }).every((button) => button.classList.contains('regular'))).toBe(true)
   })
@@ -76,4 +86,16 @@ describe('PreferencesDialog', () => {
     expect(deleteButtons.length).toBeGreaterThan(0)
     expect(deleteButtons.every((button) => button.classList.contains('delete-icon-button') && button.classList.contains('compact'))).toBe(true)
   })
+
+  it('previews a theme immediately and restores the persisted theme when canceled', () => {
+    const { unmount } = render(<PreferencesDialog onClose={vi.fn()} onPresetChange={vi.fn()} />)
+    fireEvent.click(screen.getByRole('button', { name: '主题' }))
+    fireEvent.click(screen.getByRole('option', { name: 'MoonSprite Light可用主题' }))
+
+    expect(document.documentElement.dataset.themeMode).toBe('light')
+    expect(localStorage.getItem(THEME_PREFERENCE_KEY)).toBeNull()
+    unmount()
+    expect(document.documentElement.dataset.themeMode).toBe('dark')
+  })
+
 })
