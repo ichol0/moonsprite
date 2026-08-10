@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { createDocument } from '@/core/document'
+import { createDocument, createLayerMask, writeLayerColor } from '@/core/document'
+import { ensureAnimationDocument } from '@/core/animation'
 import { CanvasCompositeCache, shouldCacheFullCompositeSurface } from './canvas-composite-cache'
 
 class MockOffscreenCanvas {
@@ -26,6 +27,82 @@ describe('CanvasCompositeCache', () => {
     expect(shouldCacheFullCompositeSurface(4200, 1800)).toBe(true)
     expect(shouldCacheFullCompositeSurface(9000, 1800)).toBe(false)
     expect(shouldCacheFullCompositeSurface(4200, 1800, 16 * 1024 * 1024)).toBe(false)
+  })
+
+  it('draws an active layer mask as an isolated white-backed grayscale surface', () => {
+    const context = {
+      save: vi.fn(), restore: vi.fn(), beginPath: vi.fn(), rect: vi.fn(), clip: vi.fn(),
+      translate: vi.fn(), scale: vi.fn(), drawImage: vi.fn(), imageSmoothingEnabled: true
+    }
+    const document = createDocument('isolated mask', 2, 1, 'rgba')
+    const cel = ensureAnimationDocument(document).cels[0]
+    const mask = createLayerMask(cel.id, 2, 1)
+    cel.mask = mask
+    writeLayerColor(document, mask, 1, { r: 255, g: 0, b: 0, a: 255 })
+
+    new CanvasCompositeCache().draw({
+      context: context as never,
+      document,
+      view: { zoom: 2, panX: 0, panY: 0, rotation: 0, mirrored: false, mirroredVertical: false, showGrid: false, relativeLuminance: false },
+      originX: 0,
+      originY: 0,
+      canvasWidth: 4,
+      canvasHeight: 2,
+      fromX: 0,
+      fromY: 0,
+      toX: 2,
+      toY: 1,
+      revision: 1,
+      isolatedLayerMask: mask
+    })
+
+    const surface = context.drawImage.mock.calls[0][0] as MockOffscreenCanvas
+    const rendered = surface.context.putImageData.mock.calls[0][0] as MockImageData
+    expect(Array.from(rendered.data)).toEqual([255, 255, 255, 255, 54, 54, 54, 255])
+  })
+
+  it('patches an isolated linked mask when its source frame differs from the active frame', () => {
+    const context = {
+      save: vi.fn(), restore: vi.fn(), beginPath: vi.fn(), rect: vi.fn(), clip: vi.fn(),
+      translate: vi.fn(), scale: vi.fn(), drawImage: vi.fn(), imageSmoothingEnabled: true
+    }
+    const document = createDocument('linked isolated mask', 2, 1, 'rgba')
+    const timeline = ensureAnimationDocument(document)
+    const sourceFrameId = timeline.activeFrameId
+    const activeFrameId = 'frame-linked-target'
+    timeline.frames.push({ id: activeFrameId, duration: 100 })
+    timeline.activeFrameId = activeFrameId
+    const sourceCel = timeline.cels[0]
+    const mask = createLayerMask(sourceCel.id, 2, 1)
+    sourceCel.mask = mask
+    const cache = new CanvasCompositeCache()
+    const draw = (contentRevision: number, contentInvalidation: Parameters<CanvasCompositeCache['draw']>[0]['contentInvalidation'] = null): void => cache.draw({
+      context: context as never,
+      document,
+      view: { zoom: 2, panX: 0, panY: 0, rotation: 0, mirrored: false, mirroredVertical: false, showGrid: false, relativeLuminance: false },
+      originX: 0,
+      originY: 0,
+      canvasWidth: 4,
+      canvasHeight: 2,
+      fromX: 0,
+      fromY: 0,
+      toX: 2,
+      toY: 1,
+      revision: contentRevision,
+      contentRevision,
+      contentInvalidation,
+      frameId: activeFrameId,
+      isolatedLayerMask: mask
+    })
+
+    draw(0)
+    const surface = context.drawImage.mock.calls[0][0] as MockOffscreenCanvas
+    writeLayerColor(document, mask, 0, { r: 0, g: 0, b: 0, a: 255 })
+    draw(1, { kind: 'region', fromRevision: 0, revision: 1, frameId: sourceFrameId, rect: { x: 0, y: 0, width: 1, height: 1 } })
+
+    expect(surface.context.putImageData).toHaveBeenCalledTimes(2)
+    const patch = surface.context.putImageData.mock.calls[1][0] as MockImageData
+    expect(Array.from(patch.data)).toEqual([0, 0, 0, 255])
   })
 
   it('draws a fractional-zoom canvas as one continuous surface while painting', () => {

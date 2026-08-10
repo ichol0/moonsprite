@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { animationCelContentBounds, animationCelThumbnailLayout, pixelPerfectThumbnailScale, renderAnimationCelThumbnailPixels } from './animation-thumbnail'
+import { animationCelContentBounds, animationCelThumbnailLayout, pixelPerfectThumbnailScale, renderAnimationCelThumbnailPixels, renderLayerMaskThumbnailPixels } from './animation-thumbnail'
 
 describe('animation cel thumbnail layout', () => {
   it('quantizes thumbnail scale without changing pixel aspect ratio', () => {
@@ -82,5 +82,29 @@ describe('animation cel thumbnail layout', () => {
     expect(Array.from(thumbnail)).toContain(220)
     expect(Array.from(thumbnail)).toContain(40)
     expect(Array.from(thumbnail)).toContain(80)
+  })
+
+  it('renders transparent mask pixels as white and painted pixels as grayscale', () => {
+    const pixels = new Uint8ClampedArray(2 * 4)
+    pixels.set([48, 48, 48, 255], 4)
+    const thumbnail = renderLayerMaskThumbnailPixels(2, 1, 2, 1, {
+      id: 'mask',
+      name: 'Mask',
+      visible: true,
+      locked: false,
+      opacity: 1,
+      blendMode: 'normal',
+      width: 2,
+      height: 1,
+      offsetX: 0,
+      offsetY: 0,
+      format: 'rgba',
+      pixels,
+      ownerKind: 'cel',
+      ownerId: 'cel'
+    })
+
+    expect(Array.from(thumbnail.slice(0, 4))).toEqual([255, 255, 255, 255])
+    expect(Array.from(thumbnail.slice(4, 8))).toEqual([48, 48, 48, 255])
   })
 })

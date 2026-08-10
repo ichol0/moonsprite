@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { colorFromValues, colorToValues, hslToRgb, parseRgbaHex, rgbToHsl, rgbaHex } from './color-values'
+import { colorFromValues, colorToValues, displayRgbaHex, hslToRgb, parseRgbaHex, rgbToHsl, rgbaHex } from './color-values'
 
 describe('color value models', () => {
   it('round-trips RGB, HSV, HSL, LAB and CMYK values', () => {
@@ -17,6 +17,8 @@ describe('color value models', () => {
 
   it('formats and parses six/eight digit HEX values', () => {
     expect(rgbaHex({ r: 41, g: 121, b: 255, a: 128 })).toBe('#2979FF80')
+    expect(displayRgbaHex({ r: 208, g: 138, b: 101, a: 255 })).toBe('#D08A65')
+    expect(displayRgbaHex({ r: 208, g: 138, b: 101, a: 128 })).toBe('#D08A6580')
     expect(parseRgbaHex('#2979FF', 128)).toEqual({ r: 41, g: 121, b: 255, a: 128 })
     expect(parseRgbaHex('#2979FF80')).toEqual({ r: 41, g: 121, b: 255, a: 128 })
   })

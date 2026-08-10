@@ -37,19 +37,22 @@ describe('tool preferences persistence boundary', () => {
     expect(settings.brushPaintMode).toBe('pattern-source')
     expect(settings.proceduralAntialiasStrength).toBe(100)
     expect(settings.selectionMode).toBe('replace')
+    expect(settings.fillTolerance).toBe(0)
+    expect(settings.gradientTolerance).toBe(0)
+    expect(settings.gradientContiguous).toBe(true)
   })
 
   it('writes a complete snapshot through the storage boundary', () => {
     const storage = createStorage()
     saveToolSettings(defaultToolSettings, storage)
     expect(storage.getItem(TOOL_SETTINGS_KEY)).toContain('moveAutoSelect')
-    expect(loadToolSettings(storage)).toMatchObject({ brushSize: 1, moveAutoSelect: true, selectionMode: 'replace', fillKind: 'bucket', gradientDither: 'none' })
+    expect(loadToolSettings(storage)).toMatchObject({ brushSize: 1, moveAutoSelect: true, selectionMode: 'replace', fillKind: 'bucket', gradientTolerance: 0, gradientContiguous: true, gradientDither: 'none' })
   })
 
-  it('persists the selected fill child tool and gradient preset', () => {
+  it('persists independent paint-bucket and gradient range settings', () => {
     const storage = createStorage()
-    saveToolSettings({ ...defaultToolSettings, fillKind: 'gradient', gradientDither: 'bayer-4' }, storage)
-    expect(loadToolSettings(storage)).toMatchObject({ fillKind: 'gradient', gradientDither: 'bayer-4' })
+    saveToolSettings({ ...defaultToolSettings, fillKind: 'gradient', gradientDither: 'bayer-4', fillTolerance: 37, gradientTolerance: 82, gradientContiguous: false }, storage)
+    expect(loadToolSettings(storage)).toMatchObject({ fillKind: 'gradient', gradientDither: 'bayer-4', fillTolerance: 37, gradientTolerance: 82, gradientContiguous: false })
   })
 
   it('persists independent symmetry axes and defaults legacy data to disabled', () => {

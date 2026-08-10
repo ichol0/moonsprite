@@ -1,6 +1,7 @@
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { useState } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import type { MoonSpriteApi } from '@shared/types'
 import { ColorValueControl } from './ColorValueControl'
 import { COLOR_EDITOR_MODES_PREFERENCE_KEY } from '@/core/file-preferences'
 
@@ -16,6 +17,7 @@ describe('ColorValueControl', () => {
     expect(screen.getByRole('dialog', { name: '颜色编辑 浅色' })).toBeInTheDocument()
     expect(screen.getByRole('tab', { name: 'RGB', selected: true })).toBeInTheDocument()
     expect(screen.getByLabelText('当前颜色')).toBeInTheDocument()
+    expect(screen.getByRole('textbox', { name: '背景颜色 HEX' })).toHaveValue('2979FF')
     expect(screen.getByRole('spinbutton', { name: '背景颜色 R' })).toHaveValue('41')
     expect(screen.getByRole('slider', { name: '背景颜色 A滑块' })).toHaveValue('255')
   })
@@ -65,7 +67,7 @@ describe('ColorValueControl', () => {
     expect(currentSwatch.style.background).not.toBe(previousStyle)
   })
 
-  it('copies the confirmed color HEX from the comparison swatch', () => {
+  it('copies the confirmed color HEX and shows feedback on the clicked swatch', async () => {
     const writeText = vi.fn().mockResolvedValue(undefined)
     Object.defineProperty(navigator, 'clipboard', {
       configurable: true,
@@ -76,7 +78,11 @@ describe('ColorValueControl', () => {
 
     fireEvent.click(screen.getByRole('button', { name: '当前颜色' }))
 
-    expect(writeText).toHaveBeenCalledWith('#2979FFFF')
+    expect(writeText).toHaveBeenCalledWith('#2979FF')
+    expect(await screen.findByRole('status')).toHaveTextContent('#2979FF')
+    expect(document.querySelector('.color-editor-current-swatch')).toHaveClass('copied')
+    expect(document.querySelector('.color-editor-copy-toast')).toBeInTheDocument()
+    expect(document.querySelector('.color-editor-copy-mark')).not.toBeInTheDocument()
   })
 
   it('commits a HEX edit when the field loses focus', () => {
@@ -90,6 +96,21 @@ describe('ColorValueControl', () => {
     fireEvent.blur(hexInput!)
 
     expect(onChange).toHaveBeenLastCalledWith({ r: 0, g: 255, b: 0, a: 255 })
+  })
+
+  it('pastes a valid clipboard HEX when the field is right-clicked', async () => {
+    const onChange = vi.fn()
+    const readClipboardText = vi.fn().mockResolvedValue(' #12AB34CC ')
+    window.moonSprite = { readClipboardText } as unknown as MoonSpriteApi
+    render(<ColorValueControl color={{ r: 255, g: 0, b: 0, a: 255 }} onChange={onChange} label="Color" />)
+    fireEvent.click(screen.getByRole('button', { name: 'Color' }))
+    const hexInput = document.querySelector<HTMLInputElement>('.color-editor-hex input')!
+
+    fireEvent.contextMenu(hexInput)
+
+    expect(readClipboardText).toHaveBeenCalledOnce()
+    await waitFor(() => expect(onChange).toHaveBeenLastCalledWith({ r: 18, g: 171, b: 52, a: 204 }))
+    expect(hexInput).toHaveValue('12AB34CC')
   })
 
   it('commits a HEX edit before an unmoved editor closes from an outside click', () => {
@@ -112,6 +133,18 @@ describe('ColorValueControl', () => {
     expect(document.querySelectorAll('.color-editor-field')).toHaveLength(4)
     expect(document.querySelector('.color-editor-preview')).not.toBeInTheDocument()
     expect(container.querySelector('.color-value-trigger')).toBeInTheDocument()
+  })
+
+  it('expands a compact editor when switching to CMYK', async () => {
+    localStorage.setItem('moonsprite.color-editor-size.cmyk-fit', JSON.stringify({ width: 560, height: 240 }))
+    render(<ColorValueControl color={{ r: 41, g: 121, b: 255, a: 255 }} onChange={vi.fn()} label="Color" storageKey="cmyk-fit" />)
+    fireEvent.click(screen.getByRole('button', { name: 'Color' }))
+    const editor = screen.getByRole('dialog')
+
+    fireEvent.click(screen.getByRole('tab', { name: 'CMYK' }))
+
+    await waitFor(() => expect(editor.style.height).toBe('298px'))
+    expect(document.querySelectorAll('.color-editor-field')).toHaveLength(5)
   })
 
   it('closes the draggable editor from its title bar', () => {
@@ -186,5 +219,17 @@ describe('ColorValueControl', () => {
     expect(container.querySelector('.color-value-add-button')).not.toBeInTheDocument()
     expect(actionRow).toHaveClass('supports-palette-action')
     expect(actionRow).not.toHaveClass('has-add-action')
+  })
+
+  it('fills foreground and background triggers with their colors and readable text', () => {
+    const { container, rerender } = render(<ColorValueControl color={{ r: 240, g: 240, b: 240, a: 255 }} onChange={vi.fn()} label="Color" roleLabel="Foreground" fillWithColor />)
+    const trigger = container.querySelector<HTMLButtonElement>('.filled-color-trigger')!
+    expect(trigger.style.getPropertyValue('--color-value-fill')).toBe('rgb(240 240 240)')
+    expect(trigger.style.getPropertyValue('--color-value-contrast')).toBe('#090a0d')
+    expect(trigger.querySelector('.color-value-swatch')).not.toBeInTheDocument()
+
+    rerender(<ColorValueControl color={{ r: 10, g: 20, b: 30, a: 255 }} onChange={vi.fn()} label="Color" roleLabel="Background" fillWithColor />)
+    expect(trigger.style.getPropertyValue('--color-value-fill')).toBe('rgb(10 20 30)')
+    expect(trigger.style.getPropertyValue('--color-value-contrast')).toBe('#fff')
   })
 })

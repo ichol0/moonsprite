@@ -48,6 +48,11 @@ describe('app render keys', () => {
     expect(toolRailRenderKey(session)).not.toBe(fillRail)
     expect(toolOptionsRenderKey(session)).not.toBe(fillOptions)
 
+    const gradientOptions = toolOptionsRenderKey(session)
+    session.gradientTolerance = 64
+    session.gradientContiguous = false
+    expect(toolOptionsRenderKey(session)).not.toBe(gradientOptions)
+
     const menu = appMenuRenderKey(session)
     session.history.push({ label: 'edit', bytes: 1, undo: () => undefined, redo: () => undefined })
     expect(appMenuRenderKey(session)).not.toBe(menu)

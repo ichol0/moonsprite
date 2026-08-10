@@ -24,14 +24,17 @@ const utilityIconPaths = {
   redo: 'M3 0h1v1H3zM3 1h2v1H3zM1 2h5v1H1zM0 3h1v1H0zM3 3h2v1H3zM0 4h1v1H0zM3 4h1v1H3zM1 5h1v1H1z',
   workspace: 'M2 2h7v3H2zM2 6h4v2H2zM7 6h2v2H7z',
   copy: 'M3 3h5v3H3zM3 6h5v2H3z',
+  link: 'M2 3h2v1H2zM7 3h2v1H7zM2 4h1v1H2zM8 4h1v1H8zM4 5h3v1H4zM2 6h1v1H2zM8 6h1v1H8zM2 7h2v1H2zM7 7h2v1H7z',
+  paste: 'M2 2h6v3H2zM2 5h4v1H2zM2 6h3v1H2zM7 6h1v1H7zM2 7h3v1H2zM6 7h3v1H6zM2 8h3v1H2zM7 8h1v1H7z',
   mergeDown: 'M2 2h2v2H2zM5 2h1v2H5zM7 2h1v2H7zM2 5h1v3H2zM3 7h1v1H3zM5 5h3v3H5z',
   mergeVisible: 'M4 2h2v1H4zM2 3h6v2H2zM4 5h2v1H4zM2 6h1v1H2zM7 6h1v1H7zM2 7h6v1H2zM4 8h2v1H4z',
+  clippingMask: 'M5 2h4v1H5zM4 3h1v3H4zM2 6h5v1H2zM3 7h3v1H3zM4 8h1v1H4z',
+  layerMask: 'M5 2h2v1H5zM8 2h2v1H8zM5 3h1v1H5zM9 3h1v1H9zM7 4h1v1H7zM2 5h6v1H2zM2 6h1v1H2zM7 6h1v1H7zM1 7h3v1H1zM5 7h1v1H5zM9 7h1v1H9zM2 8h1v1H2zM5 8h2v1H5zM8 8h2v1H8z',
   folder: 'M2 2h3v1H2zM1 3h7v1H1zM1 4h8v4H1z',
-  folderOpen: 'M4 3h5v1H4zM3 4h6v1H3zM2 5h6v1H2zM1 6h7v1H1zM1 7h6v1H1z',
+  folderOpen: 'M5 4h5v1H5zM4 5h6v1H4zM3 6h6v1H3zM2 7h7v1H2z',
   move: 'M4 3h1v1H4zM6 3h1v1H6zM4 5h1v1H4zM6 5h1v1H6zM4 7h1v1H4zM6 7h1v1H6z',
   save: 'M3 2h5v1H3zM2 3h1v1H2zM7 3h2v1H7zM2 4h7v2H2zM2 6h2v2H2zM7 6h2v2H7zM2 8h7v1H2z',
   export: 'M3 2h5v1H3zM2 3h4v1H2zM8 3h1v1H8zM2 4h7v1H2zM2 5h1v1H2zM5 5h4v1H5zM2 6h1v2H2zM7 6h2v1H7zM5 7h4v1H5zM2 8h7v1H2z',
-  project: 'M3 2h4v1H3zM2 3h1v1H2zM4 3h4v1H4zM2 4h6v1H2zM2 5h4v1H2zM7 5h1v1H7zM2 6h3v1H2zM7 6h1v1H7zM2 7h2v1H2zM7 7h1v1H7zM3 8h4v1H3z',
   roadmapPlanned: 'M4 2h3v1H4zM3 3h1v1H3zM7 3h1v1H7zM2 4h1v3H2zM8 4h1v3H8zM3 7h1v1H3zM7 7h1v1H7zM4 8h3v1H4z',
   roadmapCompleted: 'M4 2h3v1H4zM3 3h1v1H3zM7 3h1v1H7zM2 4h1v3H2zM6 4h1v2H6zM8 4h1v3H8zM4 5h1v1H4zM5 6h1v1H5zM3 7h1v1H3zM7 7h1v1H7zM4 8h3v1H4z',
   canvasCenter: 'M4 2h3v1H4zM3 3h1v1H3zM7 3h1v1H7zM2 4h1v3H2zM8 4h1v3H8zM5 5h1v1H5zM3 7h1v1H3zM7 7h1v1H7zM4 8h3v1H4z',
@@ -51,6 +54,7 @@ const utilityIconPaths = {
   clearRecords: 'M6 2h1v1H6zM5 3h3v1H5zM4 4h5v1H4zM3 5h5v1H3zM2 6h5v1H2zM3 7h3v1H3zM4 8h4v1H4z',
   refresh: 'M3 2h4v1H3zM2 3h2v1H2zM7 3h1v1H7zM1 4h4v1H1zM2 5h2v1H2zM6 5h2v1H6zM5 6h4v1H5zM2 7h1v1H2zM6 7h2v1H6zM3 8h4v1H3z',
   extractColors: 'M2 2h2v1H2zM7 2h2v1H7zM2 3h1v1H2zM8 3h1v1H8zM5 4h1v1H5zM4 5h1v1H4zM6 5h1v1H6zM5 6h1v1H5zM2 7h1v1H2zM8 7h1v1H8zM2 8h2v1H2zM7 8h2v1H7z',
+  follow: 'M0 0h2v1H0zM5 0h2v1H5zM0 1h1v1H0zM6 1h1v1H6zM0 5h1v1H0zM6 5h1v1H6zM0 6h2v1H0zM5 6h2v1H5z',
   check: 'M6 1h1v1H6zM5 2h1v1H5zM0 3h1v1H0zM4 3h1v1H4zM1 4h1v1H1zM3 4h1v1H3zM2 5h1v1H2z'
 } as const
 
@@ -66,13 +70,14 @@ const utilityIconTranslucentPaths: Partial<Record<PixelUtilityIconKind, string>>
   redo: 'M0 2h1v1H0zM0 5h1v1H0z',
   onion: 'M7 4h2v1H7zM8 5h1v3H8zM4 7h1v1H4zM4 8h5v1H4z',
   copy: 'M2 2h4v1H2zM2 3h1v3H2z',
+  link: 'M4 3h1v1H4zM6 3h1v1H6zM4 7h1v1H4zM6 7h1v1H6z',
   mergeDown: 'M3 6h1v1H3z',
   mergeVisible: 'M3 6h1v1H3zM6 6h1v1H6z',
+  clippingMask: 'M5 3h1v1H5z',
   folder: 'M1 2h1v1H1zM5 2h1v1H5zM8 3h1v1H8z',
-  folderOpen: 'M1 2h5v1H1zM1 3h3v1H1zM1 4h2v1H1zM1 5h1v1H1zM8 5h1v1H8zM7 7h1v1H7z',
+  folderOpen: 'M2 3h5v1H2zM2 4h3v1H2zM2 5h2v1H2zM2 6h1v1H2zM9 6h1v1H9z',
   save: 'M2 2h1v1H2zM8 2h1v1H8zM3 3h1v1H3zM6 3h1v1H6z',
   export: 'M2 2h1v1H2zM8 2h1v1H8zM6 3h1v1H6zM3 5h1v1H3zM3 7h1v1H3z',
-  project: 'M2 2h1v1H2zM7 2h1v1H7zM2 8h1v1H2zM7 8h1v1H7z',
   image: 'M6 7h1v1H6z',
   info: 'M5 4h1v1H5z',
   checkboxUnchecked: 'M2 2h1v1H2zM8 2h1v1H8zM2 8h1v1H2zM8 8h1v1H8z',
@@ -87,7 +92,7 @@ export type PixelUtilityIconKind = keyof typeof utilityIconPaths
 
 const fivePixelUtilityIconKinds = new Set<PixelUtilityIconKind>(['down', 'up', 'left', 'right', 'close', 'plus'])
 const sixPixelUtilityIconKinds = new Set<PixelUtilityIconKind>(['undo', 'redo', 'restore'])
-const sevenPixelUtilityIconKinds = new Set<PixelUtilityIconKind>(['check'])
+const sevenPixelUtilityIconKinds = new Set<PixelUtilityIconKind>(['follow', 'check'])
 
 export function PixelUtilityIcon({ kind, scale = 2, className = '' }: { kind: PixelUtilityIconKind; scale?: 1 | 2; className?: string }) {
   const sourceSize = fivePixelUtilityIconKinds.has(kind) ? 5 : sixPixelUtilityIconKinds.has(kind) ? 6 : sevenPixelUtilityIconKinds.has(kind) ? 7 : 11

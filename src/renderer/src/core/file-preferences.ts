@@ -7,6 +7,8 @@ import { DEFAULT_THEME_PREFERENCES, THEME_PREFERENCE_KEY, loadThemePreferences, 
 
 export const SAVE_FORMAT_PREFERENCE_KEY = 'moonsprite.preference.save-format'
 export const EXPORT_FORMAT_PREFERENCE_KEY = 'moonsprite.preference.export-format'
+export const SAVE_DIRECTORY_PREFERENCE_KEY = 'moonsprite.preference.save-directory'
+export const EXPORT_DIRECTORY_PREFERENCE_KEY = 'moonsprite.preference.export-directory'
 export const NEW_DOCUMENT_SIZE_PRESETS_KEY = 'moonsprite.preference.new-document-size-presets'
 export const EXPORT_SCALE_PRESETS_KEY = 'moonsprite.preference.export-scale-presets'
 export const ROTATION_INDICATOR_POSITION_KEY = 'moonsprite.preference.rotation-indicator-position'
@@ -16,6 +18,7 @@ export const LANGUAGE_PREFERENCE_KEY = APP_LANGUAGE_PREFERENCE_KEY
 export const RECOVERY_PREFERENCE_KEY = 'moonsprite.preference.recovery'
 export const RECOVERY_MINUTES_PREFERENCE_KEY = 'moonsprite.preference.recovery-minutes'
 export const ZOOM_TOOL_DRAG_MODE_PREFERENCE_KEY = 'moonsprite.preference.zoom-tool-drag-mode'
+export const WHEEL_ZOOM_MODE_PREFERENCE_KEY = 'moonsprite.preference.wheel-zoom-mode'
 export const BRUSH_SHIFT_LINE_ENABLED_KEY = 'moonsprite.preference.brush-shift-line-enabled'
 export const USE_LOCAL_CURSORS_PREFERENCE_KEY = 'moonsprite.preference.use-local-cursors'
 export const CURSOR_SCALE_PREFERENCE_KEY = 'moonsprite.preference.cursor-scale'
@@ -42,14 +45,17 @@ export const ONION_SKIN_PREFERENCE_KEY = 'moonsprite.preference.onion-skin'
 export const SYMMETRY_AXIS_PREFERENCE_KEY = 'moonsprite.preference.symmetry-axis'
 export const TIMELAPSE_RECORDING_ENABLED_PREFERENCE_KEY = 'moonsprite.preference.timelapse-recording-enabled'
 export const UI_SCALE_PREFERENCE_KEY = 'moonsprite.preference.ui-scale'
+export const TOOL_ICON_SCALE_PREFERENCE_KEY = 'moonsprite.preference.tool-icon-scale'
 export { THEME_PREFERENCE_KEY }
 
 export type RotationIndicatorPosition = 'view' | 'canvas'
 export type RelativeLuminanceScope = 'canvas' | 'app'
 export type ZoomToolDragMode = 'smooth' | 'stepped'
+export type WheelZoomMode = 'smooth' | 'stepped'
 export type CursorScale = 1 | 1.25 | 1.5 | 2
-export const UI_SCALE_VALUES = [0.75, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2] as const
+export const UI_SCALE_VALUES = [0.75, 1, 1.5, 2] as const
 export type UiScale = typeof UI_SCALE_VALUES[number]
+export type ToolIconScale = 1 | 2
 export type BrushPreviewMode = 'none' | 'edge' | 'full' | 'full-edge'
 export type EyedropperMagnifierStyle = 'pixel' | 'line'
 export type CheckerSize = number
@@ -85,6 +91,10 @@ export function parseZoomToolDragMode(value: string | null): ZoomToolDragMode {
   return value === 'stepped' ? 'stepped' : 'smooth'
 }
 
+export function parseWheelZoomMode(value: string | null): WheelZoomMode {
+  return value === 'smooth' ? 'smooth' : 'stepped'
+}
+
 export function parseBrushShiftLineEnabled(value: string | null): boolean {
   return value !== 'false'
 }
@@ -97,6 +107,10 @@ export function parseCursorScale(value: string | null): CursorScale {
 export function parseUiScale(value: string | null): UiScale {
   const parsed = Number(value)
   return UI_SCALE_VALUES.includes(parsed as UiScale) ? parsed as UiScale : 1
+}
+
+export function parseToolIconScale(value: string | null): ToolIconScale {
+  return value === '1' ? 1 : 2
 }
 
 export function parseBrushPreviewMode(value: string | null): BrushPreviewMode {
@@ -207,8 +221,11 @@ export type ExportFormatPreference = 'png' | 'jpeg' | 'webp' | 'svg' | 'gif'
 export interface EditorPreferences {
   language: AppLocale
   uiScale: UiScale
+  toolIconScale: ToolIconScale
   saveFormat: SaveFormatPreference
   exportFormat: ExportFormatPreference
+  saveDirectory: string
+  exportDirectory: string
   recovery: boolean
   recoveryMinutes: number
   documentSizePresets: DocumentSizePreset[]
@@ -225,6 +242,7 @@ export interface EditorPreferences {
   pixelGridColor: RgbaColor
   gridColor: RgbaColor
   wheelZoomEnabled: boolean
+  wheelZoomMode: WheelZoomMode
   shiftLinePreviewEnabled: boolean
   lassoPreviewClosed: boolean
   eyedropperSwitchToPencil: boolean
@@ -246,8 +264,11 @@ export interface EditorPreferences {
 export const DEFAULT_EDITOR_PREFERENCES: EditorPreferences = {
   language: DEFAULT_APP_LOCALE,
   uiScale: 1,
+  toolIconScale: 2,
   saveFormat: 'moonsprite',
   exportFormat: 'png',
+  saveDirectory: '',
+  exportDirectory: '',
   recovery: true,
   recoveryMinutes: 5,
   documentSizePresets: DEFAULT_DOCUMENT_SIZE_PRESETS,
@@ -264,6 +285,7 @@ export const DEFAULT_EDITOR_PREFERENCES: EditorPreferences = {
   pixelGridColor: DEFAULT_PIXEL_GRID_COLOR,
   gridColor: DEFAULT_GRID_COLOR,
   wheelZoomEnabled: true,
+  wheelZoomMode: 'stepped',
   shiftLinePreviewEnabled: true,
   lassoPreviewClosed: false,
   eyedropperSwitchToPencil: false,
@@ -500,6 +522,10 @@ function parseExportFormat(value: string | null): ExportFormatPreference {
   return value === 'jpeg' || value === 'webp' || value === 'svg' || value === 'gif' ? value : 'png'
 }
 
+function parseDirectoryPreference(value: string | null): string {
+  return value?.trim() ?? ''
+}
+
 export function parseRecoveryMinutes(value: string | null): number {
   if (!value?.trim()) return DEFAULT_EDITOR_PREFERENCES.recoveryMinutes
   const parsed = Number(value)
@@ -513,8 +539,11 @@ export function loadEditorPreferences(storage?: Storage): EditorPreferences {
   return {
     language: parseAppLocale(get(LANGUAGE_PREFERENCE_KEY)),
     uiScale: parseUiScale(get(UI_SCALE_PREFERENCE_KEY)),
+    toolIconScale: parseToolIconScale(get(TOOL_ICON_SCALE_PREFERENCE_KEY)),
     saveFormat: parseSaveFormat(get(SAVE_FORMAT_PREFERENCE_KEY)),
     exportFormat: parseExportFormat(get(EXPORT_FORMAT_PREFERENCE_KEY)),
+    saveDirectory: parseDirectoryPreference(get(SAVE_DIRECTORY_PREFERENCE_KEY)),
+    exportDirectory: parseDirectoryPreference(get(EXPORT_DIRECTORY_PREFERENCE_KEY)),
     recovery: get(RECOVERY_PREFERENCE_KEY) !== 'false',
     recoveryMinutes: parseRecoveryMinutes(get(RECOVERY_MINUTES_PREFERENCE_KEY)),
     documentSizePresets: parseDocumentSizePresets(get(NEW_DOCUMENT_SIZE_PRESETS_KEY)),
@@ -531,6 +560,7 @@ export function loadEditorPreferences(storage?: Storage): EditorPreferences {
     pixelGridColor: theme.grid.pixelGridColor,
     gridColor: theme.grid.gridColor,
     wheelZoomEnabled: get(WHEEL_ZOOM_ENABLED_PREFERENCE_KEY) !== 'false',
+    wheelZoomMode: parseWheelZoomMode(get(WHEEL_ZOOM_MODE_PREFERENCE_KEY)),
     shiftLinePreviewEnabled: get(SHIFT_LINE_PREVIEW_ENABLED_PREFERENCE_KEY) !== 'false',
     lassoPreviewClosed: get(LASSO_PREVIEW_CLOSED_PREFERENCE_KEY) === 'true',
     eyedropperSwitchToPencil: get(EYEDROPPER_SWITCH_TO_PENCIL_PREFERENCE_KEY) === 'true',
@@ -555,8 +585,11 @@ export function saveEditorPreferences(preferences: EditorPreferences, storage?: 
   const values: Record<string, string> = {
     [LANGUAGE_PREFERENCE_KEY]: preferences.language,
     [UI_SCALE_PREFERENCE_KEY]: String(parseUiScale(String(preferences.uiScale))),
+    [TOOL_ICON_SCALE_PREFERENCE_KEY]: String(parseToolIconScale(String(preferences.toolIconScale))),
     [SAVE_FORMAT_PREFERENCE_KEY]: preferences.saveFormat,
     [EXPORT_FORMAT_PREFERENCE_KEY]: preferences.exportFormat,
+    [SAVE_DIRECTORY_PREFERENCE_KEY]: parseDirectoryPreference(preferences.saveDirectory),
+    [EXPORT_DIRECTORY_PREFERENCE_KEY]: parseDirectoryPreference(preferences.exportDirectory),
     [RECOVERY_PREFERENCE_KEY]: String(preferences.recovery),
     [RECOVERY_MINUTES_PREFERENCE_KEY]: String(parseRecoveryMinutes(String(preferences.recoveryMinutes))),
     [NEW_DOCUMENT_SIZE_PRESETS_KEY]: JSON.stringify(parseDocumentSizePresets(JSON.stringify(preferences.documentSizePresets))),
@@ -575,6 +608,7 @@ export function saveEditorPreferences(preferences: EditorPreferences, storage?: 
     [PIXEL_GRID_COLOR_PREFERENCE_KEY]: colorHex(preferences.pixelGridColor),
     [GRID_COLOR_PREFERENCE_KEY]: colorHex(preferences.gridColor),
     [WHEEL_ZOOM_ENABLED_PREFERENCE_KEY]: String(preferences.wheelZoomEnabled),
+    [WHEEL_ZOOM_MODE_PREFERENCE_KEY]: preferences.wheelZoomMode,
     [SHIFT_LINE_PREVIEW_ENABLED_PREFERENCE_KEY]: String(preferences.shiftLinePreviewEnabled),
     [LASSO_PREVIEW_CLOSED_PREFERENCE_KEY]: String(preferences.lassoPreviewClosed),
     [EYEDROPPER_SWITCH_TO_PENCIL_PREFERENCE_KEY]: String(preferences.eyedropperSwitchToPencil),

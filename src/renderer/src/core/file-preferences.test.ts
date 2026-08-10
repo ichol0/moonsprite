@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { BRUSH_SHIFT_LINE_ENABLED_KEY, DEFAULT_GRID_COLOR, DEFAULT_PIXEL_GRID_COLOR, EXPORT_FORMAT_PREFERENCE_KEY, GRID_COLOR_PREFERENCE_KEY, LANGUAGE_PREFERENCE_KEY, LAYER_DISPLAY_COLOR_PRESETS_KEY, MOVE_LAYER_CONTENT_PREVIEW_ENABLED_PREFERENCE_KEY, NEW_DOCUMENT_SIZE_PRESETS_KEY, PIXEL_GRID_COLOR_PREFERENCE_KEY, RECOVERY_MINUTES_PREFERENCE_KEY, SAVE_FORMAT_PREFERENCE_KEY, SYMMETRY_AXIS_PREFERENCE_KEY, THEME_PREFERENCE_KEY, TIMELAPSE_RECORDING_ENABLED_PREFERENCE_KEY, UI_SCALE_PREFERENCE_KEY, ZOOM_TOOL_DRAG_MODE_PREFERENCE_KEY, imageExportKindForPreference, loadEditorPreferences, parseBrushPreviewMode, parseBrushShiftLineEnabled, parseCheckerSize, parseCursorScale, parseDocumentSizePresets, parseDrawingBrushPreviewEnabled, parseExportScalePresets, parseEyedropperMagnifierStyle, parseLayerDisplayColorPresets, parseLineDirectionStep, parseRelativeLuminanceScope, parseSymmetryAxisPreferences, parseUiScale, parseZoomToolDragMode, saveEditorPreferences, saveImageKindForPreference } from './file-preferences'
+import { BRUSH_SHIFT_LINE_ENABLED_KEY, DEFAULT_GRID_COLOR, DEFAULT_PIXEL_GRID_COLOR, EXPORT_DIRECTORY_PREFERENCE_KEY, EXPORT_FORMAT_PREFERENCE_KEY, GRID_COLOR_PREFERENCE_KEY, LANGUAGE_PREFERENCE_KEY, LAYER_DISPLAY_COLOR_PRESETS_KEY, MOVE_LAYER_CONTENT_PREVIEW_ENABLED_PREFERENCE_KEY, NEW_DOCUMENT_SIZE_PRESETS_KEY, PIXEL_GRID_COLOR_PREFERENCE_KEY, RECOVERY_MINUTES_PREFERENCE_KEY, SAVE_DIRECTORY_PREFERENCE_KEY, SAVE_FORMAT_PREFERENCE_KEY, SYMMETRY_AXIS_PREFERENCE_KEY, THEME_PREFERENCE_KEY, TIMELAPSE_RECORDING_ENABLED_PREFERENCE_KEY, TOOL_ICON_SCALE_PREFERENCE_KEY, UI_SCALE_PREFERENCE_KEY, WHEEL_ZOOM_MODE_PREFERENCE_KEY, ZOOM_TOOL_DRAG_MODE_PREFERENCE_KEY, imageExportKindForPreference, loadEditorPreferences, parseBrushPreviewMode, parseBrushShiftLineEnabled, parseCheckerSize, parseCursorScale, parseDocumentSizePresets, parseDrawingBrushPreviewEnabled, parseExportScalePresets, parseEyedropperMagnifierStyle, parseLayerDisplayColorPresets, parseLineDirectionStep, parseRelativeLuminanceScope, parseSymmetryAxisPreferences, parseToolIconScale, parseUiScale, parseWheelZoomMode, parseZoomToolDragMode, saveEditorPreferences, saveImageKindForPreference } from './file-preferences'
 import { resolveTheme } from './theme'
 
 describe('file format preferences', () => {
@@ -56,6 +56,12 @@ describe('canvas preferences', () => {
     expect(parseZoomToolDragMode('unexpected')).toBe('smooth')
   })
 
+  it('defaults wheel zoom to percentage steps and restores smooth zoom', () => {
+    expect(parseWheelZoomMode(null)).toBe('stepped')
+    expect(parseWheelZoomMode('smooth')).toBe('smooth')
+    expect(parseWheelZoomMode('unexpected')).toBe('stepped')
+  })
+
   it('keeps Shift line drawing enabled by default and restores an explicit disabled value', () => {
     expect(parseBrushShiftLineEnabled(null)).toBe(true)
     expect(parseBrushShiftLineEnabled('true')).toBe(true)
@@ -99,7 +105,10 @@ describe('editor preferences persistence boundary', () => {
     expect(defaults.saveFormat).toBe('moonsprite')
     expect(defaults.language).toBe('zh-CN')
     expect(defaults.uiScale).toBe(1)
+    expect(defaults.toolIconScale).toBe(2)
     expect(defaults.exportFormat).toBe('png')
+    expect(defaults.saveDirectory).toBe('')
+    expect(defaults.exportDirectory).toBe('')
     expect(defaults.recoveryMinutes).toBe(5)
     expect(defaults.useLocalCursors).toBe(false)
     expect(defaults.brushPreviewMode).toBe('full')
@@ -107,6 +116,7 @@ describe('editor preferences persistence boundary', () => {
     expect(defaults.pixelGridColor).toEqual(DEFAULT_PIXEL_GRID_COLOR)
     expect(defaults.gridColor).toEqual(DEFAULT_GRID_COLOR)
     expect(defaults.wheelZoomEnabled).toBe(true)
+    expect(defaults.wheelZoomMode).toBe('stepped')
     expect(defaults.lassoPreviewClosed).toBe(false)
     expect(defaults.eyedropperSwitchToPencil).toBe(false)
     expect(defaults.eyedropperMagnifierEnabled).toBe(true)
@@ -124,10 +134,12 @@ describe('editor preferences persistence boundary', () => {
     expect(loadEditorPreferences(adapter).recoveryMinutes).toBe(60)
     storage.set(LANGUAGE_PREFERENCE_KEY, 'en-US')
     expect(loadEditorPreferences(adapter).language).toBe('en-US')
-    storage.set(UI_SCALE_PREFERENCE_KEY, '1.25')
-    expect(loadEditorPreferences(adapter).uiScale).toBe(1.25)
+    storage.set(UI_SCALE_PREFERENCE_KEY, '0.75')
+    expect(loadEditorPreferences(adapter).uiScale).toBe(0.75)
     storage.set(UI_SCALE_PREFERENCE_KEY, '1.23')
     expect(loadEditorPreferences(adapter).uiScale).toBe(1)
+    storage.set(TOOL_ICON_SCALE_PREFERENCE_KEY, '1')
+    expect(loadEditorPreferences(adapter).toolIconScale).toBe(1)
   })
 
   it('round-trips normalized values through storage', () => {
@@ -141,18 +153,29 @@ describe('editor preferences persistence boundary', () => {
       get length() { return storage.size }
     } as Storage
     const current = loadEditorPreferences(adapter)
-    saveEditorPreferences({ ...current, uiScale: 1.5, saveFormat: 'aseprite', exportFormat: 'svg', recoveryMinutes: 12, documentSizePresets: [{ width: 32, height: 16 }, { width: 32, height: 16 }], exportScalePresets: [100, 100, 250] }, adapter)
+    saveEditorPreferences({ ...current, uiScale: 1.5, toolIconScale: 1, saveFormat: 'aseprite', exportFormat: 'svg', saveDirectory: '  D:\\MoonSprite\\gallery  ', exportDirectory: 'D:/MoonSprite/exports', recoveryMinutes: 12, documentSizePresets: [{ width: 32, height: 16 }, { width: 32, height: 16 }], exportScalePresets: [100, 100, 250] }, adapter)
     expect(storage.get(SAVE_FORMAT_PREFERENCE_KEY)).toBe('aseprite')
     expect(storage.get(EXPORT_FORMAT_PREFERENCE_KEY)).toBe('svg')
     expect(storage.get(UI_SCALE_PREFERENCE_KEY)).toBe('1.5')
-    expect(parseUiScale('2')).toBe(2)
+    expect(storage.get(TOOL_ICON_SCALE_PREFERENCE_KEY)).toBe('1')
+    expect(storage.get(SAVE_DIRECTORY_PREFERENCE_KEY)).toBe('D:\\MoonSprite\\gallery')
+    expect(storage.get(EXPORT_DIRECTORY_PREFERENCE_KEY)).toBe('D:/MoonSprite/exports')
+    expect(parseToolIconScale('1')).toBe(1)
+    expect(parseToolIconScale('3')).toBe(2)
     expect(parseUiScale('0.5')).toBe(1)
+    expect(parseUiScale('2')).toBe(2)
+    expect(parseUiScale('1.25')).toBe(1)
     expect(loadEditorPreferences(adapter).recoveryMinutes).toBe(12)
     expect(loadEditorPreferences(adapter).documentSizePresets).toEqual([{ width: 32, height: 16 }])
     expect(loadEditorPreferences(adapter).exportScalePresets).toEqual([100, 250])
+    expect(loadEditorPreferences(adapter).saveDirectory).toBe('D:\\MoonSprite\\gallery')
+    expect(loadEditorPreferences(adapter).exportDirectory).toBe('D:/MoonSprite/exports')
     expect(storage.has(NEW_DOCUMENT_SIZE_PRESETS_KEY)).toBe(true)
     saveEditorPreferences({ ...loadEditorPreferences(adapter), zoomToolDragMode: 'stepped' }, adapter)
     expect(storage.get(ZOOM_TOOL_DRAG_MODE_PREFERENCE_KEY)).toBe('stepped')
+    saveEditorPreferences({ ...loadEditorPreferences(adapter), wheelZoomMode: 'smooth' }, adapter)
+    expect(storage.get(WHEEL_ZOOM_MODE_PREFERENCE_KEY)).toBe('smooth')
+    expect(loadEditorPreferences(adapter).wheelZoomMode).toBe('smooth')
     saveEditorPreferences({ ...loadEditorPreferences(adapter), brushShiftLineEnabled: false }, adapter)
     expect(storage.get(BRUSH_SHIFT_LINE_ENABLED_KEY)).toBe('false')
     saveEditorPreferences({ ...loadEditorPreferences(adapter), timelapseRecordingEnabled: false, eyedropperMagnifierEnabled: false, eyedropperMagnifierDistortionEnabled: false, moveLayerContentPreviewEnabled: false }, adapter)

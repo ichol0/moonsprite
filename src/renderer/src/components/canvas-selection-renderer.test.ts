@@ -43,4 +43,32 @@ describe('drawSelectionOutline', () => {
     expect(context.fillRect).toHaveBeenCalledTimes(8)
     expect(context.strokeRect).toHaveBeenCalledTimes(8)
   })
+
+  it('draws transform handles at supplied rotated positions', () => {
+    const context = {
+      save: vi.fn(), restore: vi.fn(), translate: vi.fn(), setLineDash: vi.fn(), stroke: vi.fn(),
+      fillRect: vi.fn(), strokeRect: vi.fn(), lineWidth: 1, lineCap: 'butt', lineJoin: 'miter',
+      lineDashOffset: 0, strokeStyle: '', fillStyle: ''
+    }
+    const handlePoints = Array.from({ length: 8 }, (_, index) => ({ x: 20 + index, y: 40 + index }))
+
+    drawSelectionOutline({
+      context: context as never,
+      selection: { x: 0, y: 0, width: 2, height: 2 },
+      box: { x: 10, y: 20, width: 32, height: 32 },
+      view: { zoom: 16, panX: 0, panY: 0, rotation: 0, mirrored: false, mirroredVertical: false, showGrid: false, relativeLuminance: false },
+      viewportWidth: 200,
+      viewportHeight: 200,
+      rotationIndicatorPosition: 'view',
+      cache: null,
+      outlineDark: '#123456',
+      outlineLight: '#abcdef',
+      showOutline: false,
+      showHandles: true,
+      handlePoints
+    })
+
+    expect(context.fillRect).toHaveBeenNthCalledWith(1, 16, 36, 8, 8)
+    expect(context.fillRect).toHaveBeenNthCalledWith(8, 23, 43, 8, 8)
+  })
 })

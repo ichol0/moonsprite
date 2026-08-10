@@ -27,6 +27,46 @@ import shapeRectangleIcon from '@/assets/tool-icons/shape-rectangle.svg'
 import shapeEllipseFillIcon from '@/assets/tool-icons/shape-ellipse-fill.svg'
 import shapeEllipseIcon from '@/assets/tool-icons/shape-ellipse.svg'
 import toolGradientIcon from '@/assets/tool-icons/tool-gradient-6-6.svg'
+import toolGradientNormalIcon from '@/assets/tool-icons/tool-gradient-normal.svg'
+import toolPencilNormalIcon from '@/assets/tool-icons/tool-pencil-normal.svg'
+import toolEraserNormalIcon from '@/assets/tool-icons/tool-eraser-normal.svg'
+import selectionRectangleNormalIcon from '@/assets/tool-icons/selection-rectangle-normal.svg'
+import selectionEllipseNormalIcon from '@/assets/tool-icons/selection-ellipse-normal.svg'
+import selectionLassoNormalIcon from '@/assets/tool-icons/selection-lasso-normal.svg'
+import selectionPolygonLassoNormalIcon from '@/assets/tool-icons/selection-polygon-lasso-normal.svg'
+import selectionMagicNormalIcon from '@/assets/tool-icons/selection-magic-normal.svg'
+import toolMoveNormalIcon from '@/assets/tool-icons/tool-move-normal.svg'
+import shapeRectangleNormalIcon from '@/assets/tool-icons/shape-rectangle-normal.svg'
+import shapeRectangleFillNormalIcon from '@/assets/tool-icons/shape-rectangle-fill-normal.svg'
+import shapeEllipseNormalIcon from '@/assets/tool-icons/shape-ellipse-normal.svg'
+import shapeEllipseFillNormalIcon from '@/assets/tool-icons/shape-ellipse-fill-normal.svg'
+import toolFillNormalIcon from '@/assets/tool-icons/tool-fill-normal.svg'
+import toolEyedropperNormalIcon from '@/assets/tool-icons/tool-eyedropper-normal.svg'
+import toolHandNormalIcon from '@/assets/tool-icons/tool-hand-normal.svg'
+import toolZoomNormalIcon from '@/assets/tool-icons/tool-zoom-normal.svg'
+import toolRotateNormalIcon from '@/assets/tool-icons/tool-rotate-normal.svg'
+
+const NORMAL_EDITOR_TOOL_ICON_BY_SOURCE = new Map<string, string>([
+  [toolPencilIcon, toolPencilNormalIcon],
+  [toolEraserIcon, toolEraserNormalIcon],
+  [selectionRectangleIcon, selectionRectangleNormalIcon],
+  [selectionEllipseIcon, selectionEllipseNormalIcon],
+  [selectionLassoIcon, selectionLassoNormalIcon],
+  [selectionPolygonLassoIcon, selectionPolygonLassoNormalIcon],
+  [selectionMagicIcon, selectionMagicNormalIcon],
+  [toolMoveIcon, toolMoveNormalIcon],
+  [shapeRectangleIcon, shapeRectangleNormalIcon],
+  [shapeRectangleFillIcon, shapeRectangleFillNormalIcon],
+  [shapeEllipseIcon, shapeEllipseNormalIcon],
+  [shapeEllipseFillIcon, shapeEllipseFillNormalIcon],
+  [toolFillIcon, toolFillNormalIcon],
+  [toolEyedropperIcon, toolEyedropperNormalIcon],
+  [toolHandIcon, toolHandNormalIcon],
+  [toolZoomIcon, toolZoomNormalIcon],
+  [toolRotateIcon, toolRotateNormalIcon],
+  [toolGradientIcon, toolGradientNormalIcon]
+])
+export const normalEditorToolIconFor = (source: string): string | undefined => NORMAL_EDITOR_TOOL_ICON_BY_SOURCE.get(source)
 
 const TOOL_BASE: Array<{ id: ToolId; icon: string; shortcutId: ShortcutId }> = [
   { id: 'pencil', icon: toolPencilIcon, shortcutId: 'tool.pencil' }, { id: 'eraser', icon: toolEraserIcon, shortcutId: 'tool.eraser' }, { id: 'selection', icon: toolSelectionIcon, shortcutId: 'tool.selection' }, { id: 'move', icon: toolMoveIcon, shortcutId: 'tool.move' }, { id: 'shape', icon: toolShapeIcon, shortcutId: 'tool.shape' }, { id: 'fill', icon: toolFillIcon, shortcutId: 'tool.fill' }, { id: 'eyedropper', icon: toolEyedropperIcon, shortcutId: 'tool.eyedropper' }, { id: 'hand', icon: toolHandIcon, shortcutId: 'tool.hand' }, { id: 'zoom', icon: toolZoomIcon, shortcutId: 'tool.zoom' }, { id: 'rotate', icon: toolRotateIcon, shortcutId: 'tool.rotate' }
@@ -114,7 +154,8 @@ export const ALL_EDITOR_TOOL_ICONS = [...new Set([
   ...Object.values(SELECTION_KIND_ICONS),
   ...SELECTION_MODE_BASE.map((item) => item.icon),
   ...SHAPE_KIND_BASE.map((item) => item.icon),
-  ...FILL_KIND_BASE.map((item) => item.icon)
+  ...FILL_KIND_BASE.map((item) => item.icon),
+  ...NORMAL_EDITOR_TOOL_ICON_BY_SOURCE.values()
 ])]
 
 const pixelMasks = {
@@ -133,5 +174,6 @@ export function PixelShapeIcon({ kind }: { kind: keyof typeof pixelMasks }) {
 }
 
 export function PixelAssetIcon({ src, className = '' }: { src: string; className?: string }) {
-  return <span className={`pixel-asset-icon ${className}`.trim()} style={{ '--pixel-icon-source': `url("${src}")` } as CSSProperties} aria-hidden="true" />
+  const normalSource = normalEditorToolIconFor(src)
+  return <span className={`pixel-asset-icon ${className}`.trim()} style={{ '--pixel-icon-source': `url("${src}")`, ...(normalSource ? { '--pixel-icon-normal-source': `url("${normalSource}")` } : {}) } as CSSProperties} aria-hidden="true" />
 }

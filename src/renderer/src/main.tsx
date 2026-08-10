@@ -8,7 +8,7 @@ import { applyThemeToDocument } from './core/theme'
 import { translate } from './core/localization'
 import { installTauriApi } from './platform/tauri-api'
 import { applyCursorPreferences } from './platform/cursor-theme'
-import { applyUiScale } from './platform/ui-scale'
+import { applyToolIconScale, applyUiScale } from './platform/ui-scale'
 
 const rootElement = document.getElementById('root')
 
@@ -16,6 +16,7 @@ if (!rootElement) throw new Error('MoonSprite root element is missing.')
 
 const startupPreferences = loadEditorPreferences()
 applyThemeToDocument(startupPreferences.theme)
+applyToolIconScale(startupPreferences.toolIconScale)
 void applyCursorPreferences(startupPreferences.useLocalCursors, startupPreferences.cursorScale).catch(() => undefined)
 
 void installTauriApi()

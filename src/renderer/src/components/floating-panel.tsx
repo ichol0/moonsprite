@@ -249,9 +249,10 @@ interface PortalResizeHandlesProps {
   onResize: (event: ReactPointerEvent<HTMLElement>, direction: ResizeDirection) => void
   position: CSSProperties | undefined
   targetRef: RefObject<HTMLElement | null>
+  className?: string
 }
 
-export function PortalResizeHandles({ onResize, position, targetRef }: PortalResizeHandlesProps) {
+export function PortalResizeHandles({ onResize, position, targetRef, className = '' }: PortalResizeHandlesProps) {
   const [bounds, setBounds] = useState<{ left: number; top: number; width: number; height: number } | null>(null)
 
   useEffect(() => {
@@ -273,7 +274,7 @@ export function PortalResizeHandles({ onResize, position, targetRef }: PortalRes
   if (!bounds) return null
   const zIndex = typeof position?.zIndex === 'number' ? position.zIndex + 1 : 220
   return createPortal(
-    <div className="floating-resize-portal" style={{ left: bounds.left, top: bounds.top, width: bounds.width, height: bounds.height, zIndex }} aria-hidden="true">
+    <div className={`floating-resize-portal ${className}`.trim()} style={{ left: bounds.left, top: bounds.top, width: bounds.width, height: bounds.height, zIndex }} aria-hidden="true">
       <PanelResizeHandles onResize={onResize} />
     </div>,
     document.body

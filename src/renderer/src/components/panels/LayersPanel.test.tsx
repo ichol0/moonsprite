@@ -1,6 +1,6 @@
 import { act, cleanup, createEvent, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { createDocument, createLayer, getActiveLayer } from '@/core/document'
+import { createDocument, createLayer, ensureLayerCoversCanvas, getActiveLayer } from '@/core/document'
 import { animationCelKey, connectAnimationCels, ensureAnimationDocument } from '@/core/animation'
 import { buildLayerPanelTree } from '@/core/layer-panel-layout'
 import { ONION_SKIN_PREFERENCE_KEY } from '@/core/file-preferences'
@@ -19,6 +19,39 @@ afterEach(() => {
 })
 
 describe('LayersPanel animation', () => {
+  it('uses a shorter frame header without duration text at compact density', () => {
+    localStorage.setItem('moonsprite.layers.display-density', 'compact')
+    const document = createDocument('compact timeline header', 2, 2, 'rgba')
+    useWorkspace.getState().addSession(document)
+    const { container } = render(<LayersPanel session={useWorkspace.getState().sessions[0]} docked />)
+
+    expect(container.querySelector('.layers-panel')).toHaveClass('layer-density-compact')
+    const frameHeader = container.querySelector('.layer-animation-frame-header')
+    expect(frameHeader?.querySelector('strong')).toHaveTextContent('1')
+    expect(frameHeader?.querySelector('small')).not.toBeInTheDocument()
+  })
+
+  it('uses Alt-click to select cel content and Shift+Alt-click to add it', () => {
+    const document = createDocument('timeline content selection', 3, 1, 'rgba')
+    getActiveLayer(document).pixels[3] = 255
+    useWorkspace.getState().addSession(document)
+    useWorkspace.getState().addAnimationFrame()
+    ensureLayerCoversCanvas(document, getActiveLayer(document))
+    getActiveLayer(document).pixels[11] = 255
+    const timeline = ensureAnimationDocument(document)
+    const [firstFrame, secondFrame] = timeline.frames
+    const layerId = document.activeLayerId
+    const session = useWorkspace.getState().sessions[0]
+    const { container } = render(<LayersPanel session={session} docked />)
+
+    const firstCell = container.querySelector<HTMLElement>(`[data-animation-cel-key="${animationCelKey(layerId, firstFrame.id)}"]`)!
+    fireEvent.pointerDown(firstCell, { button: 0, altKey: true })
+    const secondCell = container.querySelector<HTMLElement>(`[data-animation-cel-key="${animationCelKey(layerId, secondFrame.id)}"]`)!
+    fireEvent.pointerDown(secondCell, { button: 0, altKey: true, shiftKey: true })
+
+    expect(Array.from(useWorkspace.getState().sessions[0].selection?.mask ?? [])).toEqual([1, 0, 1])
+  })
+
   it('creates a frame by copying the selected frame and still supports blank frames from the frame menu', () => {
     const document = createDocument('animation', 2, 2, 'rgba')
     const layer = getActiveLayer(document)
@@ -152,6 +185,38 @@ describe('LayersPanel animation', () => {
     const separator = screen.getByRole('separator', { name: '调整图层名称区域宽度' })
     fireEvent.keyDown(separator, { key: 'ArrowRight' })
     expect(localStorage.getItem('moonsprite.layers.label-width')).toBe('202')
+  })
+
+  it('shows a layer mask thumbnail after Ctrl+wheel enlarges the timeline', () => {
+    const document = createDocument('mask thumbnail', 2, 2, 'rgba')
+    getActiveLayer(document).pixels[3] = 255
+    useWorkspace.getState().addSession(document)
+    const cel = ensureAnimationDocument(document).cels[0]
+    useWorkspace.getState().createLayerMask(cel.id)
+    const { container } = render(<LayersPanel session={useWorkspace.getState().sessions[0]} docked />)
+
+    expect(container.querySelector('.layer-mask-thumbnail')).not.toBeInTheDocument()
+    const panel = container.querySelector('.layers-panel') as HTMLElement
+    fireEvent.wheel(panel, { ctrlKey: true, deltaY: -100 })
+
+    expect(panel).toHaveClass('layer-density-detailed')
+    expect(container.querySelector('.cel-mask-marker')).toBeInTheDocument()
+    expect(container.querySelector('.layer-mask-thumbnail')).toBeInTheDocument()
+  })
+
+  it('disables layer-mask creation and paste for empty cels with an explanatory tooltip', async () => {
+    const document = createDocument('empty mask commands', 1, 1, 'rgba')
+    useWorkspace.getState().addSession(document)
+    const { container } = render(<LayersPanel session={useWorkspace.getState().sessions[0]} docked />)
+    fireEvent.contextMenu(container.querySelector<HTMLElement>('[data-animation-cel-key]')!, { clientX: 30, clientY: 40 })
+
+    const createMask = screen.getByRole('menuitem', { name: '新建图层蒙版' })
+    const pasteMask = screen.getByRole('menuitem', { name: '粘贴图层蒙版单元格' })
+    expect(createMask).toBeDisabled()
+    expect(pasteMask).toBeDisabled()
+
+    fireEvent.pointerEnter(createMask.closest('.moon-tooltip-anchor')!)
+    expect(await screen.findByRole('tooltip')).toHaveTextContent('当前图层单元格没有可见内容，无法创建或粘贴图层蒙版。请先在该单元格中绘制内容。')
   })
 
   it('outlines the complete selected frame column instead of only its header', () => {
@@ -481,6 +546,34 @@ describe('LayersPanel animation', () => {
     expect(container.querySelector('[data-linked-cel-connector]')).not.toBeInTheDocument()
   })
 
+  it('renders masks inherited through linked cels as one connected block', () => {
+    const document = createDocument('linked mask visuals', 1, 1, 'rgba')
+    getActiveLayer(document).pixels[3] = 255
+    useWorkspace.getState().addSession(document)
+    const firstCel = ensureAnimationDocument(document).cels[0]
+    useWorkspace.getState().createLayerMask(firstCel.id)
+    useWorkspace.getState().duplicateAnimationFrame()
+    const timeline = ensureAnimationDocument(document)
+    const cels = timeline.frames.map((frame) => timeline.cels.find((cel) => cel.layerId === document.activeLayerId && cel.frameId === frame.id)!)
+    expect(connectAnimationCels(document, cels.map((cel) => cel.id))).toBe(true)
+    const firstKey = animationCelKey(document.activeLayerId, timeline.frames[0].id)
+    useWorkspace.getState().selectAnimationMaskCell(firstKey)
+
+    const { container } = render(<LayersPanel session={useWorkspace.getState().sessions[0]} docked />)
+    const maskCells = Array.from(container.querySelectorAll<HTMLElement>('[data-animation-mask-cel-key]'))
+    expect(maskCells).toHaveLength(2)
+    expect(maskCells.every((cell) => cell.classList.contains('linked-cel'))).toBe(true)
+    expect(maskCells.filter((cell) => cell.classList.contains('active-mask'))).toHaveLength(1)
+    const maskBlock = Array.from(container.querySelectorAll<HTMLElement>('[data-linked-cel-block]'))
+      .find((block) => block.style.getPropertyValue('--animation-row-index') === '0')
+    const celBlock = Array.from(container.querySelectorAll<HTMLElement>('[data-linked-cel-block]'))
+      .find((block) => block.style.getPropertyValue('--animation-row-index') === '1')
+    expect(maskBlock).toHaveClass('selected')
+    expect(celBlock).toBeInTheDocument()
+    expect(maskBlock?.dataset.frameIndex).toBe(celBlock?.dataset.frameIndex)
+    expect(maskBlock?.dataset.frameSpan).toBe(celBlock?.dataset.frameSpan)
+  })
+
   it('keeps thumbnails on every cel in a linked group at enlarged density', () => {
     localStorage.setItem('moonsprite.layers.display-density', 'huge')
     const document = createDocument('linked cel thumbnails', 2, 2, 'rgba')
@@ -543,6 +636,196 @@ describe('LayersPanel animation', () => {
 })
 
 describe('LayersPanel properties', () => {
+  it('creates a cell mask only from the cell context menu and activates its upper marker', () => {
+    const document = createDocument('layer mask menu', 2, 2, 'rgba')
+    const layer = getActiveLayer(document)
+    layer.pixels[3] = 255
+    const cel = ensureAnimationDocument(document).cels[0]
+    useWorkspace.getState().addSession(document)
+    const session = useWorkspace.getState().sessions[0]
+    const { container, rerender } = render(<LayersPanel session={session} docked />)
+
+    fireEvent.contextMenu(container.querySelector(`[data-layer-id="${layer.id}"]`)!, { clientX: 20, clientY: 20 })
+    expect(screen.getAllByRole('menuitem').some((item) => item.textContent?.includes('图层蒙版'))).toBe(false)
+    fireEvent.pointerDown(window.document.body)
+
+    const celButton = container.querySelector(`[data-animation-cel-key="${animationCelKey(layer.id, cel.frameId)}"]`)!
+    fireEvent.contextMenu(celButton, { clientX: 20, clientY: 20 })
+    const createMaskItem = screen.getAllByRole('menuitem').find((item) => item.textContent?.includes('图层蒙版'))
+    expect(createMaskItem).toBeDefined()
+    fireEvent.click(createMaskItem!)
+    rerender(<LayersPanel session={session} docked />)
+
+    const marker = container.querySelector<HTMLElement>(`[data-layer-mask-id="${cel.mask?.id}"]`)
+    expect(marker).toBeInTheDocument()
+    const maskRow = container.querySelector(`[data-layer-mask-row-owner="${layer.id}"]`)!
+    const layerRow = container.querySelector(`[data-layer-id="${layer.id}"]`)!
+    expect(maskRow).toBeInTheDocument()
+    expect([...maskRow.parentElement!.children].indexOf(maskRow)).toBeLessThan([...layerRow.parentElement!.children].indexOf(layerRow))
+    expect(marker?.closest('.layer-mask-cel')).toHaveClass('active-mask', 'selected-cel')
+    expect(container.querySelector('[data-animation-cel-selection]')).toHaveStyle('--animation-row-index: 0')
+    fireEvent.click(celButton)
+    expect(useWorkspace.getState().sessions[0].activeLayerMaskId).toBeNull()
+    fireEvent.click(marker!)
+    expect(useWorkspace.getState().sessions[0].activeLayerMaskId).toBe(cel.mask?.id)
+    expect(useWorkspace.getState().sessions[0].layerMaskIsolatedView).toBe(false)
+    fireEvent.pointerDown(marker!, { button: 0, altKey: true })
+    expect(useWorkspace.getState().sessions[0].activeLayerMaskId).toBe(cel.mask?.id)
+    expect(useWorkspace.getState().sessions[0].layerMaskIsolatedView).toBe(true)
+    expect(layerRow).not.toHaveClass('selected')
+    expect(container.querySelector('[data-animation-cel-selection]')).toHaveStyle('--animation-row-index: 0')
+
+    useWorkspace.getState().clearAnimationSelection()
+    rerender(<LayersPanel session={session} docked />)
+    const activeMaskCell = container.querySelector<HTMLElement>(`[data-animation-mask-cel-key="${animationCelKey(layer.id, cel.frameId)}"]`)!
+    expect(activeMaskCell).toHaveClass('active-mask')
+    expect(activeMaskCell).not.toHaveClass('selected-cel')
+    expect(container.querySelector('[data-animation-cel-selection]')).not.toBeInTheDocument()
+
+    fireEvent.keyDown(window, { key: 'Alt' })
+    expect(activeMaskCell).toHaveClass('mask-edit-ready')
+    fireEvent.keyUp(window, { key: 'Alt' })
+
+    fireEvent.pointerDown(container.querySelector(`[data-layer-id="${layer.id}"]`)!, { button: 0 })
+    expect(useWorkspace.getState().sessions[0].activeLayerMaskId).toBeNull()
+  })
+
+  it('creates a layer-group mask from the group menu and renders a normal-size mask cell', () => {
+    const document = createDocument('group mask menu', 2, 2, 'rgba')
+    const group = { id: 'group-1', name: 'Folder', visible: true, locked: false, opacity: 1, blendMode: 'normal' as const }
+    document.groups.push(group)
+    document.layers[0].groupId = group.id
+    useWorkspace.getState().addSession(document)
+    const session = useWorkspace.getState().sessions[0]
+    const { container, rerender } = render(<LayersPanel session={session} docked />)
+
+    fireEvent.contextMenu(container.querySelector(`[data-group-id="${group.id}"]`)!, { clientX: 20, clientY: 20 })
+    const createMaskItem = screen.getAllByRole('menuitem').find((item) => item.textContent?.includes('新建图层组蒙版'))
+    expect(createMaskItem).toBeDefined()
+    fireEvent.click(createMaskItem!)
+    rerender(<LayersPanel session={session} docked />)
+
+    const mask = ensureAnimationDocument(document).groupMasks?.[0]?.mask
+    expect(mask).toBeDefined()
+    expect(container.querySelector(`[data-layer-mask-row-owner="${group.id}"]`)).toHaveTextContent('图层组蒙版')
+    expect(container.querySelector(`[data-layer-mask-id="${mask?.id}"]`)).toBeInTheDocument()
+  })
+
+  it('selects mask cells independently and enters the last mask with Alt-click', () => {
+    const document = createDocument('mask timeline selection', 2, 2, 'rgba')
+    getActiveLayer(document).pixels[3] = 255
+    useWorkspace.getState().addSession(document)
+    const firstCel = ensureAnimationDocument(document).cels[0]
+    useWorkspace.getState().createLayerMask(firstCel.id)
+    useWorkspace.getState().duplicateAnimationFrame()
+    const timeline = ensureAnimationDocument(document)
+    const session = useWorkspace.getState().sessions[0]
+    const { container } = render(<LayersPanel session={session} docked />)
+    const firstKey = animationCelKey(document.activeLayerId, timeline.frames[0].id)
+    const secondKey = animationCelKey(document.activeLayerId, timeline.frames[1].id)
+    const firstMaskCell = container.querySelector<HTMLElement>(`[data-animation-mask-cel-key="${firstKey}"]`)!
+    const secondMaskCell = container.querySelector<HTMLElement>(`[data-animation-mask-cel-key="${secondKey}"]`)!
+
+    fireEvent.pointerDown(firstMaskCell, { button: 0, clientX: 10, clientY: 40 })
+    fireEvent.pointerUp(firstMaskCell, { clientX: 10, clientY: 40 })
+    fireEvent.pointerDown(secondMaskCell, { button: 0, ctrlKey: true, clientX: 40, clientY: 40 })
+    expect(session.selectedAnimationMaskCellKeys).toEqual([firstKey, secondKey])
+    expect(session.selectedAnimationCellKeys).toEqual([])
+    expect(session.activeLayerMaskId).toBe(ensureAnimationDocument(document).cels[1].mask?.id)
+    expect(session.layerMaskIsolatedView).toBe(false)
+
+    useWorkspace.getState().clearAnimationSelection()
+    fireEvent.pointerDown(firstMaskCell, { button: 0, altKey: true, clientX: 10, clientY: 40 })
+    fireEvent.pointerDown(secondMaskCell, { button: 0, altKey: true, shiftKey: true, clientX: 40, clientY: 40 })
+    expect(session.selectedAnimationMaskCellKeys).toEqual([firstKey, secondKey])
+    expect(session.activeLayerMaskId).toBe(ensureAnimationDocument(document).cels[1].mask?.id)
+    expect(session.layerMaskIsolatedView).toBe(true)
+
+    fireEvent.contextMenu(secondMaskCell, { clientX: 40, clientY: 40 })
+    fireEvent.click(globalThis.document.querySelector<HTMLButtonElement>('.animation-context-menu .context-menu-item')!)
+    expect(ensureAnimationDocument(document).cels.every((cel) => !cel.mask)).toBe(true)
+  })
+
+  it('extends a mask-cell selection while long-press dragging across frames', () => {
+    vi.useFakeTimers()
+    const document = createDocument('mask long press selection', 1, 1, 'rgba')
+    getActiveLayer(document).pixels[3] = 255
+    useWorkspace.getState().addSession(document)
+    const firstCel = ensureAnimationDocument(document).cels[0]
+    useWorkspace.getState().createLayerMask(firstCel.id)
+    useWorkspace.getState().duplicateAnimationFrame()
+    useWorkspace.getState().clearAnimationSelection()
+    const timeline = ensureAnimationDocument(document)
+    const session = useWorkspace.getState().sessions[0]
+    const { container } = render(<LayersPanel session={session} docked />)
+    const cells = Array.from(container.querySelectorAll<HTMLElement>('[data-animation-mask-cel-key]'))
+
+    fireEvent.pointerDown(cells[0], { button: 0, pointerId: 1, clientX: 10, clientY: 40 })
+    act(() => vi.advanceTimersByTime(360))
+    fireEvent.pointerMove(cells[1], { pointerId: 1, clientX: 50, clientY: 40 })
+    expect(container.querySelector<HTMLElement>('[data-animation-cel-selection]')?.style.getPropertyValue('--animation-frame-span')).toBe('2')
+    fireEvent.pointerUp(cells[1], { pointerId: 1, clientX: 50, clientY: 40 })
+    expect(session.selectedAnimationMaskCellKeys).toEqual(timeline.frames.map((frame) => animationCelKey(document.activeLayerId, frame.id)))
+  })
+
+  it('toggles clipping masks for layers and groups from the context menu', () => {
+    const document = createDocument('clipping mask menu', 2, 2, 'rgba')
+    const layer = getActiveLayer(document)
+    document.groups.push({ id: 'group', name: 'Group', parentGroupId: null, visible: true, locked: false, opacity: 1, blendMode: 'normal' })
+    useWorkspace.getState().addSession(document)
+    const session = useWorkspace.getState().sessions[0]
+    const { container, rerender } = render(<LayersPanel session={session} docked />)
+
+    fireEvent.contextMenu(container.querySelector(`[data-layer-id="${layer.id}"]`)!, { clientX: 20, clientY: 20 })
+    fireEvent.click(screen.getByRole('menuitem', { name: '开启剪贴蒙版' }))
+    rerender(<LayersPanel session={session} docked />)
+    expect(layer.clippingMask).toBe(true)
+    expect(container.querySelector(`[data-layer-id="${layer.id}"] [data-pixel-icon="clippingMask"]`)).toBeInTheDocument()
+
+    fireEvent.contextMenu(container.querySelector('[data-group-id="group"]')!, { clientX: 20, clientY: 48 })
+    fireEvent.click(screen.getByRole('menuitem', { name: '开启剪贴蒙版' }))
+    rerender(<LayersPanel session={session} docked />)
+    expect(document.groups[0].clippingMask).toBe(true)
+    expect(container.querySelector('[data-group-id="group"] [data-pixel-icon="clippingMask"]')).toBeInTheDocument()
+
+    fireEvent.contextMenu(container.querySelector(`[data-layer-id="${layer.id}"]`)!, { clientX: 20, clientY: 76 })
+    fireEvent.click(screen.getByRole('menuitem', { name: '关闭剪贴蒙版' }))
+    expect(layer.clippingMask).toBeUndefined()
+  })
+
+  it('edits a single selected group without changing its implicit descendant selection', () => {
+    const document = createDocument('single group properties', 2, 2, 'rgba')
+    const member = getActiveLayer(document)
+    member.groupId = 'group'
+    member.blendMode = 'screen'
+    document.groups.push({ id: 'group', name: 'Group', parentGroupId: null, visible: true, locked: false, opacity: 1, blendMode: 'normal' })
+    useWorkspace.getState().addSession(document)
+    useWorkspace.getState().selectGroup('group')
+    const { container } = render(<LayersPanel session={useWorkspace.getState().sessions[0]} docked />)
+
+    fireEvent.contextMenu(container.querySelector('[data-group-id="group"]')!, { clientX: 20, clientY: 20 })
+    fireEvent.click(screen.getByRole('menuitem', { name: '属性' }))
+    expect(screen.getByRole('heading', { name: '图层组属性' })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '混合模式' }))
+    fireEvent.click(screen.getByRole('option', { name: '正片叠底' }))
+    fireEvent.click(screen.getByRole('checkbox', { name: /累积混合/ }))
+    fireEvent.click(screen.getByRole('button', { name: '关闭' }))
+
+    expect(document.groups[0].blendMode).toBe('multiply')
+    expect(document.groups[0].cumulativeBlend).toBe(true)
+    expect(member.blendMode).toBe('screen')
+
+    fireEvent.contextMenu(container.querySelector(`[data-layer-id="${member.id}"]`)!, { clientX: 20, clientY: 48 })
+    fireEvent.click(screen.getByRole('menuitem', { name: '属性' }))
+    expect(screen.getByRole('heading', { name: '图层属性' })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '混合模式' }))
+    fireEvent.click(screen.getByRole('option', { name: '正常' }))
+    fireEvent.click(screen.getByRole('button', { name: '关闭' }))
+
+    expect(document.groups[0].blendMode).toBe('multiply')
+    expect(member.blendMode).toBe('normal')
+  })
+
   it('commits the previewed properties and closes on Enter', () => {
     const document = createDocument('layer properties', 2, 2, 'rgba')
     const layer = getActiveLayer(document)

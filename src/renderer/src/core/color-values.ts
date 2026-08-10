@@ -85,6 +85,12 @@ export const cmykToRgb = (c: number, m: number, y: number, k: number, alpha = 25
 
 export const rgbaHex = (color: RgbaColor): string => `#${[color.r, color.g, color.b, color.a].map((channel) => clampByte(channel).toString(16).padStart(2, '0')).join('').toUpperCase()}`
 
+/** Uses six digits for opaque UI colors and keeps alpha only when it carries information. */
+export const displayRgbaHex = (color: RgbaColor): string => {
+  const value = rgbaHex(color)
+  return clampByte(color.a) === 255 ? value.slice(0, 7) : value
+}
+
 export const parseRgbaHex = (value: string, fallbackAlpha = 255): RgbaColor | null => {
   const match = /^#?([0-9a-f]{6})([0-9a-f]{2})?$/i.exec(value.trim())
   if (!match) return null

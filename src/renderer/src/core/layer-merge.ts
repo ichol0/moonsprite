@@ -17,6 +17,7 @@ interface MergedLayerProperties {
   locked: boolean
   opacity: number
   blendMode: BlendMode
+  clippingMask?: boolean
 }
 
 function createMergedLayer(document: SpriteDocument, name: string, pixels: Uint8ClampedArray, properties: MergedLayerProperties): RasterLayer {
@@ -26,6 +27,7 @@ function createMergedLayer(document: SpriteDocument, name: string, pixels: Uint8
   layer.locked = properties.locked
   layer.opacity = properties.opacity
   layer.blendMode = properties.blendMode
+  if (properties.clippingMask === true) layer.clippingMask = true
   if (layer.format === 'rgba') {
     layer.pixels.set(pixels)
   } else {
@@ -114,7 +116,8 @@ export function mergeLayerGroup(document: SpriteDocument, groupId: string): Laye
     visible: group.visible,
     locked: group.locked,
     opacity: group.opacity,
-    blendMode: group.blendMode
+    blendMode: group.blendMode,
+    clippingMask: group.clippingMask === true
   })
   const indexes = layers.map((layer) => document.layers.indexOf(layer))
   const insertionIndex = Math.min(...indexes)

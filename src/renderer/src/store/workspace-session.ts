@@ -1,4 +1,4 @@
-import type { ImageBrush, ProceduralBrushId, ProceduralBrushSettings, RgbaColor, SelectionMask, SpriteDocument, ToolId } from '@shared/types'
+import type { ImageBrush, LayerMask, ProceduralBrushId, ProceduralBrushSettings, RasterLayer, RgbaColor, SelectionMask, SpriteDocument, ToolId } from '@shared/types'
 import { HistoryStack, type ContentInvalidationHint } from '@/core/history'
 import { PROCEDURAL_BRUSH_IDS } from '@/core/brushes'
 import { packColor, unpackColor } from '@/core/raster'
@@ -16,11 +16,18 @@ import type { BrushProfile, DocumentSession } from './workspace-types'
 import { defaultSymmetryCenter } from '@/core/symmetry'
 import { ensureAnimationDocument, refreshActiveAnimationFrame } from '@/core/animation'
 import { normalizeProjectDisplaySettings, normalizeProjectStatistics, normalizeTimelapseSettings } from '@/core/project-metadata'
+import { findLayerMask, getActiveLayer } from '@/core/document'
 
 const defaultColor: RgbaColor = { r: 41, g: 121, b: 255, a: 255 }
 const defaultSecondary: RgbaColor = { r: 241, g: 244, b: 248, a: 255 }
 
 export const isBrushTool = (tool: ToolId): tool is BrushTool => tool === 'pencil' || tool === 'eraser' || tool === 'fill'
+
+export const activeLayerMask = (session: DocumentSession): LayerMask | null => session.activeLayerMaskId
+  ? findLayerMask(session.document, session.activeLayerMaskId)
+  : null
+
+export const activePaintLayer = (session: DocumentSession): RasterLayer => activeLayerMask(session) ?? getActiveLayer(session.document)
 
 export const brushProfileFromSession = (session: DocumentSession): BrushProfile => ({
   brushSize: session.brushSize,
@@ -115,6 +122,9 @@ export function persistToolSettings(session: DocumentSession): void {
     shapeRatio: session.shapeRatio ? { ...session.shapeRatio } : null,
     fillMode: session.fillMode,
     fillKind: session.fillKind ?? 'bucket',
+    fillTolerance: session.fillTolerance,
+    gradientTolerance: session.gradientTolerance,
+    gradientContiguous: session.gradientContiguous,
     gradientDither: session.gradientDither ?? 'none',
     moveAutoSelect: session.moveAutoSelect,
     selectionKind: session.selectionKind,
@@ -169,6 +179,9 @@ export const sessionFromDocument = (document: SpriteDocument): DocumentSession =
     shapeRatio: typeof settings.shapeRatio === 'number' ? { width: settings.shapeRatio, height: 1 } : settings.shapeRatio ? { ...settings.shapeRatio } : null,
     fillMode: settings.fillMode,
     fillKind: settings.fillKind,
+    fillTolerance: settings.fillTolerance,
+    gradientTolerance: settings.gradientTolerance,
+    gradientContiguous: settings.gradientContiguous,
     gradientDither: settings.gradientDither,
     moveAutoSelect: settings.moveAutoSelect,
     selection: null,
@@ -206,6 +219,8 @@ export const sessionFromDocument = (document: SpriteDocument): DocumentSession =
     selectedGroupId: null,
     selectedGroupIds: [],
     selectedLayerIds: [document.activeLayerId],
+    activeLayerMaskId: null,
+    layerMaskIsolatedView: false,
     layerSelectionAnchorId: document.activeLayerId,
     collapsedGroupIds: [],
     animationPlaying: false,
@@ -216,8 +231,12 @@ export const sessionFromDocument = (document: SpriteDocument): DocumentSession =
     animationFrameSelectionAnchorId: null,
     selectedAnimationCellKeys: [],
     animationCellSelectionAnchorKey: null,
+    selectedAnimationMaskCellKeys: [],
+    animationMaskCellSelectionAnchorKey: null,
     animationCellClipboard: [],
     animationCellClipboardAnchorKey: null,
+    animationMaskClipboard: [],
+    animationMaskClipboardAnchorKey: null,
     animationFrameClipboard: [],
     revision: 0,
     contentRevision: 0,

@@ -6,15 +6,26 @@ import { FloatingDockPreview, PanelResizeHandles, useFloatingPanel } from '@/com
 import { NumberInput } from '@/components/NumberInput'
 import type { DockDragProps } from '@/components/workspace-panel-types'
 import { countUsedPaletteColors, encodePalettePng, extractPaletteColors, mergePaletteColors } from '@/core/palette'
-import { PALETTE_SWATCH_PIXELS, paletteColorRoles, paletteColorsEqual, paletteMarkerColor, paletteReorderTarget, reorderPalettePreview, type PaletteSwatchSize } from '@/core/palette-layout'
+import { addPaletteIdToSlots, fitPaletteSlotsToGrid, normalizePaletteColumns, normalizePaletteSlots, PALETTE_SWATCH_GAP, PALETTE_SWATCH_PIXELS, paletteColorRoles, paletteColorsEqual, paletteGridCapacity, paletteMarkerColor, paletteRangeIdsBySlots, paletteSlotRange, repositionPaletteSlots, type PaletteSwatchSize } from '@/core/palette-layout'
 import { readStoredString, removeStoredValue, writeStoredString } from '@/core/panel-preferences'
 import { colorEquals } from '@/core/raster'
 import { builtInPaletteNameKeys } from '@/core/built-in-palettes'
+import { joinDirectoryPath } from '@/core/document-files'
+import { RECENT_EXPORTS_CHANGED_EVENT, recordRecentExportPath } from '@/core/export-settings'
+import { loadEditorPreferences } from '@/core/file-preferences'
 import { useWorkspace, type DocumentSession } from '@/store/workspace'
 import { useI18n } from '@/components/I18nProvider'
 import { PixelCloseIcon as X, PixelUtilityIcon } from '@/components/PixelUtilityIcon'
 
 const PALETTE_SWATCH_SIZE_STORAGE_KEY = 'moonsprite.palette-swatch-size'
+const PALETTE_SWATCH_SIZE_ORDER: PaletteSwatchSize[] = ['tiny', 'small', 'medium', 'large', 'huge']
+const PALETTE_SWATCH_SIZE_LABEL_KEYS = {
+  tiny: 'palette.size.tiny',
+  small: 'palette.size.small',
+  medium: 'palette.size.medium',
+  large: 'palette.size.large',
+  huge: 'palette.size.huge'
+} as const
 
 export function PalettePanel({ session, docked = false, onDockDragStart, onPanelContextMenu, onFloatingDock }: { session: DocumentSession } & DockDragProps) {
   const { t } = useI18n()
@@ -46,17 +57,42 @@ export function PalettePanel({ session, docked = false, onDockDragStart, onPanel
   const paletteContextRef = useRef<HTMLSpanElement>(null)
   const [paletteActionsPopoverPosition, setPaletteActionsPopoverPosition] = useState({ left: 8, top: 8 })
   const [libraryPopoverPosition, setLibraryPopoverPosition] = useState({ left: 8, top: 8 })
-  const dragRef = useRef<{ ids: number[]; baseOrder: number[]; previewOrder: number[]; clickedId: number; anchorOffset: number; pointerId: number; element: HTMLButtonElement; startX: number; startY: number; moved: boolean; collapseOnClick: boolean; target: { id: number; insertAfter: boolean } | null } | null>(null)
+  const dragRef = useRef<{ ids: number[]; baseSlots: Array<number | null>; previewSlots: Array<number | null>; columns: number; clickedId: number; pointerId: number; element: HTMLElement; startX: number; startY: number; moved: boolean; targetSlot: number | null } | null>(null)
+  const selectionGestureRef = useRef<{ pointerId: number; element: HTMLElement; slots: Array<number | null>; columns: number; startSlot: number; lastSlot: number; startX: number; startY: number; clickedId: number | null; active: boolean; longPressTimer: number | null } | null>(null)
   const [draggingIds, setDraggingIds] = useState<number[]>([])
-  const [focusedSwatchId, setFocusedSwatchId] = useState<number | null>(null)
+  const [focusedSlot, setFocusedSlot] = useState<number | null>(null)
+  const [dropTargetSlot, setDropTargetSlot] = useState<number | null>(null)
   const [paletteEditLocked, setPaletteEditLocked] = useState(() => readStoredString('moonsprite.palette-edit-locked') !== 'false')
-  const [palettePreviewOrder, setPalettePreviewOrder] = useState<number[] | null>(null)
+  const [palettePreviewSlots, setPalettePreviewSlots] = useState<Array<number | null> | null>(null)
+  const [paletteBoxSelection, setPaletteBoxSelection] = useState<{ startSlot: number; endSlot: number } | null>(null)
+  const [gestureSelectedIds, setGestureSelectedIds] = useState<number[] | null>(null)
+  const [selectionOutlineHovered, setSelectionOutlineHovered] = useState(false)
+  const [gridCapacity, setGridCapacity] = useState(() => ({ columns: normalizePaletteColumns(session.document.paletteColumns), rows: 1 }))
   const [swatchSize, setSwatchSize] = useState<PaletteSwatchSize>(() => {
     const stored = readStoredString(PALETTE_SWATCH_SIZE_STORAGE_KEY)
-    return stored === 'small' || stored === 'large' ? stored : 'medium'
+    return PALETTE_SWATCH_SIZE_ORDER.includes(stored as PaletteSwatchSize) ? stored as PaletteSwatchSize : 'medium'
   })
   const ordered = session.document.paletteOrder.map((id) => session.document.palette.find((entry) => entry.id === id)).filter((entry): entry is PaletteEntry => Boolean(entry))
-  const displayedOrdered = (palettePreviewOrder ?? session.document.paletteOrder).map((id) => session.document.palette.find((entry) => entry.id === id)).filter((entry): entry is PaletteEntry => Boolean(entry))
+  const storedColumns = normalizePaletteColumns(session.document.paletteColumns)
+  const storedSlots = normalizePaletteSlots(session.document.palette.map((entry) => entry.id), session.document.paletteOrder, session.document.paletteSlots, storedColumns)
+  const fittedLayout = fitPaletteSlotsToGrid(storedSlots, storedColumns, gridCapacity.columns, gridCapacity.rows)
+  const paletteSlots = fittedLayout.slots
+  const paletteColumns = fittedLayout.columns
+  const displayedSlots = palettePreviewSlots ?? paletteSlots
+  const displayedSelectedIds = gestureSelectedIds ?? session.selectedPaletteIds
+  const boxSelectionRange = paletteBoxSelection ? paletteSlotRange(paletteColumns, paletteBoxSelection.startSlot, paletteBoxSelection.endSlot) : null
+  const selectedSlotIndices = displayedSlots.flatMap((id, index) => id !== null && displayedSelectedIds.includes(id) ? [index] : [])
+  const selectedSlotRange = selectedSlotIndices.length > 0
+    ? selectedSlotIndices.slice(1).reduce((range, slot) => {
+        const point = paletteSlotRange(paletteColumns, slot, slot)
+        return { left: Math.min(range.left, point.left), top: Math.min(range.top, point.top), right: Math.max(range.right, point.right), bottom: Math.max(range.bottom, point.bottom) }
+      }, paletteSlotRange(paletteColumns, selectedSlotIndices[0], selectedSlotIndices[0]))
+    : null
+  const focusedEmptySlotRange = palettePreviewSlots === null && displayedSelectedIds.length === 0 && focusedSlot !== null && displayedSlots[focusedSlot] === null
+    ? paletteSlotRange(paletteColumns, focusedSlot, focusedSlot)
+    : null
+  const displayedSelectionRange = boxSelectionRange ?? focusedEmptySlotRange ?? selectedSlotRange
+  const paletteById = new Map(session.document.palette.map((entry) => [entry.id, entry]))
   const orderedColors = ordered.map((entry) => ({ ...entry.color }))
   const usedColorCount = useMemo(
     () => countUsedPaletteColors(session.document),
@@ -71,11 +107,20 @@ export function PalettePanel({ session, docked = false, onDockDragStart, onPanel
   useLayoutEffect(() => {
     const grid = swatchGridRef.current
     if (!grid) return
-    for (const entry of displayedOrdered) {
-      const swatch = grid.querySelector<HTMLElement>(`[data-palette-id="${entry.id}"]`)
-      swatch?.style.setProperty('--swatch-corner-color', paletteMarkerColor(entry.color))
+    const updateCapacity = (): void => {
+      if (grid.clientWidth <= 0 || grid.clientHeight <= 0) return
+      const next = paletteGridCapacity(grid.clientWidth, grid.clientHeight, PALETTE_SWATCH_PIXELS[swatchSize])
+      setGridCapacity((current) => current.columns === next.columns && current.rows === next.rows ? current : next)
     }
-  }, [displayedOrdered, session.revision])
+    updateCapacity()
+    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(updateCapacity)
+    observer?.observe(grid)
+    window.addEventListener('resize', updateCapacity)
+    return () => {
+      observer?.disconnect()
+      window.removeEventListener('resize', updateCapacity)
+    }
+  }, [session.document.id, swatchSize])
 
   const refreshPalettes = async (preferredId?: string): Promise<void> => {
     setPaletteLoading(true)
@@ -150,87 +195,210 @@ export function PalettePanel({ session, docked = false, onDockDragStart, onPanel
     const grid = swatchGridRef.current
     const gridBounds = grid?.getBoundingClientRect()
     if (!grid || !gridBounds || clientX < gridBounds.left || clientX > gridBounds.right || clientY < gridBounds.top || clientY > gridBounds.bottom) return null
-    const swatches = Array.from(grid.querySelectorAll<HTMLElement>('[data-palette-id]'))
-    for (let index = 0; index < swatches.length; index += 1) {
-      const swatch = swatches[index]
+    const swatches = Array.from(grid.querySelectorAll<HTMLElement>('[data-palette-slot]'))
+    for (const swatch of swatches) {
       const bounds = swatch.getBoundingClientRect()
-      if (clientX >= bounds.left && clientX <= bounds.right && clientY >= bounds.top && clientY <= bounds.bottom) return index
+      if (clientX >= bounds.left && clientX <= bounds.right && clientY >= bounds.top && clientY <= bounds.bottom) return Number(swatch.dataset.paletteSlot)
     }
     return null
   }
-  const beginPaletteDrag = (event: React.PointerEvent<HTMLButtonElement>, id: number): void => {
+  const pointerHitsPaletteSelectionOutline = (clientX: number, clientY: number): boolean => {
+    const outline = swatchGridRef.current?.querySelector<HTMLElement>('[data-palette-selection-outline]')
+    if (!outline) return false
+    const bounds = outline.getBoundingClientRect()
+    if (bounds.width <= 0 || bounds.height <= 0) return false
+    const tolerance = 6
+    const inside = clientX >= bounds.left - tolerance && clientX <= bounds.right + tolerance && clientY >= bounds.top - tolerance && clientY <= bounds.bottom + tolerance
+    return inside && (Math.abs(clientX - bounds.left) <= tolerance || Math.abs(bounds.right - clientX) <= tolerance || Math.abs(clientY - bounds.top) <= tolerance || Math.abs(bounds.bottom - clientY) <= tolerance)
+  }
+  const nearestSelectedPaletteId = (clientX: number, clientY: number): number | null => {
+    const selected = new Set(session.selectedPaletteIds)
+    const elements = Array.from(swatchGridRef.current?.querySelectorAll<HTMLElement>('[data-palette-id]') ?? [])
+      .filter((element) => selected.has(Number(element.dataset.paletteId)))
+    let nearest: { id: number; distance: number } | null = null
+    for (const element of elements) {
+      const bounds = element.getBoundingClientRect()
+      const distance = (clientX - (bounds.left + bounds.width / 2)) ** 2 + (clientY - (bounds.top + bounds.height / 2)) ** 2
+      if (!nearest || distance < nearest.distance) nearest = { id: Number(element.dataset.paletteId), distance }
+    }
+    return nearest?.id ?? (session.paletteSelectionId !== null && selected.has(session.paletteSelectionId) ? session.paletteSelectionId : session.selectedPaletteIds[0] ?? null)
+  }
+  const startPaletteMove = (event: React.PointerEvent<HTMLElement>, clickedId: number): void => {
+    const grid = swatchGridRef.current
+    if (!grid) return
+    const ids = [...session.selectedPaletteIds]
+    const baseSlots = [...paletteSlots]
+    dragRef.current = { ids, baseSlots, previewSlots: baseSlots, columns: paletteColumns, clickedId, pointerId: event.pointerId, element: grid, startX: event.clientX, startY: event.clientY, moved: false, targetSlot: null }
+    grid.setPointerCapture?.(event.pointerId)
+    setSelectionOutlineHovered(true)
+    event.preventDefault()
+  }
+  const beginPaletteOutlineDrag = (event: React.PointerEvent<HTMLDivElement>): void => {
+    if (event.button !== 0 || event.shiftKey || event.ctrlKey || event.metaKey || !pointerHitsPaletteSelectionOutline(event.clientX, event.clientY)) return
+    const clickedId = nearestSelectedPaletteId(event.clientX, event.clientY)
+    if (clickedId === null) return
+    startPaletteMove(event, clickedId)
+    event.stopPropagation()
+  }
+  const beginPaletteDrag = (event: React.PointerEvent<HTMLButtonElement>, slotIndex: number, id: number | null): void => {
+    event.currentTarget.focus({ preventScroll: true })
+    setFocusedSlot(slotIndex)
     if (event.button === 2) {
-      const color = session.document.palette.find((entry) => entry.id === id)?.color
-      if (color) {
-        event.currentTarget.focus({ preventScroll: true })
-        setFocusedSwatchId(id)
+      const color = id === null ? null : session.document.palette.find((entry) => entry.id === id)?.color
+      if (color && id !== null) {
         store.selectSecondaryPaletteColor(id)
       }
       return
     }
     if (event.button !== 0) return
-    event.currentTarget.focus({ preventScroll: true })
-    setFocusedSwatchId(id)
-    const additive = event.shiftKey || event.ctrlKey || event.metaKey
-    const alreadySelected = session.selectedPaletteIds.includes(id)
-    const collapseOnClick = !additive && alreadySelected && session.selectedPaletteIds.length > 1
-    const startsFromHandle = !additive && Boolean((event.target as HTMLElement).closest('.swatch-drag-edge'))
-    if (additive) store.selectPaletteColor(id, true)
-    else if (!alreadySelected || session.selectedPaletteIds.length === 1) store.selectPaletteColor(id)
-    if (!startsFromHandle) {
-      if (collapseOnClick) store.selectPaletteColor(id)
+    if (event.shiftKey) {
+      const anchorId = session.paletteSelectionId
+      if (anchorId !== null) {
+        const anchorSlot = paletteSlots.indexOf(anchorId)
+        const ids = anchorSlot < 0 ? (id === null ? [] : [id]) : paletteRangeIdsBySlots(paletteSlots, paletteColumns, anchorSlot, slotIndex)
+        store.selectPaletteColors(ids, id ?? ids.at(-1) ?? anchorId)
+      } else if (id !== null) store.selectPaletteColor(id)
       return
     }
-    const active = useWorkspace.getState().sessions.find((item) => item.document.id === session.document.id)
-    const ids = active?.selectedPaletteIds.includes(id) ? [...active.selectedPaletteIds] : [id]
-    const baseOrder = [...session.document.paletteOrder]
-    const moving = baseOrder.filter((entryId) => ids.includes(entryId))
-    dragRef.current = { ids, baseOrder, previewOrder: baseOrder, clickedId: id, anchorOffset: Math.max(0, moving.indexOf(id)), pointerId: event.pointerId, element: event.currentTarget, startX: event.clientX, startY: event.clientY, moved: false, collapseOnClick, target: null }
-    event.currentTarget.setPointerCapture(event.pointerId)
+    if (event.ctrlKey || event.metaKey) {
+      if (id !== null) store.selectPaletteColor(id, true)
+      return
+    }
+    if (id === null) setGestureSelectedIds([])
+    const captureTarget = swatchGridRef.current ?? event.currentTarget
+    const gesture = { pointerId: event.pointerId, element: captureTarget, slots: [...paletteSlots], columns: paletteColumns, startSlot: slotIndex, lastSlot: slotIndex, startX: event.clientX, startY: event.clientY, clickedId: id, active: false, longPressTimer: null as number | null }
+    gesture.longPressTimer = window.setTimeout(() => {
+      if (selectionGestureRef.current !== gesture) return
+      gesture.active = true
+      gesture.longPressTimer = null
+      const ids = paletteRangeIdsBySlots(gesture.slots, gesture.columns, gesture.startSlot, gesture.lastSlot)
+      setPaletteBoxSelection({ startSlot: gesture.startSlot, endSlot: gesture.lastSlot })
+      setGestureSelectedIds(ids)
+    }, 360)
+    selectionGestureRef.current = gesture
+    captureTarget.setPointerCapture?.(event.pointerId)
+    event.preventDefault()
   }
-  const movePaletteDrag = (event: React.PointerEvent<HTMLButtonElement>): void => {
+  const movePalettePointer = (event: React.PointerEvent<HTMLDivElement>): void => {
     const drag = dragRef.current
-    if (!drag) return
-    if (!drag.moved && Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY) < 1) return
-    if (!drag.moved) {
-      drag.moved = true
-      setDraggingIds(drag.ids)
+    if (drag) {
+      if (!drag.moved && Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY) < 1) return
+      if (!drag.moved) {
+        drag.moved = true
+        setDraggingIds(drag.ids)
+      }
+      const pointerSlot = resolvePaletteSlot(event.clientX, event.clientY)
+      if (pointerSlot === null) return
+      const preview = repositionPaletteSlots(drag.baseSlots, drag.ids, pointerSlot, drag.clickedId, drag.columns)
+      drag.targetSlot = pointerSlot
+      setDropTargetSlot(pointerSlot)
+      if (preview.length === drag.previewSlots.length && preview.every((entryId, index) => entryId === drag.previewSlots[index])) return
+      drag.previewSlots = preview
+      setPalettePreviewSlots(preview)
+      return
+    }
+    const gesture = selectionGestureRef.current
+    if (!gesture || gesture.pointerId !== event.pointerId) {
+      setSelectionOutlineHovered(pointerHitsPaletteSelectionOutline(event.clientX, event.clientY))
+      return
     }
     const pointerSlot = resolvePaletteSlot(event.clientX, event.clientY)
-    if (pointerSlot === null) return
-    const preview = reorderPalettePreview(drag.baseOrder, drag.ids, pointerSlot - drag.anchorOffset)
-    if (preview.every((id, index) => id === drag.previewOrder[index])) return
-    drag.previewOrder = preview
-    drag.target = paletteReorderTarget(drag.baseOrder, drag.ids, preview)
-    setPalettePreviewOrder(preview)
+    if (pointerSlot === null || pointerSlot === gesture.lastSlot) return
+    gesture.lastSlot = pointerSlot
+    if (!gesture.active) return
+    setPaletteBoxSelection({ startSlot: gesture.startSlot, endSlot: pointerSlot })
+    setGestureSelectedIds(paletteRangeIdsBySlots(gesture.slots, gesture.columns, gesture.startSlot, pointerSlot))
+  }
+  const handlePaletteWheel = (event: React.WheelEvent<HTMLDivElement>): void => {
+    if (event.ctrlKey) {
+      const delta = Math.abs(event.deltaY) >= Math.abs(event.deltaX) ? event.deltaY : event.deltaX
+      if (delta === 0) return
+      const currentIndex = PALETTE_SWATCH_SIZE_ORDER.indexOf(swatchSize)
+      const nextIndex = Math.max(0, Math.min(PALETTE_SWATCH_SIZE_ORDER.length - 1, currentIndex + (delta < 0 ? 1 : -1)))
+      if (nextIndex !== currentIndex) chooseSwatchSize(PALETTE_SWATCH_SIZE_ORDER[nextIndex])
+      event.preventDefault()
+      return
+    }
+    if (!event.altKey) return
+    const delta = Math.abs(event.deltaX) > Math.abs(event.deltaY) ? event.deltaX : event.deltaY
+    if (delta === 0) return
+    event.currentTarget.scrollLeft += delta
+    event.preventDefault()
+  }
+  const clearPaletteFocus = (event: React.FocusEvent<HTMLDivElement>): void => {
+    if (event.relatedTarget instanceof Node && event.currentTarget.contains(event.relatedTarget)) return
+    setFocusedSlot(null)
+    setPaletteBoxSelection(null)
+    setGestureSelectedIds(null)
+    useWorkspace.getState().selectPaletteColors([], -1)
   }
   const finishPaletteDrag = (): void => {
     const drag = dragRef.current
     dragRef.current = null
-    if (drag?.element.hasPointerCapture(drag.pointerId)) drag.element.releasePointerCapture(drag.pointerId)
-    if (drag?.moved && drag.target) useWorkspace.getState().reorderPaletteColors(drag.ids, drag.target.id, drag.target.insertAfter)
-    else if (drag?.collapseOnClick) useWorkspace.getState().selectPaletteColor(drag.clickedId)
+    if (drag?.element.hasPointerCapture?.(drag.pointerId)) drag.element.releasePointerCapture?.(drag.pointerId)
+    if (drag?.moved && drag.targetSlot !== null) useWorkspace.getState().reorderPaletteColors(drag.ids, drag.previewSlots, drag.columns)
     setDraggingIds([])
-    setPalettePreviewOrder(null)
+    setDropTargetSlot(null)
+    setPalettePreviewSlots(null)
+    setSelectionOutlineHovered(false)
+  }
+  const finishPaletteSelection = (canceled = false): void => {
+    const gesture = selectionGestureRef.current
+    selectionGestureRef.current = null
+    if (!gesture) return
+    if (gesture.longPressTimer !== null) window.clearTimeout(gesture.longPressTimer)
+    if (gesture.element.hasPointerCapture?.(gesture.pointerId)) gesture.element.releasePointerCapture?.(gesture.pointerId)
+    if (!canceled) {
+      if (gesture.active) {
+        const ids = paletteRangeIdsBySlots(gesture.slots, gesture.columns, gesture.startSlot, gesture.lastSlot)
+        const targetId = gesture.slots[gesture.lastSlot]
+        useWorkspace.getState().selectPaletteColors(ids, targetId ?? ids.at(-1) ?? -1)
+      } else if (gesture.clickedId !== null) useWorkspace.getState().selectPaletteColor(gesture.clickedId)
+      else useWorkspace.getState().selectPaletteColors([], -1)
+    }
+    setPaletteBoxSelection(null)
+    setGestureSelectedIds(null)
+  }
+  const finishPalettePointer = (pointerId: number, canceled = false): void => {
+    if (dragRef.current?.pointerId === pointerId) finishPaletteDrag()
+    if (selectionGestureRef.current?.pointerId === pointerId) finishPaletteSelection(canceled)
+  }
+  const addCurrentColorToSlot = (slotIndex: number): void => {
+    const workspace = useWorkspace.getState()
+    workspace.addPaletteColor(session.primaryColor)
+    const active = workspace.sessions.find((item) => item.document.id === session.document.id)
+    const id = active?.paletteSelectionId
+    if (id === null || id === undefined) return
+    const withColor = addPaletteIdToSlots(paletteSlots, id, paletteColumns)
+    const placed = repositionPaletteSlots(withColor, [id], slotIndex, id, paletteColumns)
+    useWorkspace.getState().reorderPaletteColors([id], placed, paletteColumns)
   }
 
   useEffect(() => {
     const finishPointer = (event: PointerEvent): void => {
-      if (dragRef.current?.pointerId === event.pointerId) finishPaletteDrag()
+      finishPalettePointer(event.pointerId)
     }
+    const cancelPointer = (event: PointerEvent): void => { finishPalettePointer(event.pointerId, true) }
     const finishOutside = (event: PointerEvent): void => {
-      if (event.relatedTarget === null && dragRef.current) finishPaletteDrag()
+      if (event.relatedTarget !== null) return
+      if (dragRef.current) finishPaletteDrag()
+      if (selectionGestureRef.current) finishPaletteSelection(true)
     }
-    const finishBlur = (): void => { if (dragRef.current) finishPaletteDrag() }
+    const finishBlur = (): void => {
+      if (dragRef.current) finishPaletteDrag()
+      if (selectionGestureRef.current) finishPaletteSelection(true)
+    }
     window.addEventListener('pointerup', finishPointer, true)
-    window.addEventListener('pointercancel', finishPointer, true)
+    window.addEventListener('pointercancel', cancelPointer, true)
     window.addEventListener('pointerout', finishOutside, true)
     window.addEventListener('blur', finishBlur)
     return () => {
       window.removeEventListener('pointerup', finishPointer, true)
-      window.removeEventListener('pointercancel', finishPointer, true)
+      window.removeEventListener('pointercancel', cancelPointer, true)
       window.removeEventListener('pointerout', finishOutside, true)
       window.removeEventListener('blur', finishBlur)
+      const gesture = selectionGestureRef.current
+      if (gesture?.longPressTimer !== null && gesture?.longPressTimer !== undefined) window.clearTimeout(gesture.longPressTimer)
     }
   }, [])
 
@@ -261,7 +429,10 @@ export function PalettePanel({ session, docked = false, onDockDragStart, onPanel
   }
 
   const applyStoredPalette = (palette: StoredPalette): void => {
-    store.applyPalette(palette.colors)
+    const layout = palette.columns !== undefined && palette.slots !== undefined
+      ? { columns: palette.columns, slots: palette.slots }
+      : undefined
+    store.applyPalette(palette.colors, layout)
     setActivePaletteId(palette.id)
     setSaveName(paletteDisplayName(palette))
     writeStoredString('moonsprite.active-palette-id', palette.id)
@@ -332,7 +503,9 @@ export function PalettePanel({ session, docked = false, onDockDragStart, onPanel
     if (orderedColors.length === 0) { store.setMessage(t('palette.noColorsToSave')); return }
     setOperationBusy(true)
     try {
-      const saved = await window.moonSprite.savePalette(activePalette && !activePalette.builtIn ? activePalette.id : null, saveName.trim() || t('palette.defaultName', { name: session.document.name }), orderedColors)
+      const indexById = new Map(ordered.map((entry, index) => [entry.id, index]))
+      const savedSlots = storedSlots.map((id) => id === null ? null : indexById.get(id) ?? null)
+      const saved = await window.moonSprite.savePalette(activePalette && !activePalette.builtIn ? activePalette.id : null, saveName.trim() || t('palette.defaultName', { name: session.document.name }), orderedColors, storedColumns, savedSlots)
       upsertPalette(saved)
       setSaveOpen(false)
       store.setMessage(t('palette.saved', { name: saved.name, directory: paletteDirectory }))
@@ -348,10 +521,11 @@ export function PalettePanel({ session, docked = false, onDockDragStart, onPanel
     setOperationBusy(true)
     try {
       const safeName = (saveName.trim() || t('palette.defaultName', { name: session.document.name })).replace(/[<>:"/\\|?*]/g, '_')
-      const result = await window.moonSprite.savePaletteImage(`${safeName}.png`)
+      const result = await window.moonSprite.savePaletteImage(joinDirectoryPath(loadEditorPreferences().exportDirectory, `${safeName}.png`))
       if (result.canceled || !result.filePath) return
       const encoded = encodePalettePng(orderedColors)
       await window.moonSprite.writeBinaryAtomic(result.filePath, encoded.bytes)
+      if (recordRecentExportPath(result.filePath)) window.dispatchEvent(new Event(RECENT_EXPORTS_CHANGED_EVENT))
       setSaveOpen(false)
       store.setMessage(t('palette.imageSaved', { path: result.filePath }))
     } catch (error) {
@@ -367,12 +541,46 @@ export function PalettePanel({ session, docked = false, onDockDragStart, onPanel
       <span ref={paletteActionsControlRef} className="palette-actions-control"><button ref={paletteActionsButtonRef} className={paletteActionsOpen ? 'active' : ''} title={t('palette.actions')} aria-label={t('palette.actions')} aria-expanded={paletteActionsOpen} onClick={() => { setPaletteActionsOpen((open) => !open); setLibraryOpen(false) }}><PixelUtilityIcon kind="properties" /></button></span>
       <button className={paletteEditLocked ? '' : 'active'} title={t(paletteEditLocked ? 'palette.unlockEditing' : 'palette.lockEditing')} aria-label={t(paletteEditLocked ? 'palette.unlockEditing' : 'palette.lockEditing')} aria-pressed={!paletteEditLocked} onClick={togglePaletteEditLock}>{paletteEditLocked ? <PixelUtilityIcon kind="lock" /> : <PixelUtilityIcon kind="unlock" />}</button>
     </span><small>{t('palette.colorUsage', { count: ordered.length, usedCount: usedColorCount })}</small></header>
-    <div ref={swatchGridRef} className="swatch-grid" style={{ '--swatch-size': `${PALETTE_SWATCH_PIXELS[swatchSize]}px` } as React.CSSProperties}>{displayedOrdered.map((entry) => { const roles = paletteColorRoles(entry.color, session.primaryColor, session.secondaryColor); const active = session.selectedPaletteIds.includes(entry.id) || roles.primary || roles.secondary; const roleLabel = [roles.primary ? t('palette.foreground') : '', roles.secondary ? t('palette.background') : ''].filter(Boolean).join(t('palette.roleSeparator')); return <span key={entry.id} className="palette-swatch-wrap"><button data-palette-id={entry.id} className={`swatch ${focusedSwatchId === entry.id ? 'focused' : ''} ${roles.primary ? 'primary' : ''} ${roles.secondary ? 'secondary' : ''} ${entry.color.a === 0 ? 'transparent' : ''} ${draggingIds.includes(entry.id) ? 'dragging' : ''}`} title={`${entry.name} ${rgbaHex(entry.color)}${roleLabel ? ` · ${roleLabel}` : ''}`} aria-label={`${entry.name} ${rgbaHex(entry.color)}${roleLabel ? ` ${roleLabel}` : ''}`} aria-pressed={session.selectedPaletteIds.includes(entry.id)} style={{ '--swatch-color': colorCss(entry.color) } as React.CSSProperties} onContextMenu={(event) => event.preventDefault()} onPointerDown={(event) => beginPaletteDrag(event, entry.id)} onBlur={() => setFocusedSwatchId((current) => current === entry.id ? null : current)} onPointerMove={movePaletteDrag} onPointerUp={finishPaletteDrag} onPointerCancel={finishPaletteDrag}>{active && <span className="swatch-drag-edges" aria-hidden="true"><i className="swatch-drag-edge edge-n" /><i className="swatch-drag-edge edge-e" /><i className="swatch-drag-edge edge-s" /><i className="swatch-drag-edge edge-w" /></span>}</button></span> })}</div>
+    <div
+      ref={swatchGridRef}
+      className={`swatch-grid component-scrollbar ${selectionOutlineHovered ? 'selection-outline-hovered' : ''}`}
+      style={{ '--swatch-size': `${PALETTE_SWATCH_PIXELS[swatchSize]}px`, '--palette-swatch-gap': `${PALETTE_SWATCH_GAP}px`, '--palette-columns': paletteColumns } as React.CSSProperties}
+      onPointerDownCapture={beginPaletteOutlineDrag}
+      onPointerMove={movePalettePointer}
+      onPointerLeave={() => { if (!dragRef.current && !selectionGestureRef.current) setSelectionOutlineHovered(false) }}
+      onPointerUp={(event) => finishPalettePointer(event.pointerId)}
+      onPointerCancel={(event) => finishPalettePointer(event.pointerId, true)}
+      onWheel={handlePaletteWheel}
+      onBlur={clearPaletteFocus}
+    >
+      {displayedSlots.map((id, slotIndex) => {
+        const entry = id === null ? null : paletteById.get(id) ?? null
+        const roles = entry ? paletteColorRoles(entry.color, session.primaryColor, session.secondaryColor) : { primary: false, secondary: false }
+        const selected = Boolean(entry && displayedSelectedIds.includes(entry.id))
+        const roleLabel = [roles.primary ? t('palette.foreground') : '', roles.secondary ? t('palette.background') : ''].filter(Boolean).join(t('palette.roleSeparator'))
+        const label = entry
+          ? `${entry.name} ${rgbaHex(entry.color)}${roleLabel ? ` · ${roleLabel}` : ''}`
+          : t('palette.emptySlot', { index: slotIndex + 1 })
+        return <span key={slotIndex} className="palette-swatch-wrap"><button
+          data-palette-slot={slotIndex}
+          data-palette-id={entry?.id}
+          className={`swatch palette-slot ${entry ? 'occupied' : 'empty'} ${focusedSlot === slotIndex ? 'focused' : ''} ${selected ? 'selected' : ''} ${roles.primary ? 'primary' : ''} ${roles.secondary ? 'secondary' : ''} ${entry?.color.a === 0 ? 'transparent' : ''} ${entry && draggingIds.includes(entry.id) ? 'dragging' : ''} ${dropTargetSlot === slotIndex ? 'drop-target' : ''}`}
+          title={label}
+          aria-label={label}
+          aria-pressed={selected}
+          style={entry ? { '--swatch-color': colorCss(entry.color), '--swatch-corner-color': paletteMarkerColor(entry.color) } as React.CSSProperties : undefined}
+          onContextMenu={(event) => event.preventDefault()}
+          onPointerDown={(event) => beginPaletteDrag(event, slotIndex, entry?.id ?? null)}
+          onDoubleClick={(event) => { event.preventDefault(); event.stopPropagation(); addCurrentColorToSlot(slotIndex) }}
+        /></span>
+      })}
+      {displayedSelectionRange && <span data-palette-selection-outline className="palette-selection-box" aria-hidden="true" style={{ '--palette-selection-left': displayedSelectionRange.left, '--palette-selection-top': displayedSelectionRange.top, '--palette-selection-width': displayedSelectionRange.right - displayedSelectionRange.left + 1, '--palette-selection-height': displayedSelectionRange.bottom - displayedSelectionRange.top + 1 } as React.CSSProperties} />}
+    </div>
     {floating.style && <PanelResizeHandles onResize={floating.startResize} />}
   </section>
   <FloatingDockPreview style={floating.dockPreview} />
   {libraryOpen && createPortal(<span ref={libraryPopoverRef} className="palette-library-popover" role="menu" aria-label={t('palette.localPalettes')} style={libraryPopoverPosition}>{paletteLoading ? <span className="palette-library-state">{t('palette.loading')}</span> : paletteFiles.length === 0 ? <span className="palette-library-state">{t('palette.empty')}</span> : paletteFiles.map((palette) => <button key={palette.id} type="button" role="menuitem" className={activePaletteId === palette.id ? 'selected' : ''} title={t(palette.builtIn ? 'palette.builtInHint' : 'palette.userDeleteHint')} onClick={() => applyStoredPalette(palette)} onContextMenu={(event) => { event.preventDefault(); if (palette.builtIn) { store.setMessage(t('palette.builtInDeleteBlocked')); setPaletteContext(null); return } setPaletteContext({ id: palette.id, x: Math.min(event.clientX, window.innerWidth - 150), y: Math.min(event.clientY, window.innerHeight - 42) }) }}><span className="palette-library-name">{paletteDisplayName(palette)}{palette.builtIn && <PixelUtilityIcon kind="lock" />}</span><span className="palette-library-swatches" aria-hidden="true">{palette.colors.map((color, index) => <i key={index} style={{ background: colorCss(color) }} />)}</span></button>)}<button type="button" role="menuitem" className="palette-folder-action" onClick={() => { void window.moonSprite.openPaletteFolder(); setLibraryOpen(false) }}><PixelUtilityIcon kind="folderOpen" /><span>{t('palette.openUserFolder')}</span></button></span>, document.body)}
-  {paletteActionsOpen && createPortal(<span ref={paletteActionsPopoverRef} className="palette-actions-popover" role="menu" aria-label={t('palette.actions')} style={paletteActionsPopoverPosition}><button type="button" role="menuitem" onClick={openExtractDialog}><PixelUtilityIcon kind="extractColors" /><span>{t('palette.extractColors')}</span></button><span className="palette-actions-divider" /><section aria-label={t('palette.swatchSize')}><span>{t('palette.swatchSize')}</span><div>{(['small', 'medium', 'large'] as PaletteSwatchSize[]).map((size) => <button key={size} type="button" role="menuitemradio" aria-checked={swatchSize === size} className={swatchSize === size ? 'selected' : ''} title={t('palette.pixels', { count: PALETTE_SWATCH_PIXELS[size] })} onClick={() => chooseSwatchSize(size)}><i style={{ width: Math.round(PALETTE_SWATCH_PIXELS[size] * .45), height: Math.round(PALETTE_SWATCH_PIXELS[size] * .45) }} /><span>{t(size === 'small' ? 'palette.size.small' : size === 'medium' ? 'palette.size.medium' : 'palette.size.large')}</span></button>)}</div></section><span className="palette-actions-divider" /><button type="button" role="menuitem" onClick={openSaveDialog}><PixelUtilityIcon kind="save" /><span>{t('palette.savePalette')}</span></button></span>, document.body)}
+  {paletteActionsOpen && createPortal(<span ref={paletteActionsPopoverRef} className="palette-actions-popover context-menu" role="menu" aria-label={t('palette.actions')} style={paletteActionsPopoverPosition}><button type="button" className="context-menu-item" role="menuitem" onClick={openExtractDialog}><PixelUtilityIcon kind="extractColors" /><span className="palette-menu-label">{t('palette.extractColors')}</span></button><span className="context-menu-divider" />{PALETTE_SWATCH_SIZE_ORDER.map((size) => <button key={size} type="button" className="context-menu-item" role="menuitemradio" aria-checked={swatchSize === size} title={t('palette.pixels', { count: PALETTE_SWATCH_PIXELS[size] })} onClick={() => chooseSwatchSize(size)}><span className="menu-check">{swatchSize === size && <PixelUtilityIcon kind="check" />}</span><span className="palette-menu-label">{t(PALETTE_SWATCH_SIZE_LABEL_KEYS[size])}</span></button>)}<span className="context-menu-divider" /><button type="button" className="context-menu-item" role="menuitem" onClick={openSaveDialog}><PixelUtilityIcon kind="save" /><span className="palette-menu-label">{t('palette.savePalette')}</span></button></span>, document.body)}
   {paletteContext && createPortal(<span ref={paletteContextRef} className="palette-library-context" role="menu" style={{ left: paletteContext.x, top: paletteContext.y }}><button type="button" role="menuitem" onClick={() => void deleteStoredPalette(paletteContext.id)}><PixelUtilityIcon kind="delete" /><span>{t('palette.deletePalette')}</span></button></span>, document.body)}
   {extractOpen && createPortal(<form ref={extractFloating.ref as React.RefObject<HTMLFormElement>} className="palette-operation-dialog" style={extractFloating.style} role="dialog" aria-labelledby="palette-extract-title" onSubmit={(event) => { event.preventDefault(); void extractFromImage() }} onPointerDown={extractFloating.bringToFront}><header onPointerDown={extractFloating.startDrag}><div><span className="eyebrow">PALETTE</span><h2 id="palette-extract-title">{t('palette.extractTitle')}</h2></div><button type="button" className="icon-button" aria-label={t('common.close')} onClick={() => setExtractOpen(false)}><X size={16} /></button></header><div className="palette-dialog-body"><fieldset><legend>{t('palette.extractMethod')}</legend><label><input type="radio" name="extract-mode" checked={extractMode === 'create'} onChange={() => setExtractMode('create')} /><span><strong>{t('palette.extract.create')}</strong><small>{t('palette.extract.createHint')}</small></span></label><label><input type="radio" name="extract-mode" checked={extractMode === 'replace'} onChange={() => setExtractMode('replace')} /><span><strong>{t('palette.extract.replace', { name: activePalette ? `“${paletteDisplayName(activePalette)}”` : '' })}</strong><small>{t('palette.extract.replaceHint')}</small></span></label><label><input type="radio" name="extract-mode" checked={extractMode === 'append'} onChange={() => setExtractMode('append')} /><span><strong>{t('palette.extract.append')}</strong><small>{t('palette.extract.appendHint')}</small></span></label></fieldset><div className="palette-form-grid"><label>{t('palette.extract.limit')}<NumberInput min={1} max={4096} value={extractLimit} onValueChange={setExtractLimit} /></label>{extractMode === 'create' && <label>{t('palette.name')}<input value={extractName} onChange={(event) => setExtractName(event.target.value)} /></label>}</div></div><footer><button type="button" className="quiet-button" onClick={() => setExtractOpen(false)}>{t('common.cancel')}</button><button type="submit" className="primary-button" disabled={operationBusy}>{operationBusy ? t('palette.extracting') : t('palette.extractColors')}</button></footer></form>, document.body)}
   {saveOpen && createPortal(<section ref={saveFloating.ref} className="palette-operation-dialog palette-save-dialog" style={saveFloating.style} role="dialog" aria-labelledby="palette-save-title" onPointerDown={saveFloating.bringToFront}><header onPointerDown={saveFloating.startDrag}><div><span className="eyebrow">PALETTE</span><h2 id="palette-save-title">{t('palette.saveTitle')}</h2></div><button type="button" className="icon-button" aria-label={t('common.close')} onClick={() => setSaveOpen(false)}><X size={16} /></button></header><div className="palette-dialog-body"><label className="palette-name-field">{t('palette.name')}<input autoFocus value={saveName} onChange={(event) => setSaveName(event.target.value)} /></label><div className="palette-save-summary"><span className="palette-library-swatches" aria-hidden="true">{orderedColors.slice(0, 24).map((color, index) => <i key={index} style={{ background: colorCss(color) }} />)}</span><strong>{t('palette.colorCount', { count: orderedColors.length })}</strong></div><p>{t('palette.directory', { directory: paletteDirectory })}</p></div><footer><button type="button" className="quiet-button" disabled={operationBusy} onClick={() => void savePaletteAsImage()}><PixelUtilityIcon kind="export" />{t('palette.savePng')}</button><button type="button" className="primary-button" disabled={operationBusy} onClick={() => void savePaletteLocally()}><PixelUtilityIcon kind="save" />{t('palette.saveToApp')}</button></footer></section>, document.body)}

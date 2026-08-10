@@ -125,6 +125,114 @@ export const ellipseSelection = (x: number, y: number, width: number, height: nu
   return { x, y, width: normalizedWidth, height: normalizedHeight, mask }
 }
 
+export const rotatedEllipseSelection = (
+  target: SelectionRect,
+  canvasWidth: number,
+  canvasHeight: number,
+  angle = 0,
+  clipToCanvas = true
+): SelectionMask | null => {
+  const normalizedTarget = { ...target, width: Math.max(1, target.width), height: Math.max(1, target.height) }
+  const bounds = rotatedSelectionBounds(normalizedTarget, angle)
+  const x = clipToCanvas ? Math.max(0, bounds.x) : bounds.x
+  const y = clipToCanvas ? Math.max(0, bounds.y) : bounds.y
+  const right = clipToCanvas ? Math.min(canvasWidth, bounds.x + bounds.width) : bounds.x + bounds.width
+  const bottom = clipToCanvas ? Math.min(canvasHeight, bounds.y + bounds.height) : bounds.y + bounds.height
+  if (right <= x || bottom <= y) return null
+
+  const width = right - x
+  const height = bottom - y
+  const mask = new Uint8Array(width * height)
+  const centerX = normalizedTarget.x + normalizedTarget.width / 2
+  const centerY = normalizedTarget.y + normalizedTarget.height / 2
+  const radiusX = Math.max(0.5, normalizedTarget.width / 2)
+  const radiusY = Math.max(0.5, normalizedTarget.height / 2)
+  const radians = angle * Math.PI / 180
+  const cosine = snapRotationValue(Math.cos(-radians))
+  const sine = snapRotationValue(Math.sin(-radians))
+  let selected = 0
+
+  for (let destinationY = y; destinationY < bottom; destinationY += 1) {
+    for (let destinationX = x; destinationX < right; destinationX += 1) {
+      const offsetX = destinationX + 0.5 - centerX
+      const offsetY = destinationY + 0.5 - centerY
+      const localX = offsetX * cosine - offsetY * sine
+      const localY = offsetX * sine + offsetY * cosine
+      const normalizedX = localX / radiusX
+      const normalizedY = localY / radiusY
+      if ((normalizedX * normalizedX) + (normalizedY * normalizedY) > 1) continue
+      mask[(destinationY - y) * width + destinationX - x] = 1
+      selected += 1
+    }
+  }
+
+  return selected > 0 ? { x, y, width, height, mask } : null
+}
+
+export const rotatedRectSelection = (
+  target: SelectionRect,
+  canvasWidth: number,
+  canvasHeight: number,
+  angle = 0,
+  clipToCanvas = true
+): SelectionMask | null => {
+  const normalizedTarget = { ...target, width: Math.max(1, target.width), height: Math.max(1, target.height) }
+  const normalizedAngle = ((angle % 360) + 360) % 360
+  const bounds = rotatedSelectionBounds(normalizedTarget, angle)
+  const x = clipToCanvas ? Math.max(0, bounds.x) : bounds.x
+  const y = clipToCanvas ? Math.max(0, bounds.y) : bounds.y
+  const right = clipToCanvas ? Math.min(canvasWidth, bounds.x + bounds.width) : bounds.x + bounds.width
+  const bottom = clipToCanvas ? Math.min(canvasHeight, bounds.y + bounds.height) : bounds.y + bounds.height
+  if (right <= x || bottom <= y) return null
+  if (normalizedAngle < 1e-9 || Math.abs(normalizedAngle - 360) < 1e-9) return { x, y, width: right - x, height: bottom - y }
+
+  const width = right - x
+  const height = bottom - y
+  const mask = new Uint8Array(width * height)
+  const centerX = normalizedTarget.x + normalizedTarget.width / 2
+  const centerY = normalizedTarget.y + normalizedTarget.height / 2
+  const halfWidth = normalizedTarget.width / 2
+  const halfHeight = normalizedTarget.height / 2
+  const radians = angle * Math.PI / 180
+  const cosine = snapRotationValue(Math.cos(-radians))
+  const sine = snapRotationValue(Math.sin(-radians))
+  let selected = 0
+
+  for (let destinationY = y; destinationY < bottom; destinationY += 1) {
+    for (let destinationX = x; destinationX < right; destinationX += 1) {
+      const offsetX = destinationX + 0.5 - centerX
+      const offsetY = destinationY + 0.5 - centerY
+      const localX = offsetX * cosine - offsetY * sine
+      const localY = offsetX * sine + offsetY * cosine
+      if (Math.abs(localX) >= halfWidth - 1e-9 || Math.abs(localY) >= halfHeight - 1e-9) continue
+      mask[(destinationY - y) * width + destinationX - x] = 1
+      selected += 1
+    }
+  }
+
+  if (normalizedTarget.width > 2 && normalizedTarget.height > 2 && Math.abs(normalizedAngle % 90) > 1e-9) {
+    const cornerTips: number[] = []
+    for (let offsetY = 0; offsetY < height; offsetY += 1) {
+      for (let offsetX = 0; offsetX < width; offsetX += 1) {
+        const index = offsetY * width + offsetX
+        if (mask[index] !== 1) continue
+        let neighbors = 0
+        if (offsetX > 0 && mask[index - 1] === 1) neighbors += 1
+        if (offsetX + 1 < width && mask[index + 1] === 1) neighbors += 1
+        if (offsetY > 0 && mask[index - width] === 1) neighbors += 1
+        if (offsetY + 1 < height && mask[index + width] === 1) neighbors += 1
+        if (neighbors <= 1) cornerTips.push(index)
+      }
+    }
+    for (const index of cornerTips) {
+      mask[index] = 0
+      selected -= 1
+    }
+  }
+
+  return selected > 0 ? { x, y, width, height, mask } : null
+}
+
 export const maskFromPoints = (points: Array<{ x: number; y: number }>): SelectionMask | null => {
   if (points.length === 0) return null
   let minX = points[0].x; let maxX = points[0].x; let minY = points[0].y; let maxY = points[0].y
@@ -173,10 +281,95 @@ export interface SelectionShearTransform {
   amount: number
 }
 
+const transformedSelectionPoint = (
+  target: SelectionRect,
+  normalizedX: number,
+  normalizedY: number,
+  angle = 0,
+  shear?: SelectionShearTransform
+): { x: number; y: number } => {
+  let destinationX = target.x + normalizedX * target.width
+  let destinationY = target.y + normalizedY * target.height
+  if (shear?.axis === 'x') destinationX += shear.amount * (shear.edge === 'n' ? 1 - normalizedY : normalizedY)
+  else if (shear?.axis === 'y') destinationY += shear.amount * (shear.edge === 'w' ? 1 - normalizedX : normalizedX)
+  const radians = angle * Math.PI / 180
+  const cosine = snapRotationValue(Math.cos(radians))
+  const sine = snapRotationValue(Math.sin(radians))
+  const centerX = target.x + target.width / 2
+  const centerY = target.y + target.height / 2
+  const offsetX = destinationX - centerX
+  const offsetY = destinationY - centerY
+  return {
+    x: snapRotationValue(centerX + offsetX * cosine - offsetY * sine),
+    y: snapRotationValue(centerY + offsetX * sine + offsetY * cosine)
+  }
+}
+
+export const inverseTransformedSelectionPoint = (
+  target: SelectionRect,
+  point: { x: number; y: number },
+  angle = 0,
+  shear?: SelectionShearTransform
+): { x: number; y: number } => {
+  const radians = angle * Math.PI / 180
+  const cosine = snapRotationValue(Math.cos(radians))
+  const sine = snapRotationValue(Math.sin(radians))
+  const centerX = target.x + target.width / 2
+  const centerY = target.y + target.height / 2
+  const offsetX = point.x - centerX
+  const offsetY = point.y - centerY
+  let localX = centerX + offsetX * cosine + offsetY * sine
+  let localY = centerY - offsetX * sine + offsetY * cosine
+  if (shear?.axis === 'x') {
+    const normalizedY = (localY - target.y) / Math.max(1, target.height)
+    localX -= shear.amount * (shear.edge === 'n' ? 1 - normalizedY : normalizedY)
+  } else if (shear?.axis === 'y') {
+    const normalizedX = (localX - target.x) / Math.max(1, target.width)
+    localY -= shear.amount * (shear.edge === 'w' ? 1 - normalizedX : normalizedX)
+  }
+  return { x: snapRotationValue(localX), y: snapRotationValue(localY) }
+}
+
+export const transformedSelectionControlPoints = (
+  target: SelectionRect,
+  angle = 0,
+  shear?: SelectionShearTransform
+): Array<{ x: number; y: number }> => [
+  [0, 0], [0.5, 0], [1, 0],
+  [0, 0.5], [1, 0.5],
+  [0, 1], [0.5, 1], [1, 1]
+].map(([normalizedX, normalizedY]) => transformedSelectionPoint(target, normalizedX, normalizedY, angle, shear))
+
 export const transformedSelectionBounds = (target: SelectionRect, angle = 0, shear?: SelectionShearTransform): SelectionRect => {
   if (!shear || shear.amount === 0) return rotatedSelectionBounds(target, angle)
-  if (shear.axis === 'x') return { ...target, x: target.x + Math.min(0, shear.amount), width: target.width + Math.abs(shear.amount) }
-  return { ...target, y: target.y + Math.min(0, shear.amount), height: target.height + Math.abs(shear.amount) }
+  const radians = angle * Math.PI / 180
+  const cosine = snapRotationValue(Math.cos(radians))
+  const sine = snapRotationValue(Math.sin(radians))
+  const centerX = target.x + target.width / 2
+  const centerY = target.y + target.height / 2
+  const corners = [
+    { x: target.x, y: target.y, axisPosition: 0 },
+    { x: target.x + target.width, y: target.y, axisPosition: 0 },
+    { x: target.x + target.width, y: target.y + target.height, axisPosition: 1 },
+    { x: target.x, y: target.y + target.height, axisPosition: 1 }
+  ].map((corner) => {
+    let shearedX = corner.x
+    let shearedY = corner.y
+    if (shear.axis === 'x') shearedX += shear.amount * (shear.edge === 'n' ? 1 - corner.axisPosition : corner.axisPosition)
+    else {
+      const horizontalPosition = corner.x === target.x ? 0 : 1
+      shearedY += shear.amount * (shear.edge === 'w' ? 1 - horizontalPosition : horizontalPosition)
+    }
+    return {
+      x: snapRotationValue(centerX + (shearedX - centerX) * cosine - (shearedY - centerY) * sine),
+      y: snapRotationValue(centerY + (shearedX - centerX) * sine + (shearedY - centerY) * cosine)
+    }
+  })
+  const x = Math.floor(Math.min(...corners.map((corner) => corner.x)))
+  const y = Math.floor(Math.min(...corners.map((corner) => corner.y)))
+  const right = Math.ceil(Math.max(...corners.map((corner) => corner.x)))
+  const bottom = Math.ceil(Math.max(...corners.map((corner) => corner.y)))
+  return { x, y, width: right - x, height: bottom - y }
 }
 
 export const transformedSelectionSourcePoint = (
@@ -224,6 +417,21 @@ export const transformedSelectionSourcePoint = (
   return selectionContains(source, sourceX, sourceY) ? { x: sourceX, y: sourceY } : null
 }
 
+export const transformedSelectionDestinationPoint = (
+  source: SelectionMask,
+  target: SelectionRect,
+  sourceX: number,
+  sourceY: number,
+  angle = 0,
+  shear?: SelectionShearTransform
+): { x: number; y: number } => {
+  let normalizedX = (sourceX + 0.5 - source.x) / source.width
+  let normalizedY = (sourceY + 0.5 - source.y) / source.height
+  if (target.flipHorizontal) normalizedX = 1 - normalizedX
+  if (target.flipVertical) normalizedY = 1 - normalizedY
+  return transformedSelectionPoint(target, normalizedX, normalizedY, angle, shear)
+}
+
 export const transformSelectionMask = (
   source: SelectionMask,
   target: SelectionRect,
@@ -245,9 +453,68 @@ export const transformSelectionMask = (
 
   const mask = new Uint8Array(width * height)
   let selected = 0
+  const normalizedAngle = ((angle % 360) + 360) % 360
+  const pixelPreservingRotation = Boolean(
+    normalizedAngle !== 0
+    && !shear
+    && !target.flipHorizontal
+    && !target.flipVertical
+    && target.width === source.width
+    && target.height === source.height
+  )
+  if (pixelPreservingRotation) {
+    for (let localY = 0; localY < source.height; localY += 1) {
+      for (let localX = 0; localX < source.width; localX += 1) {
+        if (!selectionContains(source, source.x + localX, source.y + localY)) continue
+        const destination = transformedSelectionDestinationPoint(source, target, source.x + localX, source.y + localY, angle)
+        const destinationX = Math.floor(destination.x)
+        const destinationY = Math.floor(destination.y)
+        if (destinationX < x || destinationY < y || destinationX >= right || destinationY >= bottom) continue
+        const destinationOffset = (destinationY - y) * width + destinationX - x
+        if (mask[destinationOffset] === 1) continue
+        mask[destinationOffset] = 1
+        selected += 1
+      }
+    }
+
+    const inverseCandidates = new Uint8Array(width * height)
+    for (let destinationY = y; destinationY < bottom; destinationY += 1) {
+      for (let destinationX = x; destinationX < right; destinationX += 1) {
+        if (!transformedSelectionSourcePoint(source, target, destinationX, destinationY, angle)) continue
+        const destinationOffset = (destinationY - y) * width + destinationX - x
+        if (mask[destinationOffset] === 0) inverseCandidates[destinationOffset] = 1
+      }
+    }
+
+    let added = true
+    while (added) {
+      added = false
+      const additions: number[] = []
+      for (let localY = 0; localY < height; localY += 1) {
+        for (let localX = 0; localX < width; localX += 1) {
+          const offset = localY * width + localX
+          if (inverseCandidates[offset] === 0) continue
+          let occupiedNeighbors = 0
+          if (localX > 0 && mask[offset - 1] === 1) occupiedNeighbors += 1
+          if (localX + 1 < width && mask[offset + 1] === 1) occupiedNeighbors += 1
+          if (localY > 0 && mask[offset - width] === 1) occupiedNeighbors += 1
+          if (localY + 1 < height && mask[offset + width] === 1) occupiedNeighbors += 1
+          if (occupiedNeighbors >= 2) additions.push(offset)
+        }
+      }
+      for (const offset of additions) {
+        mask[offset] = 1
+        inverseCandidates[offset] = 0
+        selected += 1
+        added = true
+      }
+    }
+    return selected > 0 ? { x, y, width, height, mask } : null
+  }
   for (let destinationY = y; destinationY < bottom; destinationY += 1) {
     for (let destinationX = x; destinationX < right; destinationX += 1) {
-      if (!transformedSelectionSourcePoint(source, target, destinationX, destinationY, angle, shear)) continue
+      const sourcePoint = transformedSelectionSourcePoint(source, target, destinationX, destinationY, angle, shear)
+      if (!sourcePoint) continue
       mask[(destinationY - y) * width + destinationX - x] = 1
       selected += 1
     }
@@ -269,7 +536,7 @@ export const combineSelection = (current: SelectionMask | null, incoming: Select
   return maskFromPoints(points)
 }
 
-const packedColorMatches = (a: number, b: number, tolerance: number): boolean =>
+export const packedColorMatchesTolerance = (a: number, b: number, tolerance: number): boolean =>
   Math.max(
     Math.abs((a & 0xff) - (b & 0xff)),
     Math.abs(((a >>> 8) & 0xff) - ((b >>> 8) & 0xff)),
@@ -299,7 +566,7 @@ export const magicWandSelection = (document: SpriteDocument, layer: RasterLayer,
     return packedPixels ? packedPixels[localIndex] : palette!.get(layer.pixels[localIndex]) ?? 0
   }
   const target = packedAt(pixelIndex(document.width, startX, startY))
-  const matches = (index: number): boolean => packedColorMatches(packedAt(index), target, normalizedTolerance)
+  const matches = (index: number): boolean => packedColorMatchesTolerance(packedAt(index), target, normalizedTolerance)
   const total = document.width * document.height
   const selected = new Uint8Array(total)
   let minX = document.width; let maxX = -1; let minY = document.height; let maxY = -1

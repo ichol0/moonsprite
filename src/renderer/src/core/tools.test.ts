@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { compositeRegion, createDocument, createLayer, DocumentCompositeCache, getActiveLayer, readLayerColor, readLayerColorAt, resizeDocumentAt, writeLayerColor } from './document'
 import { beginPixelEdit, commitPixelEdit, HistoryStack } from './history'
-import { appendPerfectPixelSegment, applySelectionTransform, applySelectionTranslationPreview, brushMaskOffsets, brushStampAnchor, brushStampDimensions, captureSelectionTransform, clearSelection, fillSelectionOrCanvas, flipLayer, flipSelection, floodFill, floodFillSymmetric, moveSelection, outlinePixelIndices, outlineSelection, paintBrush, paintLine, paintShape, selectionTranslationPreviewEdit } from './tools'
-import { combineSelection, ellipseSelection, lassoSelection, magicWandSelection, rotatedSelectionBounds, selectionBoundarySegments, selectionContains, transformedSelectionBounds, transformSelectionMask } from './selection'
+import { appendPerfectPixelSegment, applySelectionTransform, applySelectionTranslationPreview, brushMaskOffsets, brushStampAnchor, brushStampDimensions, captureSelectionTransform, clearSelection, fillSelectionOrCanvas, flipLayer, flipSelection, floodFill, floodFillSymmetric, moveSelection, outlinePixelIndices, outlineSelection, paintBrush, paintLine, paintShape, rotatedShapePixelPoints, selectionTranslationPreviewEdit, shapePixelPoints } from './tools'
+import { combineSelection, ellipseSelection, lassoSelection, magicWandSelection, rotatedSelectionBounds, selectionBoundarySegments, selectionContains, transformedSelectionBounds, transformedSelectionSourcePoint, transformSelectionMask } from './selection'
 import { resizeDocument } from './document'
 import { createProceduralBrush, createProceduralBrushes, createSelectionBrush, proceduralBrushCoverageAt } from './brushes'
 import { packColor, unpackColor } from './raster'
@@ -193,6 +193,36 @@ describe('pixel tools', () => {
     paintLine(document, layer, divider, 2, 0, 2, 3, 1, blue)
     const fill = floodFill(document, layer, 0, 0, { r: 255, g: 0, b: 0, a: 255 })!
     expect(fill.before.size).toBe(8)
+  })
+
+  it('fills colors within tolerance while preserving contiguous boundaries', () => {
+    const document = createDocument('fill tolerance', 4, 1, 'rgba')
+    const layer = getActiveLayer(document)
+    writeLayerColor(document, layer, 0, { r: 10, g: 20, b: 30, a: 255 })
+    writeLayerColor(document, layer, 1, { r: 13, g: 20, b: 30, a: 255 })
+    writeLayerColor(document, layer, 2, { r: 40, g: 20, b: 30, a: 255 })
+    writeLayerColor(document, layer, 3, { r: 12, g: 20, b: 30, a: 255 })
+
+    floodFill(document, layer, 0, 0, red, null, true, null, 1, undefined, 'solid', 1, 0, 'paint', 3)
+
+    expect(readLayerColorAt(document, layer, 0, 0)).toEqual(red)
+    expect(readLayerColorAt(document, layer, 1, 0)).toEqual(red)
+    expect(readLayerColorAt(document, layer, 2, 0)).toEqual({ r: 40, g: 20, b: 30, a: 255 })
+    expect(readLayerColorAt(document, layer, 3, 0)).toEqual({ r: 12, g: 20, b: 30, a: 255 })
+  })
+
+  it('uses palette colors for indexed non-contiguous fill tolerance', () => {
+    const document = createDocument('indexed fill tolerance', 3, 1, 'indexed')
+    const layer = getActiveLayer(document)
+    writeLayerColor(document, layer, 0, { r: 10, g: 20, b: 30, a: 255 })
+    writeLayerColor(document, layer, 1, { r: 13, g: 20, b: 30, a: 255 })
+    writeLayerColor(document, layer, 2, { r: 30, g: 20, b: 30, a: 255 })
+
+    floodFill(document, layer, 0, 0, red, null, false, null, 1, undefined, 'solid', 1, 0, 'paint', 3)
+
+    expect(readLayerColorAt(document, layer, 0, 0)).toEqual(red)
+    expect(readLayerColorAt(document, layer, 1, 0)).toEqual(red)
+    expect(readLayerColorAt(document, layer, 2, 0)).toEqual({ r: 30, g: 20, b: 30, a: 255 })
   })
 
   it('fills and undoes a region larger than the initial typed fill stack', () => {
@@ -556,6 +586,40 @@ describe('pixel tools', () => {
     expect(shapeEdit.before.size).toBe(3)
   })
 
+  it('replaces only exact foreground-color pixels along an eraser replacement stroke', () => {
+    const document = createDocument('eraser color replacement', 4, 1, 'rgba')
+    const layer = getActiveLayer(document)
+    const background = { r: 245, g: 220, b: 180, a: 255 }
+    writeLayerColor(document, layer, 0, blue)
+    writeLayerColor(document, layer, 1, red)
+    writeLayerColor(document, layer, 2, blue)
+    writeLayerColor(document, layer, 3, { ...blue, a: 128 })
+    const edit = beginPixelEdit(layer.id)
+
+    paintLine(document, layer, edit, 0, 0, 3, 0, 1, background, null, 'square', 'solid', 1, null, undefined, 0, 'paint', undefined, 'raster', undefined, undefined, { source: blue, target: background })
+
+    expect(readLayerColorAt(document, layer, 0, 0)).toEqual(background)
+    expect(readLayerColorAt(document, layer, 1, 0)).toEqual(red)
+    expect(readLayerColorAt(document, layer, 2, 0)).toEqual(background)
+    expect(readLayerColorAt(document, layer, 3, 0)).toEqual({ ...blue, a: 128 })
+    expect(edit.before.size).toBe(2)
+  })
+
+  it('supports foreground-to-background eraser replacement on indexed layers', () => {
+    const document = createDocument('indexed eraser replacement', 2, 1, 'indexed')
+    const layer = getActiveLayer(document)
+    const background = { r: 16, g: 180, b: 120, a: 255 }
+    writeLayerColor(document, layer, 0, blue)
+    writeLayerColor(document, layer, 1, red)
+    const edit = beginPixelEdit(layer.id)
+
+    paintBrush(document, layer, edit, 0, 0, 2, background, 'square', null, 'solid', 1, null, undefined, 0, 'paint', undefined, undefined, undefined, { source: blue, target: background })
+
+    expect(readLayerColorAt(document, layer, 0, 0)).toEqual(background)
+    expect(readLayerColorAt(document, layer, 1, 0)).toEqual(red)
+    expect(edit.before.size).toBe(1)
+  })
+
   it('draws hollow rectangles and ellipses without filling their centers', () => {
     const document = createDocument('outline shapes', 7, 7, 'rgba')
     const layer = getActiveLayer(document)
@@ -568,6 +632,51 @@ describe('pixel tools', () => {
     paintShape(document, layer, ellipseEdit, { x: 1, y: 1, width: 5, height: 5 }, 'ellipse-outline', blue)
     expect(readLayerColorAt(document, layer, 3, 1).a).toBe(255)
     expect(readLayerColorAt(document, layer, 3, 3).a).toBe(0)
+  })
+
+  it('keeps unrotated shape pixels compatible with the existing rasterizer', () => {
+    const bounds = { x: 3, y: 4, width: 7, height: 5 }
+    for (const kind of ['rectangle', 'rectangle-outline', 'ellipse', 'ellipse-outline'] as const) {
+      expect(rotatedShapePixelPoints(bounds, kind, 20, 20, 0)).toEqual(shapePixelPoints(bounds, kind))
+    }
+  })
+
+  it('commits exactly the same pixels shown by a rotated shape preview', () => {
+    const document = createDocument('rotated shape preview', 24, 24, 'rgba')
+    const layer = getActiveLayer(document)
+    const bounds = { x: 5, y: 7, width: 11, height: 7 }
+    const angle = 37
+    const preview = rotatedShapePixelPoints(bounds, 'rectangle', document.width, document.height, angle)
+    const edit = beginPixelEdit(layer.id)
+
+    paintShape(document, layer, edit, bounds, 'rectangle', blue, null, undefined, undefined, angle)
+
+    expect([...edit.before.keys()].sort((left, right) => left - right)).toEqual(
+      preview.map(({ x, y }) => y * document.width + x).sort((left, right) => left - right)
+    )
+  })
+
+  it('keeps rotated ellipse outlines hollow', () => {
+    const bounds = { x: 6, y: 7, width: 9, height: 7 }
+    const filled = rotatedShapePixelPoints(bounds, 'ellipse', 24, 24, 37)
+    const outline = rotatedShapePixelPoints(bounds, 'ellipse-outline', 24, 24, 37)
+    const center = { x: bounds.x + Math.floor(bounds.width / 2), y: bounds.y + Math.floor(bounds.height / 2) }
+
+    expect(outline.length).toBeLessThan(filled.length)
+    expect(filled).toContainEqual({ ...center, coverage: 255 })
+    expect(outline).not.toContainEqual({ ...center, coverage: 255 })
+  })
+
+  it('does not reintroduce isolated corner tips in rotated rectangle shapes', () => {
+    const points = rotatedShapePixelPoints({ x: 4, y: 5, width: 12, height: 8 }, 'rectangle', 32, 32, 37)
+    const occupied = new Set(points.map(({ x, y }) => `${x}:${y}`))
+    for (const { x, y } of points) {
+      const neighbors = Number(occupied.has(`${x - 1}:${y}`))
+        + Number(occupied.has(`${x + 1}:${y}`))
+        + Number(occupied.has(`${x}:${y - 1}`))
+        + Number(occupied.has(`${x}:${y + 1}`))
+      expect(neighbors).toBeGreaterThanOrEqual(2)
+    }
   })
 
   it('clips an off-center brush stamp to an irregular selection', () => {
@@ -936,6 +1045,14 @@ describe('pixel tools', () => {
     expect(selectionContains(sheared, 2, 4)).toBe(true)
   })
 
+  it('includes both shear and rotation in the shared transformed bounds', () => {
+    const source = { x: 2, y: 2, width: 3, height: 3 }
+    const shear = { axis: 'x' as const, edge: 'n' as const, amount: 2 }
+    expect(transformedSelectionBounds(source, 90, shear)).toEqual({ x: 2, y: 2, width: 3, height: 5 })
+    const transformed = transformSelectionMask(source, source, 10, 10, 90, shear)
+    expect(transformed && { x: transformed.x, y: transformed.y, width: transformed.width, height: transformed.height }).toEqual({ x: 2, y: 2, width: 3, height: 5 })
+  })
+
   it('moves selected pixels through the same shear mapping used by the selection mask', () => {
     const document = createDocument('shear selection', 10, 10, 'rgba')
     const layer = getActiveLayer(document)
@@ -984,6 +1101,68 @@ describe('pixel tools', () => {
     expect(readLayerColor(document, layer, 5 * document.width + 5)).toEqual(blue)
     expect(selectionContains(rotated, 3, 3)).toBe(true)
     expect(selectionContains(rotated, 5, 5)).toBe(true)
+  })
+
+  it('does not duplicate pixels when rotating rectangular layer content', () => {
+    const document = createDocument('rotate rectangular layer content', 16, 16, 'rgba')
+    const layer = getActiveLayer(document)
+    const rows = [
+      '.RRRR...',
+      'RB..BR..',
+      'R....R..',
+      'R....R..',
+      'R..RRRRR',
+      'R...RRR.',
+      '....R...'
+    ]
+    for (let localY = 0; localY < rows.length; localY += 1) {
+      for (let localX = 0; localX < rows[localY].length; localX += 1) {
+        const pixel = rows[localY][localX]
+        if (pixel === '.') continue
+        writeLayerColor(document, layer, (2 + localY) * document.width + 2 + localX, pixel === 'B' ? blue : red)
+      }
+    }
+    const selection = { x: 2, y: 2, width: 8, height: 7 }
+    const source = captureSelectionTransform(document, selection)!
+
+    applySelectionTransform(document, source, selection, 82)
+
+    let opaqueCount = 0
+    for (let y = 0; y < document.height; y += 1) {
+      for (let x = 0; x < document.width; x += 1) {
+        if (readLayerColorAt(document, layer, x, y).a > 0) opaqueCount += 1
+      }
+    }
+    expect(opaqueCount).toBe(23)
+  })
+
+  it('fills inverse-sampled pixels inside dense rotated content', () => {
+    const document = createDocument('rotate dense layer content', 48, 48, 'rgba')
+    const layer = getActiveLayer(document)
+    const selection = { x: 12, y: 12, width: 24, height: 24 }
+    const insideSource = (x: number, y: number): boolean => {
+      const offsetX = x - selection.x - 11.5
+      const offsetY = y - selection.y - 11.5
+      return offsetX * offsetX + offsetY * offsetY <= 11.5 * 11.5
+    }
+    for (let y = selection.y; y < selection.y + selection.height; y += 1) {
+      for (let x = selection.x; x < selection.x + selection.width; x += 1) {
+        if (insideSource(x, y)) writeLayerColor(document, layer, y * document.width + x, blue)
+      }
+    }
+    const source = captureSelectionTransform(document, selection)!
+
+    applySelectionTransform(document, source, selection, 30)
+
+    const transformed = transformedSelectionBounds(selection, 30)
+    for (let y = transformed.y; y < transformed.y + transformed.height; y += 1) {
+      for (let x = transformed.x; x < transformed.x + transformed.width; x += 1) {
+        const sourcePoint = transformedSelectionSourcePoint(selection, selection, x, y, 30)
+        if (sourcePoint && insideSource(sourcePoint.x, sourcePoint.y)) {
+          expect(readLayerColorAt(document, layer, x, y).a, `missing rotated pixel at ${x},${y}`).toBeGreaterThan(0)
+        }
+      }
+    }
   })
 
   it('clips rotated selections safely at the canvas edge', () => {

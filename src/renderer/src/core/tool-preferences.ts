@@ -27,6 +27,9 @@ export interface PersistedToolSettings extends PersistedBrushProfile {
   shapeRatio: ShapeRatio | number | null
   fillMode: FillMode
   fillKind: FillKind
+  fillTolerance: number
+  gradientTolerance: number
+  gradientContiguous: boolean
   gradientDither: GradientDither
   moveAutoSelect: boolean
   selectionKind: SelectionKind
@@ -59,6 +62,9 @@ export const defaultToolSettings: PersistedToolSettings = {
   shapeRatio: null,
   fillMode: 'contiguous',
   fillKind: 'bucket',
+  fillTolerance: 0,
+  gradientTolerance: 0,
+  gradientContiguous: true,
   gradientDither: 'none',
   moveAutoSelect: true,
   selectionKind: 'rectangle',
@@ -129,6 +135,9 @@ export function loadToolSettings(storage?: Storage): PersistedToolSettings {
       shapeRatio: normalizeShapeRatio(stored.shapeRatio),
       fillMode: stored.fillMode === 'global' || stored.fillMode === 'contiguous' ? stored.fillMode : defaultToolSettings.fillMode,
       fillKind: stored.fillKind === 'gradient' || stored.fillKind === 'bucket' ? stored.fillKind : defaultToolSettings.fillKind,
+      fillTolerance: Number.isFinite(stored.fillTolerance) ? Math.max(0, Math.min(255, Math.round(stored.fillTolerance!))) : defaultToolSettings.fillTolerance,
+      gradientTolerance: Number.isFinite(stored.gradientTolerance) ? Math.max(0, Math.min(255, Math.round(stored.gradientTolerance!))) : defaultToolSettings.gradientTolerance,
+      gradientContiguous: typeof stored.gradientContiguous === 'boolean' ? stored.gradientContiguous : defaultToolSettings.gradientContiguous,
       gradientDither: stored.gradientDither === 'checker' || stored.gradientDither === 'diagonal' || stored.gradientDither === 'diagonal-reverse' || stored.gradientDither === 'horizontal' || stored.gradientDither === 'vertical' || stored.gradientDither === 'bayer-2' || stored.gradientDither === 'bayer-4' || stored.gradientDither === 'bayer-8' || stored.gradientDither === 'none' ? stored.gradientDither : defaultToolSettings.gradientDither,
       moveAutoSelect: typeof stored.moveAutoSelect === 'boolean' ? stored.moveAutoSelect : defaultToolSettings.moveAutoSelect,
       selectionKind: stored.selectionKind === 'magic' || stored.selectionKind === 'lasso' || stored.selectionKind === 'polygon-lasso' || stored.selectionKind === 'ellipse' || stored.selectionKind === 'rectangle' ? stored.selectionKind : defaultToolSettings.selectionKind,

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { commitPixelEdit } from './history'
-import { createDocument, getActiveLayer, readLayerColorAt } from './document'
-import { applyGradient, constrainGradientEndpoint, gradientColorAt, GRADIENT_DITHER_PRESETS } from './gradient'
+import { createDocument, getActiveLayer, readLayerColorAt, writeLayerColor } from './document'
+import { applyGradient, constrainGradientEndpoint, gradientColorAt, gradientRegionSelection, GRADIENT_DITHER_PRESETS } from './gradient'
 
 const red = { r: 255, g: 0, b: 0, a: 255 }
 const blue = { r: 0, g: 0, b: 255, a: 255 }
@@ -59,5 +59,37 @@ describe('gradient tool core', () => {
     history?.redo()
     expect(readLayerColorAt(document, layer, 1, 0)).toEqual(red)
     expect(readLayerColorAt(document, layer, 2, 0)).toEqual(blue)
+  })
+
+  it('limits gradients to tolerance-matched contiguous or global regions', () => {
+    const createRegionDocument = () => {
+      const document = createDocument('gradient region', 5, 1, 'rgba')
+      const layer = getActiveLayer(document)
+      const colors = [
+        { r: 20, g: 20, b: 20, a: 255 },
+        { r: 23, g: 20, b: 20, a: 255 },
+        { r: 180, g: 180, b: 180, a: 255 },
+        { r: 22, g: 20, b: 20, a: 255 },
+        { r: 20, g: 20, b: 20, a: 255 }
+      ]
+      colors.forEach((color, index) => writeLayerColor(document, layer, index, color))
+      return { document, layer, colors }
+    }
+
+    const contiguous = createRegionDocument()
+    const contiguousRegion = gradientRegionSelection(contiguous.document, contiguous.layer, { x: 0, y: 0 }, 3, true)
+    applyGradient(contiguous.document, contiguous.layer, { x: 0, y: 0 }, { x: 4, y: 0 }, red, blue, null, 'none', contiguousRegion)
+    expect(readLayerColorAt(contiguous.document, contiguous.layer, 0, 0)).toEqual(red)
+    expect(readLayerColorAt(contiguous.document, contiguous.layer, 1, 0)).toEqual({ r: 191, g: 0, b: 64, a: 255 })
+    expect(readLayerColorAt(contiguous.document, contiguous.layer, 3, 0)).toEqual(contiguous.colors[3])
+
+    const global = createRegionDocument()
+    const globalRegion = gradientRegionSelection(global.document, global.layer, { x: 0, y: 0 }, 3, false)
+    applyGradient(global.document, global.layer, { x: 0, y: 0 }, { x: 4, y: 0 }, red, blue, null, 'none', globalRegion)
+    expect(readLayerColorAt(global.document, global.layer, 0, 0)).toEqual(red)
+    expect(readLayerColorAt(global.document, global.layer, 1, 0)).toEqual({ r: 191, g: 0, b: 64, a: 255 })
+    expect(readLayerColorAt(global.document, global.layer, 3, 0)).toEqual({ r: 64, g: 0, b: 191, a: 255 })
+    expect(readLayerColorAt(global.document, global.layer, 4, 0)).toEqual(blue)
+    expect(readLayerColorAt(global.document, global.layer, 2, 0)).toEqual(global.colors[2])
   })
 })

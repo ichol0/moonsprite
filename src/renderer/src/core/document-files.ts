@@ -14,9 +14,16 @@ export function fileExtension(filePath: string): string {
   return filePath.split('.').pop()?.toLowerCase() ?? ''
 }
 
+export function joinDirectoryPath(directory: string, fileName: string): string {
+  const normalizedDirectory = directory.trim().replace(/[\\/]+$/, '')
+  if (!normalizedDirectory) return fileName
+  const separator = normalizedDirectory.includes('\\') ? '\\' : '/'
+  return `${normalizedDirectory}${separator}${fileName}`
+}
+
 export function sanitizeFileStem(name: string, fallback: string): string {
   const stem = name
-    .replace(/\.(moonsprite|aseprite|ase|png|jpe?g|webp|svg)$/i, '')
+    .replace(/\.(moonsprite|aseprite|ase|png|jpe?g|webp|svg|gif)$/i, '')
     .replace(/[\\/:*?"<>|]/g, '_')
     .trim()
   return stem || fallback
@@ -57,8 +64,8 @@ export function normalizeSaveDialogPath(filePath: string, format: SaveImageKind)
       ? /\.(ase|aseprite)$/i.test(filePath)
       : filePath.toLowerCase().endsWith(`.${extension}`)
   if (accepted) return filePath
-  return /\.(moonsprite|png|jpg|jpeg|webp|svg|ase|aseprite)$/i.test(filePath)
-    ? filePath.replace(/\.(moonsprite|png|jpg|jpeg|webp|svg|ase|aseprite)$/i, `.${extension}`)
+  return /\.(moonsprite|png|jpg|jpeg|webp|svg|gif|ase|aseprite)$/i.test(filePath)
+    ? filePath.replace(/\.(moonsprite|png|jpg|jpeg|webp|svg|gif|ase|aseprite)$/i, `.${extension}`)
     : `${filePath}.${extension}`
 }
 

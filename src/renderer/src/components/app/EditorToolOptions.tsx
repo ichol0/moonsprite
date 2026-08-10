@@ -4,12 +4,13 @@ import type { BrushPaintMode, GradientDither, ImageBrush, ImageBrushSettings, Pr
 import { NumberInput } from '@/components/NumberInput'
 import { PerformanceProfiler } from '@/components/PerformanceProfiler'
 import { ThemedSelect } from '@/components/ThemedSelect'
+import { Tooltip } from '@/components/Tooltip'
 import { useI18n } from '@/components/I18nProvider'
 import { toolOptionsRenderKey } from '@/core/app-render-keys'
 import { isProceduralBrushId } from '@/core/brushes'
 import type { TranslationKey } from '@/core/localization'
 import { brushMaskOffsets, brushStampDimensions } from '@/core/tools'
-import { loadEditorPreferences, type CheckerboardPreferences } from '@/core/file-preferences'
+import { loadEditorPreferences, parseLineDirectionStep, saveEditorPreferences, type CheckerboardPreferences } from '@/core/file-preferences'
 import { gradientColorAt } from '@/core/gradient'
 import { useWorkspace } from '@/store/workspace'
 import { useBrushLibrary } from './useBrushLibrary'
@@ -195,6 +196,24 @@ function BrushOutputControls({ settings, onChange }: { settings: ImageBrushSetti
   </>
 }
 
+function ToleranceControl({ value, open, label, inputLabel, sliderLabel, onOpen, onChange }: {
+  value: number
+  open: boolean
+  label: string
+  inputLabel: string
+  sliderLabel: string
+  onOpen: () => void
+  onChange: (value: number) => void
+}) {
+  return <div className="tolerance-control" onPointerDown={onOpen}>
+    <label><span>{label}</span><NumberInput aria-label={inputLabel} min={0} max={255} value={value} onValueChange={onChange} onFocus={onOpen} /></label>
+    {open && <div className="brush-size-popover tolerance-popover" role="dialog" aria-label={inputLabel}>
+      <input aria-label={sliderLabel} type="range" min="0" max="255" value={value} onChange={(event) => onChange(Number(event.target.value))} />
+      <strong>{value}</strong>
+    </div>}
+  </div>
+}
+
 export const EditorToolOptions = memo(function EditorToolOptions() {
   const { locale, t } = useI18n()
   const renderKey = useWorkspace((state) => toolOptionsRenderKey(
@@ -202,8 +221,10 @@ export const EditorToolOptions = memo(function EditorToolOptions() {
   ))
   const [brushFlyoutOpen, setBrushFlyoutOpen] = useState(false)
   const [brushSizeFlyoutOpen, setBrushSizeFlyoutOpen] = useState(false)
+  const [toleranceFlyoutOpen, setToleranceFlyoutOpen] = useState<'wand' | 'fill' | 'gradient' | null>(null)
   const [temporarySelectionMode, setTemporarySelectionMode] = useState<SelectionMode | null>(null)
   const [brushOutputOpen, setBrushOutputOpen] = useState(false)
+  const [lineDirectionStep, setLineDirectionStep] = useState(() => loadEditorPreferences().lineDirectionStep)
   const state = useWorkspace.getState()
   const session = state.sessions.find((item) => item.document.id === state.activeId) ?? null
   const {
@@ -220,17 +241,25 @@ export const EditorToolOptions = memo(function EditorToolOptions() {
   } = useBrushLibrary(session)
 
   useEffect(() => {
+    const syncPreferences = (): void => setLineDirectionStep(loadEditorPreferences().lineDirectionStep)
+    window.addEventListener('moonsprite:preferences-changed', syncPreferences)
+    return () => window.removeEventListener('moonsprite:preferences-changed', syncPreferences)
+  }, [])
+
+  useEffect(() => {
     const closeOutside = (event: PointerEvent): void => {
       if (!(event.target instanceof Element)) return
       if (!event.target.closest('.brush-source')) setBrushFlyoutOpen(false)
       if (!event.target.closest('.brush-size-control')) setBrushSizeFlyoutOpen(false)
+      if (!event.target.closest('.tolerance-control')) setToleranceFlyoutOpen(null)
     }
-    const closeOnBlur = (): void => setBrushFlyoutOpen(false)
+    const closeOnBlur = (): void => { setBrushFlyoutOpen(false); setToleranceFlyoutOpen(null) }
     const closeAll = (event: Event): void => {
       const target = (event as CustomEvent<{ target?: string }>).detail?.target
       if (target && target !== 'popover') return
       setBrushFlyoutOpen(false)
       setBrushSizeFlyoutOpen(false)
+      setToleranceFlyoutOpen(null)
       setBrushOutputOpen(false)
     }
     window.addEventListener('pointerdown', closeOutside, true)
@@ -249,6 +278,12 @@ export const EditorToolOptions = memo(function EditorToolOptions() {
       setBrushSizeFlyoutOpen(false)
     }
   }, [renderKey, session?.tool, session?.fillKind])
+
+  useEffect(() => {
+    const supportsTolerance = (session?.tool === 'selection' && session.selectionKind === 'magic')
+      || session?.tool === 'fill'
+    if (!supportsTolerance) setToleranceFlyoutOpen(null)
+  }, [session?.tool, session?.selectionKind, session?.fillKind])
 
   useEffect(() => {
     if (session?.tool !== 'selection') {
@@ -334,6 +369,12 @@ export const EditorToolOptions = memo(function EditorToolOptions() {
       ]
     }
   ]
+  const updateLineDirectionStep = (value: number): void => {
+    const nextValue = parseLineDirectionStep(String(value))
+    setLineDirectionStep(nextValue)
+    saveEditorPreferences({ ...loadEditorPreferences(), lineDirectionStep: nextValue })
+    window.dispatchEvent(new Event('moonsprite:preferences-changed'))
+  }
   return <PerformanceProfiler id="EditorToolOptions"><div className="tool-options">
     <span className="tool-label" title={presentation.description}>{presentation.label}</span>
     {isBrushTool && <>
@@ -389,25 +430,30 @@ export const EditorToolOptions = memo(function EditorToolOptions() {
       </div>
       {!session.brushImage?.intrinsicSize && <div className="brush-size-control" onPointerDown={() => setBrushSizeFlyoutOpen(true)}><NumberInput aria-label={t('toolOptions.brushSizeValue')} min={1} max={128} suffix="px" value={session.brushSize} onValueChange={workspace.setBrushSize} onFocus={() => setBrushSizeFlyoutOpen(true)} />{brushSizeFlyoutOpen && <div className="brush-size-popover" role="dialog" aria-label={t('toolOptions.adjustBrushSize')}><input aria-label={t('toolOptions.brushSizeSlider')} type="range" min="1" max="128" value={session.brushSize} onChange={(event) => workspace.setBrushSize(Number(event.target.value))} /><strong>{session.brushSize}px</strong></div>}</div>}
       {session.brushImage?.intrinsicSize && <span className="brush-paint-mode-select" title={t('toolOptions.brushModeHint')}><ThemedSelect<BrushPaintMode> value={session.brushPaintMode} groups={brushPaintModeGroups} label={t('toolOptions.brushMode')} onChange={workspace.setBrushPaintMode} /></span>}
+      {session.tool === 'pencil' && <label className="line-direction-step-control"><Tooltip content={t('toolOptions.lineDirectionStepHint')}><span>{t('toolOptions.lineDirectionStep')}</span></Tooltip><NumberInput aria-label={t('toolOptions.lineDirectionStep')} min={1} max={16} value={lineDirectionStep} onValueChange={updateLineDirectionStep} /></label>}
       {(session.tool === 'pencil' || session.tool === 'eraser') && <label className="tool-checkbox"><PixelCheckbox checked={session.perfectPixels} onChange={(event) => workspace.setPerfectPixels(event.target.checked)} />{t('toolOptions.perfectPixels')}</label>}
     </>}
     {session.tool === 'selection' && <>
       <div className="selection-mode-control" aria-label={t('toolOptions.selectionMode')}>{selectionModeItems.map((mode) => <button key={mode.id} title={mode.label} aria-label={mode.label} className={`icon-button ${(temporarySelectionMode ?? session.selectionMode) === mode.id ? 'selected' : ''}`} onClick={() => workspace.setSelectionMode(mode.id)}><PixelAssetIcon src={mode.icon} /></button>)}</div>
-      {session.selectionKind === 'magic' && <><label className="wand-tolerance">{t('toolOptions.tolerance')} <NumberInput aria-label={t('toolOptions.magicWandTolerance')} min={0} max={255} value={session.wandTolerance} onValueChange={workspace.setWandTolerance} /></label><label className="tool-checkbox"><PixelCheckbox aria-label={t('toolOptions.contiguousSelection')} checked={session.wandContiguous} onChange={(event) => workspace.setWandContiguous(event.target.checked)} />{t('toolOptions.contiguous')}</label></>}
+      {session.selectionKind === 'magic' && <><ToleranceControl value={session.wandTolerance} open={toleranceFlyoutOpen === 'wand'} label={t('toolOptions.tolerance')} inputLabel={t('toolOptions.magicWandTolerance')} sliderLabel={t('toolOptions.magicWandToleranceSlider')} onOpen={() => setToleranceFlyoutOpen('wand')} onChange={workspace.setWandTolerance} /><label className="tool-checkbox"><PixelCheckbox aria-label={t('toolOptions.contiguousSelection')} checked={session.wandContiguous} onChange={(event) => workspace.setWandContiguous(event.target.checked)} />{t('toolOptions.contiguous')}</label></>}
     </>}
     {session.tool === 'shape' && <div className="shape-ratio-control"><label className="tool-checkbox"><PixelCheckbox checked={session.shapeRatio !== null} onChange={(event) => workspace.setShapeRatio(event.target.checked ? { width: 1, height: 1 } : null)} />{t('toolOptions.fixedRatio')}</label>{session.shapeRatio !== null && <div className="shape-ratio-inputs"><NumberInput aria-label={t('toolOptions.shapeWidthRatio')} min={0.1} max={100} step={0.1} value={session.shapeRatio.width} onValueChange={(width) => workspace.setShapeRatio({ ...session.shapeRatio!, width })} /><span>:</span><NumberInput aria-label={t('toolOptions.shapeHeightRatio')} min={0.1} max={100} step={0.1} value={session.shapeRatio.height} onValueChange={(height) => workspace.setShapeRatio({ ...session.shapeRatio!, height })} /><button type="button" className="icon-button shape-ratio-swap" title={t('toolOptions.swapRatio')} aria-label={t('toolOptions.swapRatio')} onClick={() => workspace.setShapeRatio({ width: session.shapeRatio!.height, height: session.shapeRatio!.width })}><ArrowLeftRight size={13} /></button></div>}</div>}
-    {session.tool === 'fill' && fillKind === 'bucket' && <div className="segmented-control fill-mode-control" aria-label={t('toolOptions.fillRange')}><button className={session.fillMode === 'contiguous' ? 'selected' : ''} onClick={() => workspace.setFillMode('contiguous')}>{t('toolOptions.contiguous')}</button><button className={session.fillMode === 'global' ? 'selected' : ''} onClick={() => workspace.setFillMode('global')}>{t('toolOptions.nonContiguous')}</button></div>}
-    {session.tool === 'fill' && fillKind === 'gradient' && <span className="gradient-dither-select"><ThemedSelect<GradientDither>
-      value={gradientDither}
-      groups={gradientDitherGroups}
-      label={t('toolOptions.gradientDither')}
-      onChange={workspace.setGradientDither}
-      showCheck={false}
-      showOptionTooltips={false}
-      popoverClassName="gradient-dither-popover"
-      popoverWidth={340}
-      renderOption={(option) => <span className="gradient-option-content"><strong>{option.label}</strong><GradientPresetPreview preset={option.value} /></span>}
-    /></span>}
+    {session.tool === 'fill' && fillKind === 'bucket' && <><ToleranceControl value={session.fillTolerance} open={toleranceFlyoutOpen === 'fill'} label={t('toolOptions.tolerance')} inputLabel={t('toolOptions.fillTolerance')} sliderLabel={t('toolOptions.fillToleranceSlider')} onOpen={() => setToleranceFlyoutOpen('fill')} onChange={workspace.setFillTolerance} /><div className="segmented-control fill-mode-control" aria-label={t('toolOptions.fillRange')}><button className={session.fillMode === 'contiguous' ? 'selected' : ''} onClick={() => workspace.setFillMode('contiguous')}>{t('toolOptions.contiguous')}</button><button className={session.fillMode === 'global' ? 'selected' : ''} onClick={() => workspace.setFillMode('global')}>{t('toolOptions.nonContiguous')}</button></div></>}
+    {session.tool === 'fill' && fillKind === 'gradient' && <>
+      <ToleranceControl value={session.gradientTolerance} open={toleranceFlyoutOpen === 'gradient'} label={t('toolOptions.tolerance')} inputLabel={t('toolOptions.gradientTolerance')} sliderLabel={t('toolOptions.gradientToleranceSlider')} onOpen={() => setToleranceFlyoutOpen('gradient')} onChange={workspace.setGradientTolerance} />
+      <label className="tool-checkbox"><PixelCheckbox aria-label={t('toolOptions.contiguousGradient')} checked={session.gradientContiguous} onChange={(event) => workspace.setGradientContiguous(event.target.checked)} />{t('toolOptions.contiguous')}</label>
+      <span className="gradient-dither-select"><ThemedSelect<GradientDither>
+        value={gradientDither}
+        groups={gradientDitherGroups}
+        label={t('toolOptions.gradientDither')}
+        onChange={workspace.setGradientDither}
+        showCheck={false}
+        showOptionTooltips={false}
+        popoverClassName="gradient-dither-popover"
+        popoverWidth={340}
+        renderOption={(option) => <span className="gradient-option-content"><strong>{option.label}</strong><GradientPresetPreview preset={option.value} /></span>}
+      /></span>
+    </>}
     {supportsSymmetry && <SymmetryControls key={session.tool} axes={session.symmetryAxes} onAxisToggle={workspace.setSymmetryAxis} onResetCenter={workspace.resetSymmetryCenter} />}
     {session.tool === 'move' && <label className="tool-checkbox"><PixelCheckbox checked={session.moveAutoSelect} onChange={(event) => workspace.setMoveAutoSelect(event.target.checked)} />{t('toolOptions.autoSelectLayer')}</label>}
     {session.tool === 'rotate' && <div className="rotate-view-options"><label>{t('toolOptions.rotation')} <NumberInput aria-label={t('toolOptions.rotation')} min={0} max={359.9} step={0.1} value={Math.round(session.view.rotation * 10) / 10} onValueChange={(rotation) => workspace.setView({ rotation: ((rotation % 360) + 360) % 360 })} /></label><button type="button" className="tool-text-button" onClick={() => workspace.setView({ rotation: 0 })}>{t('toolOptions.resetView')}</button></div>}

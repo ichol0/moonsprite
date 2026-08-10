@@ -36,6 +36,12 @@ const browserPaletteId = (name: string): string => {
   return id
 }
 
+const cloneStoredPalette = (palette: StoredPalette): StoredPalette => ({
+  ...palette,
+  colors: palette.colors.map((color) => ({ ...color })),
+  slots: palette.slots ? [...palette.slots] : undefined
+})
+
 const createBrowserApi = (): MoonSpriteApi => ({
   openFiles: async () => ({ canceled: true, filePaths: [] }),
   takeStartupFiles: async () => [],
@@ -44,6 +50,8 @@ const createBrowserApi = (): MoonSpriteApi => ({
   savePaletteImage: async () => ({ canceled: true }),
   saveShortcutFile: async () => ({ canceled: true }),
   saveThemeFile: async () => ({ canceled: true }),
+  getDefaultFileDirectories: async () => ({ saveDirectory: 'gallery', exportDirectory: 'exports' }),
+  chooseDirectory: async () => ({ canceled: true }),
   fileExists: async () => false,
   readBinary: async (filePath) => {
     const brush = [...browserBrushes.values()].find((item) => item.stored.filePath === filePath)
@@ -52,14 +60,15 @@ const createBrowserApi = (): MoonSpriteApi => ({
   },
   writeBinaryAtomic: async () => { throw new Error(tr('platform.browser.writeUnsupported')) },
   writeClipboardImage: async () => {},
+  readClipboardText: async () => null,
   readClipboardImage: async () => null,
   readClipboardImageSize: async () => null,
-  listPalettes: async () => ({ directoryPath: 'palettes', palettes: [...browserPalettes.values()].map((palette) => ({ ...palette, colors: palette.colors.map((color) => ({ ...color })) })) }),
-  savePalette: async (requestedId, name, colors) => {
+  listPalettes: async () => ({ directoryPath: 'palettes', palettes: [...browserPalettes.values()].map(cloneStoredPalette) }),
+  savePalette: async (requestedId, name, colors, columns, slots) => {
     const id = requestedId ?? browserPaletteId(name)
-    const palette = { id, name, filePath: `palettes/${id}.palette.json`, builtIn: false, colors: colors.map((color: RgbaColor) => ({ ...color })) }
+    const palette: StoredPalette = { id, name, filePath: `palettes/${id}.palette.json`, builtIn: false, colors: colors.map((color: RgbaColor) => ({ ...color })), columns, slots: [...slots] }
     browserPalettes.set(id, palette)
-    return { ...palette, colors: palette.colors.map((color) => ({ ...color })) }
+    return cloneStoredPalette(palette)
   },
   deletePalette: async (id) => {
     if (browserPalettes.get(id)?.builtIn) throw new Error(tr('platform.palette.builtInDelete'))
@@ -120,17 +129,20 @@ export const createTauriApi = (): MoonSpriteApi => ({
   savePaletteImage: (defaultPath) => invoke('save_palette_image', { defaultPath, language: dialogLanguage() }),
   saveShortcutFile: (defaultPath) => invoke('save_shortcut_file', { defaultPath, language: dialogLanguage() }),
   saveThemeFile: (defaultPath) => invoke('save_theme_file', { defaultPath, language: dialogLanguage() }),
+  getDefaultFileDirectories: () => invoke('default_file_directories'),
+  chooseDirectory: (defaultPath) => invoke('choose_directory', { defaultPath }),
   fileExists: (filePath) => invoke('file_exists', { filePath }),
   readBinary: (filePath) => invokeBytes('read_binary', { filePath }),
   writeBinaryAtomic: (filePath, data) => invoke('write_binary_atomic', { filePath, data: Array.from(data) }),
   writeClipboardImage: (image) => invoke('write_clipboard_image', { width: image.width, height: image.height, data: Array.from(image.data) }),
+  readClipboardText: () => invoke<string | null>('read_clipboard_text'),
   readClipboardImage: async (): Promise<ClipboardImage | null> => {
     const image = await invoke<{ width: number; height: number; data: number[] } | null>('read_clipboard_image')
     return image ? { width: image.width, height: image.height, data: new Uint8Array(image.data) } : null
   },
   readClipboardImageSize: () => invoke<ClipboardImageSize | null>('read_clipboard_image_size'),
   listPalettes: () => invoke('list_palettes'),
-  savePalette: (id, name, colors) => invoke('save_palette', { id, name, colors }),
+  savePalette: (id, name, colors, columns, slots) => invoke('save_palette', { id, name, colors, columns, slots }),
   deletePalette: (id) => invoke('delete_palette', { id }),
   openPaletteFolder: () => invoke('open_palette_folder'),
   listWorkspaces: () => invoke('list_workspaces'),

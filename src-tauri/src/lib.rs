@@ -94,6 +94,7 @@ pub fn run() {
             let recovery_state = app.state::<platform_recovery::RecoveryState>();
             platform_recovery::initialize_session_marker(app.handle(), &recovery_state)?;
             let _ = platform_gallery::ensure_builtin_example(app.handle().clone());
+            let _ = platform_paths::export_directory();
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -104,10 +105,13 @@ pub fn run() {
             platform_dialogs::save_palette_image,
             platform_dialogs::save_shortcut_file,
             platform_dialogs::save_theme_file,
+            platform_dialogs::default_file_directories,
+            platform_dialogs::choose_directory,
             platform_files::file_exists,
             platform_files::read_binary,
             platform_files::write_binary_atomic,
             platform_clipboard::write_clipboard_image,
+            platform_clipboard::read_clipboard_text,
             platform_clipboard::read_clipboard_image,
             platform_clipboard::read_clipboard_image_size,
             platform_resources::get_resource_info,

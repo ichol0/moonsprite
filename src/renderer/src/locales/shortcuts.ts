@@ -12,6 +12,7 @@ const enGroups: Record<ShortcutGroupId, string> = {
 }
 
 const zhLabels: Record<ShortcutId, string> = {
+  toggleClippingMask: '剪贴蒙版',
   addAnimationFrame: '新增帧', addBlankAnimationFrame: '新建空帧', deleteAnimationFrame: '删除帧', copyAnimationCel: '复制单元格',
   newDocument: '新建工程', openDocument: '打开工程', closeDocument: '关闭工程', openProjectFolder: '在文件夹中打开', exportDocument: '导出',
   'tool.pencil': '画笔', 'tool.eraser': '橡皮擦', 'tool.selection': '矩形选区', 'tool.selection.ellipse': '椭圆选区', 'tool.move': '移动工具', 'tool.shape': '形状工具', 'tool.fill': '油漆桶', 'tool.fill.gradient': '渐变工具', 'tool.eyedropper': '吸管', 'tool.hand': '抓手', 'tool.zoom': '缩放工具', 'tool.rotate': '旋转视图',
@@ -21,6 +22,7 @@ const zhLabels: Record<ShortcutId, string> = {
 }
 
 const enLabels: Record<ShortcutId, string> = {
+  toggleClippingMask: 'Clipping Mask',
   addAnimationFrame: 'Add Frame', addBlankAnimationFrame: 'New Blank Frame', deleteAnimationFrame: 'Delete Frame', copyAnimationCel: 'Copy Cel',
   newDocument: 'New Project', openDocument: 'Open Project', closeDocument: 'Close Project', openProjectFolder: 'Show in Folder', exportDocument: 'Export',
   'tool.pencil': 'Pencil', 'tool.eraser': 'Eraser', 'tool.selection': 'Rectangular Selection', 'tool.selection.ellipse': 'Elliptical Selection', 'tool.move': 'Move Tool', 'tool.shape': 'Shape Tool', 'tool.fill': 'Paint Bucket', 'tool.fill.gradient': 'Gradient Tool', 'tool.eyedropper': 'Eyedropper', 'tool.hand': 'Hand Tool', 'tool.zoom': 'Zoom Tool', 'tool.rotate': 'Rotate View',

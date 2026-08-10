@@ -23,6 +23,10 @@ struct PaletteDiskFile {
     id: String,
     name: String,
     colors: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    columns: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    slots: Option<Vec<Option<usize>>>,
 }
 
 #[derive(Debug, Serialize)]
@@ -33,6 +37,10 @@ pub(crate) struct StoredPalette {
     file_path: String,
     colors: Vec<PaletteColor>,
     built_in: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    columns: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    slots: Option<Vec<Option<usize>>>,
 }
 
 #[derive(Debug, Serialize)]
@@ -138,29 +146,79 @@ fn palette_slug(name: &str) -> String {
     }
 }
 
+fn validate_palette_layout(
+    schema_version: u32,
+    color_count: usize,
+    columns: Option<u32>,
+    slots: Option<Vec<Option<usize>>>,
+    source: &str,
+) -> Result<(Option<u32>, Option<Vec<Option<usize>>>), String> {
+    match schema_version {
+        1 => {
+            if columns.is_some() || slots.is_some() {
+                return Err(format!("旧版色板不能包含槽位布局：{source}"));
+            }
+            Ok((None, None))
+        }
+        2 => {
+            let columns = columns.ok_or_else(|| format!("色板缺少列数：{source}"))?;
+            let slots = slots.ok_or_else(|| format!("色板缺少槽位：{source}"))?;
+            if !(1..=256).contains(&columns) {
+                return Err(format!("色板列数无效：{source}"));
+            }
+            if slots.len() > 1_048_576 || slots.len() % columns as usize != 0 {
+                return Err(format!("色板槽位数量无效：{source}"));
+            }
+            let mut seen = vec![false; color_count];
+            for color_index in slots.iter().flatten().copied() {
+                if color_index >= color_count {
+                    return Err(format!("色板槽位引用了不存在的颜色：{source}"));
+                }
+                if seen[color_index] {
+                    return Err(format!("色板槽位重复引用颜色：{source}"));
+                }
+                seen[color_index] = true;
+            }
+            if seen.iter().any(|placed| !placed) {
+                return Err(format!("色板槽位缺少颜色：{source}"));
+            }
+            Ok((Some(columns), Some(slots)))
+        }
+        version => Err(format!("不支持色板版本 {version}：{source}")),
+    }
+}
+
 fn stored_palette_from_file(
     file: PaletteDiskFile,
     file_path: String,
     built_in: bool,
     source: &str,
 ) -> Result<StoredPalette, String> {
-    if file.schema_version != 1 {
-        return Err(format!("不支持色板版本 {}：{source}", file.schema_version));
-    }
-    if !valid_palette_id(&file.id) || file.name.trim().is_empty() {
+    let PaletteDiskFile {
+        schema_version,
+        id,
+        name,
+        colors: encoded_colors,
+        columns,
+        slots,
+    } = file;
+    if !valid_palette_id(&id) || name.trim().is_empty() {
         return Err(format!("色板信息无效：{source}"));
     }
-    let colors = file
-        .colors
+    let (columns, slots) =
+        validate_palette_layout(schema_version, encoded_colors.len(), columns, slots, source)?;
+    let colors = encoded_colors
         .iter()
         .map(|color| parse_palette_color(color))
         .collect::<Result<Vec<_>, _>>()?;
     Ok(StoredPalette {
-        id: file.id,
-        name: file.name,
+        id,
+        name,
         file_path,
         colors,
         built_in,
+        columns,
+        slots,
     })
 }
 
@@ -231,6 +289,8 @@ pub(crate) fn save_palette(
     id: Option<String>,
     name: String,
     colors: Vec<PaletteColor>,
+    columns: u32,
+    slots: Vec<Option<usize>>,
 ) -> Result<StoredPalette, String> {
     let name = name.trim();
     if name.is_empty() {
@@ -242,6 +302,8 @@ pub(crate) fn save_palette(
     if colors.len() > 65_536 {
         return Err("单个色板最多保存 65536 种颜色。".to_string());
     }
+    let (columns, slots) =
+        validate_palette_layout(2, colors.len(), Some(columns), Some(slots), "保存的色板")?;
     let directory = palette_dir()?;
     let palette_id = match id {
         Some(value) if valid_palette_id(&value) && !is_built_in_palette_id(&value) => value,
@@ -261,10 +323,12 @@ pub(crate) fn save_palette(
     };
     let path = directory.join(format!("{palette_id}.palette.json"));
     let file = PaletteDiskFile {
-        schema_version: 1,
+        schema_version: 2,
         id: palette_id,
         name: name.to_string(),
         colors: colors.iter().map(palette_color_hex).collect(),
+        columns,
+        slots,
     };
     let encoded = serde_json::to_vec_pretty(&file).map_err(|error| error.to_string())?;
     atomic_write(&path, &encoded)?;
@@ -297,4 +361,61 @@ pub(crate) fn open_palette_folder() -> Result<(), String> {
         .spawn()
         .map_err(|error| format!("无法打开色板文件夹：{error}"))?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn palette_file(schema_version: u32) -> PaletteDiskFile {
+        PaletteDiskFile {
+            schema_version,
+            id: "test-palette".to_string(),
+            name: "Test Palette".to_string(),
+            colors: vec!["#112233FF".to_string(), "#445566FF".to_string()],
+            columns: None,
+            slots: None,
+        }
+    }
+
+    #[test]
+    fn reads_legacy_compact_palette_without_layout() {
+        let stored = stored_palette_from_file(palette_file(1), String::new(), false, "test")
+            .expect("legacy palette should load");
+        assert_eq!(stored.colors.len(), 2);
+        assert_eq!(stored.columns, None);
+        assert_eq!(stored.slots, None);
+    }
+
+    #[test]
+    fn reads_positioned_palette_layout() {
+        let mut file = palette_file(2);
+        file.columns = Some(4);
+        file.slots = Some(vec![Some(0), None, None, Some(1)]);
+        let encoded = serde_json::to_string(&file).expect("palette should serialize");
+        let decoded: PaletteDiskFile =
+            serde_json::from_str(&encoded).expect("palette should parse");
+        let stored = stored_palette_from_file(decoded, String::new(), false, "test")
+            .expect("positioned palette should load");
+        assert_eq!(stored.columns, Some(4));
+        assert_eq!(stored.slots, Some(vec![Some(0), None, None, Some(1)]));
+    }
+
+    #[test]
+    fn rejects_invalid_or_duplicate_slot_indexes() {
+        let mut missing = palette_file(2);
+        missing.columns = Some(2);
+        missing.slots = Some(vec![Some(0), Some(2)]);
+        assert!(stored_palette_from_file(missing, String::new(), false, "test").is_err());
+
+        let mut duplicate = palette_file(2);
+        duplicate.columns = Some(2);
+        duplicate.slots = Some(vec![Some(0), Some(0)]);
+        assert!(stored_palette_from_file(duplicate, String::new(), false, "test").is_err());
+    }
+
+    #[test]
+    fn rejects_unknown_palette_schema() {
+        assert!(stored_palette_from_file(palette_file(99), String::new(), false, "test").is_err());
+    }
 }

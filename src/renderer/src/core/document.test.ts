@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { blendWithMode } from './raster'
-import { compositeRegion, createCompositePointSampler, createCompositeSampler, createDocument, createLayer, DocumentCompositeCache, layerContentBounds, readLayerColor, readLayerColorAt, resizeDocumentAt, resizeDocumentImage, writeLayerColor } from './document'
+import { activateAnimationFrame, duplicateAnimationFrame, ensureAnimationDocument } from './animation'
+import { compositeRegion, createCompositePointSampler, createCompositeSampler, createDocument, createLayer, createLayerMask, DocumentCompositeCache, layerContentBounds, readLayerColor, readLayerColorAt, readLayerMaskDisplayColorAt, renderLayerMaskRegion, resizeDocumentAt, resizeDocumentImage, writeLayerColor } from './document'
 
 const red = { r: 255, g: 0, b: 0, a: 255 }
 const blue = { r: 0, g: 0, b: 255, a: 128 }
@@ -33,6 +34,145 @@ describe('document compositing', () => {
     expect(Array.from(compositeRegion(document, 0, 0, 1, 1))).toEqual(Object.values(blendWithMode(red, blue, 1, 'normal')))
   })
 
+  it('uses transparent, black, and gray cell-mask values as alpha coverage', () => {
+    const document = createDocument('layer mask alpha', 3, 1, 'rgba')
+    const layer = document.layers[0]
+    const cel = ensureAnimationDocument(document).cels[0]
+    cel.mask = createLayerMask(cel.id, 3, 1)
+    writeLayerColor(document, layer, 0, red)
+    writeLayerColor(document, layer, 1, red)
+    writeLayerColor(document, layer, 2, red)
+    writeLayerColor(document, cel.mask, 1, { r: 0, g: 0, b: 0, a: 255 })
+    writeLayerColor(document, cel.mask, 2, { r: 128, g: 128, b: 128, a: 255 })
+
+    expect(Array.from(compositeRegion(document, 0, 0, 3, 1))).toEqual([
+      255, 0, 0, 255,
+      0, 0, 0, 0,
+      255, 0, 0, 128
+    ])
+  })
+
+  it('skips a disabled layer mask during compositing', () => {
+    const document = createDocument('disabled layer mask', 1, 1, 'rgba')
+    const layer = document.layers[0]
+    const cel = ensureAnimationDocument(document).cels[0]
+    cel.mask = createLayerMask(cel.id, 1, 1)
+    cel.mask.visible = false
+    writeLayerColor(document, layer, 0, red)
+    writeLayerColor(document, cel.mask, 0, { r: 0, g: 0, b: 0, a: 255 })
+
+    expect(Array.from(compositeRegion(document, 0, 0, 1, 1))).toEqual([255, 0, 0, 255])
+  })
+
+  it('applies a frame-specific mask to the composited result of a layer group', () => {
+    const document = createDocument('group mask alpha', 1, 1, 'rgba')
+    const layer = document.layers[0]
+    const group = { id: 'group-1', name: 'Group', visible: true, locked: false, opacity: 1, blendMode: 'normal' as const }
+    document.groups.push(group)
+    layer.groupId = group.id
+    writeLayerColor(document, layer, 0, red)
+    const timeline = ensureAnimationDocument(document)
+    const mask = createLayerMask(group.id, 1, 1, 'group')
+    writeLayerColor(document, mask, 0, { r: 0, g: 0, b: 0, a: 255 })
+    timeline.groupMasks = [{ groupId: group.id, frameId: timeline.activeFrameId, mask }]
+
+    expect(Array.from(compositeRegion(document, 0, 0, 1, 1))).toEqual([0, 0, 0, 0])
+    mask.visible = false
+    expect(Array.from(compositeRegion(document, 0, 0, 1, 1))).toEqual([255, 0, 0, 255])
+  })
+
+  it('keeps masks independent between animation cells', () => {
+    const document = createDocument('cell masks', 1, 1, 'rgba')
+    const layer = document.layers[0]
+    writeLayerColor(document, layer, 0, red)
+    const timeline = ensureAnimationDocument(document)
+    const firstCel = timeline.cels[0]
+    firstCel.mask = createLayerMask(firstCel.id, 1, 1)
+    writeLayerColor(document, firstCel.mask, 0, { r: 0, g: 0, b: 0, a: 255 })
+    const secondFrameId = duplicateAnimationFrame(document)
+    const secondCel = ensureAnimationDocument(document).cels.find((cel) => cel.frameId === secondFrameId)!
+    writeLayerColor(document, secondCel.mask!, 0, { r: 128, g: 128, b: 128, a: 255 })
+
+    expect(Array.from(compositeRegion(document, 0, 0, 1, 1))).toEqual([255, 0, 0, 128])
+    activateAnimationFrame(document, timeline.frames[0].id)
+    expect(Array.from(compositeRegion(document, 0, 0, 1, 1))).toEqual([0, 0, 0, 0])
+  })
+
+  it('keeps empty mask pixels transparent and normalizes painted pixels to opaque grayscale', () => {
+    const document = createDocument('mask grayscale', 1, 1, 'rgba')
+    const cel = ensureAnimationDocument(document).cels[0]
+    const mask = createLayerMask(cel.id, 1, 1)
+    cel.mask = mask
+
+    expect(readLayerColor(document, mask, 0)).toEqual({ r: 0, g: 0, b: 0, a: 0 })
+
+    writeLayerColor(document, mask, 0, { r: 255, g: 0, b: 0, a: 255 })
+
+    expect(readLayerColor(document, mask, 0)).toEqual({ r: 54, g: 54, b: 54, a: 255 })
+    writeLayerColor(document, mask, 0, { r: 0, g: 0, b: 0, a: 0 })
+    expect(readLayerColor(document, mask, 0)).toEqual({ r: 0, g: 0, b: 0, a: 0 })
+  })
+
+  it('renders an isolated layer mask as white-backed grayscale', () => {
+    const document = createDocument('mask editing surface', 3, 1, 'rgba')
+    const cel = ensureAnimationDocument(document).cels[0]
+    const mask = createLayerMask(cel.id, 3, 1)
+    cel.mask = mask
+    writeLayerColor(document, mask, 1, { r: 255, g: 0, b: 0, a: 255 })
+    writeLayerColor(document, mask, 2, { r: 0, g: 0, b: 0, a: 128 })
+
+    expect(readLayerMaskDisplayColorAt(mask, 0, 0)).toEqual({ r: 255, g: 255, b: 255, a: 255 })
+    expect(Array.from(renderLayerMaskRegion(mask, 0, 0, 3, 1))).toEqual([
+      255, 255, 255, 255,
+      54, 54, 54, 255,
+      127, 127, 127, 255
+    ])
+  })
+
+  it('clips a layer to the shape and opacity of its immediate lower sibling', () => {
+    const document = createDocument('clipped layer', 2, 1, 'rgba')
+    const bottom = document.layers[0]
+    const top = createLayer('top', 2, 1, 'rgba')
+    bottom.opacity = 0.5
+    top.clippingMask = true
+    document.layers.push(top)
+    writeLayerColor(document, bottom, 0, { r: 145, g: 128, b: 77, a: 255 })
+    writeLayerColor(document, top, 0, red)
+    writeLayerColor(document, top, 1, red)
+
+    expect(Array.from(compositeRegion(document, 0, 0, 2, 1))).toEqual([255, 0, 0, 128, 0, 0, 0, 0])
+  })
+
+  it('applies the base opacity once across consecutive clipped siblings', () => {
+    const document = createDocument('clipping stack', 1, 1, 'rgba')
+    const bottom = document.layers[0]
+    const middle = createLayer('middle', 1, 1, 'rgba')
+    const top = createLayer('top', 1, 1, 'rgba')
+    bottom.opacity = 0.5
+    middle.clippingMask = true
+    top.clippingMask = true
+    document.layers.push(middle, top)
+    writeLayerColor(document, bottom, 0, { r: 145, g: 128, b: 77, a: 255 })
+    writeLayerColor(document, middle, 0, { r: 0, g: 0, b: 255, a: 255 })
+    writeLayerColor(document, top, 0, red)
+
+    expect(Array.from(compositeRegion(document, 0, 0, 1, 1))).toEqual([255, 0, 0, 128])
+  })
+
+  it('clips an isolated layer group to its immediate lower sibling', () => {
+    const document = createDocument('clipped group', 2, 1, 'rgba')
+    const bottom = document.layers[0]
+    const grouped = createLayer('grouped', 2, 1, 'rgba')
+    grouped.groupId = 'group'
+    document.layers.push(grouped)
+    document.groups.push({ id: 'group', name: 'group', parentGroupId: null, visible: true, locked: false, opacity: 1, blendMode: 'normal', clippingMask: true })
+    writeLayerColor(document, bottom, 0, red)
+    writeLayerColor(document, grouped, 0, { ...blue, a: 255 })
+    writeLayerColor(document, grouped, 1, { ...blue, a: 255 })
+
+    expect(Array.from(compositeRegion(document, 0, 0, 2, 1))).toEqual([0, 0, 255, 255, 0, 0, 0, 0])
+  })
+
   it('preserves nested group order and opacity', () => {
     const document = createDocument('nested groups', 1, 1, 'rgba')
     const bottom = document.layers[0]
@@ -47,6 +187,208 @@ describe('document compositing', () => {
     writeLayerColor(document, grouped, 0, { ...blue, a: 255 })
 
     const expected = blendWithMode(red, { ...blue, a: 255 }, 0.5, 'normal')
+    expect(Array.from(compositeRegion(document, 0, 0, 1, 1))).toEqual(Object.values(expected))
+  })
+
+  it('applies child-layer and group blend modes at their own compositing levels', () => {
+    const document = createDocument('nested blend modes', 1, 1, 'rgba')
+    const outsideBottom = document.layers[0]
+    const groupBottom = createLayer('group bottom', 1, 1, 'rgba')
+    const groupTop = createLayer('group top', 1, 1, 'rgba')
+    groupBottom.groupId = 'group'
+    groupTop.groupId = 'group'
+    groupTop.blendMode = 'screen'
+    document.layers.push(groupBottom, groupTop)
+    document.groups.push({ id: 'group', name: 'group', parentGroupId: null, visible: true, locked: false, opacity: 1, blendMode: 'multiply' })
+    const outsideColor = { r: 76, g: 132, b: 218, a: 255 }
+    const groupBottomColor = { r: 214, g: 92, b: 48, a: 255 }
+    const groupTopColor = { r: 42, g: 188, b: 124, a: 255 }
+    writeLayerColor(document, outsideBottom, 0, outsideColor)
+    writeLayerColor(document, groupBottom, 0, groupBottomColor)
+    writeLayerColor(document, groupTop, 0, groupTopColor)
+
+    const groupColor = blendWithMode(groupBottomColor, groupTopColor, 1, 'screen')
+    const expected = blendWithMode(outsideColor, groupColor, 1, 'multiply')
+    expect(Array.from(compositeRegion(document, 0, 0, 1, 1))).toEqual(Object.values(expected))
+  })
+
+  it('keeps the group blend mode active when a child layer returns to normal', () => {
+    const document = createDocument('normal child in blended group', 1, 1, 'rgba')
+    const outsideBottom = document.layers[0]
+    const groupBottom = createLayer('group bottom', 1, 1, 'rgba')
+    const groupTop = createLayer('group top', 1, 1, 'rgba')
+    groupBottom.groupId = 'group'
+    groupTop.groupId = 'group'
+    groupTop.blendMode = 'screen'
+    document.layers.push(groupBottom, groupTop)
+    document.groups.push({ id: 'group', name: 'group', parentGroupId: null, visible: true, locked: false, opacity: 1, blendMode: 'multiply' })
+    const outsideColor = { r: 76, g: 132, b: 218, a: 255 }
+    const groupBottomColor = { r: 214, g: 92, b: 48, a: 255 }
+    const groupTopColor = { r: 42, g: 188, b: 124, a: 255 }
+    writeLayerColor(document, outsideBottom, 0, outsideColor)
+    writeLayerColor(document, groupBottom, 0, groupBottomColor)
+    writeLayerColor(document, groupTop, 0, groupTopColor)
+
+    groupTop.blendMode = 'normal'
+
+    const groupColor = blendWithMode(groupBottomColor, groupTopColor, 1, 'normal')
+    const expected = blendWithMode(outsideColor, groupColor, 1, 'multiply')
+    expect(Array.from(compositeRegion(document, 0, 0, 1, 1))).toEqual(Object.values(expected))
+    expect(expected).not.toEqual(groupColor)
+  })
+
+  it('keeps multiply layers visually unchanged when they are placed in a normal full-opacity group', () => {
+    const document = createDocument('pass-through normal group', 1, 1, 'rgba')
+    const background = document.layers[0]
+    const first = createLayer('first multiply', 1, 1, 'rgba')
+    const second = createLayer('second multiply', 1, 1, 'rgba')
+    const third = createLayer('third multiply', 1, 1, 'rgba')
+    first.blendMode = 'multiply'
+    second.blendMode = 'multiply'
+    third.blendMode = 'multiply'
+    document.layers.push(first, second, third)
+    writeLayerColor(document, background, 0, { r: 206, g: 238, b: 224, a: 255 })
+    writeLayerColor(document, first, 0, { r: 176, g: 92, b: 232, a: 255 })
+    writeLayerColor(document, second, 0, { r: 72, g: 168, b: 244, a: 255 })
+    writeLayerColor(document, third, 0, { r: 232, g: 72, b: 156, a: 255 })
+    const beforeGrouping = compositeRegion(document, 0, 0, 1, 1)
+
+    first.groupId = 'group'
+    second.groupId = 'group'
+    third.groupId = 'group'
+    document.groups.push({ id: 'group', name: 'group', parentGroupId: null, panelOrder: 3, visible: true, locked: false, opacity: 1, blendMode: 'normal' })
+
+    expect(Array.from(compositeRegion(document, 0, 0, 1, 1))).toEqual(Array.from(beforeGrouping))
+  })
+
+  it('applies a blended group to the fully composited Photoshop-style backdrop', () => {
+    const document = createDocument('Photoshop blend chain', 1, 1, 'rgba')
+    const background = document.layers[0]
+    const screenLayer = createLayer('screen', 1, 1, 'rgba')
+    const groupMember = createLayer('group member', 1, 1, 'rgba')
+    screenLayer.blendMode = 'screen'
+    groupMember.groupId = 'multiply-group'
+    document.layers.push(screenLayer, groupMember)
+    document.groups.push({ id: 'multiply-group', name: 'multiply group', parentGroupId: null, panelOrder: 2, visible: true, locked: false, opacity: 1, blendMode: 'multiply' })
+    writeLayerColor(document, background, 0, { r: 0x91, g: 0x80, b: 0x4d, a: 255 })
+    writeLayerColor(document, screenLayer, 0, { r: 0x91, g: 0x15, b: 0x22, a: 255 })
+    writeLayerColor(document, groupMember, 0, { r: 0x91, g: 0x15, b: 0x22, a: 255 })
+
+    expect(createCompositePointSampler(document)(0, 0)).toEqual({ r: 0x76, g: 0x0b, b: 0x0d, a: 255 })
+  })
+
+  it('optionally reapplies a group blend mode to its pass-through result', () => {
+    const document = createDocument('cumulative group blend', 1, 1, 'rgba')
+    const background = document.layers[0]
+    const member = createLayer('multiply member', 1, 1, 'rgba')
+    member.groupId = 'group'
+    member.blendMode = 'multiply'
+    document.layers.push(member)
+    document.groups.push({ id: 'group', name: 'group', parentGroupId: null, visible: true, locked: false, opacity: 1, blendMode: 'multiply' })
+    writeLayerColor(document, background, 0, { r: 0x91, g: 0x80, b: 0x4d, a: 255 })
+    writeLayerColor(document, member, 0, { r: 0x91, g: 0x15, b: 0x22, a: 255 })
+
+    expect(createCompositePointSampler(document)(0, 0)).toEqual({ r: 0x52, g: 0x0b, b: 0x0a, a: 255 })
+
+    document.groups[0].cumulativeBlend = true
+
+    expect(createCompositePointSampler(document)(0, 0)).toEqual({ r: 0x2f, g: 0x06, b: 0x03, a: 255 })
+
+    writeLayerColor(document, member, 0, { r: 0, g: 0, b: 0, a: 0 })
+    expect(createCompositePointSampler(document)(0, 0)).toEqual({ r: 0x91, g: 0x80, b: 0x4d, a: 255 })
+  })
+
+  it('applies group opacity to the second cumulative blend only', () => {
+    const document = createDocument('transparent cumulative group blend', 1, 1, 'rgba')
+    const background = document.layers[0]
+    const member = createLayer('multiply member', 1, 1, 'rgba')
+    const backgroundColor = { r: 145, g: 128, b: 77, a: 255 }
+    const memberColor = { r: 145, g: 21, b: 34, a: 255 }
+    member.groupId = 'group'
+    member.blendMode = 'multiply'
+    document.layers.push(member)
+    document.groups.push({ id: 'group', name: 'group', parentGroupId: null, visible: true, locked: false, opacity: 0.5, blendMode: 'multiply', cumulativeBlend: true })
+    writeLayerColor(document, background, 0, backgroundColor)
+    writeLayerColor(document, member, 0, memberColor)
+
+    const passThroughResult = blendWithMode(backgroundColor, memberColor, 1, 'multiply')
+    const expected = blendWithMode(backgroundColor, passThroughResult, 0.5, 'multiply')
+    expect(createCompositePointSampler(document)(0, 0)).toEqual(expected)
+  })
+
+  it('applies nested group blend modes from the innermost group outward', () => {
+    const document = createDocument('nested blended groups', 1, 1, 'rgba')
+    const outsideBottom = document.layers[0]
+    const parentBottom = createLayer('parent bottom', 1, 1, 'rgba')
+    const childBottom = createLayer('child bottom', 1, 1, 'rgba')
+    const childTop = createLayer('child top', 1, 1, 'rgba')
+    parentBottom.groupId = 'parent'
+    childBottom.groupId = 'child'
+    childTop.groupId = 'child'
+    childTop.blendMode = 'screen'
+    document.layers.push(parentBottom, childBottom, childTop)
+    document.groups.push(
+      { id: 'parent', name: 'parent', parentGroupId: null, visible: true, locked: false, opacity: 1, blendMode: 'multiply' },
+      { id: 'child', name: 'child', parentGroupId: 'parent', visible: true, locked: false, opacity: 1, blendMode: 'overlay' }
+    )
+    const outsideColor = { r: 76, g: 132, b: 218, a: 255 }
+    const parentBottomColor = { r: 214, g: 92, b: 48, a: 255 }
+    const childBottomColor = { r: 42, g: 188, b: 124, a: 255 }
+    const childTopColor = { r: 184, g: 66, b: 206, a: 255 }
+    writeLayerColor(document, outsideBottom, 0, outsideColor)
+    writeLayerColor(document, parentBottom, 0, parentBottomColor)
+    writeLayerColor(document, childBottom, 0, childBottomColor)
+    writeLayerColor(document, childTop, 0, childTopColor)
+
+    const childColor = blendWithMode(childBottomColor, childTopColor, 1, 'screen')
+    const childInParent = blendWithMode(parentBottomColor, childColor, 1, 'overlay')
+    const expected = blendWithMode(outsideColor, childInParent, 1, 'multiply')
+    expect(Array.from(compositeRegion(document, 0, 0, 1, 1))).toEqual(Object.values(expected))
+  })
+
+  it('keeps a moved group at its panelOrder position across normal and blended compositing paths', () => {
+    const document = createDocument('moved blended group', 1, 1, 'rgba')
+    const bottom = document.layers[0]
+    const member = createLayer('group member', 1, 1, 'rgba')
+    const cover = createLayer('root cover', 1, 1, 'rgba')
+    member.groupId = 'group'
+    document.layers.push(member, cover)
+    document.groups.push({ id: 'group', name: 'group', parentGroupId: null, panelOrder: 3, visible: true, locked: false, opacity: 1, blendMode: 'normal' })
+    const bottomColor = { r: 248, g: 244, b: 236, a: 255 }
+    const memberColor = { r: 220, g: 96, b: 48, a: 255 }
+    const coverColor = { r: 64, g: 112, b: 208, a: 255 }
+    writeLayerColor(document, bottom, 0, bottomColor)
+    writeLayerColor(document, member, 0, memberColor)
+    writeLayerColor(document, cover, 0, coverColor)
+
+    expect(Array.from(compositeRegion(document, 0, 0, 1, 1))).toEqual(Object.values(memberColor))
+
+    document.groups[0].blendMode = 'multiply'
+    const expected = blendWithMode(coverColor, memberColor, 1, 'multiply')
+    expect(Array.from(compositeRegion(document, 0, 0, 1, 1))).toEqual(Object.values(expected))
+  })
+
+  it('anchors legacy groups at their highest descendant instead of splitting them around root layers', () => {
+    const document = createDocument('legacy group order', 1, 1, 'rgba')
+    const bottom = document.layers[0]
+    const groupBottom = createLayer('group bottom', 1, 1, 'rgba')
+    const rootMiddle = createLayer('root middle', 1, 1, 'rgba')
+    const groupTop = createLayer('group top', 1, 1, 'rgba')
+    groupBottom.groupId = 'group'
+    groupTop.groupId = 'group'
+    document.layers.push(groupBottom, rootMiddle, groupTop)
+    document.groups.push({ id: 'group', name: 'group', parentGroupId: null, visible: true, locked: false, opacity: 1, blendMode: 'multiply' })
+    const bottomColor = { r: 248, g: 244, b: 236, a: 255 }
+    const groupBottomColor = { r: 220, g: 96, b: 48, a: 255 }
+    const rootMiddleColor = { r: 64, g: 112, b: 208, a: 255 }
+    const groupTopColor = { r: 112, g: 208, b: 92, a: 255 }
+    writeLayerColor(document, bottom, 0, bottomColor)
+    writeLayerColor(document, groupBottom, 0, groupBottomColor)
+    writeLayerColor(document, rootMiddle, 0, rootMiddleColor)
+    writeLayerColor(document, groupTop, 0, groupTopColor)
+
+    const groupColor = blendWithMode(groupBottomColor, groupTopColor, 1, 'normal')
+    const expected = blendWithMode(rootMiddleColor, groupColor, 1, 'multiply')
     expect(Array.from(compositeRegion(document, 0, 0, 1, 1))).toEqual(Object.values(expected))
   })
 
@@ -194,6 +536,22 @@ describe('document compositing', () => {
     expect(layerContentBounds(document, layer)).toEqual({ x: 0, y: 0, width: 1, height: 1 })
   })
 
+  it('keeps a fully cropped layer mask neutral instead of hiding the owner', () => {
+    const document = createDocument('cropped mask', 2, 2, 'rgba')
+    const layer = document.layers[0]
+    const cel = ensureAnimationDocument(document).cels[0]
+    cel.mask = createLayerMask(cel.id, 1, 1)
+    cel.mask.offsetX = 8
+    cel.mask.offsetY = 8
+    writeLayerColor(document, cel.mask, 0, { r: 0, g: 0, b: 0, a: 255 })
+    writeLayerColor(document, layer, 0, red)
+
+    resizeDocumentAt(document, 1, 1, 0, 0, true)
+
+    expect(Array.from(cel.mask.pixels)).toEqual([0, 0, 0, 0])
+    expect(Array.from(compositeRegion(document, 0, 0, 1, 1))).toEqual([255, 0, 0, 255])
+  })
+
   it('resizes layer pixels, offsets, and the document together', () => {
     const document = createDocument('image resize', 2, 1, 'rgba')
     const layer = document.layers[0]
@@ -210,5 +568,20 @@ describe('document compositing', () => {
     expect(layer.offsetY).toBe(0)
     expect(readLayerColor(document, layer, 0)).toEqual(red)
     expect(readLayerColorAt(document, layer, 2, 0)).toEqual(red)
+  })
+
+  it('keeps smoothly resized cell masks transparent or opaque grayscale', () => {
+    const document = createDocument('mask image resize', 2, 1, 'rgba')
+    const cel = ensureAnimationDocument(document).cels[0]
+    cel.mask = createLayerMask(cel.id, 2, 1)
+    writeLayerColor(document, cel.mask, 0, { r: 0, g: 0, b: 0, a: 255 })
+
+    resizeDocumentImage(document, 5, 1, 'smooth')
+
+    for (let offset = 0; offset < cel.mask.pixels.length; offset += 4) {
+      expect(cel.mask.pixels[offset + 1]).toBe(cel.mask.pixels[offset])
+      expect(cel.mask.pixels[offset + 2]).toBe(cel.mask.pixels[offset])
+      expect([0, 255]).toContain(cel.mask.pixels[offset + 3])
+    }
   })
 })

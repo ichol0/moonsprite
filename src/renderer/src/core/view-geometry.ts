@@ -95,6 +95,31 @@ const displayRelative = (point: ViewportPoint, view: Pick<ViewGeometryState, 'ro
   return rotateRelative(mirrored, view.rotation)
 }
 
+export function clampCanvasViewPan<T extends ViewGeometryState>(viewportWidth: number, viewportHeight: number, documentWidth: number, documentHeight: number, view: T, position: RotationIndicatorPosition): T {
+  if (![viewportWidth, viewportHeight, documentWidth, documentHeight, view.zoom, view.panX, view.panY, view.rotation].every(Number.isFinite)) return view
+  if (viewportWidth <= 0 || viewportHeight <= 0 || documentWidth <= 0 || documentHeight <= 0 || view.zoom <= 0) return view
+  const radians = view.rotation * Math.PI / 180
+  const cosine = Math.abs(Math.cos(radians))
+  const sine = Math.abs(Math.sin(radians))
+  const scaledWidth = documentWidth * view.zoom
+  const scaledHeight = documentHeight * view.zoom
+  const displayedWidth = scaledWidth * cosine + scaledHeight * sine
+  const displayedHeight = scaledWidth * sine + scaledHeight * cosine
+  const displayedPan = position === 'canvas' ? { x: view.panX, y: view.panY } : displayRelative({ x: view.panX, y: view.panY }, view)
+  const axisOverscroll = (viewportSize: number, displayedSize: number): number => Math.min(viewportSize, displayedSize) / 2
+  const overscrollX = axisOverscroll(viewportWidth, displayedWidth)
+  const overscrollY = axisOverscroll(viewportHeight, displayedHeight)
+  const limitX = Math.abs(viewportWidth - displayedWidth) / 2 + overscrollX
+  const limitY = Math.abs(viewportHeight - displayedHeight) / 2 + overscrollY
+  const clampedPan = {
+    x: Math.min(limitX, Math.max(-limitX, displayedPan.x)),
+    y: Math.min(limitY, Math.max(-limitY, displayedPan.y))
+  }
+  if (clampedPan.x === displayedPan.x && clampedPan.y === displayedPan.y) return view
+  const delta = viewPanDeltaFromScreen(clampedPan.x - displayedPan.x, clampedPan.y - displayedPan.y, view.rotation, position, Boolean(view.mirrored), Boolean(view.mirroredVertical))
+  return { ...view, panX: view.panX + delta.x, panY: view.panY + delta.y }
+}
+
 export function documentPointFromViewportPointContinuous(point: ViewportPoint, viewportWidth: number, viewportHeight: number, documentWidth: number, documentHeight: number, view: ViewGeometryState, position: RotationIndicatorPosition): ViewportPoint {
   const pivot = viewRotationPivot(viewportWidth, viewportHeight, view.panX, view.panY, position)
   const unrotated = inverseDisplayPoint(point, pivot, view)

@@ -20,6 +20,8 @@ import cursorRotateNe from '@/assets/pixel-icons/21-Slice-15.png'
 import cursorRotateSe from '@/assets/pixel-icons/22-Slice-16.png'
 import cursorRotateSw from '@/assets/pixel-icons/23-Slice-17.png'
 import cursorRotateNw from '@/assets/pixel-icons/24-Icon-24.png'
+import cursorRotateN from '@/assets/pixel-icons/cursor-selection-rotate-n.png'
+import cursorRotateS from '@/assets/pixel-icons/cursor-selection-rotate-s.png'
 import builtinRotate from '@/assets/pixel-icons/cursor-rotate.png'
 import builtinRotateNe from '@/assets/pixel-icons/cursor-selection-rotate-ne.png'
 import builtinRotateSe from '@/assets/pixel-icons/cursor-selection-rotate-se.png'
@@ -28,7 +30,7 @@ import builtinRotateNw from '@/assets/pixel-icons/cursor-selection-rotate-nw.png
 import cursorShearHorizontal from '@/assets/pixel-icons/cursor-selection-shear-horizontal.png'
 import cursorShearVertical from '@/assets/pixel-icons/cursor-selection-shear-vertical.png'
 
-interface CursorDefinition {
+export interface CursorDefinition {
   variable: string
   source: string
   builtinSource?: string
@@ -36,7 +38,7 @@ interface CursorDefinition {
   fallback: string
 }
 
-const cursorDefinitions: CursorDefinition[] = [
+export const CURSOR_ICON_LIBRARY: readonly CursorDefinition[] = [
   { variable: '--cursor-default', source: cursorDefault, hotspot: [9, 5], fallback: 'default' },
   { variable: '--cursor-help', source: cursorDefault, hotspot: [9, 5], fallback: 'help' },
   { variable: '--cursor-progress', source: cursorProgress, hotspot: [11, 5], fallback: 'progress' },
@@ -68,9 +70,13 @@ const cursorDefinitions: CursorDefinition[] = [
   { variable: '--cursor-selection-rotate-se', source: cursorRotateSe, builtinSource: builtinRotateSe, hotspot: [16, 16], fallback: 'crosshair' },
   { variable: '--cursor-selection-rotate-sw', source: cursorRotateSw, builtinSource: builtinRotateSw, hotspot: [16, 16], fallback: 'crosshair' },
   { variable: '--cursor-selection-rotate-nw', source: cursorRotateNw, builtinSource: builtinRotateNw, hotspot: [16, 16], fallback: 'crosshair' },
+  { variable: '--cursor-selection-rotate-n', source: cursorRotateN, builtinSource: cursorRotateN, hotspot: [16, 16], fallback: 'crosshair' },
+  { variable: '--cursor-selection-rotate-s', source: cursorRotateS, builtinSource: cursorRotateS, hotspot: [16, 16], fallback: 'crosshair' },
   { variable: '--cursor-selection-shear-horizontal', source: cursorShearHorizontal, builtinSource: cursorShearHorizontal, hotspot: [16, 16], fallback: 'ew-resize' },
   { variable: '--cursor-selection-shear-vertical', source: cursorShearVertical, builtinSource: cursorShearVertical, hotspot: [16, 16], fallback: 'ns-resize' }
-]
+] as const
+
+const cursorDefinitions: CursorDefinition[] = [...CURSOR_ICON_LIBRARY]
 
 // Editing feedback must stay deterministic. The system crosshair is visually
 // indistinguishable from a lost/unfinished canvas interaction, so these

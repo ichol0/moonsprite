@@ -8,13 +8,9 @@ describe('FutureRoadmapDialog', () => {
   it('shows every planned feature and marks implemented items as completed', () => {
     render(<FutureRoadmapDialog onClose={vi.fn()} />)
     const items = screen.getAllByRole('listitem')
-    expect(items).toHaveLength(16)
-    expect(items[0]).toHaveClass('completed')
-    expect(items[1]).toHaveClass('completed')
-    expect(items[2]).toHaveClass('completed')
-    expect(items[3]).toHaveClass('completed')
-    expect(items[4]).not.toHaveClass('completed')
-    expect(items[15]).not.toHaveClass('completed')
+    expect(items).toHaveLength(21)
+    expect(items.slice(0, 9).every((item) => item.classList.contains('completed'))).toBe(true)
+    expect(items.slice(9).every((item) => !item.classList.contains('completed'))).toBe(true)
   })
 
   it('closes from the unified icon button', () => {

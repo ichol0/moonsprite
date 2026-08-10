@@ -3,6 +3,7 @@ use serde::Serialize;
 use std::path::{Path, PathBuf};
 
 use crate::platform_gallery::gallery_dir;
+use crate::platform_paths::export_directory;
 
 pub type DialogFilter = (&'static str, &'static [&'static str]);
 
@@ -100,6 +101,26 @@ pub(crate) struct SaveDialogResult {
     file_path: Option<String>,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct DirectoryDialogResult {
+    canceled: bool,
+    directory_path: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct DefaultFileDirectories {
+    save_directory: String,
+    export_directory: String,
+}
+
+fn has_explicit_directory(default_path: Option<&str>) -> bool {
+    default_path
+        .and_then(|value| Path::new(value).parent())
+        .is_some_and(|parent| !parent.as_os_str().is_empty())
+}
+
 fn file_dialog(default_path: Option<&str>) -> FileDialog {
     let mut dialog = FileDialog::new();
     if let Some(path) = default_path {
@@ -169,10 +190,7 @@ pub(crate) fn save_project(
     format: Option<String>,
     language: Option<String>,
 ) -> SaveDialogResult {
-    let has_explicit_directory = default_path
-        .as_deref()
-        .and_then(|value| Path::new(value).parent())
-        .is_some_and(|parent| !parent.as_os_str().is_empty());
+    let has_explicit_directory = has_explicit_directory(default_path.as_deref());
     let mut dialog = file_dialog(default_path.as_deref());
     if !has_explicit_directory {
         if let Ok(directory) = gallery_dir() {
@@ -193,10 +211,15 @@ pub(crate) fn export_image(
     format: String,
     language: Option<String>,
 ) -> SaveDialogResult {
+    let has_explicit_directory = has_explicit_directory(default_path.as_deref());
     let (label, extensions) = image_export_filter(&format, language.as_deref());
-    let path = file_dialog(default_path.as_deref())
-        .add_filter(label, &extensions)
-        .save_file();
+    let mut dialog = file_dialog(default_path.as_deref());
+    if !has_explicit_directory {
+        if let Ok(directory) = export_directory() {
+            dialog = dialog.set_directory(directory);
+        }
+    }
+    let path = dialog.add_filter(label, &extensions).save_file();
     SaveDialogResult {
         canceled: path.is_none(),
         file_path: path.map(|value| value.to_string_lossy().to_string()),
@@ -208,7 +231,14 @@ pub(crate) fn save_palette_image(
     default_path: Option<String>,
     language: Option<String>,
 ) -> SaveDialogResult {
-    let path = file_dialog(default_path.as_deref())
+    let has_explicit_directory = has_explicit_directory(default_path.as_deref());
+    let mut dialog = file_dialog(default_path.as_deref());
+    if !has_explicit_directory {
+        if let Ok(directory) = export_directory() {
+            dialog = dialog.set_directory(directory);
+        }
+    }
+    let path = dialog
         .add_filter(
             if is_english(language.as_deref()) {
                 "PNG palette image"
@@ -221,6 +251,32 @@ pub(crate) fn save_palette_image(
     SaveDialogResult {
         canceled: path.is_none(),
         file_path: path.map(|value| value.to_string_lossy().to_string()),
+    }
+}
+
+#[tauri::command]
+pub(crate) fn default_file_directories() -> Result<DefaultFileDirectories, String> {
+    Ok(DefaultFileDirectories {
+        save_directory: gallery_dir()?.to_string_lossy().to_string(),
+        export_directory: export_directory()?.to_string_lossy().to_string(),
+    })
+}
+
+#[tauri::command]
+pub(crate) fn choose_directory(default_path: Option<String>) -> DirectoryDialogResult {
+    let mut dialog = FileDialog::new();
+    if let Some(value) = default_path.as_deref().filter(|value| !value.trim().is_empty()) {
+        let path = PathBuf::from(value);
+        if path.is_dir() {
+            dialog = dialog.set_directory(path);
+        } else if let Some(parent) = path.parent().filter(|parent| parent.is_dir()) {
+            dialog = dialog.set_directory(parent);
+        }
+    }
+    let path = dialog.pick_folder();
+    DirectoryDialogResult {
+        canceled: path.is_none(),
+        directory_path: path.map(|value| value.to_string_lossy().to_string()),
     }
 }
 
@@ -268,7 +324,14 @@ pub(crate) fn save_theme_file(
 
 #[cfg(test)]
 mod tests {
-    use super::{image_export_filter, project_save_filter};
+    use super::{has_explicit_directory, image_export_filter, project_save_filter};
+
+    #[test]
+    fn detects_when_a_dialog_path_already_contains_a_directory() {
+        assert!(!has_explicit_directory(Some("sprite.png")));
+        assert!(has_explicit_directory(Some("D:/exports/sprite.png")));
+        assert!(has_explicit_directory(Some("D:\\exports\\sprite.png")));
+    }
 
     #[test]
     fn project_save_filters_keep_moonsprite_and_aseprite_distinct() {

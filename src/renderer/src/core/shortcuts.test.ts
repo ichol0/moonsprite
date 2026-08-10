@@ -57,6 +57,7 @@ describe('shortcut persistence boundary', () => {
     expect(DEFAULT_SHORTCUTS.adjustmentHueSaturation).toBe('Ctrl+U')
     expect(DEFAULT_SHORTCUTS.adjustmentColorBalance).toBe('')
     expect(DEFAULT_SHORTCUTS.newLayer).toBe('Shift+N')
+    expect(DEFAULT_SHORTCUTS.toggleClippingMask).toBe('Ctrl+Alt+G')
     expect(DEFAULT_SHORTCUTS.polygonLasso).toBe('Shift+Q')
     expect(DEFAULT_SHORTCUTS['tool.fill.gradient']).toBe('Shift+G')
     expect(DEFAULT_SHORTCUTS.toggleCustomGrid).toBe("Ctrl+'")

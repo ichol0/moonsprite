@@ -2,7 +2,7 @@ import type { GradientDither, RasterLayer, RgbaColor, SelectionMask, SpriteDocum
 import { beginPixelEdit, recordPixel, type PixelEdit } from './history'
 import { ensureLayerCoversCanvas, findOrAddPaletteColor, isLayerEffectivelyLocked, layerIndexAt, readLayerColor } from './document'
 import { blendOver, packColor } from './raster'
-import { selectionContains } from './selection'
+import { magicWandSelection, selectionContains } from './selection'
 
 export const GRADIENT_DITHER_PRESETS: readonly GradientDither[] = [
   'none', 'bayer-2', 'bayer-4', 'bayer-8', 'checker', 'diagonal', 'diagonal-reverse', 'horizontal', 'vertical'
@@ -95,6 +95,15 @@ export const gradientColorAt = (
   return amount >= ditherThreshold(dither, x, y) ? { ...endColor } : { ...startColor }
 }
 
+/** Resolves the color-matched area that a gradient is allowed to paint. */
+export const gradientRegionSelection = (
+  document: SpriteDocument,
+  layer: RasterLayer,
+  start: { x: number; y: number },
+  tolerance = 0,
+  contiguous = true
+): SelectionMask | null => magicWandSelection(document, layer, start.x, start.y, tolerance, contiguous)
+
 const gradientPaintValue = (document: SpriteDocument, layer: RasterLayer, index: number, color: RgbaColor): number => {
   if (color.a === 0) return layer.format === 'rgba' ? packColor(color) : 0
   if (color.a === 255) return layer.format === 'rgba' ? packColor(color) : findOrAddPaletteColor(document, color)
@@ -112,12 +121,14 @@ export const applyGradient = (
   startColor: RgbaColor,
   endColor: RgbaColor,
   selection?: SelectionMask | null,
-  dither: GradientDither = 'none'
+  dither: GradientDither = 'none',
+  paintRegion?: SelectionMask | null
 ): PixelEdit | null => {
-  if (isLayerEffectivelyLocked(document, layer) || !ensureLayerCoversCanvas(document, layer)) return null
+  if (paintRegion === null || isLayerEffectivelyLocked(document, layer) || !ensureLayerCoversCanvas(document, layer)) return null
   const edit = beginPixelEdit(layer.id)
   for (let y = 0; y < document.height; y += 1) for (let x = 0; x < document.width; x += 1) {
     if (selection && !selectionContains(selection, x, y)) continue
+    if (paintRegion && !selectionContains(paintRegion, x, y)) continue
     const index = layerIndexAt(layer, x, y)
     if (index === null) continue
     const color = gradientColorAt(startColor, endColor, x, y, start, end, dither)

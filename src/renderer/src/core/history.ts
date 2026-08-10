@@ -1,6 +1,6 @@
 import type { RasterLayer, SelectionRect, SpriteDocument } from '@shared/types'
 import { animationLayerAtFrame, ensureAnimationDocument } from './animation'
-import { getLayer, getLayerStorageOrigin, layerIndexAtStoragePoint, markLayerContentChanged, readLayerPacked, writeLayerPacked, writeLayerPackedRun } from './document'
+import { getLayer, getLayerMaskOwner, getLayerStorageOrigin, isLayerMask, layerIndexAtStoragePoint, markLayerContentChanged, readLayerPacked, writeLayerPacked, writeLayerPackedRun } from './document'
 
 export interface HistoryEntry {
   label: string
@@ -122,7 +122,11 @@ export function beginPixelEdit(layerId: string): PixelEdit {
 }
 
 export function preparePixelEdit(document: SpriteDocument, edit: PixelEdit): void {
-  if (!edit.frameId && document.animation) edit.frameId = ensureAnimationDocument(document).activeFrameId
+  if (edit.frameId || !document.animation) return
+  const target = getLayer(document, edit.layerId)
+  edit.frameId = isLayerMask(target)
+    ? getLayerMaskOwner(document, target)?.frameId
+    : ensureAnimationDocument(document).activeFrameId
 }
 
 /** Records a pixel when the caller already has its current packed value. */
@@ -157,8 +161,11 @@ export function recordPixel(document: SpriteDocument, layer: RasterLayer, edit: 
 
 export function commitPixelEdit(document: SpriteDocument, edit: PixelEdit, label: string): HistoryEntry | null {
   if (edit.before.size === 0 && !edit.runs?.length) return null
+  const maskTarget = isLayerMask(getLayer(document, edit.layerId))
   const frameId = edit.frameId ?? document.animation?.activeFrameId
-  const layerForFrame = (): RasterLayer => frameId && document.animation?.activeFrameId !== frameId
+  const layerForFrame = (): RasterLayer => maskTarget
+    ? getLayer(document, edit.layerId)
+    : frameId && document.animation?.activeFrameId !== frameId
     ? animationLayerAtFrame(document, edit.layerId, frameId) ?? getLayer(document, edit.layerId)
     : getLayer(document, edit.layerId)
   const layer = layerForFrame()
@@ -225,8 +232,10 @@ export function commitPixelEdit(document: SpriteDocument, edit: PixelEdit, label
   }
 }
 
-export function revertPixelEdit(document: SpriteDocument, edit: PixelEdit): void {
-  const layer = edit.frameId && document.animation?.activeFrameId !== edit.frameId
+export function revertPixelEdit(document: SpriteDocument, edit: PixelEdit | null | undefined): void {
+  if (!edit) return
+  const maskTarget = isLayerMask(getLayer(document, edit.layerId))
+  const layer = !maskTarget && edit.frameId && document.animation?.activeFrameId !== edit.frameId
     ? animationLayerAtFrame(document, edit.layerId, edit.frameId) ?? getLayer(document, edit.layerId)
     : getLayer(document, edit.layerId)
   if (edit.before.size > 0 || edit.runs?.length) markLayerContentChanged(layer)

@@ -132,6 +132,8 @@ export interface RgbaLayer {
   locked: boolean
   opacity: number
   blendMode: BlendMode
+  /** Restricts this layer to the visible alpha of its immediate lower sibling. */
+  clippingMask?: boolean
   groupId?: string | null
   /** Local bitmap dimensions. They may differ from the visible canvas after moving/resizing. */
   width: number
@@ -154,6 +156,8 @@ export interface IndexedLayer {
   locked: boolean
   opacity: number
   blendMode: BlendMode
+  /** Restricts this layer to the visible alpha of its immediate lower sibling. */
+  clippingMask?: boolean
   groupId?: string | null
   width: number
   height: number
@@ -164,6 +168,19 @@ export interface IndexedLayer {
 }
 
 export type RasterLayer = RgbaLayer | IndexedLayer
+
+export interface LayerMask extends RgbaLayer {
+  ownerKind: 'cel' | 'group'
+  ownerId: string
+  /** Optional independent link to another mask surface. */
+  linkedMaskId?: string | null
+}
+
+export interface AnimationGroupMask {
+  groupId: string
+  frameId: string
+  mask: LayerMask
+}
 
 export interface LayerGroup {
   id: string
@@ -179,6 +196,10 @@ export interface LayerGroup {
   locked: boolean
   opacity: number
   blendMode: BlendMode
+  /** Restricts this group to the visible alpha of its immediate lower sibling. */
+  clippingMask?: boolean
+  /** Re-applies the group blend mode after its children have composited against the external backdrop. */
+  cumulativeBlend?: boolean
 }
 
 /** 动画时间轴中的一帧。持续时间以毫秒保存，便于后续导入 Aseprite 帧时保持原始节奏。 */
@@ -218,11 +239,15 @@ export interface AnimationCel {
   /** Cel 独立的不透明度，未设置时沿用图层不透明度。 */
   opacity?: number
   surface?: AnimationCelSurface
+  /** Independent grayscale surface for this cell; transparent pixels are neutral/unpainted. */
+  mask?: LayerMask
 }
 
 export interface AnimationTimeline {
   frames: AnimationFrame[]
   cels: AnimationCel[]
+  /** Frame-specific masks attached to layer groups. */
+  groupMasks?: AnimationGroupMask[]
   activeFrameId: string
   loop: boolean
 }
@@ -260,7 +285,7 @@ export interface TimelapseSettings {
 }
 
 export interface SpriteDocument {
-  schemaVersion: 1 | 2
+  schemaVersion: 1 | 2 | 3 | 4
   id: string
   name: string
   width: number
@@ -271,6 +296,10 @@ export interface SpriteDocument {
   activeLayerId: string
   palette: PaletteEntry[]
   paletteOrder: number[]
+  /** Fixed visual palette slots. Empty entries preserve user-defined spacing and placement. */
+  paletteSlots?: Array<number | null>
+  /** Column count used to decode paletteSlots into stable two-dimensional positions. */
+  paletteColumns?: number
   nextColorId: number
   /** Project-owned brushes are stored in the .moonsprite container. */
   customBrushes?: ProjectBrush[]
@@ -367,6 +396,16 @@ export interface SaveDialogResult {
   filePath?: string
 }
 
+export interface DirectoryDialogResult {
+  canceled: boolean
+  directoryPath?: string
+}
+
+export interface DefaultFileDirectories {
+  saveDirectory: string
+  exportDirectory: string
+}
+
 export interface RecoveryRecord {
   id: string
   name: string
@@ -390,6 +429,13 @@ export interface StoredPalette {
   filePath: string
   colors: RgbaColor[]
   builtIn: boolean
+  columns?: number
+  slots?: Array<number | null>
+}
+
+export interface PaletteSlotLayout {
+  columns: number
+  slots: Array<number | null>
 }
 
 export interface PaletteListing {
@@ -451,14 +497,17 @@ export interface MoonSpriteApi {
   savePaletteImage(defaultPath?: string): Promise<SaveDialogResult>
   saveShortcutFile(defaultPath?: string): Promise<SaveDialogResult>
   saveThemeFile(defaultPath?: string): Promise<SaveDialogResult>
+  getDefaultFileDirectories(): Promise<DefaultFileDirectories>
+  chooseDirectory(defaultPath?: string): Promise<DirectoryDialogResult>
   fileExists(filePath: string): Promise<boolean>
   readBinary(filePath: string): Promise<Uint8Array>
   writeBinaryAtomic(filePath: string, data: Uint8Array): Promise<void>
   writeClipboardImage(image: ClipboardImage): Promise<void>
+  readClipboardText(): Promise<string | null>
   readClipboardImage(): Promise<ClipboardImage | null>
   readClipboardImageSize(): Promise<ClipboardImageSize | null>
   listPalettes(): Promise<PaletteListing>
-  savePalette(id: string | null, name: string, colors: RgbaColor[]): Promise<StoredPalette>
+  savePalette(id: string | null, name: string, colors: RgbaColor[], columns: number, slots: Array<number | null>): Promise<StoredPalette>
   deletePalette(id: string): Promise<void>
   openPaletteFolder(): Promise<void>
   listWorkspaces(): Promise<WorkspaceListing>

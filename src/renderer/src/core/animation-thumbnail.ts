@@ -1,4 +1,4 @@
-import type { AnimationCelSurface, PaletteEntry } from '@shared/types'
+import type { AnimationCelSurface, LayerMask, PaletteEntry } from '@shared/types'
 
 export interface AnimationThumbnailRect { x: number; y: number; width: number; height: number }
 
@@ -180,6 +180,59 @@ export const renderAnimationCelThumbnailPixels = (
     }
     const targetIndex = (y * size + x) * 4
     blendThumbnailPixel(output, targetIndex, r, g, b, alpha * celOpacity)
+  }
+  return output
+}
+
+/** Render the complete cel mask into a white-backed grayscale thumbnail. */
+export const renderLayerMaskThumbnailPixels = (
+  documentWidth: number,
+  documentHeight: number,
+  thumbnailWidth: number,
+  thumbnailHeight: number,
+  mask: LayerMask
+): Uint8ClampedArray => {
+  const outputWidth = Math.max(1, Math.trunc(thumbnailWidth))
+  const outputHeight = Math.max(1, Math.trunc(thumbnailHeight))
+  const output = new Uint8ClampedArray(outputWidth * outputHeight * 4)
+  for (let index = 0; index < output.length; index += 4) {
+    output[index] = 255
+    output[index + 1] = 255
+    output[index + 2] = 255
+    output[index + 3] = 255
+  }
+
+  const canvasWidth = Math.max(1, Math.trunc(documentWidth))
+  const canvasHeight = Math.max(1, Math.trunc(documentHeight))
+  const maskWidth = Math.max(1, Math.trunc(mask.width))
+  const maskHeight = Math.max(1, Math.trunc(mask.height))
+  if (mask.pixels.length < maskWidth * maskHeight * 4) return output
+
+  const scale = Math.min(outputWidth / canvasWidth, outputHeight / canvasHeight)
+  if (!Number.isFinite(scale) || scale <= 0) return output
+  const renderedWidth = canvasWidth * scale
+  const renderedHeight = canvasHeight * scale
+  const originX = (outputWidth - renderedWidth) / 2
+  const originY = (outputHeight - renderedHeight) / 2
+  const maskOffsetX = Math.trunc(mask.offsetX)
+  const maskOffsetY = Math.trunc(mask.offsetY)
+
+  for (let y = 0; y < outputHeight; y += 1) for (let x = 0; x < outputWidth; x += 1) {
+    const canvasX = (x + 0.5 - originX) / scale
+    const canvasY = (y + 0.5 - originY) / scale
+    if (canvasX < 0 || canvasY < 0 || canvasX >= canvasWidth || canvasY >= canvasHeight) continue
+    const sourceX = Math.floor(canvasX - maskOffsetX)
+    const sourceY = Math.floor(canvasY - maskOffsetY)
+    if (sourceX < 0 || sourceY < 0 || sourceX >= maskWidth || sourceY >= maskHeight) continue
+    const sourceIndex = (sourceY * maskWidth + sourceX) * 4
+    const alpha = mask.pixels[sourceIndex + 3] / 255
+    if (alpha <= 0) continue
+    const gray = Math.round((mask.pixels[sourceIndex] + mask.pixels[sourceIndex + 1] + mask.pixels[sourceIndex + 2]) / 3)
+    const value = Math.round(gray * alpha + 255 * (1 - alpha))
+    const targetIndex = (y * outputWidth + x) * 4
+    output[targetIndex] = value
+    output[targetIndex + 1] = value
+    output[targetIndex + 2] = value
   }
   return output
 }

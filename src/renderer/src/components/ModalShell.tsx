@@ -17,6 +17,7 @@ interface ModalShellProps extends Omit<HTMLAttributes<HTMLElement>, 'onSubmit'> 
   maxWidth?: number
   onSubmit?: FormEventHandler<HTMLFormElement>
   placement?: ModalPlacement
+  resizePortalClassName?: string
   storageKey: string
 }
 
@@ -51,6 +52,7 @@ export function ModalShell({
   maxWidth = 820,
   onPointerDown,
   placement = 'center',
+  resizePortalClassName,
   storageKey,
   ...props
 }: ModalShellProps): ReactElement {
@@ -93,5 +95,5 @@ export function ModalShell({
       if ((event.target as HTMLElement).closest('header')) floating.startDrag(event)
       onPointerDown?.(event)
     }
-  }, children, createElement(PortalResizeHandles, { targetRef: floating.ref, position: floating.style, onResize: floating.startResize }))
+  }, children, createElement(PortalResizeHandles, { targetRef: floating.ref, position: floating.style, onResize: floating.startResize, className: resizePortalClassName }))
 }

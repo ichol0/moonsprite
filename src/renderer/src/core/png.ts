@@ -6,6 +6,7 @@ import { createDocument } from './document'
 import { compositeDocument } from './document'
 import { TRANSPARENT } from './raster'
 import { translateCurrent as tr } from './localization'
+import { normalizePaletteSlots, PALETTE_GRID_COLUMNS } from './palette-layout'
 
 export interface PngExport {
   bytes: Uint8Array
@@ -154,6 +155,8 @@ export function decodePng(input: Uint8Array, fallbackName = tr('core.document.im
     for (let index = 0; index < layer.pixels.length; index += 1) layer.pixels[index] = paletteLookup[samples[index]] ?? 0
     document.palette = palette
     document.paletteOrder = palette.map((entry) => entry.id)
+    document.paletteColumns = PALETTE_GRID_COLUMNS
+    document.paletteSlots = normalizePaletteSlots(document.palette.map((entry) => entry.id), document.paletteOrder, undefined, document.paletteColumns)
     document.nextColorId = palette.length
     return document
   }

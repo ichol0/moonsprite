@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { PreferencesDialog } from './PreferencesDialog'
 import { useWorkspace } from '@/store/workspace'
 import { THEME_PREFERENCE_KEY } from '@/core/file-preferences'
+import type { MoonSpriteApi } from '@shared/types'
 
 afterEach(() => {
   cleanup()
@@ -96,6 +97,26 @@ describe('PreferencesDialog', () => {
     expect(localStorage.getItem(THEME_PREFERENCE_KEY)).toBeNull()
     unmount()
     expect(document.documentElement.dataset.themeMode).toBe('dark')
+  })
+
+  it('selects and persists a custom default save directory', async () => {
+    const previousApi = window.moonSprite
+    const chooseDirectory = vi.fn(async () => ({ canceled: false, directoryPath: 'D:\\MoonSprite\\custom-gallery' }))
+    Object.defineProperty(window, 'moonSprite', { configurable: true, writable: true, value: {
+      getDefaultFileDirectories: vi.fn(async () => ({ saveDirectory: 'D:\\MoonSprite\\gallery', exportDirectory: 'D:\\MoonSprite\\exports' })),
+      chooseDirectory
+    } as unknown as MoonSpriteApi })
+    try {
+      render(<PreferencesDialog onClose={vi.fn()} onPresetChange={vi.fn()} />)
+      fireEvent.click(screen.getByRole('button', { name: '文件' }))
+      await waitFor(() => expect(screen.getByDisplayValue('D:\\MoonSprite\\gallery')).toBeInTheDocument())
+      fireEvent.click(screen.getByRole('button', { name: '选择默认保存文件夹' }))
+      await waitFor(() => expect(screen.getByDisplayValue('D:\\MoonSprite\\custom-gallery')).toBeInTheDocument())
+      fireEvent.click(screen.getByRole('button', { name: '应用' }))
+      expect(localStorage.getItem('moonsprite.preference.save-directory')).toBe('D:\\MoonSprite\\custom-gallery')
+    } finally {
+      Object.defineProperty(window, 'moonSprite', { configurable: true, writable: true, value: previousApi })
+    }
   })
 
 })

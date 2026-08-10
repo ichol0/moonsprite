@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { documentPointFromViewportPoint, documentPointFromViewportPointContinuous, rotationIndicatorFitsCanvas, unrotatedViewportBounds, viewCanvasOrigin, viewPanDeltaFromScreen, viewRotationPivot, zoomViewAroundViewportPoint } from './view-geometry'
+import { clampCanvasViewPan, documentPointFromViewportPoint, documentPointFromViewportPointContinuous, rotationIndicatorFitsCanvas, unrotatedViewportBounds, viewCanvasOrigin, viewPanDeltaFromScreen, viewRotationPivot, zoomViewAroundViewportPoint } from './view-geometry'
 
 describe('view rotation geometry', () => {
   it('uses the viewport center for a view-centered rotation indicator', () => {
@@ -96,5 +96,29 @@ describe('view rotation geometry', () => {
     const before = documentPointFromViewportPoint(point, 800, 600, 100, 50, view, 'canvas')
     const next = zoomViewAroundViewportPoint(view, 4, point, 800, 600, 100, 50, 'canvas')
     expect(documentPointFromViewportPoint(point, 800, 600, 100, 50, next, 'canvas')).toEqual(before)
+  })
+
+  it('allows half of a small canvas to move outside the viewport', () => {
+    expect(clampCanvasViewPan(800, 600, 64, 64, { zoom: 1, panX: 1000, panY: -1000, rotation: 0 }, 'view')).toEqual({ zoom: 1, panX: 400, panY: -300, rotation: 0 })
+  })
+
+  it('allows a large canvas edge to move to the viewport center', () => {
+    expect(clampCanvasViewPan(800, 600, 200, 160, { zoom: 5, panX: 1000, panY: -1000, rotation: 0 }, 'view')).toEqual({ zoom: 5, panX: 500, panY: -400, rotation: 0 })
+  })
+
+  it('uses the same half-boundary rule at high zoom', () => {
+    expect(clampCanvasViewPan(800, 600, 200, 160, { zoom: 8, panX: 1000, panY: -1000, rotation: 0 }, 'view')).toEqual({ zoom: 8, panX: 800, panY: -640, rotation: 0 })
+    expect(clampCanvasViewPan(800, 600, 4, 4, { zoom: 8, panX: 1000, panY: 1000, rotation: 0 }, 'view')).toEqual({ zoom: 8, panX: 400, panY: 300, rotation: 0 })
+  })
+
+  it('keeps the half-boundary rule at the maximum zoom', () => {
+    expect(clampCanvasViewPan(800, 600, 20, 20, { zoom: 64, panX: 1000, panY: -1000, rotation: 0 }, 'view')).toEqual({ zoom: 64, panX: 640, panY: -640, rotation: 0 })
+    expect(clampCanvasViewPan(800, 600, 4, 4, { zoom: 64, panX: 1000, panY: 1000, rotation: 0 }, 'view')).toEqual({ zoom: 64, panX: 400, panY: 300, rotation: 0 })
+  })
+
+  it('clamps the displayed bounds of a rotated canvas', () => {
+    const next = clampCanvasViewPan(300, 300, 100, 50, { zoom: 2, panX: 1000, panY: 0, rotation: 90 }, 'view')
+    expect(next.panX).toBeCloseTo(150)
+    expect(next.panY).toBeCloseTo(0)
   })
 })
