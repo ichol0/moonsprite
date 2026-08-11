@@ -59,6 +59,17 @@ describe('selection preview geometry', () => {
     expect(selectionContains(rotated, 3, 3)).toBe(true)
   })
 
+  it('trims empty padding around a rotated masked selection', () => {
+    const source = ellipseSelection(4, 5, 8, 4)!
+    const rotated = transformSelectionMask(source, source, 20, 20, 45, undefined, false)!
+    const hasSelectedPixel = (offsets: number[]): boolean => offsets.some((offset) => rotated.mask?.[offset] === 1)
+
+    expect(hasSelectedPixel(Array.from({ length: rotated.width }, (_, x) => x))).toBe(true)
+    expect(hasSelectedPixel(Array.from({ length: rotated.width }, (_, x) => (rotated.height - 1) * rotated.width + x))).toBe(true)
+    expect(hasSelectedPixel(Array.from({ length: rotated.height }, (_, y) => y * rotated.width))).toBe(true)
+    expect(hasSelectedPixel(Array.from({ length: rotated.height }, (_, y) => y * rotated.width + rotated.width - 1))).toBe(true)
+  })
+
   it('rotates all eight transform control points around the selection center', () => {
     expect(transformedSelectionControlPoints({ x: 2, y: 3, width: 4, height: 2 }, 90)).toEqual([
       { x: 5, y: 2 }, { x: 5, y: 4 }, { x: 5, y: 6 },
@@ -77,6 +88,11 @@ describe('selection preview geometry', () => {
 
     const diagonal = rotatedEllipseSelection(target, 40, 40, 37)
     expect(diagonal).not.toBeNull()
+    const boundarySelected = (offsets: number[]): boolean => offsets.some((offset) => diagonal!.mask?.[offset] === 1)
+    expect(boundarySelected(Array.from({ length: diagonal!.width }, (_, x) => x))).toBe(true)
+    expect(boundarySelected(Array.from({ length: diagonal!.width }, (_, x) => (diagonal!.height - 1) * diagonal!.width + x))).toBe(true)
+    expect(boundarySelected(Array.from({ length: diagonal!.height }, (_, y) => y * diagonal!.width))).toBe(true)
+    expect(boundarySelected(Array.from({ length: diagonal!.height }, (_, y) => y * diagonal!.width + diagonal!.width - 1))).toBe(true)
     for (let row = 0; row < (diagonal?.height ?? 0); row += 1) {
       const selectedColumns = Array.from({ length: diagonal!.width }, (_, column) => column)
         .filter((column) => diagonal!.mask?.[row * diagonal!.width + column] === 1)

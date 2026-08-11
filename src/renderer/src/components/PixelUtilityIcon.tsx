@@ -1,6 +1,6 @@
 const utilityIconPaths = {
-  lock: 'M4 2h3v1H4zM3 3h1v1H3zM7 3h1v1H7zM3 4h5v1H3zM2 5h7v1H2zM2 6h3v2H2zM6 6h3v2H6zM2 8h7v1H2z',
-  unlock: 'M4 1h3v1H4zM3 2h1v2H3zM7 2h1v1H7zM3 4h5v1H3zM2 5h7v1H2zM2 6h3v2H2zM6 6h3v2H6zM2 8h7v1H2z',
+  lock: 'M4 1h3v1H4zM3 2h1v2H3zM7 2h1v2H7zM3 4h5v1H3zM2 5h7v1H2zM2 6h4v2H2zM7 6h2v2H7zM2 8h7v1H2z',
+  unlock: 'M4 1h3v1H4zM3 2h1v2H3zM7 2h1v1H7zM3 4h5v1H3zM2 5h1v3H2zM8 5h1v3H8zM6 6h1v1H6zM2 8h7v1H2z',
   eye: 'M3 2h4v1H3zM2 3h3v1H2zM6 3h2v1H6zM1 4h1v2H1zM3 4h4v1H3zM8 4h1v2H8zM4 5h2v1H4zM2 6h1v1H2zM7 6h1v1H7zM3 7h4v1H3z',
   eyeOff: 'M1 4h1v2H1zM8 4h1v2H8zM2 6h1v1H2zM7 6h1v1H7zM3 7h4v1H3z',
   properties: 'M2 2h3v1H2zM2 3h1v1H2zM4 3h4v1H4zM2 4h3v1H2zM6 5h3v1H6zM3 6h4v1H3zM8 6h1v1H8zM6 7h3v1H6z',
@@ -30,8 +30,8 @@ const utilityIconPaths = {
   mergeVisible: 'M4 2h2v1H4zM2 3h6v2H2zM4 5h2v1H4zM2 6h1v1H2zM7 6h1v1H7zM2 7h6v1H2zM4 8h2v1H4z',
   clippingMask: 'M5 2h4v1H5zM4 3h1v3H4zM2 6h5v1H2zM3 7h3v1H3zM4 8h1v1H4z',
   layerMask: 'M5 2h2v1H5zM8 2h2v1H8zM5 3h1v1H5zM9 3h1v1H9zM7 4h1v1H7zM2 5h6v1H2zM2 6h1v1H2zM7 6h1v1H7zM1 7h3v1H1zM5 7h1v1H5zM9 7h1v1H9zM2 8h1v1H2zM5 8h2v1H5zM8 8h2v1H8z',
-  folder: 'M2 2h3v1H2zM1 3h7v1H1zM1 4h8v4H1z',
-  folderOpen: 'M5 4h5v1H5zM4 5h6v1H4zM3 6h6v1H3zM2 7h7v1H2z',
+  folder: 'M2 2h3v1H2zM1 3h7v1H1zM1 4h8v5H1z',
+  folderOpen: 'M4 4h6v1H4zM3 5h7v1H3zM2 6h8v1H2zM1 7h8v2H1z',
   move: 'M4 3h1v1H4zM6 3h1v1H6zM4 5h1v1H4zM6 5h1v1H6zM4 7h1v1H4zM6 7h1v1H6z',
   save: 'M3 2h5v1H3zM2 3h1v1H2zM7 3h2v1H7zM2 4h7v2H2zM2 6h2v2H2zM7 6h2v2H7zM2 8h7v1H2z',
   export: 'M3 2h5v1H3zM2 3h4v1H2zM8 3h1v1H8zM2 4h7v1H2zM2 5h1v1H2zM5 5h4v1H5zM2 6h1v2H2zM7 6h2v1H7zM5 7h4v1H5zM2 8h7v1H2z',
@@ -59,8 +59,8 @@ const utilityIconPaths = {
 } as const
 
 const utilityIconTranslucentPaths: Partial<Record<PixelUtilityIconKind, string>> = {
-  lock: 'M2 4h1v1H2zM8 4h1v1H8zM5 7h1v1H5z',
-  unlock: 'M2 4h1v1H2zM8 4h1v1H8zM5 7h1v1H5z',
+  lock: 'M2 4h1v1H2zM8 4h1v1H8zM6 7h1v1H6z',
+  unlock: 'M2 4h1v1H2zM8 4h1v1H8zM6 7h1v1H6z',
   properties: 'M8 3h1v1H8zM2 6h1v1H2z',
   delete: 'M4 5h1v1H4zM6 5h1v1H6z',
   newFolder: 'M1 2h1v1H1zM5 2h1v1H5zM8 3h1v1H8z',
@@ -75,7 +75,7 @@ const utilityIconTranslucentPaths: Partial<Record<PixelUtilityIconKind, string>>
   mergeVisible: 'M3 6h1v1H3zM6 6h1v1H6z',
   clippingMask: 'M5 3h1v1H5z',
   folder: 'M1 2h1v1H1zM5 2h1v1H5zM8 3h1v1H8z',
-  folderOpen: 'M2 3h5v1H2zM2 4h3v1H2zM2 5h2v1H2zM2 6h1v1H2zM9 6h1v1H9z',
+  folderOpen: 'M1 3h6v1H1zM1 4h3v1H1zM1 5h2v1H1zM1 6h1v1H1zM9 7h1v1H9z',
   save: 'M2 2h1v1H2zM8 2h1v1H8zM3 3h1v1H3zM6 3h1v1H6z',
   export: 'M2 2h1v1H2zM8 2h1v1H8zM6 3h1v1H6zM3 5h1v1H3zM3 7h1v1H3z',
   image: 'M6 7h1v1H6z',

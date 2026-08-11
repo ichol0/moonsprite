@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { CSSProperties, PointerEvent as ReactPointerEvent, RefObject } from 'react'
-import { loadFloatingPosition, saveFloatingPosition, type FloatingPosition } from '@/core/panel-preferences'
+import { loadFloatingPosition, resizeFloatingPosition, saveFloatingPosition, type FloatingAnchor, type FloatingPosition } from '@/core/panel-preferences'
 
 let floatingZIndex = 40
 
@@ -17,6 +17,13 @@ interface PanelDockZone {
 }
 
 const notifyWorkspaceLayoutChanged = (): void => { window.dispatchEvent(new Event('moonsprite-workspace-layout-change')) }
+
+const currentFloatingAnchor = (): FloatingAnchor => {
+  const stage = document.querySelector<HTMLElement>('.stage-wrap')?.getBoundingClientRect()
+  return stage && stage.width > 0 && stage.height > 0
+    ? { left: stage.left, top: stage.top, width: stage.width, height: stage.height }
+    : { left: 0, top: 0, width: window.innerWidth, height: window.innerHeight }
+}
 
 export function panelDockZoneAt(clientX: number, clientY: number): PanelDockZone | null {
   const contains = (bounds: DOMRect): boolean => clientX >= bounds.left && clientX <= bounds.right && clientY >= bounds.top && clientY <= bounds.bottom
@@ -74,6 +81,7 @@ export function useFloatingPanel(initialPosition: FloatingPosition | null = null
   const pointerCaptureRef = useRef<{ element: HTMLElement; pointerId: number } | null>(null)
   const positionRef = useRef(position)
   const viewportRef = useRef({ width: window.innerWidth, height: window.innerHeight })
+  const anchorRef = useRef(currentFloatingAnchor())
   const userPositioned = useRef(false)
   const initialRightOffset = useRef(initialPosition ? window.innerWidth - initialPosition.x : 0)
 
@@ -144,25 +152,47 @@ export function useFloatingPanel(initialPosition: FloatingPosition | null = null
       setDockPreview(null)
     }
     const resize = (): void => {
+      const previousViewport = viewportRef.current
+      const previousAnchor = anchorRef.current
+      const viewport = { width: window.innerWidth, height: window.innerHeight }
+      const nextAnchor = currentFloatingAnchor()
+      viewportRef.current = viewport
+      anchorRef.current = nextAnchor
       updatePosition((current) => {
         if (!current) return current
-        const scaleX = responsiveToViewport ? window.innerWidth / viewportRef.current.width : 1
-        const scaleY = responsiveToViewport ? window.innerHeight / viewportRef.current.height : 1
-        const width = Math.max(minimumWidth, Math.min(maximumWidth(), (current.width ?? minimumWidth) * scaleX))
-        const height = Math.max(minimumHeight, Math.min(maximumHeight(), (current.height ?? minimumHeight) * scaleY))
-        const x = responsiveToViewport ? current.x * scaleX : followViewportRight && !userPositioned.current ? window.innerWidth - initialRightOffset.current : current.x
-        const y = responsiveToViewport ? current.y * scaleY : current.y
-        viewportRef.current = { width: window.innerWidth, height: window.innerHeight }
-        const next = { x: Math.max(-width + 160, Math.min(window.innerWidth - 120, x)), y: Math.max(0, Math.min(window.innerHeight - 32, y)), width, height }
-        window.requestAnimationFrame(() => persistPosition(positionRef.current))
+        const next = resizeFloatingPosition(current, previousViewport, viewport, {
+          responsiveToViewport,
+          followViewportRight,
+          userPositioned: userPositioned.current,
+          initialRightOffset: initialRightOffset.current,
+          minWidth: minimumWidth,
+          minHeight: minimumHeight
+        }, ref.current?.getBoundingClientRect(), previousAnchor, nextAnchor)
+        window.requestAnimationFrame(() => persistPosition(next))
         return next
       })
     }
     window.addEventListener('pointermove', move)
     window.addEventListener('pointerup', up)
     window.addEventListener('pointercancel', up)
-    window.addEventListener('resize', resize)
-    return () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); window.removeEventListener('pointercancel', up); window.removeEventListener('resize', resize) }
+    let resizeFrame: number | null = null
+    const scheduleResize = (): void => {
+      if (resizeFrame !== null) window.cancelAnimationFrame(resizeFrame)
+      resizeFrame = window.requestAnimationFrame(() => {
+        resizeFrame = window.requestAnimationFrame(() => {
+          resizeFrame = null
+          resize()
+        })
+      })
+    }
+    window.addEventListener('resize', scheduleResize)
+    return () => {
+      window.removeEventListener('pointermove', move)
+      window.removeEventListener('pointerup', up)
+      window.removeEventListener('pointercancel', up)
+      window.removeEventListener('resize', scheduleResize)
+      if (resizeFrame !== null) window.cancelAnimationFrame(resizeFrame)
+    }
   }, [])
 
   useEffect(() => {

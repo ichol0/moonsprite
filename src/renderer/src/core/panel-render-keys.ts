@@ -19,6 +19,7 @@ interface PanelSessionState {
   selectedAnimationCellKeys?: string[]
   selectedAnimationMaskCellKeys?: string[]
   activeLayerMaskId?: string | null
+  layerMaskIsolatedView?: boolean
   view: { relativeLuminance: boolean }
 }
 
@@ -51,6 +52,7 @@ export const layersPanelRenderKey = (session: PanelSessionState): string => [
   session.selectedAnimationCellKeys?.join(',') ?? '',
   session.selectedAnimationMaskCellKeys?.join(',') ?? '',
   session.activeLayerMaskId ?? '',
+  session.layerMaskIsolatedView ? 1 : 0,
   session.layersPanelRevision ?? session.revision,
   session.document.layers.map((layer) => `${layer.id}:${layer.name}:${layer.groupId ?? ''}:${layer.visible ? 1 : 0}:${layer.locked ? 1 : 0}:${layer.opacity}:${layer.blendMode}`).join('|'),
   session.document.groups.map((group) => `${group.id}:${group.name}:${group.parentGroupId ?? ''}:${group.visible ? 1 : 0}:${group.locked ? 1 : 0}:${group.opacity}:${group.blendMode}:${group.cumulativeBlend === true ? 1 : 0}`).join('|'),

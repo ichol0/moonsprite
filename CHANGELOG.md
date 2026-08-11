@@ -14,5 +14,6 @@
 
 | 版本 | 完整记录 |
 | --- | --- |
+| `DEV.4` | [查看 DEV.4 完整更新记录](docs/changelog/DEV.4.md) |
 | `DEV.3` | [查看 DEV.3 完整更新记录](docs/changelog/DEV.3.md) |
 | `DEV.2` | [查看 DEV.2 完整更新记录](docs/changelog/DEV.2.md) |

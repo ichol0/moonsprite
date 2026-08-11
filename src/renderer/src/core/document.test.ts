@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { blendWithMode } from './raster'
 import { activateAnimationFrame, duplicateAnimationFrame, ensureAnimationDocument } from './animation'
-import { compositeRegion, createCompositePointSampler, createCompositeSampler, createDocument, createLayer, createLayerMask, DocumentCompositeCache, layerContentBounds, readLayerColor, readLayerColorAt, readLayerMaskDisplayColorAt, renderLayerMaskRegion, resizeDocumentAt, resizeDocumentImage, writeLayerColor } from './document'
+import { compositePixelWithLayerColor, compositeRegion, createCompositePointReplacementSampler, createCompositePointSampler, createCompositeSampler, createDocument, createLayer, createLayerMask, createNormalCompositePointReplacementSampler, DocumentCompositeCache, layerContentBounds, readLayerColor, readLayerColorAt, readLayerMaskDisplayColorAt, renderLayerMaskRegion, resizeDocumentAt, resizeDocumentImage, writeLayerColor } from './document'
 
 const red = { r: 255, g: 0, b: 0, a: 255 }
 const blue = { r: 0, g: 0, b: 255, a: 128 }
@@ -50,6 +50,12 @@ describe('document compositing', () => {
       0, 0, 0, 0,
       255, 0, 0, 128
     ])
+
+    const sampleReplacement = createCompositePointReplacementSampler(document, layer.id)
+    const replacement = { r: 20, g: 180, b: 90, a: 192 }
+    for (let x = 0; x < document.width; x += 1) {
+      expect(sampleReplacement(x, 0, replacement)).toEqual(compositePixelWithLayerColor(document, x, layer.id, replacement))
+    }
   })
 
   it('skips a disabled layer mask during compositing', () => {
@@ -344,6 +350,19 @@ describe('document compositing', () => {
     const childInParent = blendWithMode(parentBottomColor, childColor, 1, 'overlay')
     const expected = blendWithMode(outsideColor, childInParent, 1, 'multiply')
     expect(Array.from(compositeRegion(document, 0, 0, 1, 1))).toEqual(Object.values(expected))
+
+    const sampleReplacement = createCompositePointReplacementSampler(document, childTop.id)
+    for (const replacement of [
+      { r: 0, g: 0, b: 0, a: 0 },
+      { r: 33, g: 177, b: 91, a: 128 },
+      { r: 241, g: 132, b: 18, a: 255 }
+    ]) {
+      const replacementChildColor = blendWithMode(childBottomColor, replacement, 1, 'screen')
+      const replacementInParent = blendWithMode(parentBottomColor, replacementChildColor, 1, 'overlay')
+      const replacementExpected = blendWithMode(outsideColor, replacementInParent, 1, 'multiply')
+      expect(sampleReplacement(0, 0, replacement)).toEqual(replacementExpected)
+      expect(compositePixelWithLayerColor(document, 0, childTop.id, replacement)).toEqual(replacementExpected)
+    }
   })
 
   it('keeps a moved group at its panelOrder position across normal and blended compositing paths', () => {
@@ -434,6 +453,13 @@ describe('document compositing', () => {
     for (let y = -1; y < 6; y += 1) for (let x = -2; x < 8; x += 1) expected.push(...Object.values(sample(x, y)))
 
     expect(Array.from(compositeRegion(document, -2, -1, 10, 7))).toEqual(expected)
+
+    const sampleReplacement = createCompositePointReplacementSampler(document, rgba.id)
+    const replacement = { r: 190, g: 70, b: 35, a: 144 }
+    for (let y = 0; y < document.height; y += 1) for (let x = 0; x < document.width; x += 1) {
+      const index = y * document.width + x
+      expect(sampleReplacement(x, y, replacement)).toEqual(compositePixelWithLayerColor(document, index, rgba.id, replacement))
+    }
   })
 
   it('invalidates cached sparse row ranges only for changed layer content', () => {
@@ -464,6 +490,50 @@ describe('document compositing', () => {
     const replacement = { r: 10, g: 220, b: 30, a: 255 }
 
     expect(createCompositeSampler(document, layer.id, replacement)(0)).toEqual(replacement)
+  })
+
+  it('matches the per-pixel API while changing replacement colors on a normal layer', () => {
+    const document = createDocument('dynamic replacement', 3, 1, 'rgba')
+    const layer = document.layers[0]
+    layer.opacity = 0.6
+    layer.offsetX = 1
+    const sampleReplacement = createCompositePointReplacementSampler(document, layer.id)
+    const replacements = [
+      { r: 15, g: 25, b: 35, a: 255 },
+      { r: 80, g: 120, b: 160, a: 128 },
+      { r: 240, g: 210, b: 180, a: 0 }
+    ]
+
+    replacements.forEach((replacement, x) => {
+      expect(sampleReplacement(x, 0, replacement)).toEqual(compositePixelWithLayerColor(document, x, layer.id, replacement))
+    })
+  })
+
+  it('matches the generic replacement sampler with spatially bucketed normal layers', () => {
+    const document = createDocument('normal replacement preview', 1025, 3, 'rgba')
+    const background = document.layers[0]
+    const active = createLayer('active', 1025, 3, 'rgba')
+    const local = createLayer('local', 8, 3, 'rgba')
+    background.opacity = 0.8
+    active.opacity = 0.65
+    local.offsetX = 510
+    writeLayerColor(document, background, 0, { r: 30, g: 40, b: 50, a: 255 })
+    writeLayerColor(document, background, 512, { r: 80, g: 90, b: 100, a: 180 })
+    writeLayerColor(document, local, 1, { r: 220, g: 40, b: 80, a: 160 })
+    document.layers = [background, active, local]
+    document.activeLayerId = active.id
+    const generic = createCompositePointReplacementSampler(document, active.id)
+    const bucketed = createNormalCompositePointReplacementSampler(document, active.id)
+    expect(bucketed).not.toBeNull()
+
+    for (const replacement of [red, blue, { r: 15, g: 210, b: 90, a: 0 }]) {
+      for (const [x, y] of [[0, 0], [511, 0], [512, 0], [517, 0], [1024, 2]]) {
+        expect(bucketed!(x, y, replacement)).toEqual(generic(x, y, replacement))
+      }
+    }
+
+    local.blendMode = 'multiply'
+    expect(createNormalCompositePointReplacementSampler(document, active.id)).toBeNull()
   })
 
   it('previews a replacement color in newly expanded canvas space', () => {

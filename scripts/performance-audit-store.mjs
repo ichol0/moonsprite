@@ -24,7 +24,7 @@ export function normalizeSuiteReports(suites, reports) {
   return suites.flatMap((suite) => {
     const report = reports[suite.id]
     if (!report) return []
-    if (suite.kind === 'canvas') return normalizeCanvasResults(report.results, suite.id)
+    if (suite.kind === 'canvas') return normalizeCanvasResults(report.results, suite.id, { reactOnly: suite.runtime === 'profile' })
     if (suite.kind === 'vitest-benchmark') return normalizeVitestBenchmark(report, suite.id)
     if (suite.kind === 'bundle') return normalizeBundleReport(report, suite.id)
     return []

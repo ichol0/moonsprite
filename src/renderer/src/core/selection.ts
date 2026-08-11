@@ -166,7 +166,7 @@ export const rotatedEllipseSelection = (
     }
   }
 
-  return selected > 0 ? { x, y, width, height, mask } : null
+  return trimSelectionMaskBounds(x, y, width, height, mask, selected)
 }
 
 export const rotatedRectSelection = (
@@ -230,7 +230,7 @@ export const rotatedRectSelection = (
     }
   }
 
-  return selected > 0 ? { x, y, width, height, mask } : null
+  return trimSelectionMaskBounds(x, y, width, height, mask, selected)
 }
 
 export const maskFromPoints = (points: Array<{ x: number; y: number }>): SelectionMask | null => {
@@ -432,6 +432,40 @@ export const transformedSelectionDestinationPoint = (
   return transformedSelectionPoint(target, normalizedX, normalizedY, angle, shear)
 }
 
+function trimSelectionMaskBounds(
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  mask: Uint8Array,
+  selected: number
+): SelectionMask | null {
+  if (selected === 0) return null
+  let minX = width
+  let minY = height
+  let maxX = -1
+  let maxY = -1
+  for (let localY = 0; localY < height; localY += 1) {
+    for (let localX = 0; localX < width; localX += 1) {
+      if (mask[localY * width + localX] === 0) continue
+      minX = Math.min(minX, localX)
+      minY = Math.min(minY, localY)
+      maxX = Math.max(maxX, localX)
+      maxY = Math.max(maxY, localY)
+    }
+  }
+  if (minX === 0 && minY === 0 && maxX === width - 1 && maxY === height - 1) return { x, y, width, height, mask }
+  const trimmedWidth = maxX - minX + 1
+  const trimmedHeight = maxY - minY + 1
+  const trimmedMask = new Uint8Array(trimmedWidth * trimmedHeight)
+  for (let localY = minY; localY <= maxY; localY += 1) {
+    const sourceOffset = localY * width + minX
+    const targetOffset = (localY - minY) * trimmedWidth
+    trimmedMask.set(mask.subarray(sourceOffset, sourceOffset + trimmedWidth), targetOffset)
+  }
+  return { x: x + minX, y: y + minY, width: trimmedWidth, height: trimmedHeight, mask: trimmedMask }
+}
+
 export const transformSelectionMask = (
   source: SelectionMask,
   target: SelectionRect,
@@ -509,7 +543,7 @@ export const transformSelectionMask = (
         added = true
       }
     }
-    return selected > 0 ? { x, y, width, height, mask } : null
+    return trimSelectionMaskBounds(x, y, width, height, mask, selected)
   }
   for (let destinationY = y; destinationY < bottom; destinationY += 1) {
     for (let destinationX = x; destinationX < right; destinationX += 1) {
@@ -519,7 +553,7 @@ export const transformSelectionMask = (
       selected += 1
     }
   }
-  return selected > 0 ? { x, y, width, height, mask } : null
+  return trimSelectionMaskBounds(x, y, width, height, mask, selected)
 }
 
 export const combineSelection = (current: SelectionMask | null, incoming: SelectionMask | null, mode: SelectionMode): SelectionMask | null => {

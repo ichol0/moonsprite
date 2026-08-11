@@ -7,14 +7,29 @@ const canvasArguments = (suite, outputPath, repetitions = suite.repetitions ?? 1
   `--size=${suite.sizes.join(',')}`,
   `--scenario=${suite.scenarios.join(',')}`,
   `--repeat=${repetitions}`,
+  `--runtime=${suite.runtime ?? 'production'}`,
   `--output-json=${outputPath}`,
 ]
+
+const buildCanvasRuntime = (runtime) => runPnpm([
+  'exec',
+  'vite',
+  'build',
+  '--config',
+  'vite.config.ts',
+  '--mode',
+  runtime === 'profile' ? 'performance-profile' : 'performance-production',
+])
 
 async function executeSuite(suite, directory) {
   const outputPath = resolve(directory, `${suite.id}.json`)
   if (suite.kind === 'canvas') {
     run(process.execPath, canvasArguments(suite, outputPath))
-    return readJson(outputPath)
+    const report = await readJson(outputPath)
+    if (suite.runtime === 'profile' && !report.results?.some((result) => result.reactCommitCount > 0 || Object.keys(result.reactByRegion ?? {}).length > 0)) {
+      throw new Error('React profiling build did not record any commit samples.')
+    }
+    return report
   }
   if (suite.kind === 'vitest-benchmark') {
     runPnpm(['exec', 'vitest', 'bench', suite.file, '--run', `--outputJson=${outputPath}`])
@@ -37,7 +52,9 @@ async function executeSuite(suite, directory) {
 }
 
 export async function executePerformanceSuites(suites, directory) {
-  if (suites.some((suite) => suite.kind === 'canvas' || suite.kind === 'bundle')) runPnpm(['build:web'])
+  const canvasRuntimes = [...new Set(suites.filter((suite) => suite.kind === 'canvas').map((suite) => suite.runtime ?? 'production'))]
+  for (const runtime of canvasRuntimes) buildCanvasRuntime(runtime)
+  if (suites.some((suite) => suite.kind === 'bundle')) runPnpm(['build:web'])
   const reports = {}
   for (const suite of suites) reports[suite.id] = await executeSuite(suite, directory)
   return reports
@@ -62,7 +79,8 @@ export async function confirmCanvasCandidate(suite, candidate, directory, existi
 }
 
 export async function executeCandidate(candidate, suite, directory) {
-  if (suite.kind === 'canvas' || suite.kind === 'bundle') runPnpm(['build:web'])
+  if (suite.kind === 'canvas') buildCanvasRuntime(suite.runtime ?? 'production')
+  else if (suite.kind === 'bundle') runPnpm(['build:web'])
   if (suite.kind === 'canvas') {
     const targeted = {
       ...suite,

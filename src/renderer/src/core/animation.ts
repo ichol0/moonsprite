@@ -665,6 +665,38 @@ export const refreshActiveAnimationFrame = (document: SpriteDocument): void => {
   applyFrameSurfaces(document, timeline)
 }
 
+export const animationCelOffsetsForKeys = (document: SpriteDocument, keys: readonly string[]): Record<string, { x: number; y: number }> => {
+  const timeline = ensureAnimationDocument(document)
+  const lookup = createAnimationCelLookup(timeline)
+  const offsets: Record<string, { x: number; y: number }> = {}
+  for (const key of keys) {
+    const target = parseAnimationCelKey(key)
+    if (!target) continue
+    const cel = lookup.resolve(lookup.at(target.layerId, target.frameId))
+    if (!cel?.surface) continue
+    offsets[key] = { x: cel.surface.offsetX, y: cel.surface.offsetY }
+  }
+  return offsets
+}
+
+export const setAnimationCelOffsetsForKeys = (document: SpriteDocument, offsets: Readonly<Record<string, { x: number; y: number }>>): void => {
+  const timeline = ensureAnimationDocument(document)
+  const lookup = createAnimationCelLookup(timeline)
+  for (const [key, offset] of Object.entries(offsets)) {
+    const target = parseAnimationCelKey(key)
+    if (!target) continue
+    const cel = lookup.resolve(lookup.at(target.layerId, target.frameId))
+    if (!cel?.surface) continue
+    cel.surface.offsetX = offset.x
+    cel.surface.offsetY = offset.y
+  }
+  applyFrameSurfaces(document, timeline)
+}
+
+export const setAnimationCelOffsets = (document: SpriteDocument, frameId: string, offsets: Readonly<Record<string, { x: number; y: number }>>): void => {
+  setAnimationCelOffsetsForKeys(document, Object.fromEntries(Object.entries(offsets).map(([layerId, offset]) => [animationCelKey(layerId, frameId), offset])))
+}
+
 export const activateAnimationFrame = (document: SpriteDocument, frameId: string): boolean => {
   const timeline = ensureAnimationDocument(document)
   if (timeline.activeFrameId === frameId) return true

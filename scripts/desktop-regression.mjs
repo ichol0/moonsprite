@@ -37,7 +37,8 @@ const child = spawn(executable, [startupProject], {
     ...process.env,
     APPDATA: appDataDirectory,
     LOCALAPPDATA: appDataDirectory,
-    WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${debugPort} --user-data-dir=${userDataDirectory}`
+    WEBVIEW2_USER_DATA_FOLDER: userDataDirectory,
+    WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${debugPort}`
   }
 })
 
@@ -106,12 +107,13 @@ try {
   await page.waitForFunction(() => !document.querySelector('main.app-shell')?.classList.contains('advanced-mode'))
   assert(await canvas.isVisible(), 'Canvas did not remain visible after leaving advanced mode.')
 
-  const windowMenuButton = page.getByRole('button', { name: '窗口', exact: true })
-  await windowMenuButton.click()
-  const relativeLuminanceItem = page.locator('.menu-popover button').filter({ hasText: '查看相对明暗' })
+  const previewPanel = page.locator('.preview-panel')
+  await previewPanel.waitFor({ state: 'visible' })
+  await previewPanel.click({ button: 'right', position: { x: 24, y: 12 } })
+  const relativeLuminanceItem = page.locator('.workspace-panel-context-menu button').filter({ hasText: '查看相对明暗' })
   await relativeLuminanceItem.waitFor({ state: 'visible' })
   assert(await relativeLuminanceItem.isEnabled(), 'Relative luminance menu command is unexpectedly disabled.')
-  await windowMenuButton.click()
+  await page.keyboard.press('Escape')
 
   const selectionToolButton = page.locator('.tool-rail button[aria-label="矩形框选工具"]')
   await selectionToolButton.click()

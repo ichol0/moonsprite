@@ -45,7 +45,7 @@ const sameFollowViewportSnapshot = (left: FollowViewportSnapshot, right: FollowV
 export function PreviewPanel({ session, onClose, docked = false, onDockDragStart, onPanelContextMenu, onFloatingDock, relativeLuminanceInPreview = true, relativeLuminanceOverride = null }: { session: DocumentSession; onClose: () => void; relativeLuminanceInPreview?: boolean; relativeLuminanceOverride?: boolean | null } & DockDragProps) {
   const { t } = useI18n()
   const defaultPosition = { x: Math.max(12, window.innerWidth - 310 - 250 - 16), y: Math.max(46, window.innerHeight - 27 - 260 - 16), width: 250, height: 260 }
-  const floating = useFloatingPanel(docked ? null : defaultPosition, false, true, 'moonsprite.preview-panel.v1', false, onFloatingDock, docked)
+  const floating = useFloatingPanel(docked ? null : defaultPosition, false, true, 'moonsprite.preview-panel.v1', true, onFloatingDock, docked)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const [zoom, setZoom] = useState(1)
   const [pan, setPan] = useState({ x: 0, y: 0 })

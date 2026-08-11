@@ -8,18 +8,22 @@ import {
 } from './performance-acceptance.mjs'
 
 const candidate = { id: 'metric', suiteId: 'canvas', label: 'Canvas draw', value: 10, noisePercent: 1 }
+const initialFingerprint = { algorithm: 'sha256', value: 'initial', files: 10 }
+const fingerprint = { algorithm: 'sha256', value: 'abc', files: 10 }
 const audit = {
   id: 'audit-1', releaseLabel: 'DEV.3', metrics: [candidate],
   scope: { level: 'P3', suites: [{ id: 'canvas-full' }] },
   analysis: { candidate },
-  attempts: [{ afterMetrics: [{ ...candidate, value: 9 }], comparison: { status: 'accepted', accepted: true, improvementPercent: 10, requiredImprovementPercent: 5, reason: 'accepted' } }],
+  sourceFingerprint: initialFingerprint,
+  attempts: [{ sourceFingerprint: fingerprint, afterMetrics: [{ ...candidate, value: 9 }], comparison: { status: 'accepted', accepted: true, improvementPercent: 10, requiredImprovementPercent: 5, reason: 'accepted' } }],
 }
-const fingerprint = { algorithm: 'sha256', value: 'abc', files: 10 }
 
 test('接受结果必须符合复测状态或显式用户批准', () => {
-  assert.deepEqual(validateAcceptance(audit, { outcome: 'adopted', reason: '收益稳定', userApproved: false }), [])
+  assert.deepEqual(validateAcceptance(audit, { outcome: 'adopted', reason: '收益稳定', userApproved: false, sourceFingerprint: fingerprint }), [])
   assert.match(validateAcceptance({ ...audit, attempts: [] }, { outcome: 'adopted', reason: 'x' })[0], /定向复测/)
   assert.match(validateAcceptance(audit, { outcome: 'approved-no-change', reason: '高风险' })[0], /用户批准/)
+  assert.match(validateAcceptance(audit, { outcome: 'adopted', reason: 'x', sourceFingerprint: initialFingerprint })[0], /重新复测/)
+  assert.match(validateAcceptance({ ...audit, attempts: [{ ...audit.attempts[0], comparison: { status: 'rejected-final', accepted: false } }] }, { outcome: 'not-adopted', reason: 'x', sourceFingerprint: fingerprint })[0], /恢复未采纳改动/)
 })
 
 test('显式接受生成基线、发布凭证和唯一历史条目', () => {

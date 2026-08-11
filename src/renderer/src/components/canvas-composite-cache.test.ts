@@ -4,7 +4,12 @@ import { ensureAnimationDocument } from '@/core/animation'
 import { CanvasCompositeCache, shouldCacheFullCompositeSurface } from './canvas-composite-cache'
 
 class MockOffscreenCanvas {
-  readonly context = { putImageData: vi.fn() }
+  readonly context = {
+    putImageData: vi.fn(),
+    drawImage: vi.fn(),
+    imageSmoothingEnabled: false,
+    imageSmoothingQuality: 'low'
+  }
   constructor(public width: number, public height: number) {}
   getContext() { return this.context }
 }
@@ -166,6 +171,76 @@ describe('CanvasCompositeCache', () => {
     expect(drawing.drawImage).toHaveBeenCalledTimes(1)
     expect(idle.drawImage.mock.calls[0][0]).toBe(drawing.drawImage.mock.calls[0][0])
     expect(idle.drawImage).toHaveBeenCalledWith(expect.any(MockOffscreenCanvas), 0, 0, 64, 64, 12.25, 8.75, 200.32, 200.32)
+  })
+
+  it('reuses the downscaled surface while panning below 100 percent zoom', () => {
+    const context = {
+      save: vi.fn(), restore: vi.fn(), beginPath: vi.fn(), rect: vi.fn(), clip: vi.fn(),
+      translate: vi.fn(), scale: vi.fn(), drawImage: vi.fn(), imageSmoothingEnabled: true,
+      imageSmoothingQuality: 'high'
+    }
+    const document = createDocument('large overview', 4000, 4000, 'rgba')
+    const cache = new CanvasCompositeCache()
+    const draw = (originX: number) => cache.draw({
+      context: context as never,
+      document,
+      view: { zoom: 0.125, panX: 0, panY: 0, rotation: 0, mirrored: false, mirroredVertical: false, showGrid: false, relativeLuminance: false },
+      originX,
+      originY: 0,
+      canvasWidth: 500,
+      canvasHeight: 500,
+      fromX: 0,
+      fromY: 0,
+      toX: 4000,
+      toY: 4000,
+      revision: 1,
+      contentRevision: 1,
+      imageSmoothingEnabled: true
+    })
+
+    draw(10)
+    const scaledSurface = context.drawImage.mock.calls.at(-1)?.[0] as MockOffscreenCanvas
+    expect(scaledSurface.width).toBe(500)
+    expect(scaledSurface.height).toBe(500)
+    expect(scaledSurface.context.drawImage).toHaveBeenCalledTimes(1)
+    expect(context.drawImage).toHaveBeenLastCalledWith(scaledSurface, 10, 0, 500, 500)
+
+    draw(24)
+    expect(context.drawImage.mock.calls.at(-1)?.[0]).toBe(scaledSurface)
+    expect(scaledSurface.context.drawImage).toHaveBeenCalledTimes(1)
+    expect(context.drawImage).toHaveBeenLastCalledWith(scaledSurface, 24, 0, 500, 500)
+  })
+
+  it('rebuilds the downscaled surface after a dirty-region update', () => {
+    const context = {
+      save: vi.fn(), restore: vi.fn(), beginPath: vi.fn(), rect: vi.fn(), clip: vi.fn(),
+      translate: vi.fn(), scale: vi.fn(), drawImage: vi.fn(), imageSmoothingEnabled: true,
+      imageSmoothingQuality: 'high'
+    }
+    const document = createDocument('overview update', 64, 64, 'rgba')
+    const cache = new CanvasCompositeCache()
+    const options = {
+      context: context as never,
+      document,
+      view: { zoom: 0.5, panX: 0, panY: 0, rotation: 0, mirrored: false, mirroredVertical: false, showGrid: false, relativeLuminance: false },
+      originX: 0,
+      originY: 0,
+      canvasWidth: 32,
+      canvasHeight: 32,
+      fromX: 0,
+      fromY: 0,
+      toX: 64,
+      toY: 64,
+      revision: 1,
+      contentRevision: 1,
+      imageSmoothingEnabled: true
+    }
+
+    cache.draw(options)
+    const firstScaledSurface = context.drawImage.mock.calls.at(-1)?.[0]
+    cache.invalidateRect({ x: 2, y: 3, width: 1, height: 1 }, 64, 64)
+    cache.draw(options)
+    expect(context.drawImage.mock.calls.at(-1)?.[0]).not.toBe(firstScaledSurface)
   })
 
   it('patches a dirty rectangle without splitting the final display surface', () => {

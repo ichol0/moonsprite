@@ -9,6 +9,7 @@ test('画布性能参数默认运行完整场景', () => {
     scenarios: ['pan', 'zoom', 'rotated-zoom', 'draw', 'shape', 'marquee', 'bucket-fill', 'gradient'],
     repetitions: 1,
     outputJson: undefined,
+    runtime: 'production',
   })
 })
 
@@ -19,6 +20,7 @@ test('画布性能参数支持单尺寸和多场景筛选', () => {
     scenarios: ['pan', 'zoom'],
     repetitions: 1,
     outputJson: undefined,
+    runtime: 'production',
   })
 })
 
@@ -35,7 +37,21 @@ test('画布性能参数支持独立运行复杂工程场景', () => {
     scenarios: ['complex-draw', 'complex-undo', 'complex-playback'],
     repetitions: 3,
     outputJson: 'artifacts/result.json',
+    runtime: 'production',
   })
-  assert.throws(() => parseCanvasPerformanceOptions(['--scenario=draw,complex-draw']), /不能与普通画布场景混合/)
+  assert.throws(() => parseCanvasPerformanceOptions(['--scenario=draw,complex-draw']), /不能在同一进程中混合/)
   assert.throws(() => parseCanvasPerformanceOptions(['--repeat=0']), /1 至 10/)
+})
+
+test('大画布场景支持 800 至 4000 并可选择 Profiler 运行模式', () => {
+  assert.deepEqual(parseCanvasPerformanceOptions(['--size=800,2048,4000', '--scenario=large-pan,large-draw,large-gradient', '--runtime=profile']), {
+    full: false,
+    sizes: [800, 2048, 4000],
+    scenarios: ['large-pan', 'large-draw', 'large-gradient'],
+    repetitions: 1,
+    outputJson: undefined,
+    runtime: 'profile',
+  })
+  assert.throws(() => parseCanvasPerformanceOptions(['--scenario=large-pan,draw']), /不能在同一进程中混合/)
+  assert.throws(() => parseCanvasPerformanceOptions(['--runtime=unknown']), /不支持的画布运行模式/)
 })

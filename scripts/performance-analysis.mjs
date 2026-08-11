@@ -39,7 +39,7 @@ const metric = ({ id, suiteId, kind, label, values, budget, target }) => ({
   target,
 })
 
-export function normalizeCanvasResults(rawResults, suiteId) {
+export function normalizeCanvasResults(rawResults, suiteId, options = {}) {
   const groups = new Map()
   for (const result of rawResults ?? []) {
     const key = `${result.canvasSize}:${result.scenario}`
@@ -52,20 +52,22 @@ export function normalizeCanvasResults(rawResults, suiteId) {
     const [sizeText, scenario] = key.split(':')
     const canvasSize = Number(sizeText)
     const target = { kind: 'canvas', suiteId, canvasSize, scenario }
-    for (const [name, label] of [
-      ['p95', '帧 p95'],
-      ['over25Percent', '>25 ms 比例'],
-      ['drawP95', '主绘制 p95'],
-      ['inputP95', '指针处理 p95'],
-      ['reactCommitP95', 'React 提交 p95'],
-    ]) {
+    const metricDefinitions = options.reactOnly
+      ? [['reactCommitP95', 'React 提交 p95']]
+      : [
+          ['p95', '帧 p95'],
+          ['over25Percent', '>25 ms 比例'],
+          ['drawP95', '主绘制 p95'],
+          ['inputP95', '指针处理 p95'],
+        ]
+    for (const [name, label] of metricDefinitions) {
       const values = results.map((result) => Number(result[name])).filter(Number.isFinite)
       if (values.length === 0) continue
       const budgetKey = name === 'p95' ? 'frameP95' : name
       metrics.push(metric({
         id: `${suiteId}:${canvasSize}:${scenario}:${name}`,
         suiteId,
-        kind: 'canvas',
+        kind: name === 'reactCommitP95' ? 'react-root' : 'canvas',
         label: `${canvasSize}x${canvasSize} ${scenario} ${label}`,
         values,
         budget: CANVAS_BUDGETS[budgetKey],
@@ -73,7 +75,7 @@ export function normalizeCanvasResults(rawResults, suiteId) {
       }))
     }
 
-    const regions = new Set(results.flatMap((result) => Object.keys(result.reactByRegion ?? {})))
+    const regions = options.reactOnly ? new Set(results.flatMap((result) => Object.keys(result.reactByRegion ?? {}))) : new Set()
     for (const region of regions) {
       const values = results.map((result) => Number(result.reactByRegion?.[region]?.p95)).filter(Number.isFinite)
       if (values.length === 0) continue
@@ -134,17 +136,20 @@ export function normalizeBundleReport(report, suiteId = 'bundle') {
 
 export function environmentsMatch(left, right) {
   if (!left || !right) return false
-  return ['platform', 'arch', 'cpu', 'node', 'browser'].every((key) => left[key] === right[key])
+  return ['platform', 'arch', 'cpu', 'logicalCpuCount', 'totalMemoryBytes', 'gpu', 'powerPlan', 'node', 'browser'].every((key) => left[key] === right[key])
 }
 
 const severityRank = { stable: 0, attention: 1, blocking: 2 }
 
-export function analyzePerformance(metrics, baseline = null, environment = null) {
+const hasStableHistorySample = (item) => !['canvas', 'react-root', 'react-region'].includes(item.kind) || item.samples >= 3
+
+export function analyzePerformance(metrics, baseline = null, environment = null, options = {}) {
   const comparable = environmentsMatch(environment, baseline?.environment)
   const baselineById = new Map((baseline?.metrics ?? []).map((item) => [item.id, item]))
   const analyzed = metrics.filter((item) => Number.isFinite(item.value) && item.value >= 0).map((item) => {
     const previous = comparable ? baselineById.get(item.id) : null
-    const deltaPercent = previous?.value > 0 ? (item.value - previous.value) / previous.value * 100 : null
+    const historicalComparable = Boolean(previous?.value > 0 && hasStableHistorySample(item) && hasStableHistorySample(previous))
+    const deltaPercent = historicalComparable ? (item.value - previous.value) / previous.value * 100 : null
     const budgetDeltaPercent = item.budget > 0 ? (item.value - item.budget) / item.budget * 100 : null
     const severity = (deltaPercent !== null && deltaPercent > 15) || (budgetDeltaPercent !== null && budgetDeltaPercent > 15)
       ? 'blocking'
@@ -153,10 +158,10 @@ export function analyzePerformance(metrics, baseline = null, environment = null)
         : 'stable'
     const budgetRatio = item.budget > 0 ? item.value / item.budget : 0
     const regressionWeight = deltaPercent === null ? 1 : 1 + Math.max(0, deltaPercent) / 100
-    return { ...item, baselineValue: previous?.value ?? null, deltaPercent, budgetDeltaPercent, severity, score: budgetRatio * regressionWeight }
+    return { ...item, baselineValue: previous?.value ?? null, historicalComparable, deltaPercent, budgetDeltaPercent, severity, score: budgetRatio * regressionWeight }
   })
   analyzed.sort((left, right) => right.score - left.score || right.value - left.value || left.id.localeCompare(right.id))
-  const candidate = analyzed[0] ?? null
+  const candidate = analyzed.find((item) => item.id === options.candidateId) ?? analyzed[0] ?? null
   const overallSeverity = analyzed.reduce((result, item) => severityRank[item.severity] > severityRank[result] ? item.severity : result, 'stable')
   const permission = candidate?.kind === 'react-region' && !['MoonSprite', 'CanvasStage'].includes(candidate.target.region)
     ? 'auto-low-risk'
@@ -181,7 +186,11 @@ export function compareOptimization(beforeMetrics, afterMetrics, candidate, atte
   const improvementPercent = (before.value - after.value) / before.value * 100
   const requiredImprovementPercent = Math.max(5, 2 * before.noisePercent, 2 * after.noisePercent)
   const afterById = new Map(afterMetrics.map((item) => [item.id, item]))
-  const adjacentRegressions = beforeMetrics.filter((item) => item.suiteId === candidate.suiteId && item.id !== candidate.id).flatMap((item) => {
+  const sameMeasurementContext = (item) => candidate.target?.kind !== 'canvas'
+    || (item.target?.kind === 'canvas'
+      && item.target.canvasSize === candidate.target.canvasSize
+      && item.target.scenario === candidate.target.scenario)
+  const adjacentRegressions = beforeMetrics.filter((item) => item.suiteId === candidate.suiteId && item.id !== candidate.id && sameMeasurementContext(item)).flatMap((item) => {
     const next = afterById.get(item.id)
     if (!next || item.value <= 0) return []
     const regression = (next.value - item.value) / item.value * 100

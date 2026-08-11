@@ -32,6 +32,7 @@ import type { SelectionShearTransform } from '@/core/selection'
 import type { SelectionTransformSource, SelectionTranslationPreview } from '@/core/tools'
 import type { SymmetryAxes, SymmetryCenter } from '@/core/symmetry'
 import type { BrushTool } from '@/core/tool-preferences'
+import type { BrushDynamicsSettings, BrushPressureSettings } from '@/core/pressure'
 
 export interface CanvasResizePreview {
   width: number
@@ -103,6 +104,8 @@ export interface BrushProfile {
   proceduralBrushSettings: Record<ProceduralBrushId, ProceduralBrushSettings>
   proceduralAntialias: boolean
   proceduralAntialiasStrength: number
+  brushDynamics: BrushDynamicsSettings
+  brushPressure: BrushPressureSettings
 }
 
 export type DocumentContentInvalidation = ContentInvalidationHint & {
@@ -129,6 +132,8 @@ export interface DocumentSession {
   proceduralBrushSettings: Record<ProceduralBrushId, ProceduralBrushSettings>
   proceduralAntialias: boolean
   proceduralAntialiasStrength: number
+  brushDynamics: BrushDynamicsSettings
+  brushPressure: BrushPressureSettings
   shapeKind: ShapeKind
   shapeRatio: ShapeRatio | null
   fillMode: FillMode

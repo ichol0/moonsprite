@@ -1,11 +1,12 @@
 import { execFileSync, spawnSync } from 'node:child_process'
+import { evaluateDevValidationRequest } from './dev-validation-policy.mjs'
 import { classifyValidationScope } from './validation-scope.mjs'
 
 const requestedMode = process.argv[2]
 const modeAliases = { fast: 'dev', integration: 'release' }
 const mode = modeAliases[requestedMode] ?? requestedMode
 if (!['dev', 'release'].includes(mode)) {
-  console.error('用法：node scripts/run-validation.mjs <dev|release> [--desktop] [-- <文件...>]')
+  console.error('用法：node scripts/run-validation.mjs <dev|release> [--desktop] [--risk=high] [-- <文件...>]')
   process.exit(1)
 }
 
@@ -21,7 +22,26 @@ const workingTreeFiles = () => [...new Set([
   ...splitLines(git(['ls-files', '--others', '--exclude-standard'])),
 ].filter((file) => !normalize(file).startsWith('resource/')))]
 
-const files = (requestedFiles.length > 0 ? requestedFiles : workingTreeFiles()).map(normalize)
+const highRisk = options.has('--risk=high')
+const invalidRiskOptions = [...options].filter((option) => option.startsWith('--risk=') && option !== '--risk=high')
+if (invalidRiskOptions.length > 0) {
+  console.error(`不支持的风险参数：${invalidRiskOptions.join(', ')}。当前仅支持 --risk=high。`)
+  process.exit(1)
+}
+
+const devPolicy = mode === 'dev'
+  ? evaluateDevValidationRequest(requestedFiles, { highRisk })
+  : null
+if (devPolicy?.errors.length) {
+  for (const error of devPolicy.errors) console.error(error)
+  console.error('示例：pnpm check:dev -- src/renderer/src/components/Toolbar.tsx')
+  console.error('高风险示例：pnpm check:dev -- --risk=high src/renderer/src/core/selection.ts src/renderer/src/core/selection.test.ts')
+  process.exit(1)
+}
+
+const files = (mode === 'dev'
+  ? devPolicy.files
+  : (requestedFiles.length > 0 ? requestedFiles : workingTreeFiles()).map(normalize))
 const scope = classifyValidationScope(files, {
   forceFull: mode === 'release',
   expandFull: mode === 'release',
@@ -43,10 +63,6 @@ const runPnpm = (commandArgs) => {
 
 const webCodeFiles = scope.files.filter((file) => /^(src\/(renderer|shared)\/.*|vite\.config\.ts|vitest\.config\.ts|tsconfig.*\.json|package\.json|pnpm-lock\.yaml)$/.test(file) && /\.(ts|tsx|json|yaml)$/.test(file))
 const explicitVitestFiles = scope.files.filter((file) => /^src\/.*\.(test|spec)\.[cm]?[jt]sx?$/.test(file))
-const highRiskWebFiles = scope.files.filter((file) => (
-  /^src\/renderer\/src\/(core|store)\/.*\.[cm]?[jt]sx?$/.test(file)
-  || /^src\/shared\/.*\.[cm]?[jt]sx?$/.test(file)
-) && !/\.(test|spec)\.[cm]?[jt]sx?$/.test(file))
 const nodeTestFiles = scope.files.filter((file) => /^scripts\/.*\.test\.mjs$/.test(file))
 const versionFilesChanged = scope.files.some((file) => new Set([
   'package.json',
@@ -57,13 +73,8 @@ const versionFilesChanged = scope.files.some((file) => new Set([
 ]).has(file))
 const rendererCodeChanged = scope.files.some((file) => /^src\/renderer\/src\/.*\.[cm]?[jt]sx?$/.test(file))
 
-if (mode === 'dev' && highRiskWebFiles.length > 0 && explicitVitestFiles.length === 0) {
-  console.error('Core、Store 或 Shared 改动需要显式传入相关测试文件，避免自动扩散为大范围测试。')
-  console.error('示例：pnpm check:dev -- src/renderer/src/core/tools.ts src/renderer/src/core/tools.test.ts')
-  process.exit(1)
-}
-
 console.log(`验证模式：${mode === 'dev' ? 'dev.X 开发' : 'dev.X 发布'}`)
+if (mode === 'dev') console.log(`风险：${highRisk ? '高风险（要求定向测试）' : '普通'}`)
 console.log(`范围：web=${scope.web}, rust=${scope.rust}, thumbnail=${scope.thumbnail}, desktop=${scope.desktop}`)
 
 if (mode === 'release') {

@@ -182,5 +182,5 @@ export const createTauriApi = (): MoonSpriteApi => ({
 export async function installTauriApi(): Promise<void> {
   if (window.moonSprite) return
   if ('__TAURI_INTERNALS__' in window) window.moonSprite = createTauriApi()
-  else if (import.meta.env.DEV) window.moonSprite = createBrowserApi()
+  else window.moonSprite = createBrowserApi()
 }

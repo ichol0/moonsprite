@@ -14,7 +14,7 @@ const roadmapItems: Array<{ id: string; label: TranslationKey; category: Transla
   { id: 'dither-brush', label: 'roadmap.item.ditherBrush', category: 'roadmap.category.tools', completed: false },
   { id: 'text', label: 'roadmap.item.text', category: 'roadmap.category.tools', completed: false },
   { id: 'pencil-smoothing', label: 'roadmap.item.pencilSmoothing', category: 'roadmap.category.tools', completed: false },
-  { id: 'pressure', label: 'roadmap.item.pressure', category: 'roadmap.category.input', completed: false },
+  { id: 'pressure', label: 'roadmap.item.pressure', category: 'roadmap.category.input', completed: true },
   { id: 'slice', label: 'roadmap.item.slice', category: 'roadmap.category.tools', completed: false },
   { id: 'tile', label: 'roadmap.item.tile', category: 'roadmap.category.canvas', completed: false },
   { id: 'gif-bead-export', label: 'roadmap.item.beadExport', category: 'roadmap.category.export', completed: false },
@@ -23,7 +23,7 @@ const roadmapItems: Array<{ id: string; label: TranslationKey; category: Transla
   { id: 'indexed-mode', label: 'roadmap.item.indexedMode', category: 'roadmap.category.export', completed: true },
   { id: 'timelapse-animation', label: 'roadmap.item.timelapseAnimation', category: 'roadmap.category.animation', completed: true },
   { id: 'custom-brush', label: 'roadmap.item.customBrush', category: 'roadmap.category.input', completed: true },
-  { id: 'sprite-sheet', label: 'roadmap.item.spriteSheet', category: 'roadmap.category.export', completed: false },
+  { id: 'sprite-sheet', label: 'roadmap.item.spriteSheet', category: 'roadmap.category.export', completed: true },
   { id: 'animation-tags', label: 'roadmap.item.animationTags', category: 'roadmap.category.animation', completed: false }
 ]
 

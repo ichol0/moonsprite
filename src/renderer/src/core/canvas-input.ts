@@ -1,6 +1,6 @@
 import type { RasterLayer, RgbaColor, SelectionMask, SelectionMode, SelectionRect, ShapeRatio, SpriteDocument } from '@shared/types'
 import { revertPixelEdit, type PixelEdit } from './history'
-import { restoreSelectionTranslationPreview, type SelectionTransformSource, type SelectionTranslationPreview } from './tools'
+import { restoreSelectionTranslationPreview, type BrushGradientSample, type SelectionTransformSource, type SelectionTranslationPreview } from './tools'
 import { inverseTransformedSelectionPoint, rasterLinePoints, selectionBoundarySegments, selectionContains, type SelectionShearTransform } from './selection'
 import { balancedStairLinePoints } from './pixel-line'
 
@@ -19,9 +19,21 @@ export interface CanvasPoint {
   y: number
 }
 
+export interface CanvasStrokePoint extends CanvasPoint {
+  size?: number
+  opacityScale?: number
+  color?: RgbaColor
+  gradient?: BrushGradientSample
+  coverageKey?: string
+  overrideImageBrushColor?: boolean
+}
+
 export interface PointerClientPoint {
   clientX: number
   clientY: number
+  pressure?: number
+  pointerType?: string
+  timeStamp?: number
 }
 
 export interface CoalescedPointerEvent extends PointerClientPoint {
@@ -38,13 +50,59 @@ export const coalescedPointerClientPoints = (event: CoalescedPointerEvent): Poin
   const points: PointerClientPoint[] = []
   const append = (point: PointerClientPoint): void => {
     if (!Number.isFinite(point.clientX) || !Number.isFinite(point.clientY)) return
+    const pressure = Number.isFinite(point.pressure) ? point.pressure : undefined
+    const pointerType = typeof point.pointerType === 'string' ? point.pointerType : undefined
+    const timeStamp = Number.isFinite(point.timeStamp) ? point.timeStamp : undefined
     const previous = points.at(-1)
-    if (previous?.clientX === point.clientX && previous.clientY === point.clientY) return
-    points.push({ clientX: point.clientX, clientY: point.clientY })
+    if (previous?.clientX === point.clientX
+      && previous.clientY === point.clientY
+      && previous.pressure === pressure
+      && previous.pointerType === pointerType
+      && previous.timeStamp === timeStamp) return
+    points.push({
+      clientX: point.clientX,
+      clientY: point.clientY,
+      ...(pressure === undefined ? {} : { pressure }),
+      ...(pointerType === undefined ? {} : { pointerType }),
+      ...(timeStamp === undefined ? {} : { timeStamp })
+    })
   }
   for (const point of coalesced) append(point)
   append(event)
   return points
+}
+
+export interface BrushSpeedState {
+  clientX: number
+  clientY: number
+  timeStamp: number
+  speed: number
+}
+
+export const BRUSH_SPEED_EMA_TIME_CONSTANT_MS = 55
+export const BRUSH_SPEED_STOP_MS = 160
+export const BRUSH_SPEED_LIMIT = 4000
+
+export const beginBrushSpeedTracking = (sample: PointerClientPoint): BrushSpeedState | undefined =>
+  Number.isFinite(sample.clientX) && Number.isFinite(sample.clientY) && Number.isFinite(sample.timeStamp)
+    ? { clientX: sample.clientX, clientY: sample.clientY, timeStamp: sample.timeStamp!, speed: 0 }
+    : undefined
+
+export function updateBrushSpeedTracking(
+  previous: BrushSpeedState | undefined,
+  sample: PointerClientPoint
+): { state: BrushSpeedState | undefined; speed: number } {
+  const initial = beginBrushSpeedTracking(sample)
+  if (!initial) return { state: previous, speed: previous?.speed ?? 0 }
+  if (!previous) return { state: initial, speed: 0 }
+  const elapsed = initial.timeStamp - previous.timeStamp
+  if (elapsed <= 0) return { state: previous, speed: previous.speed }
+  if (elapsed >= BRUSH_SPEED_STOP_MS) return { state: { ...initial, speed: 0 }, speed: 0 }
+  const distance = Math.hypot(initial.clientX - previous.clientX, initial.clientY - previous.clientY)
+  const instantaneous = Math.min(BRUSH_SPEED_LIMIT, distance * 1000 / elapsed)
+  const alpha = 1 - Math.exp(-elapsed / BRUSH_SPEED_EMA_TIME_CONSTANT_MS)
+  const speed = Math.min(BRUSH_SPEED_LIMIT, previous.speed + (instantaneous - previous.speed) * alpha)
+  return { state: { ...initial, speed }, speed }
 }
 
 export type SelectionHandle = 'nw' | 'n' | 'ne' | 'w' | 'e' | 'sw' | 's' | 'se'
@@ -122,9 +180,10 @@ export interface CanvasDragState {
   startZoom?: number
   startRotation?: number
   startAngle?: number
+  rotationPivot?: CanvasPoint
   patternOrigin?: CanvasPoint
   constrain?: boolean
-  path?: CanvasPoint[]
+  path?: CanvasStrokePoint[]
   canvasEdge?: 'n' | 'e' | 's' | 'w' | 'ne' | 'nw' | 'se' | 'sw'
   canvasPreview?: { width: number; height: number; offsetX: number; offsetY: number }
   floatingPaste?: boolean
@@ -149,6 +208,9 @@ export interface CanvasDragState {
   layerOffset?: CanvasPoint
   layerIds?: string[]
   layerOffsets?: Record<string, CanvasPoint>
+  layerFrameId?: string
+  animationCellKeys?: string[]
+  animationCellOffsets?: Record<string, CanvasPoint>
   duplicateOnDrag?: boolean
   duplicatedLayerId?: string
   duplicatedLayer?: RasterLayer
@@ -158,6 +220,11 @@ export interface CanvasDragState {
   collapseLayerSelectionOnClick?: boolean
   color?: RgbaColor
   colorReplacement?: { source: RgbaColor; target: RgbaColor }
+  lastBrushSize?: number
+  lastOpacityScale?: number
+  lastBrushColor?: RgbaColor
+  lastBrushGradientActive?: boolean
+  brushSpeed?: BrushSpeedState
   gradientEndColor?: RgbaColor
   gradientPaintRegion?: SelectionMask | null
   axisLock?: 'x' | 'y'

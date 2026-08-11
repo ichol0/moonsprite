@@ -2,6 +2,19 @@ import type { BrushPaintMode, BrushShape, BrushTexture, FillKind, FillMode, Grad
 import { normalizeProceduralBrushSettings, PROCEDURAL_BRUSH_IDS } from './brushes'
 import { readStoredJson, writeStoredJson } from './storage'
 import { DEFAULT_SYMMETRY_AXES, type SymmetryAxes } from './symmetry'
+import {
+  DEFAULT_BRUSH_DYNAMICS_SETTINGS,
+  DEFAULT_BRUSH_PRESSURE_SETTINGS,
+  brushPressureFromDynamics,
+  cloneBrushDynamicsSettings,
+  migrateBrushPressureSettings,
+  normalizeBrushDynamicsSettings,
+  normalizeBrushPressureSettings,
+  type BrushDynamicsSettings,
+  type LegacyBrushDynamicsSettingsV2,
+  type LegacyBrushDynamicsSettingsV3,
+  type BrushPressureSettings
+} from './pressure'
 
 export const TOOL_SETTINGS_KEY = 'moonsprite.tool-settings.v1'
 export type BrushTool = 'pencil' | 'eraser' | 'fill'
@@ -17,6 +30,8 @@ export interface PersistedBrushProfile {
   proceduralBrushSettings: Record<ProceduralBrushId, ProceduralBrushSettings>
   proceduralAntialias: boolean
   proceduralAntialiasStrength: number
+  brushDynamics: BrushDynamicsSettings
+  brushPressure: BrushPressureSettings
 }
 
 export interface PersistedToolSettings extends PersistedBrushProfile {
@@ -57,6 +72,8 @@ export const defaultToolSettings: PersistedToolSettings = {
   proceduralAntialias: false,
   proceduralAntialiasPreferenceVersion: 1,
   proceduralAntialiasStrength: 20,
+  brushDynamics: cloneBrushDynamicsSettings(DEFAULT_BRUSH_DYNAMICS_SETTINGS),
+  brushPressure: { ...DEFAULT_BRUSH_PRESSURE_SETTINGS },
   brushProfiles: undefined,
   shapeKind: 'rectangle',
   shapeRatio: null,
@@ -93,6 +110,12 @@ export function normalizePersistedBrushProfile(stored: Partial<PersistedBrushPro
     id,
     normalizeProceduralBrushSettings(id, stored?.proceduralBrushSettings?.[id] ?? fallback.proceduralBrushSettings[id])
   ])) as Record<ProceduralBrushId, ProceduralBrushSettings>
+  const storedDynamics = stored?.brushDynamics as BrushDynamicsSettings | LegacyBrushDynamicsSettingsV2 | LegacyBrushDynamicsSettingsV3 | undefined
+  const brushDynamics = storedDynamics?.version === 2 || storedDynamics?.version === 3 || storedDynamics?.version === 4
+    ? normalizeBrushDynamicsSettings(storedDynamics, fallback.brushDynamics)
+    : stored?.brushPressure
+      ? migrateBrushPressureSettings(stored.brushPressure)
+      : normalizeBrushDynamicsSettings(fallback.brushDynamics)
   return {
     brushSize: Number.isFinite(stored?.brushSize) ? Math.max(1, Math.min(128, Math.round(stored!.brushSize!))) : fallback.brushSize,
     brushShape: stored?.brushShape === 'square' || stored?.brushShape === 'round' || stored?.brushShape === 'line' ? stored.brushShape : fallback.brushShape,
@@ -109,14 +132,21 @@ export function normalizePersistedBrushProfile(stored: Partial<PersistedBrushPro
     },
     proceduralBrushSettings,
     proceduralAntialias: stored?.proceduralAntialias === true,
-    proceduralAntialiasStrength: Number.isFinite(stored?.proceduralAntialiasStrength) ? Math.max(1, Math.min(100, Math.round(stored!.proceduralAntialiasStrength!))) : fallback.proceduralAntialiasStrength
+    proceduralAntialiasStrength: Number.isFinite(stored?.proceduralAntialiasStrength) ? Math.max(1, Math.min(100, Math.round(stored!.proceduralAntialiasStrength!))) : fallback.proceduralAntialiasStrength,
+    brushDynamics,
+    brushPressure: normalizeBrushPressureSettings(stored?.brushPressure, brushPressureFromDynamics(brushDynamics))
   }
 }
 
 export function loadToolSettings(storage?: Storage): PersistedToolSettings {
   try {
     const stored = readStoredJson<Partial<PersistedToolSettings> | null>(TOOL_SETTINGS_KEY, null, storage)
-    if (!stored) return { ...defaultToolSettings, proceduralBrushSettings: createDefaultProceduralBrushSettings() }
+    if (!stored) return {
+      ...defaultToolSettings,
+      proceduralBrushSettings: createDefaultProceduralBrushSettings(),
+      brushDynamics: cloneBrushDynamicsSettings(DEFAULT_BRUSH_DYNAMICS_SETTINGS),
+      brushPressure: { ...DEFAULT_BRUSH_PRESSURE_SETTINGS }
+    }
     const legacyProfile = normalizePersistedBrushProfile(stored, defaultToolSettings)
     if (stored.brushPaintModePreferenceVersion !== 1) legacyProfile.brushPaintMode = defaultToolSettings.brushPaintMode
     if (stored.proceduralAntialiasPreferenceVersion !== 1) legacyProfile.proceduralAntialias = defaultToolSettings.proceduralAntialias
@@ -153,7 +183,12 @@ export function loadToolSettings(storage?: Storage): PersistedToolSettings {
       }
     }
   } catch {
-    return { ...defaultToolSettings, proceduralBrushSettings: createDefaultProceduralBrushSettings() }
+    return {
+      ...defaultToolSettings,
+      proceduralBrushSettings: createDefaultProceduralBrushSettings(),
+      brushDynamics: cloneBrushDynamicsSettings(DEFAULT_BRUSH_DYNAMICS_SETTINGS),
+      brushPressure: { ...DEFAULT_BRUSH_PRESSURE_SETTINGS }
+    }
   }
 }
 

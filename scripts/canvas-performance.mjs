@@ -131,71 +131,40 @@ async function stopFrameProbe(page) {
 async function createDocument(page, size) {
   await page.goto(performanceUrl.href, { waitUntil: 'domcontentloaded', timeout: 30_000 })
   await page.waitForSelector('button.start-action.primary-button', { timeout: 30_000 })
-  await page.locator('button.start-action.primary-button').click()
-  await page.getByRole('spinbutton', { name: '画布宽度' }).fill(String(size))
-  await page.getByRole('spinbutton', { name: '画布高度' }).fill(String(size))
-  await page.locator('.modal-backdrop button.primary-button').last().click()
+  const project = await page.evaluate(async (canvasSize) => {
+    const harness = window.__moonSpritePerformanceHarness
+    if (!harness) throw new Error('Performance harness is unavailable.')
+    return harness.createSimpleDocument(canvasSize)
+  }, size)
   await page.waitForSelector('canvas.stage-canvas', { timeout: 30_000 })
   await page.waitForTimeout(300)
+  return project
 }
 
 async function createComplexDocument(page, size) {
   await page.goto(performanceUrl.href, { waitUntil: 'domcontentloaded', timeout: 30_000 })
   await page.waitForSelector('button.start-action.primary-button', { timeout: 30_000 })
-  await page.evaluate(async (canvasSize) => {
-    const [{ useWorkspace }, { createDocument, createLayer }] = await Promise.all([
-      import('/src/store/workspace.ts'),
-      import('/src/core/document.ts')
-    ])
-    const document = createDocument('Complex performance project', canvasSize, canvasSize, 'rgba')
-    document.groups = Array.from({ length: 6 }, (_, index) => ({
-      id: `perf-group-${index}`,
-      name: `Group ${index}`,
-      parentGroupId: index >= 3 ? `perf-group-${index - 3}` : null,
-      visible: true,
-      locked: false,
-      opacity: 1,
-      blendMode: 'normal'
-    }))
-    document.layers = Array.from({ length: 24 }, (_, layerIndex) => {
-      const layer = createLayer(`Layer ${layerIndex}`, canvasSize, canvasSize, 'rgba')
-      layer.groupId = `perf-group-${layerIndex % 6}`
-      const channel = layerIndex % 3
-      for (let y = layerIndex % 8; y < canvasSize; y += 8) {
-        for (let x = 0; x < canvasSize; x += 1) {
-          const offset = (y * canvasSize + x) * 4
-          layer.pixels[offset + channel] = 64 + layerIndex * 7
-          layer.pixels[offset + 3] = 96 + layerIndex * 5
-        }
-      }
-      return layer
-    })
-    document.activeLayerId = document.layers.at(-1).id
-    const frames = Array.from({ length: 12 }, (_, index) => ({ id: `perf-frame-${index}`, duration: 80 }))
-    document.animation = {
-      frames,
-      activeFrameId: frames[0].id,
-      loop: true,
-      cels: frames.flatMap((frame, frameIndex) => document.layers.map((layer, layerIndex) => ({
-        id: `perf-cel-${frameIndex}-${layerIndex}`,
-        layerId: layer.id,
-        frameId: frame.id,
-        opacity: layer.opacity,
-        surface: {
-          format: 'rgba',
-          width: layer.width,
-          height: layer.height,
-          offsetX: frameIndex % 3 - 1,
-          offsetY: frameIndex % 2,
-          pixels: layer.pixels
-        }
-      })))
-    }
-    document.timelapse = { ...document.timelapse, enabled: false, snapshots: [] }
-    useWorkspace.getState().addSession(document)
+  const project = await page.evaluate(async (canvasSize) => {
+    const harness = window.__moonSpritePerformanceHarness
+    if (!harness) throw new Error('Performance harness is unavailable.')
+    return harness.createComplexDocument(canvasSize)
   }, size)
   await page.waitForSelector('canvas.stage-canvas', { timeout: 30_000 })
   await page.waitForTimeout(500)
+  return project
+}
+
+async function createLargeDocument(page, size) {
+  await page.goto(performanceUrl.href, { waitUntil: 'domcontentloaded', timeout: 30_000 })
+  await page.waitForSelector('button.start-action.primary-button', { timeout: 30_000 })
+  const project = await page.evaluate(async (canvasSize) => {
+    const harness = window.__moonSpritePerformanceHarness
+    if (!harness) throw new Error('Performance harness is unavailable.')
+    return harness.createLargeDocument(canvasSize)
+  }, size)
+  await page.waitForSelector('canvas.stage-canvas', { timeout: 30_000 })
+  await page.waitForTimeout(600)
+  return project
 }
 
 async function runScenario(page, size, label, action) {
@@ -205,51 +174,62 @@ async function runScenario(page, size, label, action) {
 }
 
 async function resetSimpleScenario(page, initialView) {
-  await page.evaluate(async (view) => {
-    const { useWorkspace } = await import('/src/store/workspace.ts')
-    const state = useWorkspace.getState()
-    state.setView(view)
-    state.setSelection(null)
+  await page.evaluate((view) => {
+    const harness = window.__moonSpritePerformanceHarness
+    if (!harness) throw new Error('Performance harness is unavailable.')
+    harness.resetScenario(view)
   }, initialView)
   await page.waitForTimeout(50)
 }
 
 async function prepareToolScenario(page, initialView, tool, fillKind = null, shapeKind = null) {
   await resetSimpleScenario(page, initialView)
-  await page.evaluate(async ({ activeTool, activeFillKind, activeShapeKind }) => {
-    const { useWorkspace } = await import('/src/store/workspace.ts')
-    const state = useWorkspace.getState()
-    state.setTool(activeTool)
-    if (activeFillKind) state.setFillKind(activeFillKind)
-    if (activeShapeKind) state.setShapeKind(activeShapeKind)
-    state.setPrimaryColor({ r: 41, g: 121, b: 255, a: 255 })
-    state.setSecondaryColor({ r: 245, g: 86, b: 74, a: 255 })
-    state.setGradientDither('none')
+  await page.evaluate(({ activeTool, activeFillKind, activeShapeKind }) => {
+    const harness = window.__moonSpritePerformanceHarness
+    if (!harness) throw new Error('Performance harness is unavailable.')
+    harness.prepareTool(activeTool, activeFillKind, activeShapeKind)
   }, { activeTool: tool, activeFillKind: fillKind, activeShapeKind: shapeKind })
   await page.waitForTimeout(50)
 }
 
-async function benchmarkDocument(browser, size, scenarios) {
-  const context = await browser.newContext({ viewport: { width: 1280, height: 800 } })
-  const page = await context.newPage()
-  const complex = [...scenarios].some((scenario) => scenario.startsWith('complex-'))
-  if (complex) await createComplexDocument(page, size)
-  else await createDocument(page, size)
+async function seedUndoHistory(page, center) {
+  await page.keyboard.press('B')
+  for (let stroke = 0; stroke < 6; stroke += 1) {
+    const y = center.y - 75 + stroke * 24
+    await page.mouse.move(center.x - 90, y)
+    await page.mouse.down({ button: 'left' })
+    await page.mouse.move(center.x + 90, y + 8, { steps: 12 })
+    await page.mouse.up({ button: 'left' })
+    await page.waitForTimeout(30)
+  }
+}
+
+async function benchmarkScenarioPage(page, size, scenario) {
+  const projectKind = scenario.startsWith('complex-') ? 'complex' : scenario.startsWith('large-') ? 'large' : 'simple'
+  const detailView = scenario.startsWith('large-detail-')
+  const actionKind = scenario.replace(/^complex-/, '').replace(/^large-(?:detail-)?/, '')
+  let project = { uniquePixelBytes: size * size * 4, layerCount: 1, frameCount: 1 }
+  if (projectKind === 'complex') project = await createComplexDocument(page, size)
+  else if (projectKind === 'large') project = await createLargeDocument(page, size)
+  else project = await createDocument(page, size)
   const canvas = page.locator('canvas.stage-canvas')
   const box = await canvas.boundingBox()
   if (!box) throw new Error(`无法读取 ${size} x ${size} 画布区域。`)
   const center = { x: box.x + box.width / 2, y: box.y + box.height / 2 }
   const results = []
-  const initialView = complex ? null : await page.evaluate(async () => {
-    const { useWorkspace } = await import('/src/store/workspace.ts')
-    const state = useWorkspace.getState()
-    const session = state.sessions.find((candidate) => candidate.document.id === state.activeId)
-    return session ? { ...session.view } : null
+  const initialView = await page.evaluate(() => {
+    const harness = window.__moonSpritePerformanceHarness
+    if (!harness) throw new Error('Performance harness is unavailable.')
+    return harness.activeView()
   })
+  if (projectKind === 'large' && initialView) {
+    const overviewZoom = Math.max(0.05, Math.min((box.width - 80) / size, (box.height - 80) / size))
+    Object.assign(initialView, { zoom: detailView ? 1 : overviewZoom, panX: 0, panY: 0 })
+  }
 
-  if (scenarios.has('pan')) {
+  if (actionKind === 'pan') {
     if (initialView) await resetSimpleScenario(page, initialView)
-    results.push(await runScenario(page, size, 'pan', async () => {
+    results.push(await runScenario(page, size, scenario, async () => {
       await page.mouse.move(center.x - 90, center.y - 45)
       await page.mouse.down({ button: 'middle' })
       for (let index = 0; index < 72; index += 1) {
@@ -261,9 +241,9 @@ async function benchmarkDocument(browser, size, scenarios) {
     }))
   }
 
-  if (scenarios.has('zoom')) {
+  if (actionKind === 'zoom') {
     if (initialView) await resetSimpleScenario(page, initialView)
-    results.push(await runScenario(page, size, 'zoom', async () => {
+    results.push(await runScenario(page, size, scenario, async () => {
       await page.mouse.move(center.x, center.y)
       for (let index = 0; index < 54; index += 1) {
         await page.mouse.wheel(0, index % 18 < 9 ? -80 : 80)
@@ -272,14 +252,14 @@ async function benchmarkDocument(browser, size, scenarios) {
     }))
   }
 
-  if (scenarios.has('rotated-zoom')) {
+  if (actionKind === 'rotated-zoom') {
     if (initialView) await resetSimpleScenario(page, initialView)
     await page.keyboard.press('R')
     const rotationInput = page.locator('.rotate-view-options input')
     await rotationInput.fill('37')
     await rotationInput.press('Enter')
     await page.keyboard.press('Z')
-    results.push(await runScenario(page, size, 'rotated-zoom', async () => {
+    results.push(await runScenario(page, size, scenario, async () => {
       await page.mouse.move(center.x, center.y)
       for (let index = 0; index < 54; index += 1) {
         await page.mouse.wheel(0, index % 18 < 9 ? -80 : 80)
@@ -288,9 +268,9 @@ async function benchmarkDocument(browser, size, scenarios) {
     }))
   }
 
-  if (scenarios.has('draw')) {
+  if (actionKind === 'draw') {
     if (initialView) await prepareToolScenario(page, initialView, 'pencil')
-    results.push(await runScenario(page, size, 'draw', async () => {
+    results.push(await runScenario(page, size, scenario, async () => {
       await page.mouse.move(center.x - 120, center.y - 70)
       await page.mouse.down({ button: 'left' })
       for (let index = 0; index < 72; index += 1) {
@@ -302,9 +282,9 @@ async function benchmarkDocument(browser, size, scenarios) {
     }))
   }
 
-  if (scenarios.has('shape')) {
+  if (actionKind === 'shape') {
     if (initialView) await prepareToolScenario(page, initialView, 'shape', null, 'ellipse')
-    results.push(await runScenario(page, size, 'shape', async () => {
+    results.push(await runScenario(page, size, scenario, async () => {
       await page.mouse.move(center.x - 120, center.y - 80)
       await page.mouse.down({ button: 'left' })
       for (let index = 0; index < 48; index += 1) {
@@ -316,9 +296,9 @@ async function benchmarkDocument(browser, size, scenarios) {
     }))
   }
 
-  if (scenarios.has('marquee')) {
+  if (actionKind === 'marquee') {
     if (initialView) await prepareToolScenario(page, initialView, 'selection')
-    results.push(await runScenario(page, size, 'marquee', async () => {
+    results.push(await runScenario(page, size, scenario, async () => {
       await page.mouse.move(center.x - 120, center.y - 80)
       await page.mouse.down({ button: 'left' })
       for (let index = 0; index < 48; index += 1) {
@@ -330,16 +310,16 @@ async function benchmarkDocument(browser, size, scenarios) {
     }))
   }
 
-  if (scenarios.has('bucket-fill')) {
+  if (actionKind === 'bucket-fill') {
     if (initialView) await prepareToolScenario(page, initialView, 'fill', 'bucket')
-    results.push(await runScenario(page, size, 'bucket-fill', async () => {
+    results.push(await runScenario(page, size, scenario, async () => {
       await page.mouse.click(center.x, center.y, { button: 'left' })
     }))
   }
 
-  if (scenarios.has('gradient')) {
+  if (actionKind === 'gradient') {
     if (initialView) await prepareToolScenario(page, initialView, 'fill', 'gradient')
-    results.push(await runScenario(page, size, 'gradient', async () => {
+    results.push(await runScenario(page, size, scenario, async () => {
       await page.mouse.move(center.x - 140, center.y - 90)
       await page.mouse.down({ button: 'left' })
       for (let index = 0; index < 48; index += 1) {
@@ -351,60 +331,48 @@ async function benchmarkDocument(browser, size, scenarios) {
     }))
   }
 
-  if (scenarios.has('complex-draw')) {
-    await page.keyboard.press('B')
-    results.push(await runScenario(page, size, 'complex-draw', async () => {
-      await page.mouse.move(center.x - 120, center.y - 70)
-      await page.mouse.down({ button: 'left' })
-      for (let index = 0; index < 72; index += 1) {
-        const progress = index / 71
-        await page.mouse.move(center.x - 120 + progress * 240, center.y - 70 + Math.sin(progress * Math.PI * 4) * 95)
-        await page.waitForTimeout(12)
-      }
-      await page.mouse.up({ button: 'left' })
-    }))
-  }
-
-  if (scenarios.has('complex-undo')) {
+  if (actionKind === 'undo') {
+    await seedUndoHistory(page, center)
     results.push(await runScenario(page, size, 'complex-undo', async () => {
       await page.evaluate(async () => {
-        const { useWorkspace } = await import('/src/store/workspace.ts')
-        for (let index = 0; index < 6; index += 1) {
-          useWorkspace.getState().undo()
-          await new Promise((resolve) => setTimeout(resolve, 60))
-          useWorkspace.getState().redo()
-          await new Promise((resolve) => setTimeout(resolve, 60))
-        }
+        const harness = window.__moonSpritePerformanceHarness
+        if (!harness) throw new Error('Performance harness is unavailable.')
+        const completed = await harness.undoRedo(6)
+        if (completed !== 6) throw new Error(`Expected 6 undo/redo operations, completed ${completed}.`)
       })
     }))
   }
 
-  if (scenarios.has('complex-playback')) {
+  if (actionKind === 'playback') {
     results.push(await runScenario(page, size, 'complex-playback', async () => {
       await page.evaluate(async () => {
-        const { useWorkspace } = await import('/src/store/workspace.ts')
-        const session = useWorkspace.getState().sessions.find((candidate) => candidate.document.id === useWorkspace.getState().activeId)
-        const frameIds = session?.document.animation?.frames.map((frame) => frame.id) ?? []
-        useWorkspace.getState().setAnimationPlaying(true)
-        for (const frameId of frameIds) {
-          useWorkspace.getState().setActiveAnimationFrame(frameId)
-          await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))
-          await new Promise((resolve) => setTimeout(resolve, 40))
-        }
-        useWorkspace.getState().setAnimationPlaying(false)
+        const harness = window.__moonSpritePerformanceHarness
+        if (!harness) throw new Error('Performance harness is unavailable.')
+        const frames = await harness.playAnimation()
+        if (frames < 2) throw new Error(`Expected an animated project, received ${frames} frame.`)
       })
     }))
   }
 
-  await context.close()
-  return results
+  return results.map((result) => ({ ...result, project: { kind: projectKind, ...project } }))
+}
+
+async function benchmarkDocument(browser, size, scenario) {
+  const context = await browser.newContext({ viewport: { width: 1280, height: 800 } })
+  const page = await context.newPage()
+  try {
+    return await benchmarkScenarioPage(page, size, scenario)
+  } finally {
+    await context.close().catch(() => undefined)
+  }
 }
 
 let previewProcess = null
 let browser = null
 try {
   if (!externalUrl) {
-    previewProcess = spawn(process.execPath, [resolve('node_modules/vite/bin/vite.js'), '--config', 'vite.config.ts', '--host', host, '--port', String(port), '--strictPort'], {
+    const buildMode = options.runtime === 'profile' ? 'performance-profile' : 'performance-production'
+    previewProcess = spawn(process.execPath, [resolve('node_modules/vite/bin/vite.js'), 'preview', '--config', 'vite.config.ts', '--mode', buildMode, '--host', host, '--port', String(port), '--strictPort'], {
       cwd: process.cwd(),
       stdio: 'ignore',
       windowsHide: true
@@ -417,13 +385,18 @@ try {
   console.log(`画布性能范围：尺寸 ${options.sizes.join(', ')}；场景 ${options.scenarios.join(', ')}`)
   for (let iteration = 1; iteration <= options.repetitions; iteration += 1) {
     for (const size of options.sizes) {
-      const iterationResults = await benchmarkDocument(browser, size, scenarios)
-      results.push(...iterationResults.map((result) => ({ ...result, iteration })))
+      for (const scenario of scenarios) {
+        const iterationResults = await benchmarkDocument(browser, size, scenario)
+        results.push(...iterationResults.map((result) => ({ ...result, iteration })))
+      }
     }
   }
   console.table(results.map((result) => ({
     canvas: `${result.canvasSize}x${result.canvasSize}`,
     scenario: result.scenario,
+    layers: result.project.layerCount,
+    frames: result.project.frameCount,
+    pixelMiB: (result.project.uniquePixelBytes / 1024 / 1024).toFixed(1),
     samples: result.sampleCount,
     p50: result.p50.toFixed(2),
     p95: result.p95.toFixed(2),
@@ -439,7 +412,7 @@ try {
     reactP95: result.reactCommitP95.toFixed(2),
     longestReact: result.longestReactCommit.toFixed(2)
   })))
-  const report = { schemaVersion: 1, suite: 'canvas', createdAt: new Date().toISOString(), results }
+  const report = { schemaVersion: 1, suite: 'canvas', runtime: options.runtime, createdAt: new Date().toISOString(), results }
   if (options.outputJson) {
     const outputPath = resolve(options.outputJson)
     await mkdir(dirname(outputPath), { recursive: true })

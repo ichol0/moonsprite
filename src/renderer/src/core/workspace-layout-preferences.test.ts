@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { WorkspaceLayout } from '@shared/types'
-import { INSPECTOR_WIDTH_STORAGE_KEY, LEGACY_LAYERS_DOCK_STORAGE_KEY, PANEL_VISIBILITY_STORAGE_KEY, loadInspectorWidth, loadMainWindowState, loadPanelDocks, loadPanelVisibility, normalizeWorkspaceLayout, saveMainWindowState, savePanelVisibility } from './workspace-layout-preferences'
+import { constrainBottomDockHeight, constrainInspectorWidth, constrainLeftDockWidth, INSPECTOR_WIDTH_STORAGE_KEY, LEGACY_LAYERS_DOCK_STORAGE_KEY, PANEL_VISIBILITY_STORAGE_KEY, loadInspectorWidth, loadMainWindowState, loadPanelDocks, loadPanelVisibility, normalizeWorkspaceLayout, saveMainWindowState, savePanelVisibility } from './workspace-layout-preferences'
 
 function createStorage(): Storage {
   const values = new Map<string, string>()
@@ -31,6 +31,13 @@ const layout = (changes: Partial<WorkspaceLayout> = {}): WorkspaceLayout => ({
 })
 
 describe('workspace layout preferences', () => {
+  it('constrains dock sizes for a smaller viewport without changing the preferred values', () => {
+    expect(constrainInspectorWidth(420, 900)).toBe(420)
+    expect(constrainInspectorWidth(420, 600)).toBe(380)
+    expect(constrainLeftDockWidth(420, 900)).toBe(380)
+    expect(constrainBottomDockHeight(500, 600)).toBe(407)
+  })
+
   it('clamps stored dimensions and migrates the legacy bottom layers dock', () => {
     const storage = createStorage()
     storage.setItem(INSPECTOR_WIDTH_STORAGE_KEY, '5000')

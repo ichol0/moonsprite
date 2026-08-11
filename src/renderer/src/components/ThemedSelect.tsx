@@ -14,7 +14,7 @@ export interface ThemedSelectOption<T extends string> {
   description?: string
 }
 
-export function ThemedSelect<T extends string>({ value, groups, label, onChange, disabled = false, renderSelected, renderOption, showCheck = true, showOptionTooltips = true, popoverClassName = '', popoverWidth }: {
+export function ThemedSelect<T extends string>({ value, groups, label, onChange, disabled = false, renderSelected, renderOption, showCheck = true, showOptionTooltips = true, popoverClassName = '', popoverWidth, preserveAnimationSelection = false }: {
   value: T
   groups: Array<ThemedSelectGroup<T>>
   label: string
@@ -26,6 +26,7 @@ export function ThemedSelect<T extends string>({ value, groups, label, onChange,
   showOptionTooltips?: boolean
   popoverClassName?: string
   popoverWidth?: number
+  preserveAnimationSelection?: boolean
 }) {
   const [open, setOpen] = useState(false)
   const [position, setPosition] = useState({ left: 8, top: 8, width: 220 })
@@ -81,6 +82,6 @@ export function ThemedSelect<T extends string>({ value, groups, label, onChange,
       }
       if (event.key === 'Escape') setOpen(false)
     }}><span className="themed-select-selected-copy">{selected ? renderSelected?.(selected) ?? selected.label : value}</span><ChevronDown size={14} /></button>
-    {open && createPortal(<div ref={menuRef} className={`themed-select-popover ${popoverClassName}`.trim()} data-hide-check={!showCheck ? 'true' : undefined} role="listbox" aria-label={label} style={position}>{groups.map((group) => <section key={group.label} className="themed-select-group"><span>{group.label}</span>{group.options.map((option) => { const optionCopy = <span className="themed-select-option-copy">{renderOption?.(option) ?? <strong>{option.label}</strong>}</span>; return <button key={option.value} type="button" role="option" aria-selected={option.value === value} onClick={() => select(option.value)}>{showOptionTooltips ? <Tooltip content={option.description}>{optionCopy}</Tooltip> : optionCopy}{showCheck && option.value === value && <PixelUtilityIcon kind="check" />}</button> })}</section>)}</div>, document.body)}
+    {open && createPortal(<div ref={menuRef} className={`themed-select-popover ${popoverClassName}`.trim()} data-hide-check={!showCheck ? 'true' : undefined} data-preserve-animation-selection={preserveAnimationSelection ? '' : undefined} role="listbox" aria-label={label} style={position}>{groups.map((group) => <section key={group.label} className="themed-select-group"><span>{group.label}</span>{group.options.map((option) => { const optionCopy = <span className="themed-select-option-copy">{renderOption?.(option) ?? <strong>{option.label}</strong>}</span>; return <button key={option.value} type="button" role="option" aria-selected={option.value === value} onClick={() => select(option.value)}>{showOptionTooltips ? <Tooltip content={option.description}>{optionCopy}</Tooltip> : optionCopy}{showCheck && option.value === value && <PixelUtilityIcon kind="check" />}</button> })}</section>)}</div>, document.body)}
   </span>
 }

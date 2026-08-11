@@ -22,6 +22,10 @@ void applyCursorPreferences(startupPreferences.useLocalCursors, startupPreferenc
 void installTauriApi()
   .then(async () => {
     await applyUiScale(startupPreferences.uiScale).catch(() => undefined)
+    if (__MOONSPRITE_PERFORMANCE_BUILD__ && new URLSearchParams(window.location.search).has('moonsprite-perf')) {
+      const { installPerformanceHarness } = await import('./performance/benchmark-harness')
+      installPerformanceHarness()
+    }
     createRoot(rootElement).render(
       <StrictMode>
         <I18nProvider>

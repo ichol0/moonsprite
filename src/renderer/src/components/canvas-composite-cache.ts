@@ -7,6 +7,13 @@ import type { RasterContext2D } from './canvas-selection-renderer'
 interface CompositeSurface {
   canvas: OffscreenCanvas
   revision: number
+  scaled?: ScaledCompositeSurface
+}
+
+interface ScaledCompositeSurface {
+  canvas: OffscreenCanvas
+  zoom: number
+  imageSmoothingEnabled: boolean
 }
 
 interface CompositeRegionSurface extends CompositeSurface {
@@ -99,12 +106,12 @@ export class CanvasCompositeCache {
     context.clip()
     context.imageSmoothingEnabled = imageSmoothingEnabled
     if (imageSmoothingEnabled) context.imageSmoothingQuality = 'high'
-    if (shouldCacheFullCompositeSurface(document.width, document.height, this.maxCacheBytes)) this.drawSurface(context, document, view, originX, originY, canvasWidth, canvasHeight, fromX, fromY, toX, toY, frameKey, frameId, contentRevision, contentInvalidation, isolatedLayerMask)
+    if (shouldCacheFullCompositeSurface(document.width, document.height, this.maxCacheBytes)) this.drawSurface(context, document, view, originX, originY, canvasWidth, canvasHeight, fromX, fromY, toX, toY, frameKey, frameId, contentRevision, contentInvalidation, imageSmoothingEnabled, isolatedLayerMask)
     else this.drawRegion(context, document, view, originX, originY, fromX, fromY, toX, toY, frameKey, contentRevision, isolatedLayerMask)
     context.restore()
   }
 
-  private drawSurface(context: RasterContext2D, document: SpriteDocument, view: ViewState, originX: number, originY: number, canvasWidth: number, canvasHeight: number, fromX: number, fromY: number, toX: number, toY: number, key: string, frameId: string, contentRevision: number, invalidation: DrawCompositeOptions['contentInvalidation'], isolatedLayerMask?: LayerMask): void {
+  private drawSurface(context: RasterContext2D, document: SpriteDocument, view: ViewState, originX: number, originY: number, canvasWidth: number, canvasHeight: number, fromX: number, fromY: number, toX: number, toY: number, key: string, frameId: string, contentRevision: number, invalidation: DrawCompositeOptions['contentInvalidation'], imageSmoothingEnabled: boolean, isolatedLayerMask?: LayerMask): void {
     let surface = this.surfaces.get(key)
     const canApplyInvalidation = surface
       && surface.revision !== contentRevision
@@ -137,11 +144,38 @@ export class CanvasCompositeCache {
         if (!isolatedLayerMask && view.relativeLuminance) applyRelativeLuminance(pixels)
         surfaceContext.putImageData(imageData(pixels, rect.width, rect.height), rect.x, rect.y)
       }
+      if (dirtyRects.length > 0) surface.scaled = undefined
       this.dirtyRects.delete(frameId)
     }
     const visibleWidth = Math.max(0, toX - fromX)
     const visibleHeight = Math.max(0, toY - fromY)
     if (visibleWidth > 0 && visibleHeight > 0) {
+      if (view.zoom < 1) {
+        const scaledWidth = Math.max(1, Math.round(canvasWidth))
+        const scaledHeight = Math.max(1, Math.round(canvasHeight))
+        let scaled = surface.scaled
+        if (!scaled || scaled.zoom !== view.zoom || scaled.imageSmoothingEnabled !== imageSmoothingEnabled || scaled.canvas.width !== scaledWidth || scaled.canvas.height !== scaledHeight) {
+          const canvas = new OffscreenCanvas(scaledWidth, scaledHeight)
+          const scaledContext = canvas.getContext('2d')
+          if (scaledContext) {
+            scaledContext.imageSmoothingEnabled = imageSmoothingEnabled
+            if (imageSmoothingEnabled) scaledContext.imageSmoothingQuality = 'high'
+            scaledContext.drawImage(surface.canvas, 0, 0, surface.canvas.width, surface.canvas.height, 0, 0, scaledWidth, scaledHeight)
+          }
+          scaled = { canvas, zoom: view.zoom, imageSmoothingEnabled }
+          surface.scaled = scaled
+        }
+        const scaledFromX = fromX / document.width * scaledWidth
+        const scaledFromY = fromY / document.height * scaledHeight
+        const scaledVisibleWidth = visibleWidth / document.width * scaledWidth
+        const scaledVisibleHeight = visibleHeight / document.height * scaledHeight
+        if (fromX === 0 && fromY === 0 && toX === document.width && toY === document.height) {
+          context.drawImage(scaled.canvas, originX, originY, canvasWidth, canvasHeight)
+          return
+        }
+        context.drawImage(scaled.canvas, scaledFromX, scaledFromY, scaledVisibleWidth, scaledVisibleHeight, originX + fromX * view.zoom, originY + fromY * view.zoom, visibleWidth * view.zoom, visibleHeight * view.zoom)
+        return
+      }
       context.drawImage(
         surface.canvas,
         fromX,

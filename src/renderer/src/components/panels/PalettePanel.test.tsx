@@ -203,11 +203,49 @@ describe('PalettePanel editing lock', () => {
       const { container } = render(<PalettePanel session={session} docked />)
       fireEvent.click(container.querySelector<HTMLButtonElement>('.palette-actions-control > button')!)
       fireEvent.click(screen.getByRole('menuitem', { name: '保存色板' }))
-      fireEvent.click(screen.getByRole('button', { name: '保存到软件' }))
+      fireEvent.click(screen.getByRole('button', { name: '保存为新色板' }))
 
       await waitFor(() => expect(savePalette).toHaveBeenCalled())
+      expect(savePalette.mock.calls[0]?.[0]).toBeNull()
       expect(savePalette.mock.calls[0]?.[3]).toBe(4)
       expect(savePalette.mock.calls[0]?.[4]).toEqual([null, 0, null, 1])
+    } finally {
+      window.moonSprite = previousApi
+    }
+  })
+
+  it('offers saving back to the selected user palette', async () => {
+    const project = createDocument('selected palette', 2, 2, 'rgba')
+    useWorkspace.getState().addSession(project)
+    const session = useWorkspace.getState().sessions[0]
+    const colors = project.paletteOrder.map((id) => ({ ...project.palette.find((entry) => entry.id === id)!.color }))
+    const existing: StoredPalette = {
+      id: 'selected-palette',
+      name: '已有色板',
+      filePath: 'palettes/selected-palette.palette.json',
+      builtIn: false,
+      colors,
+      columns: 4,
+      slots: colors.map((_, index) => index)
+    }
+    const savePalette = vi.fn(async (id: string | null, name: string, savedColors: RgbaColor[], columns: number, slots: Array<number | null>): Promise<StoredPalette> => ({ ...existing, id: id ?? 'new-palette', name, colors: savedColors, columns, slots }))
+    const listPalettes = vi.fn(async () => ({ directoryPath: 'palettes', palettes: [existing] }))
+    const previousApi = window.moonSprite
+    window.moonSprite = {
+      listPalettes,
+      savePalette
+    } as unknown as MoonSpriteApi
+
+    try {
+      const { container } = render(<PalettePanel session={session} docked />)
+      await waitFor(() => expect(listPalettes).toHaveBeenCalled())
+      fireEvent.click(container.querySelector<HTMLButtonElement>('.palette-actions-control > button')!)
+      fireEvent.click(screen.getByRole('menuitem', { name: '保存色板' }))
+      await waitFor(() => expect(screen.getByRole('button', { name: '保存到“已有色板”' })).toBeInTheDocument())
+      fireEvent.click(screen.getByRole('button', { name: '保存到“已有色板”' }))
+
+      await waitFor(() => expect(savePalette).toHaveBeenCalled())
+      expect(savePalette.mock.calls[0]?.[0]).toBe('selected-palette')
     } finally {
       window.moonSprite = previousApi
     }

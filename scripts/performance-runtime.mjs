@@ -2,7 +2,7 @@ import { execFileSync, spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import { gzipSync } from 'node:zlib'
-import { arch, cpus, platform, release } from 'node:os'
+import { arch, cpus, platform, release, totalmem } from 'node:os'
 import { relative, resolve } from 'node:path'
 
 export const normalizePath = (file) => file.replaceAll('\\', '/')
@@ -46,17 +46,50 @@ const browserCandidates = [
   'C:/Program Files/Microsoft/Edge/Application/msedge.exe',
 ].filter(Boolean)
 
+function commandOutput(command, args) {
+  const result = spawnSync(command, args, { encoding: 'utf8', windowsHide: true })
+  if (result.error || result.status !== 0) return 'unavailable'
+  return (result.stdout || result.stderr || '').trim() || 'unavailable'
+}
+
+function windowsGpuFingerprint() {
+  if (platform() !== 'win32') return 'unavailable'
+  return commandOutput('powershell.exe', [
+    '-NoProfile',
+    '-NonInteractive',
+    '-Command',
+    'Get-CimInstance Win32_VideoController | Sort-Object Name | ForEach-Object { "$($_.Name)|$($_.DriverVersion)" }',
+  ]).split(/\r?\n/).map((item) => item.trim()).filter(Boolean).join('; ')
+}
+
+function windowsPowerPlan() {
+  if (platform() !== 'win32') return 'unavailable'
+  const output = commandOutput('powercfg.exe', ['/getactivescheme'])
+  return output.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i)?.[0]?.toLowerCase() ?? output
+}
+
 export function performanceEnvironment() {
   const browserPath = browserCandidates.find((candidate) => existsSync(candidate))
   let browser = 'unavailable'
   if (browserPath) {
-    const result = spawnSync(browserPath, ['--version'], { encoding: 'utf8', windowsHide: true })
-    browser = (result.stdout || result.stderr || browserPath).trim()
+    const version = platform() === 'win32'
+      ? commandOutput('powershell.exe', [
+          '-NoProfile',
+          '-NonInteractive',
+          '-Command',
+          `(Get-Item -LiteralPath '${browserPath.replaceAll("'", "''")}').VersionInfo.ProductVersion`,
+        ])
+      : commandOutput(browserPath, ['--version'])
+    browser = version === 'unavailable' ? browserPath : `${browserPath} ${version}`
   }
   return {
     platform: `${platform()} ${release()}`,
     arch: arch(),
     cpu: cpus()[0]?.model ?? 'unknown',
+    logicalCpuCount: cpus().length,
+    totalMemoryBytes: totalmem(),
+    gpu: windowsGpuFingerprint(),
+    powerPlan: windowsPowerPlan(),
     node: process.version,
     browser,
   }

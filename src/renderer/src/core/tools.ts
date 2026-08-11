@@ -1,11 +1,12 @@
-import type { BrushPaintMode, BrushShape, BrushTexture, ImageBrush, ImageBrushSettings, OutlineDirection, OutlineDirections, OutlineKernel, OutlinePosition, RasterLayer, RgbaColor, SelectionMask, SelectionRect, ShapeKind, SpriteDocument } from '@shared/types'
+import type { BrushPaintMode, BrushShape, BrushTexture, GradientDither, ImageBrush, ImageBrushSettings, OutlineDirection, OutlineDirections, OutlineKernel, OutlinePosition, RasterLayer, RgbaColor, SelectionMask, SelectionRect, ShapeKind, SpriteDocument } from '@shared/types'
 import { compositeRegion, ensureLayerCoversCanvas, findOrAddPaletteColor, getActiveLayer, getLayer, getPaletteEntry, isLayerEffectivelyLocked, layerIndexAt, markLayerContentChanged, readLayerColor, readLayerColorAt, readLayerPacked, readLayerPackedAt, writeLayerPacked, writeLayerPackedRun } from './document'
 import { beginPixelEdit, preparePixelEdit, recordPixel, recordPixelKnownCurrent, type PixelEdit } from './history'
 import { blendOver, isInBounds, packColor, pixelIndex, unpackColor } from './raster'
-import { flipSelectionMask, packedColorMatchesTolerance, rotatedEllipseSelection, rotatedRectSelection, selectionContains, transformedSelectionBounds, transformedSelectionDestinationPoint, transformedSelectionSourcePoint, type SelectionFlipAxis, type SelectionShearTransform } from './selection'
+import { flipSelectionMask, packedColorMatchesTolerance, rasterLinePoints, rotatedEllipseSelection, rotatedRectSelection, selectionContains, transformedSelectionBounds, transformedSelectionDestinationPoint, transformedSelectionSourcePoint, type SelectionFlipAxis, type SelectionShearTransform } from './selection'
 import { proceduralBrushCoverageAt } from './brushes'
 import { balancedStairLinePoints } from './pixel-line'
 import { hasSymmetry, symmetryPoints, type SymmetryAxes, type SymmetryCenter } from './symmetry'
+import { gradientColorForAmount, interpolateRgbaColor } from './gradient'
 
 const paintLayerValue = (document: SpriteDocument, layer: RasterLayer, edit: PixelEdit, index: number, color: RgbaColor): number => {
   if (color.a === 0) return layer.format === 'rgba' ? packColor(color) : 0
@@ -18,6 +19,31 @@ const paintLayerValue = (document: SpriteDocument, layer: RasterLayer, edit: Pix
       : getPaletteEntry(document, original).color
   const blended = blendOver(base, color)
   return layer.format === 'rgba' ? packColor(blended) : findOrAddPaletteColor(document, blended)
+}
+
+const layerColorBeforeEdit = (document: SpriteDocument, layer: RasterLayer, edit: PixelEdit, index: number): RgbaColor => {
+  const original = edit.before.get(index)
+  if (original === undefined) return readLayerColor(document, layer, index)
+  return layer.format === 'rgba' ? unpackColor(original) : getPaletteEntry(document, original).color
+}
+
+const brushCoverageByEdit = new WeakMap<PixelEdit, Map<string, Map<number, number>>>()
+
+const claimBrushCoverage = (edit: PixelEdit, key: string, index: number, coverage: number, replaceEqual = false): boolean => {
+  let coverageByKey = brushCoverageByEdit.get(edit)
+  if (!coverageByKey) {
+    coverageByKey = new Map()
+    brushCoverageByEdit.set(edit, coverageByKey)
+  }
+  let coverageByPixel = coverageByKey.get(key)
+  if (!coverageByPixel) {
+    coverageByPixel = new Map()
+    coverageByKey.set(key, coverageByPixel)
+  }
+  const previousCoverage = coverageByPixel.get(index) ?? -1
+  if (previousCoverage > coverage || (!replaceEqual && previousCoverage === coverage)) return false
+  coverageByPixel.set(index, coverage)
+  return true
 }
 
 export const normalizeSelection = (startX: number, startY: number, endX: number, endY: number): SelectionRect => ({
@@ -73,6 +99,27 @@ export function paintSquare(
   }
 }
 
+export interface BrushGradientSample {
+  startColor: RgbaColor
+  endColor: RgbaColor
+  gradientAmount: number
+  dither: GradientDither
+}
+
+export interface BrushLineGradient {
+  startColor: RgbaColor
+  endColor: RgbaColor
+  fromAmount: number
+  toAmount: number
+  dither: GradientDither
+}
+
+const brushGradientCoverageKey = (gradient: BrushGradientSample): string => {
+  const start = gradient.startColor
+  const end = gradient.endColor
+  return `paint:brush-gradient:${start.r},${start.g},${start.b},${start.a}:${end.r},${end.g},${end.b},${end.a}:${gradient.dither}`
+}
+
 export function paintBrush(
   document: SpriteDocument,
   layer: RasterLayer,
@@ -92,27 +139,36 @@ export function paintBrush(
   patternOrigin?: { x: number; y: number },
   symmetryAxes?: SymmetryAxes,
   symmetryCenter?: SymmetryCenter,
-  colorReplacement?: { source: RgbaColor; target: RgbaColor }
+  colorReplacement?: { source: RgbaColor; target: RgbaColor },
+  opacityScale = 1,
+  coverageKey?: string,
+  overrideImageBrushColor = false,
+  gradient?: BrushGradientSample
 ): void {
   if (!ensureLayerCoversCanvas(document, layer)) return
+  const normalizedOpacityScale = Math.max(0, Math.min(1, Number.isFinite(opacityScale) ? opacityScale : 1))
+  if (normalizedOpacityScale <= 0) return
   const stamp = brushStampDimensions(size, imageBrush)
   const { x: beforeX, y: beforeY } = brushStampAnchor(size, imageBrush)
   const stampX = x - beforeX
   const stampY = y - beforeY
   for (const offset of brushMaskOffsets(size, shape, texture, textureScale, stampX, stampY, imageBrush, imageBrushSettings, proceduralAntialiasStrength, brushPaintMode, patternOrigin?.x ?? stampX, patternOrigin?.y ?? stampY)) {
-    if (offset.coverage === 0) continue
+    const scaledCoverage = Math.round(offset.coverage * normalizedOpacityScale)
+    if (scaledCoverage === 0) continue
     const sourcePoint = { x: x - beforeX + offset.x, y: y - beforeY + offset.y }
     for (const { x: px, y: py } of symmetryPoints(sourcePoint, document.width, document.height, symmetryAxes, symmetryCenter)) {
       if (selection && !insideSelection(selection, px, py)) continue
       const index = layerIndexAt(layer, px, py)
       if (index === null) continue
       if (colorReplacement) {
-        const current = readLayerColor(document, layer, index)
+        const current = layerColorBeforeEdit(document, layer, edit, index)
         const source = colorReplacement.source
         if (current.r !== source.r || current.g !== source.g || current.b !== source.b || current.a !== source.a) continue
         const target = colorReplacement.target
-        const coverage = offset.coverage / 255
-        const replacement = offset.coverage === 255 ? target : {
+        const coverageKey = `replace:${source.r},${source.g},${source.b},${source.a}:${target.r},${target.g},${target.b},${target.a}`
+        if (!claimBrushCoverage(edit, coverageKey, index, scaledCoverage)) continue
+        const coverage = scaledCoverage / 255
+        const replacement = scaledCoverage === 255 ? target : {
           r: Math.round(current.r + (target.r - current.r) * coverage),
           g: Math.round(current.g + (target.g - current.g) * coverage),
           b: Math.round(current.b + (target.b - current.b) * coverage),
@@ -123,20 +179,48 @@ export function paintBrush(
           : replacement.a === 0 ? 0 : findOrAddPaletteColor(document, replacement))
         continue
       }
-      const paintColor = offset.color ?? color
-      if (color.a === 0) {
-        if (offset.coverage === 255) recordPixel(document, layer, edit, index, 0)
+      const resolvedColor = gradient
+        ? gradientColorForAmount(gradient.startColor, gradient.endColor, gradient.gradientAmount, px, py, gradient.dither)
+        : color
+      const paintColor = offset.color && !overrideImageBrushColor && !gradient
+        ? offset.color
+        : offset.color
+          ? { ...resolvedColor, a: Math.round(resolvedColor.a * offset.color.a / 255) }
+          : resolvedColor
+      const paintCoverageKey = coverageKey ?? (gradient
+        ? brushGradientCoverageKey(gradient)
+        : color.a === 0
+        ? 'erase'
+        : `paint:${paintColor.r},${paintColor.g},${paintColor.b},${paintColor.a}`)
+      if (!claimBrushCoverage(edit, paintCoverageKey, index, scaledCoverage, coverageKey !== undefined || gradient !== undefined)) continue
+      const eraseResolvedColor = gradient ? resolvedColor.a === 0 : color.a === 0
+      if (eraseResolvedColor) {
+        const eraseCoverage = offset.color && gradient ? Math.round(scaledCoverage * offset.color.a / 255) : scaledCoverage
+        if (eraseCoverage === 0) continue
+        if (eraseCoverage === 255) recordPixel(document, layer, edit, index, 0)
         else {
-          const base = readLayerColor(document, layer, index)
-          const erased = { ...base, a: Math.round(base.a * (1 - offset.coverage / 255)) }
+          const base = layerColorBeforeEdit(document, layer, edit, index)
+          const erased = { ...base, a: Math.round(base.a * (1 - eraseCoverage / 255)) }
           recordPixel(document, layer, edit, index, layer.format === 'rgba' ? packColor(erased) : erased.a === 0 ? 0 : findOrAddPaletteColor(document, erased))
         }
       } else {
-        const stamped = offset.coverage === 255 ? paintColor : { ...paintColor, a: Math.round(paintColor.a * offset.coverage / 255) }
+        const stamped = scaledCoverage === 255 ? paintColor : { ...paintColor, a: Math.round(paintColor.a * scaledCoverage / 255) }
         recordPixel(document, layer, edit, index, paintLayerValue(document, layer, edit, index, stamped))
       }
     }
   }
+}
+
+export interface BrushLineDynamics {
+  fromSize?: number
+  toSize?: number
+  fromOpacityScale?: number
+  toOpacityScale?: number
+  fromColor?: RgbaColor
+  toColor?: RgbaColor
+  gradient?: BrushLineGradient
+  coverageKey?: string
+  overrideImageBrushColor?: boolean
 }
 
 export interface BrushMaskPoint { x: number; y: number; coverage: number; color?: RgbaColor }
@@ -331,59 +415,96 @@ export function paintLine(
   lineAlgorithm: 'raster' | 'balanced' = 'raster',
   symmetryAxes?: SymmetryAxes,
   symmetryCenter?: SymmetryCenter,
-  colorReplacement?: { source: RgbaColor; target: RgbaColor }
+  colorReplacement?: { source: RgbaColor; target: RgbaColor },
+  dynamics?: BrushLineDynamics
 ): void {
-  if (lineAlgorithm === 'balanced') {
-    const points = balancedStairLinePoints({ x: fromX, y: fromY }, { x: toX, y: toY })
-    const stamp = brushStampDimensions(size, imageBrush)
-    const stampSpacing = Math.max(1, Math.floor(Math.max(stamp.width, stamp.height) / 16))
-    for (let index = 0; index < points.length; index += 1) {
-      if (index % stampSpacing !== 0 && index !== points.length - 1) continue
-      const point = points[index]
-      paintBrush(document, layer, edit, point.x, point.y, size, color, shape, selection, texture, textureScale, imageBrush, imageBrushSettings, proceduralAntialiasStrength, brushPaintMode, patternOrigin, symmetryAxes, symmetryCenter, colorReplacement)
-    }
-    return
+  const dynamicValue = (from: number | undefined, to: number | undefined, fallback: number, progress: number): number => {
+    const start = Number.isFinite(from) ? from! : fallback
+    const end = Number.isFinite(to) ? to! : fallback
+    return start + (end - start) * progress
   }
-  let x = fromX
-  let y = fromY
-  const dx = Math.abs(toX - fromX)
-  const sx = fromX < toX ? 1 : -1
-  const dy = -Math.abs(toY - fromY)
-  const sy = fromY < toY ? 1 : -1
-  let error = dx + dy
-  const stamp = brushStampDimensions(size, imageBrush)
-  const stampSpacing = Math.max(1, Math.floor(Math.max(stamp.width, stamp.height) / 16))
-  let step = 0
-  while (true) {
-    if (step % stampSpacing === 0 || (x === toX && y === toY)) paintBrush(document, layer, edit, x, y, size, color, shape, selection, texture, textureScale, imageBrush, imageBrushSettings, proceduralAntialiasStrength, brushPaintMode, patternOrigin, symmetryAxes, symmetryCenter, colorReplacement)
-    if (x === toX && y === toY) break
-    const twiceError = error * 2
-    if (twiceError >= dy) { error += dy; x += sx }
-    if (twiceError <= dx) { error += dx; y += sy }
-    step += 1
+  const paintPoint = (pointX: number, pointY: number, progress: number): void => {
+    const pointSize = Math.max(1, Math.round(dynamicValue(dynamics?.fromSize, dynamics?.toSize, size, progress)))
+    const opacityScale = dynamicValue(dynamics?.fromOpacityScale, dynamics?.toOpacityScale, 1, progress)
+    const pointColor = dynamics?.fromColor || dynamics?.toColor
+      ? interpolateRgbaColor(dynamics.fromColor ?? dynamics.toColor ?? color, dynamics.toColor ?? dynamics.fromColor ?? color, progress)
+      : color
+    const gradient = dynamics?.gradient
+      ? {
+          startColor: dynamics.gradient.startColor,
+          endColor: dynamics.gradient.endColor,
+          gradientAmount: dynamicValue(dynamics.gradient.fromAmount, dynamics.gradient.toAmount, 0, progress),
+          dither: dynamics.gradient.dither
+        }
+      : undefined
+    paintBrush(document, layer, edit, pointX, pointY, pointSize, pointColor, shape, selection, texture, textureScale, imageBrush, imageBrushSettings, proceduralAntialiasStrength, brushPaintMode, patternOrigin, symmetryAxes, symmetryCenter, colorReplacement, opacityScale, dynamics?.coverageKey, dynamics?.overrideImageBrushColor, gradient)
+  }
+  const points = lineAlgorithm === 'balanced'
+    ? balancedStairLinePoints({ x: fromX, y: fromY }, { x: toX, y: toY })
+    : rasterLinePoints({ x: fromX, y: fromY }, { x: toX, y: toY })
+  if (points.length === 0) return
+  let stepsSinceStamp = 0
+  let lastStampedSize: number | null = null
+  for (let index = 0; index < points.length; index += 1) {
+    const progress = points.length <= 1 ? 1 : index / (points.length - 1)
+    const pointSize = Math.max(1, Math.round(dynamicValue(dynamics?.fromSize, dynamics?.toSize, size, progress)))
+    const stamp = brushStampDimensions(pointSize, imageBrush)
+    const stampSpacing = Math.max(1, Math.floor(Math.max(stamp.width, stamp.height) / 16))
+    if (index > 0) stepsSinceStamp += 1
+    const sizeChanged = lastStampedSize !== null && pointSize !== lastStampedSize
+    const mustPaint = index === 0 || index === points.length - 1 || sizeChanged || stepsSinceStamp >= stampSpacing
+    if (!mustPaint) continue
+    const point = points[index]
+    paintPoint(point.x, point.y, progress)
+    stepsSinceStamp = 0
+    lastStampedSize = pointSize
   }
 }
 
-export interface PixelPathPoint { x: number; y: number }
+export interface PixelPathPoint { x: number; y: number; size?: number; opacityScale?: number; color?: RgbaColor; gradient?: BrushGradientSample; coverageKey?: string; overrideImageBrushColor?: boolean }
 
 export function appendPerfectPixelSegment(path: PixelPathPoint[], target: PixelPathPoint): boolean {
   if (!path.length) {
     path.push({ ...target })
     return false
   }
-  let x = path[path.length - 1].x
-  let y = path[path.length - 1].y
+  const segmentStart = path[path.length - 1]
+  let x = segmentStart.x
+  let y = segmentStart.y
   const dx = Math.abs(target.x - x)
   const sx = x < target.x ? 1 : -1
   const dy = -Math.abs(target.y - y)
   const sy = y < target.y ? 1 : -1
   let error = dx + dy
+  const totalSteps = Math.max(dx, Math.abs(dy))
+  let step = 0
   let removedCorner = false
   while (x !== target.x || y !== target.y) {
     const twiceError = error * 2
     if (twiceError >= dy) { error += dy; x += sx }
     if (twiceError <= dx) { error += dx; y += sy }
-    const point = { x, y }
+    step += 1
+    const progress = totalSteps === 0 ? 1 : step / totalSteps
+    const point: PixelPathPoint = { x, y }
+    if (segmentStart.size !== undefined || target.size !== undefined) {
+      point.size = (segmentStart.size ?? target.size ?? 1) + ((target.size ?? segmentStart.size ?? 1) - (segmentStart.size ?? target.size ?? 1)) * progress
+    }
+    if (segmentStart.opacityScale !== undefined || target.opacityScale !== undefined) {
+      point.opacityScale = (segmentStart.opacityScale ?? target.opacityScale ?? 1) + ((target.opacityScale ?? segmentStart.opacityScale ?? 1) - (segmentStart.opacityScale ?? target.opacityScale ?? 1)) * progress
+    }
+    if (segmentStart.color || target.color) point.color = interpolateRgbaColor(segmentStart.color ?? target.color!, target.color ?? segmentStart.color!, progress)
+    if (segmentStart.gradient || target.gradient) {
+      const startGradient = segmentStart.gradient ?? target.gradient!
+      const endGradient = target.gradient ?? segmentStart.gradient!
+      point.gradient = {
+        startColor: interpolateRgbaColor(startGradient.startColor, endGradient.startColor, progress),
+        endColor: interpolateRgbaColor(startGradient.endColor, endGradient.endColor, progress),
+        gradientAmount: startGradient.gradientAmount + (endGradient.gradientAmount - startGradient.gradientAmount) * progress,
+        dither: endGradient.dither
+      }
+    }
+    if (segmentStart.coverageKey || target.coverageKey) point.coverageKey = target.coverageKey ?? segmentStart.coverageKey
+    if (segmentStart.overrideImageBrushColor || target.overrideImageBrushColor) point.overrideImageBrushColor = true
     if (path.length >= 2) {
       const previous = path[path.length - 1]
       const before = path[path.length - 2]
@@ -538,23 +659,31 @@ export function outlineSelection(
   return edit.before.size > 0 ? edit : null
 }
 
-export function shapePixelPoints(bounds: SelectionRect, kind: ShapeKind): BrushMaskPoint[] {
-  const width = Math.max(1, bounds.width)
-  const height = Math.max(1, bounds.height)
+const shapeContainsOffset = (width: number, height: number, ellipse: boolean, offsetX: number, offsetY: number): boolean => {
+  if (offsetX < 0 || offsetY < 0 || offsetX >= width || offsetY >= height) return false
+  if (!ellipse) return true
   const centerX = (width - 1) / 2
   const centerY = (height - 1) / 2
   const radiusX = Math.max(0.5, width / 2)
   const radiusY = Math.max(0.5, height / 2)
+  const dx = (offsetX - centerX) / radiusX
+  const dy = (offsetY - centerY) / radiusY
+  return (dx * dx) + (dy * dy) <= 1
+}
+
+export function shapeContainsPixel(bounds: SelectionRect, kind: ShapeKind, x: number, y: number): boolean {
+  const width = Math.max(1, bounds.width)
+  const height = Math.max(1, bounds.height)
+  return shapeContainsOffset(width, height, kind === 'ellipse' || kind === 'ellipse-outline', x - bounds.x, y - bounds.y)
+}
+
+export function shapePixelPoints(bounds: SelectionRect, kind: ShapeKind): BrushMaskPoint[] {
+  const width = Math.max(1, bounds.width)
+  const height = Math.max(1, bounds.height)
   const ellipse = kind === 'ellipse' || kind === 'ellipse-outline'
   const outline = kind === 'rectangle-outline' || kind === 'ellipse-outline'
   const filled = new Uint8Array(width * height)
-  const contains = (offsetX: number, offsetY: number): boolean => {
-    if (offsetX < 0 || offsetY < 0 || offsetX >= width || offsetY >= height) return false
-    if (!ellipse) return true
-    const dx = (offsetX - centerX) / radiusX
-    const dy = (offsetY - centerY) / radiusY
-    return (dx * dx) + (dy * dy) <= 1
-  }
+  const contains = (offsetX: number, offsetY: number): boolean => shapeContainsOffset(width, height, ellipse, offsetX, offsetY)
   for (let offsetY = 0; offsetY < height; offsetY += 1) for (let offsetX = 0; offsetX < width; offsetX += 1) if (contains(offsetX, offsetY)) filled[offsetY * width + offsetX] = 1
   const points: BrushMaskPoint[] = []
   for (let offsetY = 0; offsetY < height; offsetY += 1) {
@@ -851,6 +980,37 @@ export function fillSelectionOrCanvas(document: SpriteDocument, layer: RasterLay
       if (index === null) continue
       recordPixel(document, layer, edit, index, value)
     }
+  }
+  return edit.before.size > 0 ? edit : null
+}
+
+export function replaceLayerColor(document: SpriteDocument, layer: RasterLayer, source: RgbaColor, replacement: RgbaColor, selection: SelectionMask | null = null): PixelEdit | null {
+  const sourceValue = packColor(source)
+  if (sourceValue === packColor(replacement)) return null
+  const indexedSourceIds = layer.format === 'indexed'
+    ? new Set(document.palette.filter((entry) => packColor(entry.color) === sourceValue).map((entry) => entry.id))
+    : null
+  if (indexedSourceIds?.size === 0) return null
+  const edit = beginPixelEdit(layer.id)
+  let replacementValue: number | null = layer.format === 'rgba' ? packColor(replacement) : null
+  const replaceIndex = (index: number): void => {
+    const current = readLayerPacked(document, layer, index)
+    if (layer.format === 'rgba' ? current !== sourceValue : !indexedSourceIds!.has(current)) return
+    replacementValue ??= findOrAddPaletteColor(document, replacement)
+    recordPixelKnownCurrent(document, layer, edit, index, current, replacementValue)
+  }
+  if (selection) {
+    const bounds = clampSelection(document, selection)
+    if (!bounds) return null
+    for (let y = bounds.y; y < bounds.y + bounds.height; y += 1) {
+      for (let x = bounds.x; x < bounds.x + bounds.width; x += 1) {
+        if (!selectionContains(selection, x, y)) continue
+        const index = layerIndexAt(layer, x, y)
+        if (index !== null) replaceIndex(index)
+      }
+    }
+  } else {
+    for (let index = 0; index < layer.width * layer.height; index += 1) replaceIndex(index)
   }
   return edit.before.size > 0 ? edit : null
 }

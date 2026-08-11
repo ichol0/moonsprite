@@ -97,6 +97,18 @@ export const toolOptionsRenderKey = (session: DocumentSession | null): string =>
     proceduralSettings ? `${proceduralSettings.scale}:${proceduralSettings.detail}:${proceduralSettings.variation}:${proceduralSettings.angle}:${proceduralSettings.seed}` : '',
     session.proceduralAntialias ? 1 : 0,
     session.proceduralAntialiasStrength,
+    session.brushDynamics.version,
+    session.brushDynamics.gradientDither,
+    ...(['size', 'strength', 'gradient'] as const).flatMap((effect) => {
+      const mapping = session.brushDynamics.effects[effect]
+      return [mapping.sensor ?? '', mapping.outputMin, mapping.outputMax, mapping.inputMin, mapping.inputMax, mapping.curve, mapping.direction]
+    }),
+    session.brushPressure.enabled ? 1 : 0,
+    session.brushPressure.affectsSize ? 1 : 0,
+    session.brushPressure.affectsOpacity ? 1 : 0,
+    session.brushPressure.minSizePercent,
+    session.brushPressure.minOpacityPercent,
+    session.brushPressure.curve,
     session.shapeKind,
     session.shapeRatio?.width ?? '',
     session.shapeRatio?.height ?? '',

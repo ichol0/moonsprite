@@ -4,11 +4,12 @@ import { checkResourceLimit } from '@/core/resource-policy'
 import { beginPixelEdit, commitPixelEdit, HistoryStack, recordPixel, revertPixelEdit, type HistoryEntry, type PixelEdit } from '@/core/history'
 import { animationMaskAt, animationMaskSlotAt, convertDocumentColorMode, createDocument, createId, createLayer, createLayerMask as createAttachedLayerMask, duplicateLayer, findLayerMask, findOrAddPaletteColor, getDescendantGroupIds, getGroup, getGroupLockingAncestor, getLayerIdsInGroup, getLayer, getActiveLayer, getLayerLockingGroup, isGroupEffectivelyLocked, isLayerEffectivelyLocked, isLayerEffectivelyVisible, isLayerMask, layerContentBounds, readLayerColor, readLayerColorAt, resolveAnimationMask, resizeDocumentAt, resizeDocumentImage, writeLayerColor } from '@/core/document'
 import { decodeProject, encodeProject } from '@/core/project-format'
-import { activateAnimationFrame, addBlankAnimationFrame, animationCelContentSelection, animationCelHasContent, animationCelKey, animationGroupMaskAt, cloneAnimationCel, cloneAnimationCelSurface, cloneAnimationCelsForLayer, cloneAnimationGroupMask, connectAnimationCels, deleteAnimationFrame, disconnectAnimationCels, duplicateAnimationFrame, ensureAnimationDocument, mapAnimationCelBlock, nextAnimationFrameId, parseAnimationCelKey, refreshActiveAnimationFrame, removeAnimationCelsForLayers, resolveAnimationCel, resizeAnimationCelsAt, restoreAnimationCels, setAnimationFrameDuration, setAnimationLoop, syncActiveAnimationFrame } from '@/core/animation'
+import { activateAnimationFrame, addBlankAnimationFrame, animationCelContentSelection, animationCelHasContent, animationCelKey, animationGroupMaskAt, animationLayerAtFrame, cloneAnimationCel, cloneAnimationCelSurface, cloneAnimationCelsForLayer, cloneAnimationGroupMask, connectAnimationCels, deleteAnimationFrame, disconnectAnimationCels, duplicateAnimationFrame, ensureAnimationDocument, mapAnimationCelBlock, nextAnimationFrameId, parseAnimationCelKey, refreshActiveAnimationFrame, removeAnimationCelsForLayers, resolveAnimationCel, resizeAnimationCelsAt, restoreAnimationCels, setAnimationFrameDuration, setAnimationLoop, syncActiveAnimationFrame } from '@/core/animation'
 import { flushViewPreview } from '@/core/view-preview-lifecycle'
 import { fileNameFromPath } from '@/core/document-files'
 import { createSelectionBrush } from '@/core/brushes'
-import { applySelectionTransform, clampSelection, clearSelection, fillSelectionOrCanvas, flipLayer, flipSelection, flipSelectionTransformSource, moveSelection, outlineSelection, restoreSelectionTranslationPreview, selectionTranslationPreviewEdit, transformSelectionCopy, type SelectionTransformSource, type SelectionTranslationPreview } from '@/core/tools'
+import { createHorizontalSpriteSheetDocument } from '@/core/sprite-sheet'
+import { applySelectionTransform, applySelectionTranslationPreview, captureSelectionTransform, clampSelection, clearSelection, fillSelectionOrCanvas, flipLayer, flipSelection, flipSelectionTransformSource, moveSelection, outlineSelection, replaceLayerColor, restoreSelectionTranslationPreview, selectionTranslationPreviewEdit, transformSelectionCopy, type SelectionTransformSource, type SelectionTranslationPreview } from '@/core/tools'
 import { colorEquals, packColor, pixelIndex, relativeLuminanceColor, unpackColor } from '@/core/raster'
 import { combineSelection, flipSelectionMask, invertSelectionMask, selectionContains, shiftSelection, transformSelectionMask, type SelectionShearTransform } from '@/core/selection'
 import { recordRecentProject } from '@/core/home-history'
@@ -25,6 +26,7 @@ import { resolveClipboardPlacement } from '@/core/clipboard-placement'
 import { cloneProceduralSettings, defaultToolSettings, loadToolSettings, normalizePersistedBrushProfile, saveToolSettings, type BrushTool, type PersistedBrushProfile, type PersistedToolSettings } from '@/core/tool-preferences'
 import { readStoredString } from '@/core/storage'
 import { moveSymmetryCenter, type SymmetryAxes, type SymmetryCenter } from '@/core/symmetry'
+import { brushPressureFromDynamics, migrateBrushPressureSettings, normalizeBrushPressureSettings, patchBrushDynamicsGradientDither, patchBrushDynamicsMapping, type BrushDynamicsEffect, type BrushDynamicsMapping, type BrushPressureSettings } from '@/core/pressure'
 import { exportDocumentFile, exportTimelapseFile, openDocumentFile, saveDocumentFile, type ExportOptions, type SaveAsOptions } from './document-file-service'
 import { RecoveryService } from './recovery-service'
 import { ClipboardService, selectionClipboardImage, type LayerClipboard, type LayerCollectionClipboard, type LayerMaskClipboard } from './clipboard-service'
@@ -36,6 +38,17 @@ import type { AdjustmentSnapshot, AnimationFrameClipboardItem, AnimationMaskClip
 export type { ExportOptions, SaveAsOptions } from './document-file-service'
 export type { AdjustmentSnapshot, AppDialog, CanvasResizePreview, DialogChoice, DocumentSession, FloatingPaste, OutlinePreview } from './workspace-types'
 
+export type ColorReplacementTarget = 'layer' | 'document' | 'selection' | 'layers' | 'frames' | 'cells' | 'palette'
+
+export interface ColorReplacementPreview {
+  documentId: string
+  edits: PixelEdit[]
+  palette: SpriteDocument['palette']
+  nextColorId: number
+  primaryColor: RgbaColor
+  secondaryColor: RgbaColor
+}
+
 interface WorkspaceState {
   sessions: DocumentSession[]
   activeId: string | null
@@ -46,6 +59,7 @@ interface WorkspaceState {
   dialog: AppDialog | null
   recoveryRecords: RecoveryRecord[]
   newDocument(name: string, width: number, height: number, colorMode: ColorMode): Promise<void>
+  createSpriteSheetFromActive(): Promise<boolean>
   addSession(document: SpriteDocument): void
   reorderSessions(documentIds: string[]): void
   setActive(id: string): void
@@ -55,6 +69,9 @@ interface WorkspaceState {
   setBrushTexture(texture: BrushTexture): void
   setBrushTextureScale(scale: number): void
   setBrushPaintMode(mode: BrushPaintMode): void
+  setBrushDynamicsMapping(effect: BrushDynamicsEffect, patch: Partial<BrushDynamicsMapping>): void
+  setBrushDynamicsGradientDither(dither: GradientDither): void
+  setBrushPressure(settings: Partial<BrushPressureSettings>): void
   setBrushImage(brush: ImageBrush | null): void
   setTemporaryBrush(brush: ImageBrush): void
   deleteProjectBrush(id: string): void
@@ -74,6 +91,9 @@ interface WorkspaceState {
   setMoveAutoSelect(enabled: boolean): void
   setPrimaryColor(color: RgbaColor): void
   setSecondaryColor(color: RgbaColor): void
+  replaceColor(target: ColorReplacementTarget, sourceColor: RgbaColor, replacementColor: RgbaColor): void
+  previewColorReplacement(target: ColorReplacementTarget, sourceColor: RgbaColor, replacementColor: RgbaColor, previous?: ColorReplacementPreview | null): ColorReplacementPreview | null
+  restoreColorReplacementPreview(preview: ColorReplacementPreview | null): void
   selectSecondaryPaletteColor(id: number): void
   swapPrimarySecondaryColors(): void
   setView(view: Partial<ViewState>): void
@@ -183,6 +203,7 @@ interface WorkspaceState {
   toggleLayerMaskVisibility(celId: string): void
   toggleGroupMaskVisibility(groupId: string, frameId: string): void
   createLayerMask(celIdOrLayerId: string, frameId?: string): void
+  createLayerMasksForLayer(layerId: string): void
   createGroupMask(groupId: string, frameId?: string): void
   deleteLayerMask(celId: string): void
   deleteGroupMask(groupId: string, frameId?: string): void
@@ -192,6 +213,7 @@ interface WorkspaceState {
   setGroupProperties(groupId: string, name: string, opacity: number, blendMode: BlendMode, locked: boolean, displayColor?: RgbaColor | null, description?: string, cumulativeBlend?: boolean): void
   toggleLayerVisibility(layerId: string): void
   selectLayer(layerId: string, mode?: boolean | 'replace' | 'toggle' | 'range'): void
+  selectMoveToolLayer(layerId: string, additive?: boolean): void
   renameLayer(layerId: string, name: string): void
   setLayerOpacity(layerId: string, opacity: number): void
   setLayerProperties(layerId: string, name: string, opacity: number): void
@@ -388,6 +410,18 @@ const selectedGroupRows = (session: DocumentSession): string[] =>
 const selectedDirectLayerRows = (session: DocumentSession): string[] =>
   session.selectedGroupId && selectedGroupRows(session).length === 1 ? [] : [...session.selectedLayerIds]
 
+const applyLayerCurrentFrameCellSelection = (session: DocumentSession, layerIds: readonly string[], anchorLayerId: string): void => {
+  const timeline = ensureAnimationDocument(session.document)
+  const selectedKeys = layerIds.map((id) => animationCelKey(id, timeline.activeFrameId))
+  const anchorKey = animationCelKey(anchorLayerId, timeline.activeFrameId)
+  session.selectedAnimationFrameIds = []
+  session.animationFrameSelectionAnchorId = null
+  session.selectedAnimationMaskCellKeys = []
+  session.animationMaskCellSelectionAnchorKey = null
+  session.selectedAnimationCellKeys = selectedKeys
+  session.animationCellSelectionAnchorKey = selectedKeys.includes(anchorKey) ? anchorKey : selectedKeys.at(-1) ?? null
+}
+
 const layerHistoryBytes = (layer: RasterLayer): number => layer.pixels.byteLength
 const groupHistoryBytes = (_group: LayerGroup): number => 96
 
@@ -471,6 +505,94 @@ const lockedGroupStructure = (document: SpriteDocument, groupId: string): boolea
 
 const recoveryService = new RecoveryService()
 const clipboardService = new ClipboardService()
+
+const cloneColorReplacementPalette = (palette: SpriteDocument['palette']): SpriteDocument['palette'] =>
+  palette.map((entry) => ({ ...entry, color: { ...entry.color } }))
+
+const colorReplacementPalettesEqual = (left: SpriteDocument['palette'], right: SpriteDocument['palette']): boolean =>
+  left.length === right.length && left.every((entry, index) => {
+    const candidate = right[index]
+    return Boolean(candidate && entry.id === candidate.id && colorEquals(entry.color, candidate.color))
+  })
+
+interface ColorReplacementResult {
+  edits: PixelEdit[]
+  pixelCount: number
+  paletteCount: number
+  lockedCount: number
+}
+
+const applyColorReplacementTarget = (session: DocumentSession, target: ColorReplacementTarget, sourceColor: RgbaColor, replacementColor: RgbaColor): ColorReplacementResult => {
+  const edits: PixelEdit[] = []
+  const seenPixels = new Set<object>()
+  let lockedCount = 0
+  const collect = (layer: RasterLayer | null, frameId?: string, selection: SelectionMask | null = null): void => {
+    if (!layer || seenPixels.has(layer.pixels)) return
+    seenPixels.add(layer.pixels)
+    if (isLayerEffectivelyLocked(session.document, layer)) {
+      lockedCount += 1
+      return
+    }
+    const edit = replaceLayerColor(session.document, layer, sourceColor, replacementColor, selection)
+    if (!edit) return
+    if (frameId) edit.frameId = frameId
+    edits.push(edit)
+  }
+
+  syncActiveAnimationFrame(session.document)
+  const timeline = ensureAnimationDocument(session.document)
+  if (target === 'palette') {
+    let paletteCount = 0
+    for (const entry of session.document.palette) {
+      if (entry.id === 0 || !colorEquals(entry.color, sourceColor)) continue
+      entry.color = { ...replacementColor }
+      paletteCount += 1
+    }
+    if (colorEquals(session.primaryColor, sourceColor)) session.primaryColor = { ...replacementColor }
+    if (colorEquals(session.secondaryColor, sourceColor)) session.secondaryColor = { ...replacementColor }
+    return { edits, pixelCount: 0, paletteCount, lockedCount }
+  }
+
+  if (target === 'layer') {
+    collect(activePaintLayer(session), timeline.activeFrameId)
+  } else if (target === 'selection') {
+    if (session.selection) collect(activePaintLayer(session), timeline.activeFrameId, session.selection)
+  } else if (target === 'document') {
+    for (const frame of timeline.frames) for (const layer of session.document.layers) collect(animationLayerAtFrame(session.document, layer.id, frame.id), frame.id)
+  } else if (target === 'layers') {
+    const layerIds = new Set(session.selectedLayerIds)
+    for (const frame of timeline.frames) for (const layerId of layerIds) collect(animationLayerAtFrame(session.document, layerId, frame.id), frame.id)
+  } else if (target === 'frames') {
+    const frameIds = new Set(session.selectedAnimationFrameIds)
+    for (const frameId of frameIds) for (const layer of session.document.layers) collect(animationLayerAtFrame(session.document, layer.id, frameId), frameId)
+  } else {
+    for (const key of session.selectedAnimationCellKeys) {
+      const cell = parseAnimationCelKey(key)
+      if (cell) collect(animationLayerAtFrame(session.document, cell.layerId, cell.frameId), cell.frameId)
+    }
+  }
+
+  return {
+    edits,
+    pixelCount: edits.reduce((count, edit) => count + edit.before.size, 0),
+    paletteCount: 0,
+    lockedCount
+  }
+}
+
+const restoreColorReplacementPreviewState = (session: DocumentSession, preview: ColorReplacementPreview): void => {
+  for (let index = preview.edits.length - 1; index >= 0; index -= 1) revertPixelEdit(session.document, preview.edits[index])
+  session.document.palette = cloneColorReplacementPalette(preview.palette)
+  session.document.nextColorId = preview.nextColorId
+  session.primaryColor = { ...preview.primaryColor }
+  session.secondaryColor = { ...preview.secondaryColor }
+  syncActiveAnimationFrame(session.document)
+}
+
+const invalidateColorReplacementPreview = (session: DocumentSession): void => {
+  session.revision += 1
+  session.contentRevision += 1
+}
 
 const tr = (key: TranslationKey, params?: TranslationParams): string => translate(loadEditorPreferences().language, key, params)
 const paletteEditSynchronizationLocked = (): boolean => readStoredString('moonsprite.palette-edit-locked') !== 'false'
@@ -709,6 +831,31 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     }
   },
 
+  async createSpriteSheetFromActive() {
+    get().commitFloatingPaste()
+    const sourceSession = activeSession(get())
+    if (!sourceSession) return false
+    const source = sourceSession.document
+    const frameCount = ensureAnimationDocument(source).frames.length
+    const width = source.width * frameCount
+    try {
+      const resource = await window.moonSprite.getResourceInfo()
+      const check = checkResourceLimit(width, source.height, 1, 'rgba', resource)
+      if (!check.allowed) throw new Error(check.reason)
+      const document = createHorizontalSpriteSheetDocument(source, {
+        document: tr('workspace.spriteSheet.documentName', { name: source.name }),
+        layer: tr('workspace.spriteSheet.layerName')
+      })
+      document.dirty = true
+      get().addSession(document)
+      set({ message: tr('workspace.spriteSheet.created', { count: frameCount }) })
+      return true
+    } catch (error) {
+      set({ message: error instanceof Error ? error.message : tr('workspace.spriteSheet.error') })
+      return false
+    }
+  },
+
   async resizeActiveCanvas(width, height, anchor, offsetX, offsetY, trimOutside = false) {
     const current = activeSession(get())
     if (!current || !Number.isSafeInteger(width) || !Number.isSafeInteger(height) || width < 1 || height < 1) { set({ message: tr('workspace.canvasSizePositive') }); return }
@@ -822,6 +969,32 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
   setBrushTexture(texture) { get().mutateActive((session) => { session.brushTexture = texture; rememberBrushProfile(session); persistToolSettings(session) }, false) },
   setBrushTextureScale(scale) { get().mutateActive((session) => { session.brushTextureScale = Math.max(1, Math.min(16, Math.round(scale))); rememberBrushProfile(session); persistToolSettings(session) }, false) },
   setBrushPaintMode(mode) { get().mutateActive((session) => { session.brushPaintMode = mode; rememberBrushProfile(session); persistToolSettings(session) }, false) },
+  setBrushDynamicsMapping(effect, patch) {
+    get().mutateActive((session) => {
+      if (session.tool !== 'pencil' && session.tool !== 'eraser') return
+      session.brushDynamics = patchBrushDynamicsMapping(session.brushDynamics, effect, patch)
+      session.brushPressure = brushPressureFromDynamics(session.brushDynamics)
+      rememberBrushProfile(session)
+      persistToolSettings(session)
+    }, false)
+  },
+  setBrushDynamicsGradientDither(dither) {
+    get().mutateActive((session) => {
+      if (session.tool !== 'pencil' && session.tool !== 'eraser') return
+      session.brushDynamics = patchBrushDynamicsGradientDither(session.brushDynamics, dither)
+      rememberBrushProfile(session)
+      persistToolSettings(session)
+    }, false)
+  },
+  setBrushPressure(settings) {
+    get().mutateActive((session) => {
+      if (session.tool !== 'pencil' && session.tool !== 'eraser') return
+      session.brushPressure = normalizeBrushPressureSettings(settings, session.brushPressure)
+      session.brushDynamics = migrateBrushPressureSettings(session.brushPressure)
+      rememberBrushProfile(session)
+      persistToolSettings(session)
+    }, false)
+  },
   setBrushImage(brush) {
     get().mutateActive((session) => {
       session.brushImage = brush && isProceduralBrushId(brush.id)
@@ -948,6 +1121,110 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       session.paletteSecondarySelectionId = matching?.id ?? null
     }
     set({ sharedSecondaryColor: { ...color }, sessions: [...state.sessions] })
+  },
+  replaceColor(target, sourceColor, replacementColor) {
+    const state = get()
+    const session = activeSession(state)
+    if (!session) return
+    if (colorEquals(sourceColor, replacementColor)) {
+      set({ message: tr('workspace.colorReplace.sameColor') })
+      return
+    }
+    const beforePalette = cloneColorReplacementPalette(session.document.palette)
+    const beforeNextColorId = session.document.nextColorId
+    const beforePrimaryColor = { ...session.primaryColor }
+    const beforeSecondaryColor = { ...session.secondaryColor }
+    const result = applyColorReplacementTarget(session, target, sourceColor, replacementColor)
+    const labels: Record<ColorReplacementTarget, string> = {
+      layer: tr('workspace.history.replaceColorLayer'),
+      document: tr('workspace.history.replaceColorDocument'),
+      selection: tr('workspace.history.replaceColorSelection'),
+      layers: tr('workspace.history.replaceColorLayers'),
+      frames: tr('workspace.history.replaceColorFrames'),
+      cells: tr('workspace.history.replaceColorCells'),
+      palette: tr('workspace.history.replaceColorPalette')
+    }
+    const label = labels[target]
+    const entries = result.edits.map((edit) => commitPixelEdit(session.document, edit, label)).filter((entry): entry is HistoryEntry => Boolean(entry))
+    const afterPalette = cloneColorReplacementPalette(session.document.palette)
+    const afterNextColorId = session.document.nextColorId
+    const afterPrimaryColor = { ...session.primaryColor }
+    const afterSecondaryColor = { ...session.secondaryColor }
+    const paletteChanged = beforeNextColorId !== afterNextColorId || !colorReplacementPalettesEqual(beforePalette, afterPalette)
+    if (entries.length === 0 && !paletteChanged) {
+      set({ message: tr(result.lockedCount > 0 ? 'workspace.colorReplace.locked' : 'workspace.colorReplace.noMatch') })
+      return
+    }
+    session.history.push({
+      label,
+      bytes: entries.reduce((sum, entry) => sum + entry.bytes, 0) + (beforePalette.length + afterPalette.length) * 24,
+      undo: () => {
+        for (let index = entries.length - 1; index >= 0; index -= 1) entries[index].undo()
+        session.document.palette = cloneColorReplacementPalette(beforePalette)
+        session.document.nextColorId = beforeNextColorId
+        session.primaryColor = { ...beforePrimaryColor }
+        session.secondaryColor = { ...beforeSecondaryColor }
+      },
+      redo: () => {
+        session.document.palette = cloneColorReplacementPalette(afterPalette)
+        session.document.nextColorId = afterNextColorId
+        session.primaryColor = { ...afterPrimaryColor }
+        session.secondaryColor = { ...afterSecondaryColor }
+        for (const entry of entries) entry.redo()
+      },
+      invalidation: { kind: 'full' }
+    })
+    syncActiveAnimationFrame(session.document)
+    touch(session, true, { kind: 'full' })
+    recordDocumentOperation(session)
+    set({ sessions: [...state.sessions], message: tr('workspace.colorReplace.done', { count: result.pixelCount + result.paletteCount }) })
+  },
+  previewColorReplacement(target, sourceColor, replacementColor, previous = null) {
+    const state = get()
+    const changedSessions = new Set<DocumentSession>()
+    if (previous) {
+      const previousSession = state.sessions.find((candidate) => candidate.document.id === previous.documentId)
+      if (previousSession) {
+        restoreColorReplacementPreviewState(previousSession, previous)
+        changedSessions.add(previousSession)
+      }
+    }
+    const session = activeSession(state)
+    if (!session || colorEquals(sourceColor, replacementColor)) {
+      for (const changed of changedSessions) invalidateColorReplacementPreview(changed)
+      if (changedSessions.size > 0) set({ sessions: [...state.sessions] })
+      return null
+    }
+    const preview: ColorReplacementPreview = {
+      documentId: session.document.id,
+      edits: [],
+      palette: cloneColorReplacementPalette(session.document.palette),
+      nextColorId: session.document.nextColorId,
+      primaryColor: { ...session.primaryColor },
+      secondaryColor: { ...session.secondaryColor }
+    }
+    const result = applyColorReplacementTarget(session, target, sourceColor, replacementColor)
+    preview.edits = result.edits
+    const paletteChanged = preview.nextColorId !== session.document.nextColorId || !colorReplacementPalettesEqual(preview.palette, session.document.palette)
+    if (result.edits.length === 0 && !paletteChanged) {
+      for (const changed of changedSessions) invalidateColorReplacementPreview(changed)
+      if (changedSessions.size > 0) set({ sessions: [...state.sessions] })
+      return null
+    }
+    syncActiveAnimationFrame(session.document)
+    changedSessions.add(session)
+    for (const changed of changedSessions) invalidateColorReplacementPreview(changed)
+    set({ sessions: [...state.sessions] })
+    return preview
+  },
+  restoreColorReplacementPreview(preview) {
+    if (!preview) return
+    const state = get()
+    const session = state.sessions.find((candidate) => candidate.document.id === preview.documentId)
+    if (!session) return
+    restoreColorReplacementPreviewState(session, preview)
+    invalidateColorReplacementPreview(session)
+    set({ sessions: [...state.sessions] })
   },
   selectSecondaryPaletteColor(id) {
     get().mutateActive((session) => {
@@ -1149,10 +1426,6 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       const entry = commitPixelEdit(session.document, edit, label)
       if (entry) {
         session.history.push(entry)
-        if (session.activeLayerMaskId) {
-          session.selectedAnimationMaskCellKeys = []
-          session.animationMaskCellSelectionAnchorKey = null
-        }
         syncActiveAnimationFrame(session.document)
         touch(session, true, entry.invalidation)
         recordDocumentOperation(session, activity)
@@ -1304,22 +1577,26 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       const target = parseAnimationCelKey(key)
       const timeline = ensureAnimationDocument(session.document)
       if (!target || !timeline.frames.some((frame) => frame.id === target.frameId) || !session.document.layers.some((layer) => layer.id === target.layerId)) return
+      const preservedLayerIds = mode !== 'replace' && session.selectedLayerIds.length > 1 ? [...session.selectedLayerIds] : null
+      const implicitAnchorKey = mode !== 'replace' && session.selectedAnimationCellKeys.length === 0
+        ? animationCelKey(session.document.activeLayerId, timeline.activeFrameId)
+        : null
       session.selectedAnimationFrameIds = []
       session.animationFrameSelectionAnchorId = null
       session.selectedAnimationMaskCellKeys = []
       session.animationMaskCellSelectionAnchorKey = null
       session.document.activeLayerId = target.layerId
-      session.selectedLayerIds = [target.layerId]
       session.selectedGroupId = null
       session.selectedGroupIds = []
       session.activeLayerMaskId = null
       session.layerMaskIsolatedView = false
       const current = new Set(session.selectedAnimationCellKeys)
+      if (implicitAnchorKey) current.add(implicitAnchorKey)
       if (mode === 'toggle') {
         if (current.has(key)) current.delete(key)
         else current.add(key)
       } else if (mode === 'range') {
-        const anchor = session.animationCellSelectionAnchorKey ?? session.selectedAnimationCellKeys.at(-1)
+        const anchor = session.animationCellSelectionAnchorKey ?? session.selectedAnimationCellKeys.at(-1) ?? implicitAnchorKey
         const parsedAnchor = anchor ? parseAnimationCelKey(anchor) : null
         if (parsedAnchor) {
           const frames = timeline.frames
@@ -1339,7 +1616,14 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
         current.add(key)
       }
       session.selectedAnimationCellKeys = [...current]
-      session.animationCellSelectionAnchorKey = key
+      if (preservedLayerIds) session.selectedLayerIds = preservedLayerIds
+      else {
+        const focusKey = current.has(key) ? key : session.selectedAnimationCellKeys.at(-1)
+        const focus = focusKey ? parseAnimationCelKey(focusKey) : null
+        session.selectedLayerIds = focus ? [focus.layerId] : []
+        if (focus) session.document.activeLayerId = focus.layerId
+      }
+      session.animationCellSelectionAnchorKey = current.has(key) ? key : session.selectedAnimationCellKeys.at(-1) ?? null
     }, false)
     const parsed = parseAnimationCelKey(key)
     if (parsed) get().setActiveAnimationFrame(parsed.frameId)
@@ -2687,6 +2971,22 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
         applyLayerRowSelection(session, [layerId], [], { kind: 'layer', id: layerId })
         session.layerSelectionAnchorId = layerId
       }
+      if (selectionMode !== 'replace') applyLayerCurrentFrameCellSelection(session, selectedDirectLayerRows(session), layerId)
+    }, false)
+  },
+
+  selectMoveToolLayer(layerId, additive = false) {
+    get().commitFloatingPaste()
+    get().mutateActive((session) => {
+      if (!session.document.layers.some((layer) => layer.id === layerId)) return
+      const currentLayerIds = selectedDirectLayerRows(session)
+      const selectedLayerIds = additive
+        ? currentLayerIds.includes(layerId)
+          ? currentLayerIds.filter((candidate) => candidate !== layerId)
+          : [...currentLayerIds, layerId]
+        : [layerId]
+      applyLayerRowSelection(session, selectedLayerIds, [], { kind: 'layer', id: layerId })
+      applyLayerCurrentFrameCellSelection(session, selectedLayerIds, layerId)
     }, false)
   },
 
@@ -2846,6 +3146,69 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
         bytes: mask.pixels.byteLength,
         undo: () => { delete sourceCel.mask; if (ensured?.created) timeline.cels = timeline.cels.filter((candidate) => candidate !== cel); if (session.activeLayerMaskId === mask.id) { session.activeLayerMaskId = null; session.layerMaskIsolatedView = false } },
         redo: () => { if (ensured?.created && !timeline.cels.includes(cel)) timeline.cels.push(cel); sourceCel.mask = mask; session.activeLayerMaskId = mask.id; session.layerMaskIsolatedView = false; refreshActiveAnimationFrame(session.document) },
+        invalidation: { kind: 'full' }
+      })
+    })
+  },
+
+  createLayerMasksForLayer(layerId) {
+    const current = activeSession(get())
+    if (!current) return
+    const layer = current.document.layers.find((candidate) => candidate.id === layerId)
+    if (!layer) return
+    if (isLayerEffectivelyLocked(current.document, layer)) { set({ message: tr('workspace.layerMask.locked') }); return }
+    const currentTimeline = ensureAnimationDocument(current.document)
+    const currentSources = new Map<string, AnimationCel>()
+    for (const cel of currentTimeline.cels) {
+      if (cel.layerId !== layerId) continue
+      const source = resolveAnimationCel(currentTimeline, cel) ?? cel
+      if (animationCelHasContent(source, current.document.palette)) currentSources.set(source.id, source)
+    }
+    if (currentSources.size === 0) { set({ message: tr('workspace.layerMask.emptyCel') }); return }
+    if (![...currentSources.values()].some((source) => !source.mask)) return
+    get().mutateActive((session) => {
+      const timeline = ensureAnimationDocument(session.document)
+      const sources = new Map<string, AnimationCel>()
+      for (const cel of timeline.cels) {
+        if (cel.layerId !== layerId) continue
+        const source = resolveAnimationCel(timeline, cel) ?? cel
+        if (animationCelHasContent(source, session.document.palette)) sources.set(source.id, source)
+      }
+      const created = [...sources.values()].flatMap((source) => {
+        if (source.mask) return []
+        const mask = createAttachedLayerMask(source.id, session.document.width, session.document.height)
+        source.mask = mask
+        return [{ source, mask }]
+      })
+      if (created.length === 0) return
+      const activeCel = timeline.cels.find((cel) => cel.layerId === layerId && cel.frameId === timeline.activeFrameId)
+      const activeSource = resolveAnimationCel(timeline, activeCel ?? null) ?? activeCel
+      const activeMask = activeSource?.mask ?? null
+      applyLayerRowSelection(session, [layerId], [], { kind: 'layer', id: layerId })
+      session.activeLayerMaskId = activeMask?.id ?? null
+      session.layerMaskIsolatedView = false
+      session.selectedAnimationCellKeys = []
+      session.animationCellSelectionAnchorKey = null
+      session.selectedAnimationMaskCellKeys = activeMask ? [animationCelKey(layerId, timeline.activeFrameId)] : []
+      session.animationMaskCellSelectionAnchorKey = session.selectedAnimationMaskCellKeys[0] ?? null
+      refreshActiveAnimationFrame(session.document)
+      const createdMaskIds = new Set(created.map(({ mask }) => mask.id))
+      const remove = (): void => {
+        for (const { source, mask } of created) if (source.mask === mask) delete source.mask
+        if (session.activeLayerMaskId && createdMaskIds.has(session.activeLayerMaskId)) session.activeLayerMaskId = null
+        refreshActiveAnimationFrame(session.document)
+      }
+      const restore = (): void => {
+        for (const { source, mask } of created) source.mask = mask
+        session.activeLayerMaskId = activeMask?.id ?? null
+        session.layerMaskIsolatedView = false
+        refreshActiveAnimationFrame(session.document)
+      }
+      session.history.push({
+        label: tr('workspace.history.createLayerMask'),
+        bytes: created.reduce((sum, { mask }) => sum + mask.pixels.byteLength, 0),
+        undo: remove,
+        redo: restore,
         invalidation: { kind: 'full' }
       })
     })
@@ -3660,18 +4023,67 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
   moveActiveSelectionWithSelectionHistory(deltaX, deltaY) {
     get().mutateActive((session) => {
       if (!session.selection) return
-      const beforeSelection = { ...session.selection }
-      const nextX = Math.max(0, Math.min(session.document.width - beforeSelection.width, beforeSelection.x + deltaX))
-      const nextY = Math.max(0, Math.min(session.document.height - beforeSelection.height, beforeSelection.y + deltaY))
-      const actualX = nextX - beforeSelection.x
-      const actualY = nextY - beforeSelection.y
-      const edit = moveSelection(session.document, beforeSelection, actualX, actualY, false, activePaintLayer(session))
-      const entry = edit && commitPixelEdit(session.document, edit, tr('workspace.history.moveSelectionContent'))
-      if (!entry) return
-      const afterSelection = { ...beforeSelection, x: nextX, y: nextY }
-      session.selection = afterSelection
-      session.history.push({ ...entry, bytes: entry.bytes + 48, undo: () => { entry.undo(); session.selection = { ...beforeSelection } }, redo: () => { entry.redo(); session.selection = { ...afterSelection } } })
-    })
+      const currentSelection = cloneSelectionMask(session.selection)!
+      const nextX = Math.max(0, Math.min(session.document.width - currentSelection.width, currentSelection.x + Math.trunc(deltaX)))
+      const nextY = Math.max(0, Math.min(session.document.height - currentSelection.height, currentSelection.y + Math.trunc(deltaY)))
+      const actualX = nextX - currentSelection.x
+      const actualY = nextY - currentSelection.y
+      if (actualX === 0 && actualY === 0) return
+      const layer = activePaintLayer(session)
+      if (isLayerEffectivelyLocked(session.document, layer)) return
+
+      const pending = session.pendingPaste
+      if (pending) {
+        const previousTarget = cloneSelectionMask(pending.target)!
+        const angle = pending.transformAngle ?? 0
+        const shear = pending.transformShear
+        const transformTarget = pending.transformTarget ?? {
+          x: pending.target.x,
+          y: pending.target.y,
+          width: pending.target.width,
+          height: pending.target.height
+        }
+        const nextTransformTarget = { ...transformTarget, x: transformTarget.x + actualX, y: transformTarget.y + actualY }
+        restoreFloatingPreview(session)
+        const nextSelection = transformSelectionMask(pending.source.selection, nextTransformTarget, session.document.width, session.document.height, angle, shear, false)
+        if (!nextSelection) return
+        const simpleTranslation = angle % 360 === 0
+          && !shear
+          && nextTransformTarget.width === pending.source.selection.width
+          && nextTransformTarget.height === pending.source.selection.height
+          && !nextTransformTarget.flipHorizontal
+          && !nextTransformTarget.flipVertical
+        pending.previewEdit = null
+        pending.translationPreview = simpleTranslation
+          ? applySelectionTranslationPreview(session.document, pending.source, nextTransformTarget, pending.copy, pending.translationPreview, layer)
+          : null
+        if (!simpleTranslation) pending.previewEdit = applySelectionTransform(session.document, pending.source, nextTransformTarget, angle, pending.copy, shear, undefined, undefined, layer)
+        pending.target = cloneSelectionMask(nextSelection)!
+        pending.transformTarget = nextTransformTarget
+        session.selection = cloneSelectionMask(nextSelection)
+        markFloatingPreviewChanged(session, previousTarget, nextSelection)
+        return
+      }
+
+      const source = captureSelectionTransform(session.document, currentSelection, layer)
+      if (!source) return
+      const nextSelection = { ...currentSelection, x: nextX, y: nextY }
+      const translationPreview = applySelectionTranslationPreview(session.document, source, nextSelection, false, null, layer)
+      session.pendingPaste = {
+        layerId: layer.id,
+        beforeSelection: cloneSelectionMask(currentSelection),
+        source,
+        target: cloneSelectionMask(nextSelection)!,
+        transformTarget: { x: nextSelection.x, y: nextSelection.y, width: nextSelection.width, height: nextSelection.height },
+        transformAngle: 0,
+        previewEdit: null,
+        translationPreview,
+        copy: false,
+        label: tr('workspace.history.moveSelectionContent')
+      }
+      session.selection = cloneSelectionMask(nextSelection)
+      markFloatingPreviewChanged(session, currentSelection, nextSelection)
+    }, false)
   },
 
   flipActiveSelection(axis) {

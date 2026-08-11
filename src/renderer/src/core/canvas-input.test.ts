@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { CanvasInputState, SELECTION_CORNER_RESIZE_HIT_RADIUS, SELECTION_RESIZE_HIT_RADIUS, appendPolygonLassoVertex, canvasGestureForPreview, centeredShapeBounds, clampCanvasZoom, coalescedPointerClientPoints, constrainedTranslation, createCanvasPanDrag, createMarqueeResizeStart, finalizeMarqueeSelection, floatingSelectionCopyMode, polygonLassoClosedPathPoints, polygonLassoPreviewPoints, resizeRotatedMarqueeBounds, resizeSelectionBounds, resizeTransformedSelectionBounds, restoreCanvasDragAfterPan, revertCancelledCanvasDragPixelChanges, rotationHandles, selectionGestureMoved, selectionInteractionHit, selectionMarqueeUsesConstraint, selectionOverlayMaskForDrag, selectionResizeHit, selectionRotationAngle, selectionRotationHit, selectionShearHit, selectionTransformedInteractionHit, selectionTransformModifiers, selectionTransformPreviewChanged, shapeBounds, shouldClosePolygonLasso, shouldRestartFloatingSelectionForCopy, shouldStartCanvasPan, snapSelectionRotation, steppedCanvasZoom, temporaryTransformOffset, translatedSelectionRect, wheelCanvasZoom, zoomDragModeForModifiers, zoomDragTarget, type CanvasDragState } from './canvas-input'
+import { BRUSH_SPEED_STOP_MS, CanvasInputState, SELECTION_CORNER_RESIZE_HIT_RADIUS, SELECTION_RESIZE_HIT_RADIUS, appendPolygonLassoVertex, beginBrushSpeedTracking, canvasGestureForPreview, centeredShapeBounds, clampCanvasZoom, coalescedPointerClientPoints, constrainedTranslation, createCanvasPanDrag, createMarqueeResizeStart, finalizeMarqueeSelection, floatingSelectionCopyMode, polygonLassoClosedPathPoints, polygonLassoPreviewPoints, resizeRotatedMarqueeBounds, resizeSelectionBounds, resizeTransformedSelectionBounds, restoreCanvasDragAfterPan, revertCancelledCanvasDragPixelChanges, rotationHandles, selectionGestureMoved, selectionInteractionHit, selectionMarqueeUsesConstraint, selectionOverlayMaskForDrag, selectionResizeHit, selectionRotationAngle, selectionRotationHit, selectionShearHit, selectionTransformedInteractionHit, selectionTransformModifiers, selectionTransformPreviewChanged, shapeBounds, shouldClosePolygonLasso, shouldRestartFloatingSelectionForCopy, shouldStartCanvasPan, snapSelectionRotation, steppedCanvasZoom, temporaryTransformOffset, translatedSelectionRect, updateBrushSpeedTracking, wheelCanvasZoom, zoomDragModeForModifiers, zoomDragTarget, type CanvasDragState } from './canvas-input'
 import { balancedStairLinePoints } from './pixel-line'
 import { createDocument, getActiveLayer, readLayerColor } from './document'
 import { beginPixelEdit } from './history'
@@ -19,6 +19,65 @@ describe('canvas input helpers', () => {
       ]
     })
     expect(points).toEqual([{ clientX: 2, clientY: 3 }, { clientX: 5, clientY: 6 }, { clientX: 8, clientY: 7 }])
+  })
+
+  it('preserves pen pressure changes even when the pointer stays on one coordinate', () => {
+    const points = coalescedPointerClientPoints({
+      clientX: 8,
+      clientY: 7,
+      pressure: 0.8,
+      pointerType: 'pen',
+      getCoalescedEvents: () => [
+        { clientX: 8, clientY: 7, pressure: 0.2, pointerType: 'pen' },
+        { clientX: 8, clientY: 7, pressure: 0.5, pointerType: 'pen' }
+      ]
+    })
+    expect(points).toEqual([
+      { clientX: 8, clientY: 7, pressure: 0.2, pointerType: 'pen' },
+      { clientX: 8, clientY: 7, pressure: 0.5, pointerType: 'pen' },
+      { clientX: 8, clientY: 7, pressure: 0.8, pointerType: 'pen' }
+    ])
+  })
+
+  it('keeps timestamp-distinct samples and removes only exact duplicate endpoints', () => {
+    const points = coalescedPointerClientPoints({
+      clientX: 8,
+      clientY: 7,
+      pressure: 0.5,
+      pointerType: 'pen',
+      timeStamp: 12,
+      getCoalescedEvents: () => [
+        { clientX: 8, clientY: 7, pressure: 0.5, pointerType: 'pen', timeStamp: 10 },
+        { clientX: 8, clientY: 7, pressure: 0.5, pointerType: 'pen', timeStamp: 12 }
+      ]
+    })
+    expect(points).toEqual([
+      { clientX: 8, clientY: 7, pressure: 0.5, pointerType: 'pen', timeStamp: 10 },
+      { clientX: 8, clientY: 7, pressure: 0.5, pointerType: 'pen', timeStamp: 12 }
+    ])
+  })
+
+  it('tracks CSS pixel speed with zero-dt carry, stop reset, and EMA smoothing', () => {
+    const start = beginBrushSpeedTracking({ clientX: 0, clientY: 0, timeStamp: 100 })
+    expect(start?.speed).toBe(0)
+
+    const first = updateBrushSpeedTracking(start, { clientX: 10, clientY: 0, timeStamp: 110 })
+    expect(first.speed).toBeCloseTo(166.25, 2)
+
+    const zeroDt = updateBrushSpeedTracking(first.state, { clientX: 30, clientY: 0, timeStamp: 110 })
+    expect(zeroDt).toEqual({ state: first.state, speed: first.speed })
+
+    const smoothed = updateBrushSpeedTracking(zeroDt.state, { clientX: 15, clientY: 0, timeStamp: 120 })
+    expect(smoothed.speed).toBeCloseTo(221.73, 2)
+
+    const stopped = updateBrushSpeedTracking(smoothed.state, { clientX: 16, clientY: 0, timeStamp: 120 + BRUSH_SPEED_STOP_MS })
+    expect(stopped.speed).toBe(0)
+  })
+
+  it('clamps impossible speed spikes to the supported dynamics range', () => {
+    const start = beginBrushSpeedTracking({ clientX: 0, clientY: 0, timeStamp: 0 })
+    const spike = updateBrushSpeedTracking(start, { clientX: 1000, clientY: 0, timeStamp: 1 })
+    expect(spike.speed).toBeLessThanOrEqual(4000)
   })
 
   it('reverts an unfinished drawing when the pointer interaction is cancelled', () => {

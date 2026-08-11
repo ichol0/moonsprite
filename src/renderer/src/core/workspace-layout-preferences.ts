@@ -34,12 +34,24 @@ const clamp = (value: unknown, fallback: number, minimum: number, maximum: numbe
   return Number.isFinite(number) ? Math.max(minimum, Math.min(maximum, number)) : fallback
 }
 
+export function constrainInspectorWidth(width: number, viewportWidth: number): number {
+  return clamp(width, 310, 180, Math.max(180, viewportWidth - 220))
+}
+
+export function constrainLeftDockWidth(width: number, viewportWidth: number): number {
+  return clamp(width, 250, 180, Math.min(520, Math.max(180, viewportWidth - 520)))
+}
+
+export function constrainBottomDockHeight(height: number, availableHeight: number): number {
+  return clamp(height, 190, 120, Math.max(120, Math.min(520, availableHeight - 43 - 150)))
+}
+
 export function loadToolRailSide(storage?: Storage): ToolRailSide {
   return readStoredString(TOOL_RAIL_SIDE_STORAGE_KEY, storage) === 'right' ? 'right' : 'left'
 }
 
 export function loadInspectorWidth(viewportWidth: number, storage?: Storage): number {
-  return clamp(readStoredString(INSPECTOR_WIDTH_STORAGE_KEY, storage), 310, 180, Math.max(180, viewportWidth - 220))
+  return constrainInspectorWidth(Number(readStoredString(INSPECTOR_WIDTH_STORAGE_KEY, storage)), viewportWidth)
 }
 
 export function loadPanelDocks(storage?: Storage): Record<WorkspacePanelId, WorkspacePanelDock> {
@@ -124,8 +136,8 @@ export function normalizeWorkspaceLayout(layout: WorkspaceLayout, viewportWidth:
   return {
     panelDocks,
     panelVisibility,
-    inspectorWidth: clamp(layout.inspectorWidth, 310, 180, Math.max(180, viewportWidth - 220)),
-    leftDockWidth: clamp(layout.leftDockWidth, 250, 180, Math.min(520, Math.max(180, viewportWidth - 520))),
+    inspectorWidth: constrainInspectorWidth(layout.inspectorWidth, viewportWidth),
+    leftDockWidth: constrainLeftDockWidth(layout.leftDockWidth, viewportWidth),
     bottomDockHeight: clamp(layout.bottomDockHeight, 190, 120, 520),
     toolRailSide: layout.toolRailSide === 'right' ? 'right' : 'left',
     previewOpen: panelVisibility.preview

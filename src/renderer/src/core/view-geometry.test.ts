@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { clampCanvasViewPan, documentPointFromViewportPoint, documentPointFromViewportPointContinuous, rotationIndicatorFitsCanvas, unrotatedViewportBounds, viewCanvasOrigin, viewPanDeltaFromScreen, viewRotationPivot, zoomViewAroundViewportPoint } from './view-geometry'
+import { clampCanvasViewPan, documentPointFromViewportPoint, documentPointFromViewportPointContinuous, rotateViewAroundViewportPoint, rotationIndicatorFitsCanvas, rotationIndicatorPointBesidePointer, unrotatedViewportBounds, viewCanvasOrigin, viewPanDeltaFromScreen, viewRotationPivot, zoomViewAroundViewportPoint } from './view-geometry'
 
 describe('view rotation geometry', () => {
   it('uses the viewport center for a view-centered rotation indicator', () => {
@@ -8,6 +8,21 @@ describe('view rotation geometry', () => {
 
   it('uses the panned canvas center for a canvas-centered rotation indicator', () => {
     expect(viewRotationPivot(800, 600, 120, -45, 'canvas')).toEqual({ x: 520, y: 255 })
+  })
+
+  it('places the rotation indicator to the pointer left and keeps it inside the viewport', () => {
+    expect(rotationIndicatorPointBesidePointer(800, 600, { x: 500, y: 250 })).toEqual({ x: 404, y: 250 })
+    expect(rotationIndicatorPointBesidePointer(800, 600, { x: 20, y: 20 })).toEqual({ x: 64, y: 96 })
+  })
+
+  it('keeps the document point beneath a nearby rotation indicator fixed', () => {
+    const view = { zoom: 2, panX: 36, panY: -18, rotation: 15, mirrored: true, mirroredVertical: false }
+    const indicator = { x: 244, y: 188 }
+    const before = documentPointFromViewportPointContinuous(indicator, 800, 600, 128, 96, view, 'view')
+    const rotated = rotateViewAroundViewportPoint(view, 105, indicator, 800, 600, 'view')
+    const after = documentPointFromViewportPointContinuous(indicator, 800, 600, 128, 96, rotated, 'view')
+    expect(after.x).toBeCloseTo(before.x)
+    expect(after.y).toBeCloseTo(before.y)
   })
 
   it('converts screen dragging into scene panning around a fixed view center', () => {

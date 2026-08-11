@@ -1,11 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import { compositeRegion, createDocument, createLayer, DocumentCompositeCache, getActiveLayer, readLayerColor, readLayerColorAt, resizeDocumentAt, writeLayerColor } from './document'
 import { beginPixelEdit, commitPixelEdit, HistoryStack } from './history'
-import { appendPerfectPixelSegment, applySelectionTransform, applySelectionTranslationPreview, brushMaskOffsets, brushStampAnchor, brushStampDimensions, captureSelectionTransform, clearSelection, fillSelectionOrCanvas, flipLayer, flipSelection, floodFill, floodFillSymmetric, moveSelection, outlinePixelIndices, outlineSelection, paintBrush, paintLine, paintShape, rotatedShapePixelPoints, selectionTranslationPreviewEdit, shapePixelPoints } from './tools'
-import { combineSelection, ellipseSelection, lassoSelection, magicWandSelection, rotatedSelectionBounds, selectionBoundarySegments, selectionContains, transformedSelectionBounds, transformedSelectionSourcePoint, transformSelectionMask } from './selection'
+import { appendPerfectPixelSegment, applySelectionTransform, applySelectionTranslationPreview, brushMaskOffsets, brushStampAnchor, brushStampDimensions, captureSelectionTransform, clearSelection, fillSelectionOrCanvas, flipLayer, flipSelection, floodFill, floodFillSymmetric, moveSelection, outlinePixelIndices, outlineSelection, paintBrush, paintLine, paintShape, replaceLayerColor, rotatedShapePixelPoints, selectionTranslationPreviewEdit, shapeContainsPixel, shapePixelPoints } from './tools'
+import { combineSelection, ellipseSelection, lassoSelection, magicWandSelection, rasterLinePoints, rotatedSelectionBounds, selectionBoundarySegments, selectionContains, transformedSelectionBounds, transformedSelectionSourcePoint, transformSelectionMask } from './selection'
 import { resizeDocument } from './document'
 import { createProceduralBrush, createProceduralBrushes, createSelectionBrush, proceduralBrushCoverageAt } from './brushes'
 import { packColor, unpackColor } from './raster'
+import { balancedStairLinePoints } from './pixel-line'
 
 const blue = { r: 41, g: 121, b: 255, a: 255 }
 const red = { r: 255, g: 48, b: 48, a: 255 }
@@ -18,6 +19,48 @@ describe('pixel tools', () => {
     expect(path).toContainEqual({ x: 2, y: 5 })
     expect(path).not.toContainEqual({ x: 2, y: 6 })
     expect(path).toContainEqual({ x: 3, y: 6 })
+  })
+
+  it('keeps interpolated brush dynamics in perfect-pixel paths', () => {
+    const path = [{ x: 0, y: 0, size: 2, opacityScale: 0.25 }]
+    appendPerfectPixelSegment(path, { x: 2, y: 0, size: 6, opacityScale: 1 })
+    expect(path).toEqual([
+      { x: 0, y: 0, size: 2, opacityScale: 0.25 },
+      { x: 1, y: 0, size: 4, opacityScale: 0.625 },
+      { x: 2, y: 0, size: 6, opacityScale: 1 }
+    ])
+  })
+
+  it('keeps interpolated gradient color in perfect-pixel paths', () => {
+    const path = [{ x: 0, y: 0, color: red }]
+    appendPerfectPixelSegment(path, { x: 2, y: 0, color: blue })
+    expect(path).toEqual([
+      { x: 0, y: 0, color: red },
+      { x: 1, y: 0, color: { r: 148, g: 85, b: 152, a: 255 } },
+      { x: 2, y: 0, color: blue }
+    ])
+  })
+
+  it('rebuilds perfect-pixel gradient samples with the same document-space dither', () => {
+    const path = [{
+      x: 0,
+      y: 0,
+      gradient: { startColor: red, endColor: blue, gradientAmount: 0, dither: 'checker' as const }
+    }]
+    appendPerfectPixelSegment(path, {
+      x: 2,
+      y: 0,
+      gradient: { startColor: red, endColor: blue, gradientAmount: 1, dither: 'checker' }
+    })
+    expect(path[1].gradient).toEqual({ startColor: red, endColor: blue, gradientAmount: 0.5, dither: 'checker' })
+
+    const document = createDocument('perfect pixel gradient', 3, 1, 'rgba')
+    const layer = getActiveLayer(document)
+    const edit = beginPixelEdit(layer.id)
+    for (const point of path) {
+      paintBrush(document, layer, edit, point.x, point.y, 1, red, 'square', null, 'solid', 1, null, undefined, 0, 'paint', undefined, undefined, undefined, undefined, 1, undefined, false, point.gradient)
+    }
+    expect([0, 1, 2].map((index) => readLayerColor(document, layer, index))).toEqual([red, red, blue])
   })
 
   it('cleans both outer corners without changing diagonal or reversed paths', () => {
@@ -65,6 +108,82 @@ describe('pixel tools', () => {
 
     expect(readLayerColor(document, layer, 0)).toEqual({ r: 255, g: 0, b: 0, a: 255 })
     expect(readLayerColor(document, layer, 1)).toEqual({ r: 0, g: 255, b: 0, a: 255 })
+  })
+
+  it('uses an explicit dynamic color override while preserving image-brush alpha', () => {
+    const document = createDocument('gradient colored brush', 2, 1, 'rgba')
+    const layer = getActiveLayer(document)
+    const brush = {
+      id: 'project-brush-gradient-test',
+      name: 'Gradient colored brush',
+      width: 2,
+      height: 1,
+      coverage: new Uint8Array([255, 128]),
+      colors: new Uint32Array([
+        packColor({ r: 255, g: 0, b: 0, a: 255 }),
+        packColor({ r: 0, g: 255, b: 0, a: 128 })
+      ]),
+      intrinsicSize: true
+    }
+    const dynamicColor = { r: 120, g: 40, b: 220, a: 200 }
+
+    paintBrush(document, layer, beginPixelEdit(layer.id), 1, 0, 1, dynamicColor, 'square', null, 'solid', 1, brush, undefined, 0, 'paint', undefined, undefined, undefined, undefined, 1, 'paint:brush-gradient', true)
+
+    expect(readLayerColor(document, layer, 0)).toEqual(dynamicColor)
+    expect(readLayerColor(document, layer, 1)).toEqual({ ...dynamicColor, a: 100 })
+  })
+
+  it('applies dynamic gradient RGB while preserving image-brush alpha', () => {
+    const document = createDocument('dithered colored brush', 2, 1, 'rgba')
+    const layer = getActiveLayer(document)
+    const brush = {
+      id: 'project-brush-gradient-v4',
+      name: 'Gradient colored brush v4',
+      width: 2,
+      height: 1,
+      coverage: new Uint8Array([255, 128]),
+      colors: new Uint32Array([
+        packColor({ r: 10, g: 20, b: 30, a: 255 }),
+        packColor({ r: 40, g: 50, b: 60, a: 128 })
+      ]),
+      intrinsicSize: true
+    }
+
+    paintBrush(document, layer, beginPixelEdit(layer.id), 1, 0, 1, red, 'square', null, 'solid', 1, brush, undefined, 0, 'paint', undefined, undefined, undefined, undefined, 1, undefined, false, {
+      startColor: red,
+      endColor: blue,
+      gradientAmount: 0.5,
+      dither: 'none'
+    })
+
+    const purple = { r: 148, g: 85, b: 152, a: 255 }
+    expect(readLayerColor(document, layer, 0)).toEqual(purple)
+    expect(readLayerColor(document, layer, 1)).toEqual({ ...purple, a: 128 })
+  })
+
+  it('uses final transparent gradient pixels as alpha-preserving image-brush erasure', () => {
+    const document = createDocument('transparent gradient brush', 1, 1, 'rgba')
+    const layer = getActiveLayer(document)
+    writeLayerColor(document, layer, 0, blue)
+    const transparent = { r: 0, g: 0, b: 0, a: 0 }
+    const brush = {
+      id: 'project-brush-transparent-gradient',
+      name: 'Transparent gradient brush',
+      width: 1,
+      height: 1,
+      coverage: new Uint8Array([128]),
+      colors: new Uint32Array([packColor({ r: 40, g: 50, b: 60, a: 128 })]),
+      intrinsicSize: true
+    }
+
+    paintBrush(document, layer, beginPixelEdit(layer.id), 0, 0, 1, red, 'square', null, 'solid', 1, brush, undefined, 0, 'paint', undefined, undefined, undefined, undefined, 1, undefined, false, {
+      startColor: transparent,
+      endColor: transparent,
+      gradientAmount: 0.5,
+      dither: 'none'
+    })
+
+    expect(readLayerColor(document, layer, 0)).toEqual({ ...blue, a: 127 })
   })
 
   it('captures every non-transparent selection pixel and its original color', () => {
@@ -173,6 +292,37 @@ describe('pixel tools', () => {
       [0, 0, 0, 1, 1, 1, 0, 0, 0],
       [0, 0, 0, 0, 0, 0, 1, 1, 1]
     ])
+  })
+
+  it('uses each dynamic point size for raster and balanced stamp spacing', () => {
+    const paintDynamicLine = (algorithm: 'raster' | 'balanced') => {
+      const document = createDocument(`dynamic ${algorithm}`, 80, 21, 'rgba')
+      const layer = getActiveLayer(document)
+      paintLine(document, layer, beginPixelEdit(layer.id), 40, 0, 40, 20, 64, blue, null, 'line', 'solid', 1, null, undefined, 0, 'paint', undefined, algorithm, undefined, undefined, undefined, {
+        fromSize: 64,
+        toSize: 1
+      })
+      return Array.from({ length: 21 }, (_, y) => readLayerColorAt(document, layer, 40, y).a > 0)
+    }
+
+    const raster = paintDynamicLine('raster')
+    const balanced = paintDynamicLine('balanced')
+    expect(raster).toEqual(balanced)
+    expect(raster[0]).toBe(true)
+    expect(raster[3]).toBe(true)
+    expect(raster[20]).toBe(true)
+  })
+
+  it('paints a zero-length dynamic line exactly once', () => {
+    const document = createDocument('zero dynamic line', 1, 1, 'rgba')
+    const layer = getActiveLayer(document)
+    const edit = beginPixelEdit(layer.id)
+    paintLine(document, layer, edit, 0, 0, 0, 0, 1, red, null, 'square', 'solid', 1, null, undefined, 0, 'paint', undefined, 'balanced', undefined, undefined, undefined, {
+      fromOpacityScale: 0.25,
+      toOpacityScale: 0.5
+    })
+    expect(edit.before.size).toBe(1)
+    expect(readLayerColor(document, layer, 0).a).toBe(128)
   })
 
   it('keeps an already painted anchor inside the first six-pixel stair', () => {
@@ -386,6 +536,59 @@ describe('pixel tools', () => {
     const translucentBlue = { ...blue, a: 96 }
     fillSelectionOrCanvas(document, layer, translucentBlue)
     expect(readLayerColorAt(document, layer, 0, 0)).toEqual(translucentBlue)
+  })
+
+  it('replaces only pixels exactly matching the requested color', () => {
+    const document = createDocument('replace exact color', 3, 1, 'rgba')
+    const layer = getActiveLayer(document)
+    writeLayerColor(document, layer, 0, red)
+    writeLayerColor(document, layer, 1, { ...red, a: 128 })
+    writeLayerColor(document, layer, 2, red)
+
+    const edit = replaceLayerColor(document, layer, red, blue)
+
+    expect(edit?.before.size).toBe(2)
+    expect(readLayerColor(document, layer, 0)).toEqual(blue)
+    expect(readLayerColor(document, layer, 1)).toEqual({ ...red, a: 128 })
+    expect(readLayerColor(document, layer, 2)).toEqual(blue)
+  })
+
+  it('limits color replacement to pixels covered by the selection mask', () => {
+    const document = createDocument('replace selected color', 3, 1, 'rgba')
+    const layer = getActiveLayer(document)
+    writeLayerColor(document, layer, 0, red)
+    writeLayerColor(document, layer, 1, red)
+    writeLayerColor(document, layer, 2, red)
+
+    const edit = replaceLayerColor(document, layer, red, blue, { x: 0, y: 0, width: 3, height: 1, mask: new Uint8Array([1, 0, 1]) })
+
+    expect(edit?.before.size).toBe(2)
+    expect(readLayerColor(document, layer, 0)).toEqual(blue)
+    expect(readLayerColor(document, layer, 1)).toEqual(red)
+    expect(readLayerColor(document, layer, 2)).toEqual(blue)
+  })
+
+  it('replaces matching colors without leaving indexed mode', () => {
+    const document = createDocument('replace indexed color', 2, 1, 'indexed')
+    const layer = getActiveLayer(document)
+    writeLayerColor(document, layer, 0, red)
+    writeLayerColor(document, layer, 1, red)
+
+    const edit = replaceLayerColor(document, layer, red, blue)
+
+    expect(edit?.before.size).toBe(2)
+    expect(document.colorMode).toBe('indexed')
+    expect(readLayerColor(document, layer, 0)).toEqual(blue)
+    expect(readLayerColor(document, layer, 1)).toEqual(blue)
+  })
+
+  it('does not add an indexed palette color when no pixel matches', () => {
+    const document = createDocument('replace missing indexed color', 1, 1, 'indexed')
+    const layer = getActiveLayer(document)
+    const before = document.palette.length
+
+    expect(replaceLayerColor(document, layer, red, blue)).toBeNull()
+    expect(document.palette).toHaveLength(before)
   })
 
   it('traverses the whole contiguous region before applying a tiled texture', () => {
@@ -641,6 +844,24 @@ describe('pixel tools', () => {
     }
   })
 
+  it('uses the same filled-shape membership for sampled previews and exact rasterization', () => {
+    for (const bounds of [
+      { x: 3, y: 4, width: 1, height: 1 },
+      { x: 3, y: 4, width: 2, height: 3 },
+      { x: 3, y: 4, width: 7, height: 5 },
+      { x: -2, y: 1, width: 8, height: 6 }
+    ]) {
+      for (const kind of ['rectangle', 'ellipse'] as const) {
+        const exact = new Set(shapePixelPoints(bounds, kind).map(({ x, y }) => `${x}:${y}`))
+        for (let y = bounds.y - 1; y <= bounds.y + bounds.height; y += 1) {
+          for (let x = bounds.x - 1; x <= bounds.x + bounds.width; x += 1) {
+            expect(shapeContainsPixel(bounds, kind, x, y)).toBe(exact.has(`${x}:${y}`))
+          }
+        }
+      }
+    }
+  })
+
   it('commits exactly the same pixels shown by a rotated shape preview', () => {
     const document = createDocument('rotated shape preview', 24, 24, 'rgba')
     const layer = getActiveLayer(document)
@@ -865,6 +1086,122 @@ describe('pixel tools', () => {
     paintLine(document, layer, edit, 0, 0, 0, 0, 1, translucentRed)
     paintLine(document, layer, edit, 0, 0, 0, 0, 1, translucentRed)
     expect(readLayerColor(document, layer, 0)).toEqual({ r: 148, g: 60, b: 127, a: 255 })
+  })
+
+  it('scales pencil and eraser coverage without accumulating repeated samples', () => {
+    const pencilDocument = createDocument('pressure pencil', 1, 1, 'rgba')
+    const pencilLayer = getActiveLayer(pencilDocument)
+    const pencilEdit = beginPixelEdit(pencilLayer.id)
+    paintBrush(pencilDocument, pencilLayer, pencilEdit, 0, 0, 1, red, 'square', null, 'solid', 1, null, undefined, 0, 'paint', undefined, undefined, undefined, undefined, 0.5)
+    paintBrush(pencilDocument, pencilLayer, pencilEdit, 0, 0, 1, red, 'square', null, 'solid', 1, null, undefined, 0, 'paint', undefined, undefined, undefined, undefined, 0.5)
+    expect(readLayerColor(pencilDocument, pencilLayer, 0)).toEqual({ ...red, a: 128 })
+
+    const eraserDocument = createDocument('pressure eraser', 1, 1, 'rgba')
+    const eraserLayer = getActiveLayer(eraserDocument)
+    writeLayerColor(eraserDocument, eraserLayer, 0, blue)
+    const eraserEdit = beginPixelEdit(eraserLayer.id)
+    const transparent = { r: 0, g: 0, b: 0, a: 0 }
+    paintBrush(eraserDocument, eraserLayer, eraserEdit, 0, 0, 1, transparent, 'square', null, 'solid', 1, null, undefined, 0, 'paint', undefined, undefined, undefined, undefined, 0.5)
+    paintBrush(eraserDocument, eraserLayer, eraserEdit, 0, 0, 1, transparent, 'square', null, 'solid', 1, null, undefined, 0, 'paint', undefined, undefined, undefined, undefined, 0.5)
+    expect(readLayerColor(eraserDocument, eraserLayer, 0).a).toBe(127)
+  })
+
+  it('replaces equal-coverage gradient samples from the pre-stroke pixel', () => {
+    const document = createDocument('dynamic gradient', 1, 1, 'rgba')
+    const layer = getActiveLayer(document)
+    const edit = beginPixelEdit(layer.id)
+    paintBrush(document, layer, edit, 0, 0, 1, red, 'square', null, 'solid', 1, null, undefined, 0, 'paint', undefined, undefined, undefined, undefined, 0.5, 'paint:brush-gradient')
+    paintBrush(document, layer, edit, 0, 0, 1, { r: 0, g: 255, b: 0, a: 255 }, 'square', null, 'solid', 1, null, undefined, 0, 'paint', undefined, undefined, undefined, undefined, 0.5, 'paint:brush-gradient')
+    expect(readLayerColor(document, layer, 0)).toEqual({ r: 0, g: 255, b: 0, a: 128 })
+  })
+
+  it('resolves fixed dynamic amounts per absolute RGBA pixel with dithering', () => {
+    const document = createDocument('dynamic dither', 2, 1, 'rgba')
+    const layer = getActiveLayer(document)
+    paintBrush(document, layer, beginPixelEdit(layer.id), 1, 0, 2, red, 'square', null, 'solid', 1, null, undefined, 0, 'paint', undefined, undefined, undefined, undefined, 1, undefined, false, {
+      startColor: { r: 0, g: 0, b: 0, a: 0 },
+      endColor: blue,
+      gradientAmount: 0.5,
+      dither: 'checker'
+    })
+    expect(readLayerColor(document, layer, 0)).toEqual(blue)
+    expect(readLayerColor(document, layer, 1).a).toBe(0)
+  })
+
+  it('paints dynamic RGBA interpolation in indexed mode without palette growth', () => {
+    const document = createDocument('indexed gradient v4', 1, 1, 'indexed')
+    const layer = getActiveLayer(document)
+    const initialPaletteSize = document.palette.length
+    const gradient = { startColor: red, endColor: blue, gradientAmount: 0.5, dither: 'none' as const }
+    const edit = beginPixelEdit(layer.id)
+    for (let index = 0; index < 20; index += 1) {
+      paintBrush(document, layer, edit, 0, 0, 1, red, 'square', null, 'solid', 1, null, undefined, 0, 'paint', undefined, undefined, undefined, undefined, 1, undefined, false, gradient)
+    }
+    expect(readLayerColor(document, layer, 0)).toEqual({ r: 148, g: 85, b: 152, a: 255 })
+    expect(document.palette.length).toBe(initialPaletteSize + 1)
+  })
+
+  it('deduplicates indexed palette colors across repeated gradient samples', () => {
+    const document = createDocument('indexed dynamic gradient', 1, 1, 'indexed')
+    const layer = getActiveLayer(document)
+    const edit = beginPixelEdit(layer.id)
+    const initialPaletteSize = document.palette.length
+    for (let index = 0; index < 100; index += 1) {
+      const color = index % 2 === 0 ? red : blue
+      paintBrush(document, layer, edit, 0, 0, 1, color, 'square', null, 'solid', 1, null, undefined, 0, 'paint', undefined, undefined, undefined, undefined, 0.5, 'paint:brush-gradient')
+    }
+    expect(document.palette.length).toBeLessThanOrEqual(initialPaletteSize + 2)
+  })
+
+  it('interpolates pressure dynamics across a painted line', () => {
+    const document = createDocument('pressure line', 3, 1, 'rgba')
+    const layer = getActiveLayer(document)
+    const edit = beginPixelEdit(layer.id)
+    paintLine(document, layer, edit, 0, 0, 2, 0, 1, red, null, 'square', 'solid', 1, null, undefined, 0, 'paint', undefined, 'raster', undefined, undefined, undefined, {
+      fromSize: 1,
+      toSize: 1,
+      fromOpacityScale: 0.25,
+      toOpacityScale: 1
+    })
+    expect([0, 1, 2].map((index) => readLayerColor(document, layer, index).a)).toEqual([64, 159, 255])
+  })
+
+  it('interpolates gradient amounts across a painted line', () => {
+    const document = createDocument('gradient line v4', 3, 1, 'rgba')
+    const layer = getActiveLayer(document)
+    paintLine(document, layer, beginPixelEdit(layer.id), 0, 0, 2, 0, 1, red, null, 'square', 'solid', 1, null, undefined, 0, 'paint', undefined, 'raster', undefined, undefined, undefined, {
+      gradient: { startColor: red, endColor: blue, fromAmount: 0, toAmount: 1, dither: 'none' }
+    })
+    expect([0, 1, 2].map((index) => readLayerColor(document, layer, index))).toEqual([
+      red,
+      { r: 148, g: 85, b: 152, a: 255 },
+      blue
+    ])
+  })
+
+  it('stamps every candidate whose integer size changed for both line algorithms', () => {
+    for (const algorithm of ['raster', 'balanced'] as const) {
+      const start = { x: 40, y: 40 }
+      const end = { x: 42, y: 41 }
+      const points = algorithm === 'raster' ? rasterLinePoints(start, end) : balancedStairLinePoints(start, end)
+      const footprint = (point: { x: number; y: number }, size: number): Set<string> => {
+        const anchor = brushStampAnchor(size)
+        return new Set(brushMaskOffsets(size, 'square').map((offset) => `${point.x - anchor.x + offset.x},${point.y - anchor.y + offset.y}`))
+      }
+      const first = footprint(points[0], 32)
+      const middle = footprint(points[1], 31)
+      const last = footprint(points[2], 30)
+      const unique = [...middle].find((key) => !first.has(key) && !last.has(key))
+      expect(unique).toBeDefined()
+      const [targetX, targetY] = unique!.split(',').map(Number)
+      const document = createDocument(`size spacing ${algorithm}`, 100, 100, 'rgba')
+      const layer = getActiveLayer(document)
+      paintLine(document, layer, beginPixelEdit(layer.id), start.x, start.y, end.x, end.y, 32, blue, { x: targetX, y: targetY, width: 1, height: 1 }, 'square', 'solid', 1, null, undefined, 0, 'paint', undefined, algorithm, undefined, undefined, undefined, {
+        fromSize: 32,
+        toSize: 30
+      })
+      expect(readLayerColorAt(document, layer, targetX, targetY)).toEqual(blue)
+    }
   })
 
   it('blends a translucent pencil color in indexed mode without repeated buildup', () => {
@@ -1261,6 +1598,19 @@ describe('pixel tools', () => {
 
     expect(edit.after.size).toBe(8)
     expect([[0, 1], [0, 3], [4, 1], [1, 0], [4, 3], [3, 0], [1, 4], [3, 4]].every(([x, y]) => readLayerColorAt(document, layer, x, y).a === 255)).toBe(true)
+  })
+
+  it('resolves gradient dithering at each final symmetric document coordinate', () => {
+    const document = createDocument('symmetric gradient dither', 5, 1, 'rgba')
+    const layer = getActiveLayer(document)
+    paintBrush(document, layer, beginPixelEdit(layer.id), 1, 0, 1, red, 'square', null, 'solid', 1, null, undefined, 0, 'paint', undefined, { horizontal: false, vertical: true, diagonalUp: false, diagonalDown: false }, undefined, undefined, 1, undefined, false, {
+      startColor: red,
+      endColor: blue,
+      gradientAmount: 0.5,
+      dither: 'vertical'
+    })
+    expect(readLayerColorAt(document, layer, 1, 0)).toEqual(blue)
+    expect(readLayerColorAt(document, layer, 3, 0)).toEqual(red)
   })
 
   it('fills distinct mirrored regions as one edit', () => {

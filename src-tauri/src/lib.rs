@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use std::{
+    ffi::OsString,
     path::PathBuf,
     sync::{Arc, Mutex},
     time::Duration,
@@ -27,9 +28,9 @@ struct AppState {
     startup_files: Mutex<Vec<String>>,
 }
 
-fn startup_file_paths() -> Vec<String> {
-    std::env::args_os()
-        .skip(1)
+fn supported_file_paths(arguments: impl IntoIterator<Item = OsString>) -> Vec<String> {
+    arguments
+        .into_iter()
         .map(PathBuf::from)
         .filter(|path| {
             path.is_file()
@@ -53,6 +54,10 @@ fn startup_file_paths() -> Vec<String> {
         })
         .map(|path| path.to_string_lossy().to_string())
         .collect()
+}
+
+fn startup_file_paths() -> Vec<String> {
+    supported_file_paths(std::env::args_os().skip(1))
 }
 
 #[tauri::command]
@@ -85,6 +90,20 @@ fn confirm_unsaved(_name: String) -> String {
 pub fn run() {
     let startup_files = startup_file_paths();
     tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(
+            |app, arguments, _cwd| {
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.unminimize();
+                    let _ = window.show();
+                    let _ = window.set_focus();
+                    let paths =
+                        supported_file_paths(arguments.into_iter().skip(1).map(OsString::from));
+                    if !paths.is_empty() {
+                        let _ = window.emit("app:file-drop", paths);
+                    }
+                }
+            },
+        ))
         .manage(AppState {
             startup_files: Mutex::new(startup_files),
             ..AppState::default()

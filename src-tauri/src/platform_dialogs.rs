@@ -265,7 +265,10 @@ pub(crate) fn default_file_directories() -> Result<DefaultFileDirectories, Strin
 #[tauri::command]
 pub(crate) fn choose_directory(default_path: Option<String>) -> DirectoryDialogResult {
     let mut dialog = FileDialog::new();
-    if let Some(value) = default_path.as_deref().filter(|value| !value.trim().is_empty()) {
+    if let Some(value) = default_path
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+    {
         let path = PathBuf::from(value);
         if path.is_dir() {
             dialog = dialog.set_directory(path);

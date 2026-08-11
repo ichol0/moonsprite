@@ -69,6 +69,29 @@ describe('app render keys', () => {
     expect(statusBarRenderKey(session, 'saved')).toContain('saved')
   })
 
+  it('tracks every brush dynamics mapping option', () => {
+    const session = createSession()
+    const changes = [
+      () => { session.brushDynamics.effects.size.sensor = 'pressure' },
+      () => { session.brushDynamics.effects.size.outputMin = 35 },
+      () => { session.brushDynamics.effects.size.outputMax = 90 },
+      () => { session.brushDynamics.effects.size.inputMin = 8 },
+      () => { session.brushDynamics.effects.size.inputMax = 75 },
+      () => { session.brushDynamics.effects.size.curve = 'hard' },
+      () => { session.brushDynamics.effects.size.direction = 'inverse' },
+      () => { session.brushDynamics.effects.strength.sensor = 'speed' },
+      () => { session.brushDynamics.effects.gradient.sensor = 'pressure' },
+      () => { session.brushDynamics.effects.gradient.outputMin = 12 },
+      () => { session.brushDynamics.gradientDither = 'bayer-4' }
+    ]
+
+    for (const change of changes) {
+      const before = toolOptionsRenderKey(session)
+      change()
+      expect(toolOptionsRenderKey(session)).not.toBe(before)
+    }
+  })
+
   it('keeps the app coordinator stable for high-frequency canvas updates', () => {
     const session = createSession()
     const state = { activeId: session.document.id, sessions: [session], dialog: null, saveProgress: null }

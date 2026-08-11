@@ -14,6 +14,19 @@ export interface ViewportBounds { left: number; top: number; right: number; bott
 
 const ROTATION_INDICATOR_MAX_FOOTPRINT = 204
 const ROTATION_INDICATOR_CLEARANCE_RATIO = 4 / 3
+const ROTATION_INDICATOR_HALF_WIDTH = 64
+const ROTATION_INDICATOR_HALF_HEIGHT = 96
+const ROTATION_INDICATOR_POINTER_GAP = 32
+
+export function rotationIndicatorPointBesidePointer(width: number, height: number, pointer: ViewportPoint): ViewportPoint {
+  const clampAxis = (value: number, size: number, halfSize: number): number => size <= halfSize * 2
+    ? size / 2
+    : Math.max(halfSize, Math.min(size - halfSize, value))
+  return {
+    x: clampAxis(pointer.x - ROTATION_INDICATOR_HALF_WIDTH - ROTATION_INDICATOR_POINTER_GAP, width, ROTATION_INDICATOR_HALF_WIDTH),
+    y: clampAxis(pointer.y, height, ROTATION_INDICATOR_HALF_HEIGHT)
+  }
+}
 
 export function viewRotationPivot(width: number, height: number, panX: number, panY: number, position: RotationIndicatorPosition): { x: number; y: number } {
   return {
@@ -83,6 +96,19 @@ const inverseDisplayPoint = (point: ViewportPoint, pivot: ViewportPoint, view: V
   // chain, so the inverse must undo rotation first and mirror second.
   const unrotated = unrotateViewportPoint(point, pivot, view.rotation)
   return mirrorViewportPoint(unrotated, pivot, Boolean(view.mirrored), Boolean(view.mirroredVertical))
+}
+
+export function rotateViewAroundViewportPoint(view: ViewGeometryState, nextRotation: number, point: ViewportPoint, viewportWidth: number, viewportHeight: number, position: RotationIndicatorPosition): ViewGeometryState {
+  if (position === 'canvas') return { ...view, rotation: nextRotation }
+  const pivot = viewRotationPivot(viewportWidth, viewportHeight, view.panX, view.panY, position)
+  const currentUntransformedPoint = inverseDisplayPoint(point, pivot, view)
+  const rotatedView = { ...view, rotation: nextRotation }
+  const nextUntransformedPoint = inverseDisplayPoint(point, pivot, rotatedView)
+  return {
+    ...rotatedView,
+    panX: view.panX + nextUntransformedPoint.x - currentUntransformedPoint.x,
+    panY: view.panY + nextUntransformedPoint.y - currentUntransformedPoint.y
+  }
 }
 
 const rotateRelative = (point: ViewportPoint, degrees: number): ViewportPoint => {

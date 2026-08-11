@@ -9,8 +9,8 @@ describe('FutureRoadmapDialog', () => {
     render(<FutureRoadmapDialog onClose={vi.fn()} />)
     const items = screen.getAllByRole('listitem')
     expect(items).toHaveLength(21)
-    expect(items.slice(0, 9).every((item) => item.classList.contains('completed'))).toBe(true)
-    expect(items.slice(9).every((item) => !item.classList.contains('completed'))).toBe(true)
+    expect(items.slice(0, 11).every((item) => item.classList.contains('completed'))).toBe(true)
+    expect(items.slice(11).every((item) => !item.classList.contains('completed'))).toBe(true)
   })
 
   it('closes from the unified icon button', () => {

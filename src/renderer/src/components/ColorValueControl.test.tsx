@@ -9,6 +9,18 @@ beforeEach(() => localStorage.clear())
 afterEach(() => cleanup())
 
 describe('ColorValueControl', () => {
+  it('uses transparent color values and readable text over the filled control checkerboard', () => {
+    const { rerender } = render(<ColorValueControl color={{ r: 0, g: 63, b: 168, a: 0 }} onChange={vi.fn()} label="Foreground" fillWithColor />)
+    const trigger = screen.getByRole('button', { name: 'Foreground' })
+
+    expect(trigger.style.getPropertyValue('--color-value-fill')).toBe('rgb(0 63 168 / 0)')
+    expect(trigger.style.getPropertyValue('--color-value-contrast')).toBe('#090a0d')
+
+    rerender(<ColorValueControl color={{ r: 0, g: 63, b: 168, a: 255 }} onChange={vi.fn()} label="Foreground" fillWithColor />)
+    expect(trigger.style.getPropertyValue('--color-value-fill')).toBe('rgb(0 63 168 / 1)')
+    expect(trigger.style.getPropertyValue('--color-value-contrast')).toBe('#fff')
+  })
+
   it('opens the shared editor with RGB as the default mode', () => {
     render(<ColorValueControl color={{ r: 41, g: 121, b: 255, a: 255 }} onChange={vi.fn()} label="背景颜色" roleLabel="浅色" />)
 
@@ -179,6 +191,19 @@ describe('ColorValueControl', () => {
     expect(foreground.querySelectorAll('.floating-resize-handle')).toHaveLength(8)
   })
 
+  it('closes a moved editor on focus loss when requested by its host dialog', () => {
+    render(<ColorValueControl color={{ r: 255, g: 0, b: 0, a: 255 }} onChange={vi.fn()} label="Color" storageKey="dialog-color" dismissOnFocusLoss />)
+    fireEvent.click(screen.getByRole('button', { name: 'Color' }))
+    const editor = screen.getByRole('dialog')
+    fireEvent.pointerDown(editor.querySelector('header')!, { button: 0, clientX: 20, clientY: 20 })
+    fireEvent.pointerMove(window, { clientX: 60, clientY: 60 })
+    fireEvent.pointerUp(window)
+
+    fireEvent.pointerDown(document.body)
+
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  })
+
   it('returns to its default position after closing and reopening', () => {
     render(<ColorValueControl color={{ r: 255, g: 0, b: 0, a: 255 }} onChange={vi.fn()} label="颜色" roleLabel="前景" storageKey="foreground" />)
     const trigger = screen.getByRole('button', { name: '颜色 前景' })
@@ -224,12 +249,12 @@ describe('ColorValueControl', () => {
   it('fills foreground and background triggers with their colors and readable text', () => {
     const { container, rerender } = render(<ColorValueControl color={{ r: 240, g: 240, b: 240, a: 255 }} onChange={vi.fn()} label="Color" roleLabel="Foreground" fillWithColor />)
     const trigger = container.querySelector<HTMLButtonElement>('.filled-color-trigger')!
-    expect(trigger.style.getPropertyValue('--color-value-fill')).toBe('rgb(240 240 240)')
+    expect(trigger.style.getPropertyValue('--color-value-fill')).toBe('rgb(240 240 240 / 1)')
     expect(trigger.style.getPropertyValue('--color-value-contrast')).toBe('#090a0d')
     expect(trigger.querySelector('.color-value-swatch')).not.toBeInTheDocument()
 
     rerender(<ColorValueControl color={{ r: 10, g: 20, b: 30, a: 255 }} onChange={vi.fn()} label="Color" roleLabel="Background" fillWithColor />)
-    expect(trigger.style.getPropertyValue('--color-value-fill')).toBe('rgb(10 20 30)')
+    expect(trigger.style.getPropertyValue('--color-value-fill')).toBe('rgb(10 20 30 / 1)')
     expect(trigger.style.getPropertyValue('--color-value-contrast')).toBe('#fff')
   })
 })

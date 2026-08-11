@@ -1,10 +1,13 @@
 {
   "schemaVersion": 1,
-  "status": "legacy",
-  "releaseLabel": "DEV.3",
-  "enforcedFrom": "DEV.4",
-  "auditId": null,
-  "outcome": null,
-  "acceptedAt": null,
-  "sourceFingerprint": null
+  "status": "complete",
+  "releaseLabel": "DEV.4",
+  "auditId": "2026-08-11_19-24-14-791",
+  "outcome": "adopted",
+  "acceptedAt": "2026-08-11T19:53:35.985Z",
+  "sourceFingerprint": {
+    "algorithm": "sha256",
+    "value": "8d0d5c0deee94dfa6cbf74606e5b458b0c311a14dbb0106e1fb198f5fd1fa6ee",
+    "files": 358
+  }
 }

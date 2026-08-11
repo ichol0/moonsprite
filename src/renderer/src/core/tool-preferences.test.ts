@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { TOOL_SETTINGS_KEY, defaultToolSettings, loadToolSettings, saveToolSettings } from './tool-preferences'
+import { DEFAULT_BRUSH_DYNAMICS_SETTINGS, DEFAULT_BRUSH_PRESSURE_SETTINGS, brushPressureFromDynamics, patchBrushDynamicsGradientDither, patchBrushDynamicsMapping } from './pressure'
+import { TOOL_SETTINGS_KEY, defaultToolSettings, loadToolSettings, normalizePersistedBrushProfile, saveToolSettings } from './tool-preferences'
 
 function createStorage(): Storage {
   const values = new Map<string, string>()
@@ -40,6 +41,92 @@ describe('tool preferences persistence boundary', () => {
     expect(settings.fillTolerance).toBe(0)
     expect(settings.gradientTolerance).toBe(0)
     expect(settings.gradientContiguous).toBe(true)
+    expect(settings.brushPressure).toEqual(DEFAULT_BRUSH_PRESSURE_SETTINGS)
+    expect(settings.brushDynamics).toEqual(DEFAULT_BRUSH_DYNAMICS_SETTINGS)
+    expect(settings.brushDynamics.effects.gradient).toMatchObject({ sensor: null, outputMin: 0, outputMax: 100 })
+    expect(settings.brushProfiles?.pencil?.brushPressure).toEqual(DEFAULT_BRUSH_PRESSURE_SETTINGS)
+  })
+
+  it('migrates legacy pressure settings when no version 2 dynamics exist', () => {
+    const storage = createStorage()
+    storage.setItem(TOOL_SETTINGS_KEY, JSON.stringify({
+      brushPressure: { enabled: true, affectsSize: true, affectsOpacity: true, minSizePercent: 35, minOpacityPercent: 8, curve: 'hard' }
+    }))
+
+    const restored = loadToolSettings(storage)
+    expect(restored.brushDynamics.effects.size).toMatchObject({ sensor: 'pressure', outputMin: 35, outputMax: 100, curve: 'hard' })
+    expect(restored.brushDynamics.effects.strength).toMatchObject({ sensor: 'pressure', outputMin: 8, outputMax: 100, curve: 'hard' })
+    expect(restored.brushDynamics.effects.gradient).toMatchObject({ sensor: null, outputMin: 0, outputMax: 100 })
+  })
+
+  it('migrates v2 factory sensor ranges without rewriting custom mappings', () => {
+    const storage = createStorage()
+    storage.setItem(TOOL_SETTINGS_KEY, JSON.stringify({
+      brushDynamics: {
+        version: 2,
+        effects: {
+          size: { sensor: 'pressure', outputMin: 20, outputMax: 100, inputMin: 0, inputMax: 100, curve: 'linear', direction: 'direct' },
+          strength: { sensor: 'speed', outputMin: 12, outputMax: 100, inputMin: 0, inputMax: 1200, curve: 'linear', direction: 'direct' }
+        }
+      }
+    }))
+
+    const restored = loadToolSettings(storage)
+    expect(restored.brushDynamics.effects.size).toMatchObject({ inputMin: 0, inputMax: 70, curve: 'hard' })
+    expect(restored.brushDynamics.effects.strength).toMatchObject({ outputMin: 12, inputMin: 0, inputMax: 1200, curve: 'linear' })
+    expect(restored.brushDynamics.effects.gradient).toMatchObject({ sensor: null, outputMin: 0, outputMax: 100 })
+    expect(restored.brushDynamics.gradientDither).toBe('none')
+  })
+
+  it('migrates v3 profiles to v4 with dithering disabled', () => {
+    const storage = createStorage()
+    storage.setItem(TOOL_SETTINGS_KEY, JSON.stringify({
+      brushDynamics: {
+        version: 3,
+        effects: DEFAULT_BRUSH_DYNAMICS_SETTINGS.effects,
+        gradientDither: 'bayer-8'
+      }
+    }))
+
+    expect(loadToolSettings(storage).brushDynamics).toMatchObject({ version: 4, gradientDither: 'none' })
+  })
+
+  it('falls back invalid v4 dithering to the profile fallback', () => {
+    const fallback = {
+      ...defaultToolSettings,
+      brushDynamics: patchBrushDynamicsGradientDither(defaultToolSettings.brushDynamics, 'diagonal')
+    }
+    const restored = normalizePersistedBrushProfile({
+      brushDynamics: { ...fallback.brushDynamics, gradientDither: 'invalid' as 'none' }
+    }, fallback)
+    expect(restored.brushDynamics.gradientDither).toBe('diagonal')
+  })
+
+  it('persists dynamics independently for each brush profile', () => {
+    const storage = createStorage()
+    const profile = normalizePersistedBrushProfile(defaultToolSettings, defaultToolSettings)
+    const pencilDynamics = patchBrushDynamicsMapping(profile.brushDynamics, 'size', { sensor: 'pressure', outputMin: 35, curve: 'soft' })
+    const eraserDynamics = patchBrushDynamicsMapping(profile.brushDynamics, 'strength', { sensor: 'speed', outputMin: 8, inputMax: 900, curve: 'hard' })
+    const pencilGradientDynamics = patchBrushDynamicsGradientDither(
+      patchBrushDynamicsMapping(pencilDynamics, 'gradient', { sensor: 'pressure', outputMin: 0, inputMax: 70, curve: 'hard' }),
+      'bayer-4'
+    )
+    const eraserDitherDynamics = patchBrushDynamicsGradientDither(eraserDynamics, 'vertical')
+    saveToolSettings({
+      ...defaultToolSettings,
+      brushProfiles: {
+        pencil: { ...profile, brushDynamics: pencilGradientDynamics, brushPressure: brushPressureFromDynamics(pencilGradientDynamics) },
+        eraser: { ...profile, brushDynamics: eraserDitherDynamics, brushPressure: brushPressureFromDynamics(eraserDitherDynamics) },
+        fill: profile
+      }
+    }, storage)
+
+    const restored = loadToolSettings(storage)
+    expect(restored.brushProfiles?.pencil?.brushDynamics.effects.size).toMatchObject({ sensor: 'pressure', outputMin: 35, curve: 'soft' })
+    expect(restored.brushProfiles?.pencil?.brushDynamics.effects.gradient).toMatchObject({ sensor: 'pressure', outputMin: 0, inputMax: 70, curve: 'hard' })
+    expect(restored.brushProfiles?.pencil?.brushDynamics.gradientDither).toBe('bayer-4')
+    expect(restored.brushProfiles?.eraser?.brushDynamics.effects.strength).toMatchObject({ sensor: 'speed', outputMin: 8, inputMax: 900, curve: 'hard' })
+    expect(restored.brushProfiles?.eraser?.brushDynamics.gradientDither).toBe('vertical')
   })
 
   it('writes a complete snapshot through the storage boundary', () => {

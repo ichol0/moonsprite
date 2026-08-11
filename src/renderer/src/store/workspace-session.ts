@@ -17,6 +17,7 @@ import { defaultSymmetryCenter } from '@/core/symmetry'
 import { ensureAnimationDocument, refreshActiveAnimationFrame } from '@/core/animation'
 import { normalizeProjectDisplaySettings, normalizeProjectStatistics, normalizeTimelapseSettings } from '@/core/project-metadata'
 import { findLayerMask, getActiveLayer } from '@/core/document'
+import { cloneBrushDynamicsSettings, normalizeBrushDynamicsSettings } from '@/core/pressure'
 
 const defaultColor: RgbaColor = { r: 41, g: 121, b: 255, a: 255 }
 const defaultSecondary: RgbaColor = { r: 241, g: 244, b: 248, a: 255 }
@@ -41,7 +42,9 @@ export const brushProfileFromSession = (session: DocumentSession): BrushProfile 
   brushImageSettings: { ...session.brushImageSettings },
   proceduralBrushSettings: cloneProceduralSettings(session.proceduralBrushSettings),
   proceduralAntialias: session.proceduralAntialias,
-  proceduralAntialiasStrength: session.proceduralAntialiasStrength
+  proceduralAntialiasStrength: session.proceduralAntialiasStrength,
+  brushDynamics: cloneBrushDynamicsSettings(session.brushDynamics),
+  brushPressure: { ...session.brushPressure }
 })
 
 export const applyBrushProfile = (session: DocumentSession, profile: BrushProfile): void => {
@@ -57,6 +60,8 @@ export const applyBrushProfile = (session: DocumentSession, profile: BrushProfil
   session.proceduralBrushSettings = cloneProceduralSettings(profile.proceduralBrushSettings)
   session.proceduralAntialias = profile.proceduralAntialias
   session.proceduralAntialiasStrength = profile.proceduralAntialiasStrength
+  session.brushDynamics = cloneBrushDynamicsSettings(profile.brushDynamics)
+  session.brushPressure = { ...profile.brushPressure }
 }
 
 export const remapSelectionBrushColors = (brush: ImageBrush, primary: RgbaColor, secondary: RgbaColor): ImageBrush => {
@@ -91,7 +96,9 @@ function persistedBrushProfileFromSession(profile: BrushProfile): PersistedBrush
     brushImageSettings: { ...profile.brushImageSettings },
     proceduralBrushSettings: cloneProceduralSettings(profile.proceduralBrushSettings),
     proceduralAntialias: profile.proceduralAntialias,
-    proceduralAntialiasStrength: profile.proceduralAntialiasStrength
+    proceduralAntialiasStrength: profile.proceduralAntialiasStrength,
+    brushDynamics: cloneBrushDynamicsSettings(profile.brushDynamics),
+    brushPressure: { ...profile.brushPressure }
   }
 }
 
@@ -101,7 +108,9 @@ function brushProfileFromPersisted(profile: PersistedBrushProfile): BrushProfile
     brushImage: null,
     brushImageTemporary: false,
     brushImageSettings: { ...profile.brushImageSettings },
-    proceduralBrushSettings: cloneProceduralSettings(profile.proceduralBrushSettings)
+    proceduralBrushSettings: cloneProceduralSettings(profile.proceduralBrushSettings),
+    brushDynamics: normalizeBrushDynamicsSettings(profile.brushDynamics),
+    brushPressure: { ...profile.brushPressure }
   }
 }
 
@@ -175,6 +184,8 @@ export const sessionFromDocument = (document: SpriteDocument): DocumentSession =
     proceduralBrushSettings: Object.fromEntries(PROCEDURAL_BRUSH_IDS.map((id) => [id, { ...settings.proceduralBrushSettings[id] }])) as Record<ProceduralBrushId, ProceduralBrushSettings>,
     proceduralAntialias: settings.proceduralAntialias,
     proceduralAntialiasStrength: settings.proceduralAntialiasStrength,
+    brushDynamics: normalizeBrushDynamicsSettings(settings.brushDynamics),
+    brushPressure: { ...settings.brushPressure },
     shapeKind: settings.shapeKind,
     shapeRatio: typeof settings.shapeRatio === 'number' ? { width: settings.shapeRatio, height: 1 } : settings.shapeRatio ? { ...settings.shapeRatio } : null,
     fillMode: settings.fillMode,

@@ -20,6 +20,8 @@ interface ColorValueControlProps {
   inPalette?: boolean
   onAddToPalette?: () => void
   fillWithColor?: boolean
+  dismissOnFocusLoss?: boolean
+  preserveAnimationSelection?: boolean
 }
 
 const modeLabels: Array<{ value: ColorValueMode; label: string }> = [
@@ -67,7 +69,7 @@ const colorGradient = (mode: ColorValueMode, values: Record<string, number>, fal
   return `linear-gradient(90deg, ${stops.join(', ')})`
 }
 
-export function ColorValueControl({ color, onChange, label, roleLabel, className = '', storageKey, inPalette = true, onAddToPalette, fillWithColor = false }: ColorValueControlProps) {
+export function ColorValueControl({ color, onChange, label, roleLabel, className = '', storageKey, inPalette = true, onAddToPalette, fillWithColor = false, dismissOnFocusLoss = false, preserveAnimationSelection = false }: ColorValueControlProps) {
   const { locale, t } = useI18n()
   const [open, setOpen] = useState(false)
   const [availableModes, setAvailableModes] = useState(() => loadEditorPreferences().colorEditorModes.filter((item) => item.enabled).map((item) => item.mode))
@@ -226,18 +228,32 @@ export function ColorValueControl({ color, onChange, label, roleLabel, className
   }, [resident])
 
   useEffect(() => {
-    if (!open || resident) return
+    if (!open || (resident && !dismissOnFocusLoss)) return
     const closeTransient = (event: PointerEvent): void => {
       const target = event.target as Node
       if (!popoverRef.current?.contains(target) && !triggerRef.current?.contains(target)) {
         commitHexRef.current()
         positionedRef.current = false
+        residentRef.current = false
+        setResident(false)
         setOpen(false)
       }
     }
+    const closeOnWindowBlur = (): void => {
+      if (!dismissOnFocusLoss) return
+      commitHexRef.current()
+      positionedRef.current = false
+      residentRef.current = false
+      setResident(false)
+      setOpen(false)
+    }
     window.addEventListener('pointerdown', closeTransient, true)
-    return () => window.removeEventListener('pointerdown', closeTransient, true)
-  }, [open, resident])
+    window.addEventListener('blur', closeOnWindowBlur)
+    return () => {
+      window.removeEventListener('pointerdown', closeTransient, true)
+      window.removeEventListener('blur', closeOnWindowBlur)
+    }
+  }, [dismissOnFocusLoss, open, resident])
 
   const applyHex = (value: string): boolean => {
     const next = parseRgbaHex(value, workingColor.a)
@@ -290,7 +306,7 @@ export function ColorValueControl({ color, onChange, label, roleLabel, className
 
   const roleTitle = roleLabel ? (locale === 'zh-CN' && !roleLabel.endsWith('色') ? `${roleLabel}色` : roleLabel) : ''
   const editorLabel = `${t('colorEditor.title')}${roleTitle ? ` ${roleTitle}` : ''}`
-  const editor = open ? <div ref={popoverRef} className={`color-editor-popover ${resident ? 'resident' : 'transient'}`} role="dialog" aria-label={editorLabel} style={{ ...position, ...size }}>
+  const editor = open ? <div ref={popoverRef} className={`color-editor-popover ${resident ? 'resident' : 'transient'}`} data-preserve-animation-selection={preserveAnimationSelection ? '' : undefined} role="dialog" aria-label={editorLabel} style={{ ...position, ...size }}>
     <header className="color-editor-titlebar" onPointerDown={(event) => {
       if (event.button !== 0 || (event.target as HTMLElement).closest('button')) return
       dragRef.current = { pointerX: event.clientX, pointerY: event.clientY, left: position.left, top: position.top }
@@ -320,7 +336,7 @@ export function ColorValueControl({ color, onChange, label, roleLabel, className
   </div> : null
 
   return <>
-    <span className={`color-value-action-row ${onAddToPalette ? 'supports-palette-action' : ''} ${onAddToPalette && !inPalette ? 'has-add-action' : ''}`}><button ref={triggerRef} type="button" className={`color-value-trigger ${fillWithColor ? 'filled-color-trigger' : ''} ${className}`.trim()} style={fillWithColor ? { '--color-value-fill': `rgb(${color.r} ${color.g} ${color.b})`, '--color-value-contrast': paletteMarkerColor(color) } as React.CSSProperties : undefined} aria-label={`${label}${roleLabel ? ` ${roleLabel}` : ''}`} aria-expanded={open} onClick={() => { setPreviousColor(copyColor(color)); setWorkingColor(copyColor(color)); setConfirmedColor(copyColor(color)); setDraftMode(mode); setDraftValues(colorToValues(color, mode)); setHexText(displayRgbaHex(color)); if (open) positionedRef.current = false; else { residentRef.current = false; setResident(false) }; setOpen((value) => !value) }}>
+    <span className={`color-value-action-row ${onAddToPalette ? 'supports-palette-action' : ''} ${onAddToPalette && !inPalette ? 'has-add-action' : ''}`}><button ref={triggerRef} type="button" className={`color-value-trigger ${fillWithColor ? 'filled-color-trigger' : ''} ${className}`.trim()} style={fillWithColor ? { '--color-value-fill': cssColor(color), '--color-value-contrast': paletteMarkerColor(color) } as React.CSSProperties : undefined} aria-label={`${label}${roleLabel ? ` ${roleLabel}` : ''}`} aria-expanded={open} onClick={() => { setPreviousColor(copyColor(color)); setWorkingColor(copyColor(color)); setConfirmedColor(copyColor(color)); setDraftMode(mode); setDraftValues(colorToValues(color, mode)); setHexText(displayRgbaHex(color)); if (open) positionedRef.current = false; else { residentRef.current = false; setResident(false) }; setOpen((value) => !value) }}>
       {!fillWithColor && <span className="color-value-swatch"><i style={{ background: `rgba(${color.r}, ${color.g}, ${color.b}, ${clampByte(color.a) / 255})` }} /></span>}
       <strong>{displayRgbaHex(color)}</strong>
       {roleLabel && <small>{roleLabel}</small>}

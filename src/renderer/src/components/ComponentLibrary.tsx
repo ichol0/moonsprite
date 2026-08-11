@@ -1,5 +1,5 @@
 import { useMemo, useState, type ReactElement } from 'react'
-import { CheckCircle2, FileText, Layers2, LoaderCircle, Palette, Search } from 'lucide-react'
+import { CheckCircle2, FileText, Layers2, Palette, Search } from 'lucide-react'
 import type { RgbaColor } from '@shared/types'
 import { ColorPicker, type ColorPickerConfig } from './ColorPicker'
 import { ColorValueControl } from './ColorValueControl'
@@ -10,11 +10,14 @@ import { TextAreaInput } from './TextAreaInput'
 import { ThemedSelect, type ThemedSelectGroup } from './ThemedSelect'
 import { Tooltip } from './Tooltip'
 import { useI18n } from './I18nProvider'
-import { PixelCloseIcon as X, PixelRightIcon as ChevronRight, PixelUtilityIcon, type PixelUtilityIconKind } from './PixelUtilityIcon'
+import { PixelCloseIcon as X, PixelDownIcon as ChevronDown, PixelRightIcon as ChevronRight, PixelUtilityIcon, type PixelUtilityIconKind } from './PixelUtilityIcon'
 import { PixelCheckbox } from './PixelCheckbox'
+import { LivePreviewToggle } from './LivePreviewToggle'
+import { BrushDynamicsSettingsPanel } from './app/EditorToolOptions'
 import { FILL_KIND_ICONS, SELECTION_KIND_ICONS, fillKindDefinitions, normalEditorToolIconFor, selectionKindDefinitions, shapeKindDefinitions, toolDefinitions } from './app/editor-tools'
 import { CURSOR_ICON_LIBRARY } from '@/platform/cursor-theme'
 import { translate, type AppLocale, type TranslationKey, type TranslationParams } from '@/core/localization'
+import type { BrushDynamicsEffect, BrushDynamicsMapping, BrushDynamicsSettings } from '@/core/pressure'
 
 type ComponentCategory = 'all' | 'controls' | 'forms' | 'panels' | 'dialogs' | 'editor'
 
@@ -110,6 +113,7 @@ export const COMPONENT_LIBRARY_ENTRIES: ComponentLibraryEntry[] = [
   { id: 'range', name: '滑块', category: 'forms', description: '适用于尺寸、不透明度、强度等连续数值。', source: '.brush-size-popover input[type=range]', tags: ['数值', '实时'] },
   { id: 'checkbox', name: '复选框', category: 'forms', description: '用于可以同时启用的独立选项。', source: 'PixelCheckbox', tags: ['设置', '复选'] },
   { id: 'switch', name: '开关', category: 'forms', description: '用于明确的开启与关闭状态。', source: '.preference-toggle / .outline-preview-toggle', tags: ['设置', '开关'] },
+  { id: 'live-preview-toggle', name: '实时预览开关', category: 'forms', description: '调整类弹窗用于开启或关闭实时预览的统一开关。', source: 'LivePreviewToggle', tags: ['实时', '开关', '弹窗'] },
   { id: 'scrollbar', name: '滚动区域', category: 'forms', description: '下拉菜单和长列表使用的统一滚动条。', source: '.component-scrollbar', tags: ['滚动', '列表'] },
   { id: 'panel-header', name: '栏目标题', category: 'panels', description: '停靠栏目标题、拖动入口和右侧操作。', source: '.panel-header', tags: ['栏目', '停靠'] },
   { id: 'layer-row', name: '图层行', category: 'panels', description: '可见性、锁定、组图标、名称、混合模式和拖动状态。', source: 'LayersPanel', tags: ['图层', '拖动'] },
@@ -119,6 +123,7 @@ export const COMPONENT_LIBRARY_ENTRIES: ComponentLibraryEntry[] = [
   { id: 'status', name: '状态提示', category: 'dialogs', description: '用于操作反馈、模式提示和不可用状态。', source: '.statusbar / .advanced-mode-notice', tags: ['提示', '反馈'] },
   { id: 'tooltip', name: '悬浮提示', category: 'dialogs', description: '用于描述等较长内容的自定义悬浮提示，自动避开视口边缘。', source: 'Tooltip', tags: ['提示', '悬浮', '描述'] },
   { id: 'tool-options', name: '工具属性栏', category: 'editor', description: '工具名称、参数、模式和撤销重做操作。', source: '.tool-options', tags: ['工具', '属性'] },
+  { id: 'pressure-options', name: '笔刷动态工具属性', category: 'editor', description: '铅笔与橡皮的压力/速度映射、渐变效果、实时传感器条和禁用状态。', source: 'BrushDynamicsSettingsPanel / .pressure-popover', tags: ['工具', '设置', '传感器'] },
   { id: 'color-picker', name: '颜色选择器', category: 'editor', description: '色盘、色相、透明度、前景色和背景色。', source: 'ColorPicker', tags: ['颜色', '实时'] },
   { id: 'color-value', name: '颜色值按钮', category: 'editor', description: '颜色预览、HEX 文本和 RGB/HSV/HSL/Gray 多模式编辑。', source: 'ColorValueControl', tags: ['颜色', 'HEX', '通道'] },
   { id: 'panel-dock', name: '停靠栏目', category: 'editor', description: '右侧、左侧和底部停靠区的容器行为。', source: 'InspectorPanels', tags: ['布局', '停靠'] }
@@ -210,6 +215,11 @@ function SwitchPreview({ locale }: { locale: AppLocale }) {
   return <label className="preference-toggle outline-preview-toggle component-library-toggle"><span>{componentText(locale, 'componentLibrary.preview.autoSelect')}</span><input type="checkbox" checked={checked} onChange={(event) => setChecked(event.target.checked)} /><span className="toggle-track" aria-hidden="true"><i /></span></label>
 }
 
+function LivePreviewTogglePreview() {
+  const [checked, setChecked] = useState(true)
+  return <LivePreviewToggle checked={checked} onChange={setChecked} />
+}
+
 function ScrollbarPreview({ locale }: { locale: AppLocale }) {
   return <div className="component-scroll-preview component-scrollbar" tabIndex={0} aria-label={componentText(locale, 'componentLibrary.preview.scrollArea')}>{Array.from({ length: 12 }, (_, index) => <div key={index}><span>{String(index + 1).padStart(2, '0')}</span><strong>{componentText(locale, 'componentLibrary.preview.listItem', { index: index + 1 })}</strong></div>)}</div>
 }
@@ -268,7 +278,7 @@ function SaveProgressPreview({ locale }: { locale: AppLocale }) {
   const [complete, setComplete] = useState(false)
   const value = complete ? 100 : 64
   return <div className="component-save-progress-preview"><section className={`save-progress-modal component-save-progress-card ${complete ? 'is-complete' : ''}`}>
-    <header><div className="save-progress-heading"><span className="save-progress-icon" aria-hidden="true">{complete ? <CheckCircle2 size={20} /> : <LoaderCircle className="spin" size={20} />}</span><div><span className="eyebrow">FILE OPERATION</span><h2>{componentText(locale, complete ? 'componentLibrary.preview.exportComplete' : 'componentLibrary.preview.exporting')}</h2></div></div></header>
+    <header><div className="save-progress-heading"><span className="save-progress-icon" aria-hidden="true">{complete ? <CheckCircle2 size={20} /> : <span className="save-progress-animation" />}</span><div><span className="eyebrow">FILE OPERATION</span><h2>{componentText(locale, complete ? 'componentLibrary.preview.exportComplete' : 'componentLibrary.preview.exporting')}</h2></div></div></header>
     <div className="save-progress-body"><strong>{componentText(locale, complete ? 'componentLibrary.preview.videoExported' : 'componentLibrary.preview.encodingVideo')}</strong><div className="save-progress-track"><i style={{ width: `${value}%` }} /></div><div className="save-progress-meta"><span>{componentText(locale, complete ? 'app.progress.complete' : 'app.progress.processing')}</span><small>{value}%</small></div></div>
     <footer><button className={complete ? 'primary-button' : 'quiet-button'} type="button" onClick={() => setComplete((current) => !current)}>{componentText(locale, complete ? 'componentLibrary.preview.ok' : 'componentLibrary.preview.finishExport')}</button></footer>
   </section></div>
@@ -286,6 +296,57 @@ function ToolOptionsPreview({ locale }: { locale: AppLocale }) {
   return <div className="component-tool-options-preview"><strong>{componentText(locale, 'componentLibrary.preview.brush')}</strong><button className="quiet-button" type="button">{componentText(locale, 'componentLibrary.preview.back')}</button><label>{componentText(locale, 'componentLibrary.preview.size')} <NumberInput value={4} min={1} max={128} onValueChange={() => undefined} /></label><span className="component-preview-spacer" /><button className="tool-text-button" type="button">{componentText(locale, 'componentLibrary.preview.undo')}</button><button className="tool-text-button" type="button">{componentText(locale, 'componentLibrary.preview.redo')}</button></div>
 }
 
+function PressureOptionsPreview({ locale }: { locale: AppLocale }) {
+  const [mode, setMode] = useState<'off' | 'on' | 'intrinsic'>('on')
+  const [tool, setTool] = useState<'pencil' | 'eraser'>('pencil')
+  const [perfectPixels, setPerfectPixels] = useState(true)
+  const [panelOpen, setPanelOpen] = useState(true)
+  const [settings, setSettings] = useState<BrushDynamicsSettings>({
+    version: 4,
+    effects: {
+      size: { sensor: null, outputMin: 20, outputMax: 100, inputMin: 0, inputMax: 70, curve: 'hard', direction: 'direct' },
+      strength: { sensor: null, outputMin: 25, outputMax: 100, inputMin: 50, inputMax: 2400, curve: 'linear', direction: 'inverse' },
+      gradient: { sensor: 'pressure', outputMin: 0, outputMax: 100, inputMin: 0, inputMax: 70, curve: 'hard', direction: 'direct' }
+    },
+    gradientDither: 'bayer-4'
+  })
+  const selectMode = (nextMode: 'off' | 'on' | 'intrinsic'): void => {
+    setMode(nextMode)
+    setPanelOpen(true)
+    setSettings((current) => ({
+      ...current,
+      effects: {
+        size: { ...current.effects.size, sensor: nextMode === 'off' ? null : 'pressure', inputMin: 0, inputMax: 70, curve: 'hard' },
+        strength: { ...current.effects.strength, sensor: nextMode === 'off' ? null : 'speed', inputMin: 50, inputMax: 2400, curve: 'linear' },
+        gradient: { ...current.effects.gradient, sensor: nextMode === 'off' ? null : 'pressure', inputMin: 0, inputMax: 70, curve: 'hard' }
+      }
+    }))
+  }
+  const updateMapping = (effect: BrushDynamicsEffect, patch: Partial<BrushDynamicsMapping>): void => {
+    setSettings((current) => ({ ...current, effects: { ...current.effects, [effect]: { ...current.effects[effect], ...patch } } }))
+    if (patch.sensor) setMode((current) => current === 'intrinsic' ? current : 'on')
+  }
+  return <div className="component-pressure-preview">
+    <div className="component-pressure-preview-modes">
+      <div className="segmented-control" aria-label={componentText(locale, 'componentLibrary.preview.pressureState')}>
+        <button className={mode === 'off' ? 'selected' : ''} type="button" onClick={() => selectMode('off')}>{componentText(locale, 'componentLibrary.preview.pressureOff')}</button>
+        <button className={mode === 'on' ? 'selected' : ''} type="button" onClick={() => selectMode('on')}>{componentText(locale, 'componentLibrary.preview.pressureOn')}</button>
+        <button className={mode === 'intrinsic' ? 'selected' : ''} type="button" onClick={() => selectMode('intrinsic')}>{componentText(locale, 'componentLibrary.preview.pressureIntrinsic')}</button>
+      </div>
+      <div className="segmented-control" aria-label={componentText(locale, 'componentLibrary.preview.mode')}>
+        <button className={tool === 'pencil' ? 'selected' : ''} type="button" onClick={() => setTool('pencil')}>{componentText(locale, 'componentLibrary.preview.brush')}</button>
+        <button className={tool === 'eraser' ? 'selected' : ''} type="button" onClick={() => setTool('eraser')}>{componentText(locale, 'componentLibrary.preview.eraser')}</button>
+      </div>
+    </div>
+    <div className="component-pressure-toolbar">
+      <strong>{componentText(locale, tool === 'pencil' ? 'componentLibrary.preview.brush' : 'componentLibrary.preview.eraser')}</strong>
+      <label className="tool-checkbox"><PixelCheckbox checked={perfectPixels} onChange={(event) => setPerfectPixels(event.target.checked)} />{componentText(locale, 'componentLibrary.preview.perfectPixels')}</label>
+      <button className={`pressure-trigger ${settings.effects.size.sensor || settings.effects.strength.sensor || settings.effects.gradient.sensor ? 'selected' : ''}`} type="button" aria-expanded={panelOpen} onClick={() => setPanelOpen((open) => !open)}>{componentText(locale, 'toolOptions.brushDynamics')}<ChevronDown size={14} /></button>
+    </div>
+    {panelOpen && <div className="component-pressure-panel"><BrushDynamicsSettingsPanel settings={settings} tool={tool} intrinsicSize={mode === 'intrinsic'} brushSize={16} documentId="component-library-brush-dynamics" primaryColor={{ r: 248, g: 91, b: 74, a: 255 }} secondaryColor={{ r: 38, g: 44, b: 58, a: 255 }} telemetryPreview={{ documentId: 'component-library-brush-dynamics', pressure: 46, speed: 1380, pointerType: 'pen', active: true }} onChange={updateMapping} onGradientDitherChange={(gradientDither) => setSettings((current) => ({ ...current, gradientDither }))} /></div>}
+  </div>
+}
+
 function ColorPickerPreview({ locale }: { locale: AppLocale }) {
   const [color, setColor] = useState(initialColor)
   const [secondary, setSecondary] = useState<RgbaColor>({ r: 12, g: 14, b: 18, a: 255 })
@@ -294,7 +355,8 @@ function ColorPickerPreview({ locale }: { locale: AppLocale }) {
 
 function ColorValuePreview({ locale }: { locale: AppLocale }) {
   const [color, setColor] = useState(initialColor)
-  return <div className="component-color-value-preview"><ColorValueControl color={color} onChange={setColor} label={componentText(locale, 'componentLibrary.preview.colorValue')} roleLabel={componentText(locale, 'componentLibrary.preview.foreground')} /><ColorValueControl color={{ r: 155, g: 155, b: 159, a: 255 }} onChange={() => undefined} label={componentText(locale, 'componentLibrary.preview.colorValue')} roleLabel={componentText(locale, 'componentLibrary.preview.background')} /></div>
+  const [transparentColor, setTransparentColor] = useState<RgbaColor>({ r: 155, g: 155, b: 159, a: 0 })
+  return <div className="component-color-value-preview"><ColorValueControl color={color} onChange={setColor} label={componentText(locale, 'componentLibrary.preview.colorValue')} roleLabel={componentText(locale, 'componentLibrary.preview.foreground')} fillWithColor /><ColorValueControl color={transparentColor} onChange={setTransparentColor} label={componentText(locale, 'componentLibrary.preview.colorValue')} roleLabel={componentText(locale, 'componentLibrary.preview.background')} fillWithColor /></div>
 }
 
 function DockPreview({ locale }: { locale: AppLocale }) {
@@ -316,6 +378,7 @@ const previewRenderers: Record<string, (props: { locale: AppLocale }) => ReactEl
   range: RangePreview,
   checkbox: CheckboxPreview,
   switch: SwitchPreview,
+  'live-preview-toggle': LivePreviewTogglePreview,
   scrollbar: ScrollbarPreview,
   'panel-header': PanelHeaderPreview,
   'layer-row': LayerRowPreview,
@@ -325,6 +388,7 @@ const previewRenderers: Record<string, (props: { locale: AppLocale }) => ReactEl
   status: StatusPreview,
   tooltip: TooltipPreview,
   'tool-options': ToolOptionsPreview,
+  'pressure-options': PressureOptionsPreview,
   'color-picker': ColorPickerPreview,
   'color-value': ColorValuePreview,
   'panel-dock': DockPreview
