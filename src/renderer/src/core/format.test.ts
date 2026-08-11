@@ -65,10 +65,20 @@ describe('MoonSprite project format', () => {
     const document = createDocument('groups', 2, 2, 'rgba')
     const layer = getActiveLayer(document)
     layer.groupId = 'group-1'
-    document.groups.push({ id: 'group-1', name: '角色', panelOrder: 0.25, displayColor: { r: 12, g: 34, b: 56, a: 255 }, description: '角色说明', visible: true, locked: true, opacity: 0.6, blendMode: 'multiply' })
+    layer.clippingMask = true
+    document.groups.push({ id: 'group-1', name: '角色', panelOrder: 0.25, displayColor: { r: 12, g: 34, b: 56, a: 255 }, description: '角色说明', visible: true, locked: true, opacity: 0.6, blendMode: 'multiply', clippingMask: true, cumulativeBlend: true })
     const restored = decodeProject(encodeProject(document))
-    expect(restored.groups).toEqual([{ id: 'group-1', name: '角色', panelOrder: 0.25, displayColor: { r: 12, g: 34, b: 56, a: 255 }, description: '角色说明', visible: true, locked: true, opacity: 0.6, blendMode: 'multiply' }])
+    expect(restored.groups).toEqual([{ id: 'group-1', name: '角色', panelOrder: 0.25, displayColor: { r: 12, g: 34, b: 56, a: 255 }, description: '角色说明', visible: true, locked: true, opacity: 0.6, blendMode: 'multiply', clippingMask: true, cumulativeBlend: true }])
     expect(restored.layers[0].groupId).toBe('group-1')
+    expect(restored.layers[0].clippingMask).toBe(true)
+  })
+
+  it('keeps legacy groups on the non-cumulative default', () => {
+    const document = createDocument('legacy group blend', 2, 2, 'rgba')
+    document.layers[0].groupId = 'group-1'
+    document.groups.push({ id: 'group-1', name: 'Legacy', visible: true, locked: false, opacity: 1, blendMode: 'normal' })
+
+    expect(decodeProject(encodeProject(document)).groups[0].cumulativeBlend).toBeUndefined()
   })
 
   it('round trips extended blend modes for layers and groups', () => {

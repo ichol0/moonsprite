@@ -17,6 +17,7 @@ interface ModalShellProps extends Omit<HTMLAttributes<HTMLElement>, 'onSubmit'> 
   maxWidth?: number
   onSubmit?: FormEventHandler<HTMLFormElement>
   placement?: ModalPlacement
+  resizePortalClassName?: string
   storageKey: string
 }
 
@@ -51,6 +52,7 @@ export function ModalShell({
   maxWidth = 820,
   onPointerDown,
   placement = 'center',
+  resizePortalClassName,
   storageKey,
   ...props
 }: ModalShellProps): ReactElement {
@@ -74,7 +76,7 @@ export function ModalShell({
     placement === 'right',
     false,
     `moonsprite.modal.${storageKey}`,
-    false,
+    true,
     undefined,
     false,
     { minWidth: layoutMinWidth, minHeight: layoutMinHeight, maxWidth, maxHeight }
@@ -89,9 +91,11 @@ export function ModalShell({
     className: `modal resizable-modal ${placement === 'right' ? 'right-modal' : ''} ${className}`.trim(),
     style: { ...floating.style, minWidth: layoutMinWidth, minHeight: layoutMinHeight, maxWidth: `min(${maxWidth}px, calc(100vw - 12px))`, maxHeight: `min(${maxHeight}px, calc(100vh - 12px))`, overflow: 'hidden' },
     onPointerDown: (event: React.PointerEvent<HTMLElement>) => {
+      if (!event.currentTarget.contains(event.target as Node)) return
       floating.bringToFront()
-      if ((event.target as HTMLElement).closest('header')) floating.startDrag(event)
+      const header = (event.target as HTMLElement).closest('header')
+      if (header && event.currentTarget.contains(header) && header.closest('.modal') === event.currentTarget) floating.startDrag(event)
       onPointerDown?.(event)
     }
-  }, children, createElement(PortalResizeHandles, { targetRef: floating.ref, position: floating.style, onResize: floating.startResize }))
+  }, children, createElement(PortalResizeHandles, { targetRef: floating.ref, position: floating.style, onResize: floating.startResize, className: resizePortalClassName }))
 }

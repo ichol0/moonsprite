@@ -30,8 +30,9 @@ export function resolveClipboardPlacement(input: ClipboardPlacementInput): { x: 
       return { x: input.originX, y: input.originY }
     }
   }
+  if (input.width > input.documentWidth || input.height > input.documentHeight) return { x: 0, y: 0 }
   return {
-    x: Math.floor((visible.left + visible.right - input.width) / 2),
-    y: Math.floor((visible.top + visible.bottom - input.height) / 2)
+    x: Math.floor((input.documentWidth - input.width) / 2),
+    y: Math.floor((input.documentHeight - input.height) / 2)
   }
 }

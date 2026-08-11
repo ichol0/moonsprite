@@ -1,6 +1,6 @@
 import type { RasterLayer, SelectionRect, SpriteDocument } from '@shared/types'
 import { animationLayerAtFrame, ensureAnimationDocument } from './animation'
-import { getLayer, getLayerStorageOrigin, layerIndexAtStoragePoint, markLayerContentChanged, readLayerPacked, writeLayerPacked, writeLayerPackedRun } from './document'
+import { getLayer, getLayerMaskOwner, getLayerStorageOrigin, isLayerMask, layerIndexAtStoragePoint, markLayerContentChanged, readLayerPacked, writeLayerPacked, writeLayerPackedRun } from './document'
 
 export interface HistoryEntry {
   label: string
@@ -107,6 +107,7 @@ export interface PixelEdit {
   before: Map<number, number>
   after: Map<number, number>
   runs?: PixelEditRun[]
+  denseRegion?: PixelEditDenseRegion
   dirtyRect?: SelectionRect
 }
 
@@ -117,12 +118,27 @@ export interface PixelEditRun {
   after: number
 }
 
+export interface PixelEditDenseRegion {
+  x: number
+  y: number
+  width: number
+  height: number
+  before: Uint32Array
+  after: Uint32Array
+  changed: Uint8Array
+  count: number
+}
+
 export function beginPixelEdit(layerId: string): PixelEdit {
   return { layerId, before: new Map(), after: new Map() }
 }
 
 export function preparePixelEdit(document: SpriteDocument, edit: PixelEdit): void {
-  if (!edit.frameId && document.animation) edit.frameId = ensureAnimationDocument(document).activeFrameId
+  if (edit.frameId || !document.animation) return
+  const target = getLayer(document, edit.layerId)
+  edit.frameId = isLayerMask(target)
+    ? getLayerMaskOwner(document, target)?.frameId
+    : ensureAnimationDocument(document).activeFrameId
 }
 
 /** Records a pixel when the caller already has its current packed value. */
@@ -156,9 +172,12 @@ export function recordPixel(document: SpriteDocument, layer: RasterLayer, edit: 
 }
 
 export function commitPixelEdit(document: SpriteDocument, edit: PixelEdit, label: string): HistoryEntry | null {
-  if (edit.before.size === 0 && !edit.runs?.length) return null
+  if (edit.before.size === 0 && !edit.runs?.length && !edit.denseRegion?.count) return null
+  const maskTarget = isLayerMask(getLayer(document, edit.layerId))
   const frameId = edit.frameId ?? document.animation?.activeFrameId
-  const layerForFrame = (): RasterLayer => frameId && document.animation?.activeFrameId !== frameId
+  const layerForFrame = (): RasterLayer => maskTarget
+    ? getLayer(document, edit.layerId)
+    : frameId && document.animation?.activeFrameId !== frameId
     ? animationLayerAtFrame(document, edit.layerId, frameId) ?? getLayer(document, edit.layerId)
     : getLayer(document, edit.layerId)
   const layer = layerForFrame()
@@ -198,7 +217,8 @@ export function commitPixelEdit(document: SpriteDocument, edit: PixelEdit, label
     runBefore[offset] = run.before
     runAfter[offset] = run.after
   }
-  if (count === 0 && runCount === 0) return null
+  const denseRegion = edit.denseRegion
+  if (count === 0 && runCount === 0 && !denseRegion?.count) return null
   const apply = (values: Uint32Array): void => {
     const layer = layerForFrame()
     if (xs.length > 0) markLayerContentChanged(layer)
@@ -216,22 +236,47 @@ export function commitPixelEdit(document: SpriteDocument, edit: PixelEdit, label
       writeLayerPackedRun(document, layer, start, runLengths[offset], values[offset])
     }
   }
+  const applyDenseRegion = (values: Uint32Array): void => {
+    if (!denseRegion?.count) return
+    const layer = layerForFrame()
+    markLayerContentChanged(layer)
+    for (let offset = 0; offset < denseRegion.changed.length; offset += 1) {
+      if (denseRegion.changed[offset] === 0) continue
+      const x = denseRegion.x + offset % denseRegion.width
+      const y = denseRegion.y + Math.floor(offset / denseRegion.width)
+      const index = layerIndexAtStoragePoint(layer, x, y)
+      if (index !== null) writeLayerPacked(document, layer, index, values[offset])
+    }
+  }
+  const denseBytes = denseRegion
+    ? denseRegion.before.byteLength + denseRegion.after.byteLength + denseRegion.changed.byteLength
+    : 0
   return {
     label,
-    bytes: xs.byteLength + ys.byteLength + before.byteLength + after.byteLength + runXs.byteLength + runYs.byteLength + runLengths.byteLength + runBefore.byteLength + runAfter.byteLength,
-    undo: () => { applyRuns(runBefore); apply(before) },
-    redo: () => { applyRuns(runAfter); apply(after) },
+    bytes: xs.byteLength + ys.byteLength + before.byteLength + after.byteLength + runXs.byteLength + runYs.byteLength + runLengths.byteLength + runBefore.byteLength + runAfter.byteLength + denseBytes,
+    undo: () => { applyRuns(runBefore); if (denseRegion) applyDenseRegion(denseRegion.before); apply(before) },
+    redo: () => { applyRuns(runAfter); if (denseRegion) applyDenseRegion(denseRegion.after); apply(after) },
     invalidation: edit.dirtyRect ? { kind: 'region', frameId, rect: { ...edit.dirtyRect } } : undefined
   }
 }
 
-export function revertPixelEdit(document: SpriteDocument, edit: PixelEdit): void {
-  const layer = edit.frameId && document.animation?.activeFrameId !== edit.frameId
+export function revertPixelEdit(document: SpriteDocument, edit: PixelEdit | null | undefined): void {
+  if (!edit) return
+  const maskTarget = isLayerMask(getLayer(document, edit.layerId))
+  const layer = !maskTarget && edit.frameId && document.animation?.activeFrameId !== edit.frameId
     ? animationLayerAtFrame(document, edit.layerId, edit.frameId) ?? getLayer(document, edit.layerId)
     : getLayer(document, edit.layerId)
-  if (edit.before.size > 0 || edit.runs?.length) markLayerContentChanged(layer)
+  if (edit.before.size > 0 || edit.runs?.length || edit.denseRegion?.count) markLayerContentChanged(layer)
   for (const run of edit.runs ?? []) {
     writeLayerPackedRun(document, layer, run.index, run.length, run.before)
+  }
+  const denseRegion = edit.denseRegion
+  if (denseRegion?.count) for (let offset = 0; offset < denseRegion.changed.length; offset += 1) {
+    if (denseRegion.changed[offset] === 0) continue
+    const x = denseRegion.x + offset % denseRegion.width
+    const y = denseRegion.y + Math.floor(offset / denseRegion.width)
+    const index = layerIndexAtStoragePoint(layer, x, y)
+    if (index !== null) writeLayerPacked(document, layer, index, denseRegion.before[offset])
   }
   for (const [index, value] of edit.before) writeLayerPacked(document, layer, index, value)
 }

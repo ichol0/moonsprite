@@ -23,6 +23,10 @@ pub fn ensure_executable_subdirectory(name: &str, label: &str) -> Result<PathBuf
     ensure_subdirectory(&executable_directory()?, name, label)
 }
 
+pub(crate) fn export_directory() -> Result<PathBuf, String> {
+    ensure_executable_subdirectory("exports", "导出")
+}
+
 #[cfg(test)]
 mod tests {
     use super::ensure_subdirectory;

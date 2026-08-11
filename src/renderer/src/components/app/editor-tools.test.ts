@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { ALL_EDITOR_TOOL_ICONS, FILL_KIND_ICONS, SELECTION_KIND_DEFINITIONS, SHAPE_KIND_DEFINITIONS, TOOL_DEFINITIONS, activeToolPresentation, fillKindDefinitions, temporarySelectionModeForModifiers } from './editor-tools'
+import { ALL_EDITOR_TOOL_ICONS, FILL_KIND_ICONS, SELECTION_KIND_DEFINITIONS, SHAPE_KIND_DEFINITIONS, TOOL_DEFINITIONS, activeToolPresentation, fillKindDefinitions, normalEditorToolIconFor, temporarySelectionModeForModifiers } from './editor-tools'
 
 describe('editor tool flyout definitions', () => {
   it('gives every main tool complete custom-tooltip metadata', () => {
@@ -47,6 +47,10 @@ describe('editor tool flyout definitions', () => {
     expect(ALL_EDITOR_TOOL_ICONS).toContain(SHAPE_KIND_DEFINITIONS.find((item) => item.id === 'rectangle')?.icon)
     expect(ALL_EDITOR_TOOL_ICONS).toContain(SHAPE_KIND_DEFINITIONS.find((item) => item.id === 'ellipse-outline')?.icon)
     expect(ALL_EDITOR_TOOL_ICONS).toContain(FILL_KIND_ICONS.gradient)
+    const pencilIcon = TOOL_DEFINITIONS.find((item) => item.id === 'pencil')?.icon
+    expect(pencilIcon).toBeTruthy()
+    expect(normalEditorToolIconFor(pencilIcon!)).toBeTruthy()
+    expect(normalEditorToolIconFor(pencilIcon!)).not.toBe(pencilIcon)
   })
 
   it('shows temporary add and subtract modes without replacing the persisted mode', () => {

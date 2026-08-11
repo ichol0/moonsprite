@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { CanvasInputState, SELECTION_CORNER_RESIZE_HIT_RADIUS, SELECTION_RESIZE_HIT_RADIUS, appendPolygonLassoVertex, canvasGestureForPreview, clampCanvasZoom, coalescedPointerClientPoints, constrainedTranslation, createCanvasPanDrag, finalizeMarqueeSelection, polygonLassoClosedPathPoints, polygonLassoPreviewPoints, resizeSelectionBounds, restoreCanvasDragAfterPan, revertCancelledCanvasDragPixelChanges, rotationHandles, selectionGestureMoved, selectionInteractionHit, selectionMarqueeUsesConstraint, selectionOverlayMaskForDrag, selectionResizeHit, selectionRotationHit, selectionShapeUsesConstraint, selectionShearHit, selectionTransformModifiers, shapeBounds, shouldClosePolygonLasso, shouldRestartFloatingSelectionForCopy, shouldStartCanvasPan, snapSelectionRotation, steppedCanvasZoom, zoomDragModeForModifiers, zoomDragTarget, type CanvasDragState } from './canvas-input'
+import { BRUSH_SPEED_STOP_MS, CanvasInputState, SELECTION_CORNER_RESIZE_HIT_RADIUS, SELECTION_RESIZE_HIT_RADIUS, appendPolygonLassoVertex, beginBrushSpeedTracking, canvasGestureForPreview, centeredShapeBounds, clampCanvasZoom, coalescedPointerClientPoints, constrainedTranslation, createCanvasPanDrag, createMarqueeResizeStart, finalizeMarqueeSelection, floatingSelectionCopyMode, polygonLassoClosedPathPoints, polygonLassoPreviewPoints, resizeRotatedMarqueeBounds, resizeSelectionBounds, resizeTransformedSelectionBounds, restoreCanvasDragAfterPan, revertCancelledCanvasDragPixelChanges, rotationHandles, selectionGestureMoved, selectionInteractionHit, selectionMarqueeUsesConstraint, selectionOverlayMaskForDrag, selectionResizeHit, selectionRotationAngle, selectionRotationHit, selectionShearHit, selectionTransformedInteractionHit, selectionTransformModifiers, selectionTransformPreviewChanged, shapeBounds, shouldClosePolygonLasso, shouldRestartFloatingSelectionForCopy, shouldStartCanvasPan, snapSelectionRotation, steppedCanvasZoom, temporaryTransformOffset, translatedSelectionRect, updateBrushSpeedTracking, wheelCanvasZoom, zoomDragModeForModifiers, zoomDragTarget, type CanvasDragState } from './canvas-input'
 import { balancedStairLinePoints } from './pixel-line'
 import { createDocument, getActiveLayer, readLayerColor } from './document'
 import { beginPixelEdit } from './history'
@@ -19,6 +19,65 @@ describe('canvas input helpers', () => {
       ]
     })
     expect(points).toEqual([{ clientX: 2, clientY: 3 }, { clientX: 5, clientY: 6 }, { clientX: 8, clientY: 7 }])
+  })
+
+  it('preserves pen pressure changes even when the pointer stays on one coordinate', () => {
+    const points = coalescedPointerClientPoints({
+      clientX: 8,
+      clientY: 7,
+      pressure: 0.8,
+      pointerType: 'pen',
+      getCoalescedEvents: () => [
+        { clientX: 8, clientY: 7, pressure: 0.2, pointerType: 'pen' },
+        { clientX: 8, clientY: 7, pressure: 0.5, pointerType: 'pen' }
+      ]
+    })
+    expect(points).toEqual([
+      { clientX: 8, clientY: 7, pressure: 0.2, pointerType: 'pen' },
+      { clientX: 8, clientY: 7, pressure: 0.5, pointerType: 'pen' },
+      { clientX: 8, clientY: 7, pressure: 0.8, pointerType: 'pen' }
+    ])
+  })
+
+  it('keeps timestamp-distinct samples and removes only exact duplicate endpoints', () => {
+    const points = coalescedPointerClientPoints({
+      clientX: 8,
+      clientY: 7,
+      pressure: 0.5,
+      pointerType: 'pen',
+      timeStamp: 12,
+      getCoalescedEvents: () => [
+        { clientX: 8, clientY: 7, pressure: 0.5, pointerType: 'pen', timeStamp: 10 },
+        { clientX: 8, clientY: 7, pressure: 0.5, pointerType: 'pen', timeStamp: 12 }
+      ]
+    })
+    expect(points).toEqual([
+      { clientX: 8, clientY: 7, pressure: 0.5, pointerType: 'pen', timeStamp: 10 },
+      { clientX: 8, clientY: 7, pressure: 0.5, pointerType: 'pen', timeStamp: 12 }
+    ])
+  })
+
+  it('tracks CSS pixel speed with zero-dt carry, stop reset, and EMA smoothing', () => {
+    const start = beginBrushSpeedTracking({ clientX: 0, clientY: 0, timeStamp: 100 })
+    expect(start?.speed).toBe(0)
+
+    const first = updateBrushSpeedTracking(start, { clientX: 10, clientY: 0, timeStamp: 110 })
+    expect(first.speed).toBeCloseTo(166.25, 2)
+
+    const zeroDt = updateBrushSpeedTracking(first.state, { clientX: 30, clientY: 0, timeStamp: 110 })
+    expect(zeroDt).toEqual({ state: first.state, speed: first.speed })
+
+    const smoothed = updateBrushSpeedTracking(zeroDt.state, { clientX: 15, clientY: 0, timeStamp: 120 })
+    expect(smoothed.speed).toBeCloseTo(221.73, 2)
+
+    const stopped = updateBrushSpeedTracking(smoothed.state, { clientX: 16, clientY: 0, timeStamp: 120 + BRUSH_SPEED_STOP_MS })
+    expect(stopped.speed).toBe(0)
+  })
+
+  it('clamps impossible speed spikes to the supported dynamics range', () => {
+    const start = beginBrushSpeedTracking({ clientX: 0, clientY: 0, timeStamp: 0 })
+    const spike = updateBrushSpeedTracking(start, { clientX: 1000, clientY: 0, timeStamp: 1 })
+    expect(spike.speed).toBeLessThanOrEqual(4000)
   })
 
   it('reverts an unfinished drawing when the pointer interaction is cancelled', () => {
@@ -122,10 +181,24 @@ describe('canvas input helpers', () => {
     expect(shouldRestartFloatingSelectionForCopy(true, false)).toBe(false)
   })
 
+  it('preserves the floating copy mode while rotating after Ctrl is released', () => {
+    expect(floatingSelectionCopyMode(true, false)).toBe(true)
+    expect(floatingSelectionCopyMode(false, true)).toBe(false)
+    expect(floatingSelectionCopyMode(null, true)).toBe(true)
+  })
+
   it('keeps zoom levels within the supported range', () => {
     expect(clampCanvasZoom(100)).toBe(64)
     expect(steppedCanvasZoom(1, true)).toBe(1.25)
     expect(steppedCanvasZoom(0.0625, false)).toBe(0.0625)
+  })
+
+  it('supports smooth and percentage wheel zoom modes', () => {
+    expect(wheelCanvasZoom(1, -120, 'stepped')).toBe(1.25)
+    expect(wheelCanvasZoom(1, 120, 'stepped')).toBe(0.666667)
+    expect(wheelCanvasZoom(1, -120, 'smooth')).toBeGreaterThan(1)
+    expect(wheelCanvasZoom(1, -120, 'smooth')).toBeLessThan(1.25)
+    expect(wheelCanvasZoom(64, -120, 'smooth')).toBe(64)
   })
 
   it('supports smooth and stepped zoom-tool drag preferences', () => {
@@ -270,11 +343,6 @@ describe('canvas input helpers', () => {
     expect(selectionInteractionHit(selection, { x: 245, y: 239 }, 1)).toBe('rotate-se')
   })
 
-  it('uses Ctrl for proportional shape selection constraints, not Shift', () => {
-    expect(selectionShapeUsesConstraint({ ctrlKey: true, metaKey: false })).toBe(true)
-    expect(selectionShapeUsesConstraint({ ctrlKey: false, metaKey: false })).toBe(false)
-  })
-
   it('uses Shift for a new square marquee but keeps Shift-add freeform unless Ctrl is also held', () => {
     expect(selectionMarqueeUsesConstraint({ ctrlKey: false, shiftKey: true }, false, 'replace')).toBe(true)
     expect(selectionMarqueeUsesConstraint({ ctrlKey: false, shiftKey: true }, true, 'add')).toBe(false)
@@ -283,9 +351,9 @@ describe('canvas input helpers', () => {
   })
 
   it('uses Shift for proportional transform and Ctrl for integer scaling without copying', () => {
-    expect(selectionTransformModifiers({ ctrlKey: true, shiftKey: false })).toEqual({ proportional: false, integerScale: true, copy: false })
-    expect(selectionTransformModifiers({ ctrlKey: true, shiftKey: true })).toEqual({ proportional: true, integerScale: true, copy: false })
-    expect(selectionTransformModifiers({ ctrlKey: false, shiftKey: true })).toEqual({ proportional: true, integerScale: false, copy: false })
+    expect(selectionTransformModifiers({ ctrlKey: true, shiftKey: false })).toEqual({ proportional: false, integerScale: true, fromCenter: false, copy: false })
+    expect(selectionTransformModifiers({ ctrlKey: true, shiftKey: true })).toEqual({ proportional: true, integerScale: true, fromCenter: false, copy: false })
+    expect(selectionTransformModifiers({ ctrlKey: false, altKey: true, shiftKey: true })).toEqual({ proportional: true, integerScale: false, fromCenter: true, copy: false })
   })
 
   it('snaps selection rotation to eight directions while Shift is held', () => {
@@ -303,6 +371,11 @@ describe('canvas input helpers', () => {
 
   it('creates constrained square bounds in every drag direction', () => {
     expect(shapeBounds({ x: 5, y: 5 }, { x: 2, y: 3 }, true)).toEqual({ x: 2, y: 2, width: 4, height: 4 })
+  })
+
+  it('creates marquee bounds around the pressed pixel while Ctrl is held', () => {
+    expect(centeredShapeBounds({ x: 5, y: 5 }, { x: 8, y: 7 })).toEqual({ x: 2, y: 3, width: 7, height: 5 })
+    expect(centeredShapeBounds({ x: 5, y: 5 }, { x: 8, y: 7 }, true)).toEqual({ x: 2, y: 2, width: 7, height: 7 })
   })
 
   it('keeps a fixed long-axis ratio in horizontal and vertical drags', () => {
@@ -335,6 +408,107 @@ describe('canvas input helpers', () => {
   it('keeps the untouched axis unchanged for one-axis integer scaling', () => {
     expect(resizeSelectionBounds({ x: 2, y: 2, width: 2, height: 1 }, { x: 8, y: 2 }, 'e', { width: 20, height: 20 }, false, true)).toEqual({ x: 2, y: 2, width: 8, height: 1 })
     expect(resizeSelectionBounds({ x: 2, y: 2, width: 1, height: 2 }, { x: 2, y: 8 }, 's', { width: 20, height: 20 }, false, true)).toEqual({ x: 2, y: 2, width: 1, height: 8 })
+  })
+
+  it('resizes existing selections symmetrically around their center while Alt is held', () => {
+    const start = { x: 2, y: 3, width: 4, height: 6 }
+    expect(resizeSelectionBounds(start, { x: 8, y: 6 }, 'e', { width: 20, height: 20 }, false, false, true)).toEqual({ x: 0, y: 3, width: 8, height: 6 })
+    expect(resizeSelectionBounds(start, { x: 8, y: 12 }, 'se', { width: 20, height: 20 }, false, false, true)).toEqual({ x: 0, y: 0, width: 8, height: 12 })
+  })
+
+  it('combines centered selection resizing with proportional and integer scaling', () => {
+    const start = { x: 2, y: 3, width: 4, height: 2 }
+    expect(resizeSelectionBounds(start, { x: 8, y: 5 }, 'se', { width: 20, height: 20 }, true, false, true)).toEqual({ x: 0, y: 2, width: 8, height: 4 })
+    expect(resizeSelectionBounds(start, { x: 8, y: 4 }, 'e', { width: 20, height: 20 }, false, true, true)).toEqual({ x: 0, y: 3, width: 8, height: 2 })
+  })
+
+  it('flips a centered selection only after the dragged handle crosses its center', () => {
+    expect(resizeSelectionBounds({ x: 2, y: 2, width: 4, height: 3 }, { x: 7, y: 3 }, 'w', { width: 20, height: 20 }, false, false, true)).toEqual({ x: 1, y: 2, width: 6, height: 3, flipHorizontal: true, flipOriginX: 4 })
+  })
+
+  it('keeps temporary marquee movement pointer-relative', () => {
+    const move = { pointer: { x: 8, y: 6 }, offset: { x: 2, y: -1 } }
+    expect(temporaryTransformOffset(move, { x: 11, y: 10 })).toEqual({ x: 5, y: 3 })
+    expect(translatedSelectionRect({ x: 3, y: 4, width: 2, height: 3 }, { x: 5, y: 3 })).toEqual({ x: 8, y: 7, width: 2, height: 3 })
+  })
+
+  it('preserves marquee geometry while Space moves it from the pointer reference', () => {
+    const beforeMove = shapeBounds({ x: 2, y: 2 }, { x: 9, y: 8 })
+    const offset = temporaryTransformOffset({ pointer: { x: 9, y: 8 }, offset: { x: 0, y: 0 } }, { x: 13, y: 6 })
+    const adjustedPointer = { x: 13 - offset.x, y: 6 - offset.y }
+    expect(translatedSelectionRect(shapeBounds({ x: 2, y: 2 }, adjustedPointer), offset)).toEqual(translatedSelectionRect(beforeMove, offset))
+  })
+
+  it('calculates rotation from the original pointer direction and supports snapping', () => {
+    const selection = { x: 0, y: 0, width: 10, height: 10 }
+    expect(selectionRotationAngle(selection, { x: 10, y: 5 }, { x: 5, y: 10 })).toBe(90)
+    expect(selectionRotationAngle(selection, { x: 10, y: 5 }, { x: 9, y: 8 }, true)).toBe(45)
+  })
+
+  it('continues resizing along the rotated marquee axes after Alt is released', () => {
+    const start = { x: 0, y: 0, width: 10, height: 6 }
+    const continuation = createMarqueeResizeStart(start, { x: 5, y: 7 })
+    expect(continuation.fromCenter).toBe(true)
+    expect(resizeRotatedMarqueeBounds(continuation.bounds, { x: 5 - continuation.pointer.x, y: 11 - continuation.pointer.y }, 90, { x: 1, y: 1 }, continuation.fromCenter)).toEqual({ x: -4, y: 0, width: 18, height: 6 })
+    expect(resizeRotatedMarqueeBounds(start, { x: 0, y: 4 }, 90, { x: 1, y: 1 }, true)).toEqual({ x: -4, y: 0, width: 18, height: 6 })
+    expect(resizeRotatedMarqueeBounds(start, { x: -2, y: 4 }, 90, { x: 1, y: 1 }, false, true)).toEqual({ x: 0, y: 0, width: 14, height: 14 })
+  })
+
+  it('keeps the exact rotation center while resizing both sides after Alt is released', () => {
+    const start = { x: 3, y: 4, width: 7, height: 5 }
+    const resized = resizeRotatedMarqueeBounds(start, { x: 4, y: 3 }, 37, { x: 1, y: 1 }, true)
+    expect(resized.x + resized.width / 2).toBe(start.x + start.width / 2)
+    expect(resized.y + resized.height / 2).toBe(start.y + start.height / 2)
+    expect((resized.width - start.width) % 2).toBe(0)
+    expect((resized.height - start.height) % 2).toBe(0)
+  })
+
+  it('resizes transformed content along its rotated local axes without replacing the transform box with the visible bounds', () => {
+    const start = { x: 2, y: 2, width: 4, height: 3 }
+    const resized = resizeTransformedSelectionBounds(start, { x: 0, y: 2 }, 90, 'e')
+    expect(resized.x).toBeCloseTo(1)
+    expect(resized.y).toBeCloseTo(3)
+    expect(resized.width).toBe(6)
+    expect(resized.height).toBe(3)
+  })
+
+  it('keeps the transformed content center fixed during rotated centered resizing', () => {
+    const start = { x: 3, y: 4, width: 7, height: 5 }
+    const resized = resizeTransformedSelectionBounds(start, { x: 4, y: 3 }, 37, 'se', false, false, true)
+    expect(resized.x + resized.width / 2).toBeCloseTo(start.x + start.width / 2)
+    expect(resized.y + resized.height / 2).toBeCloseTo(start.y + start.height / 2)
+  })
+
+  it('keeps transform handle and rotation hits on the final rotated rectangle', () => {
+    const target = { x: 10, y: 20, width: 40, height: 20 }
+    const selection = { x: 20, y: 10, width: 20, height: 40 }
+
+    expect(selectionTransformedInteractionHit(selection, target, 90, undefined, { x: 40, y: 10 }, 1)).toBe('nw')
+    expect(selectionTransformedInteractionHit(selection, target, 90, undefined, { x: 46, y: 4 }, 1)).toBe('rotate-nw')
+    expect(selectionTransformedInteractionHit(selection, target, 90, undefined, { x: 10, y: 20 }, 1)).not.toBe('nw')
+  })
+
+  it('persists selection-only transforms only after their geometry changes', () => {
+    const selection = { x: 2, y: 3, width: 6, height: 4 }
+    const unchanged: CanvasDragState = { kind: 'rotate-content', start: { x: 0, y: 0 }, last: { x: 0, y: 0 }, selectionStart: selection, transformStartTarget: selection, previewTarget: selection, startAngle: 0, previewAngle: 360 }
+    expect(selectionTransformPreviewChanged(unchanged)).toBe(false)
+    expect(selectionTransformPreviewChanged({ ...unchanged, previewAngle: 45 })).toBe(true)
+    expect(selectionTransformPreviewChanged({ ...unchanged, previewTarget: { ...selection, x: 4 } })).toBe(true)
+    expect(selectionTransformPreviewChanged({ ...unchanged, previewShear: { axis: 'x', edge: 's', amount: 2 } })).toBe(true)
+  })
+
+  it('keeps a shape ratio and fixed center while resizing after rotation', () => {
+    const start = { x: 4, y: 6, width: 10, height: 5 }
+    const angle = 37
+    const distance = 4
+    const resized = resizeRotatedMarqueeBounds(start, {
+      x: Math.cos(angle * Math.PI / 180) * distance,
+      y: Math.sin(angle * Math.PI / 180) * distance
+    }, angle, { x: 1, y: 1 }, true, false, { width: 2, height: 1 })
+
+    expect(resized).toEqual({ x: 0, y: 4, width: 18, height: 9 })
+    expect(resized.x + resized.width / 2).toBe(start.x + start.width / 2)
+    expect(resized.y + resized.height / 2).toBe(start.y + start.height / 2)
   })
 
   it('keeps the selection unchanged while a resize handle remains on its pixel boundary', () => {
@@ -377,6 +551,19 @@ describe('canvas input helpers', () => {
     expect(input.altHeld).toBe(false)
     expect(input.ctrlHeld).toBe(false)
     expect(input.shiftHeld).toBe(false)
+  })
+
+  it('only lets pointer events release marquee modifiers while keyboard events own activation', () => {
+    const input = new CanvasInputState()
+    input.altHeld = false
+    input.ctrlHeld = true
+    input.shiftHeld = true
+
+    input.syncModifierKeys({ altKey: true, ctrlKey: false, shiftKey: true }, true)
+
+    expect(input.altHeld).toBe(false)
+    expect(input.ctrlHeld).toBe(false)
+    expect(input.shiftHeld).toBe(true)
   })
 
   it('clears a lost pointer interaction so the next tool can receive shortcuts normally', () => {

@@ -1,4 +1,4 @@
-import type { ImageBrush, ProceduralBrushId, ProceduralBrushSettings, RgbaColor, SelectionMask, SpriteDocument, ToolId } from '@shared/types'
+import type { ImageBrush, LayerMask, ProceduralBrushId, ProceduralBrushSettings, RasterLayer, RgbaColor, SelectionMask, SpriteDocument, ToolId } from '@shared/types'
 import { HistoryStack, type ContentInvalidationHint } from '@/core/history'
 import { PROCEDURAL_BRUSH_IDS } from '@/core/brushes'
 import { packColor, unpackColor } from '@/core/raster'
@@ -16,11 +16,19 @@ import type { BrushProfile, DocumentSession } from './workspace-types'
 import { defaultSymmetryCenter } from '@/core/symmetry'
 import { ensureAnimationDocument, refreshActiveAnimationFrame } from '@/core/animation'
 import { normalizeProjectDisplaySettings, normalizeProjectStatistics, normalizeTimelapseSettings } from '@/core/project-metadata'
+import { findLayerMask, getActiveLayer } from '@/core/document'
+import { cloneBrushDynamicsSettings, normalizeBrushDynamicsSettings } from '@/core/pressure'
 
 const defaultColor: RgbaColor = { r: 41, g: 121, b: 255, a: 255 }
 const defaultSecondary: RgbaColor = { r: 241, g: 244, b: 248, a: 255 }
 
 export const isBrushTool = (tool: ToolId): tool is BrushTool => tool === 'pencil' || tool === 'eraser' || tool === 'fill'
+
+export const activeLayerMask = (session: DocumentSession): LayerMask | null => session.activeLayerMaskId
+  ? findLayerMask(session.document, session.activeLayerMaskId)
+  : null
+
+export const activePaintLayer = (session: DocumentSession): RasterLayer => activeLayerMask(session) ?? getActiveLayer(session.document)
 
 export const brushProfileFromSession = (session: DocumentSession): BrushProfile => ({
   brushSize: session.brushSize,
@@ -34,7 +42,9 @@ export const brushProfileFromSession = (session: DocumentSession): BrushProfile 
   brushImageSettings: { ...session.brushImageSettings },
   proceduralBrushSettings: cloneProceduralSettings(session.proceduralBrushSettings),
   proceduralAntialias: session.proceduralAntialias,
-  proceduralAntialiasStrength: session.proceduralAntialiasStrength
+  proceduralAntialiasStrength: session.proceduralAntialiasStrength,
+  brushDynamics: cloneBrushDynamicsSettings(session.brushDynamics),
+  brushPressure: { ...session.brushPressure }
 })
 
 export const applyBrushProfile = (session: DocumentSession, profile: BrushProfile): void => {
@@ -50,6 +60,8 @@ export const applyBrushProfile = (session: DocumentSession, profile: BrushProfil
   session.proceduralBrushSettings = cloneProceduralSettings(profile.proceduralBrushSettings)
   session.proceduralAntialias = profile.proceduralAntialias
   session.proceduralAntialiasStrength = profile.proceduralAntialiasStrength
+  session.brushDynamics = cloneBrushDynamicsSettings(profile.brushDynamics)
+  session.brushPressure = { ...profile.brushPressure }
 }
 
 export const remapSelectionBrushColors = (brush: ImageBrush, primary: RgbaColor, secondary: RgbaColor): ImageBrush => {
@@ -84,7 +96,9 @@ function persistedBrushProfileFromSession(profile: BrushProfile): PersistedBrush
     brushImageSettings: { ...profile.brushImageSettings },
     proceduralBrushSettings: cloneProceduralSettings(profile.proceduralBrushSettings),
     proceduralAntialias: profile.proceduralAntialias,
-    proceduralAntialiasStrength: profile.proceduralAntialiasStrength
+    proceduralAntialiasStrength: profile.proceduralAntialiasStrength,
+    brushDynamics: cloneBrushDynamicsSettings(profile.brushDynamics),
+    brushPressure: { ...profile.brushPressure }
   }
 }
 
@@ -94,7 +108,9 @@ function brushProfileFromPersisted(profile: PersistedBrushProfile): BrushProfile
     brushImage: null,
     brushImageTemporary: false,
     brushImageSettings: { ...profile.brushImageSettings },
-    proceduralBrushSettings: cloneProceduralSettings(profile.proceduralBrushSettings)
+    proceduralBrushSettings: cloneProceduralSettings(profile.proceduralBrushSettings),
+    brushDynamics: normalizeBrushDynamicsSettings(profile.brushDynamics),
+    brushPressure: { ...profile.brushPressure }
   }
 }
 
@@ -115,6 +131,9 @@ export function persistToolSettings(session: DocumentSession): void {
     shapeRatio: session.shapeRatio ? { ...session.shapeRatio } : null,
     fillMode: session.fillMode,
     fillKind: session.fillKind ?? 'bucket',
+    fillTolerance: session.fillTolerance,
+    gradientTolerance: session.gradientTolerance,
+    gradientContiguous: session.gradientContiguous,
     gradientDither: session.gradientDither ?? 'none',
     moveAutoSelect: session.moveAutoSelect,
     selectionKind: session.selectionKind,
@@ -165,10 +184,15 @@ export const sessionFromDocument = (document: SpriteDocument): DocumentSession =
     proceduralBrushSettings: Object.fromEntries(PROCEDURAL_BRUSH_IDS.map((id) => [id, { ...settings.proceduralBrushSettings[id] }])) as Record<ProceduralBrushId, ProceduralBrushSettings>,
     proceduralAntialias: settings.proceduralAntialias,
     proceduralAntialiasStrength: settings.proceduralAntialiasStrength,
+    brushDynamics: normalizeBrushDynamicsSettings(settings.brushDynamics),
+    brushPressure: { ...settings.brushPressure },
     shapeKind: settings.shapeKind,
     shapeRatio: typeof settings.shapeRatio === 'number' ? { width: settings.shapeRatio, height: 1 } : settings.shapeRatio ? { ...settings.shapeRatio } : null,
     fillMode: settings.fillMode,
     fillKind: settings.fillKind,
+    fillTolerance: settings.fillTolerance,
+    gradientTolerance: settings.gradientTolerance,
+    gradientContiguous: settings.gradientContiguous,
     gradientDither: settings.gradientDither,
     moveAutoSelect: settings.moveAutoSelect,
     selection: null,
@@ -206,6 +230,8 @@ export const sessionFromDocument = (document: SpriteDocument): DocumentSession =
     selectedGroupId: null,
     selectedGroupIds: [],
     selectedLayerIds: [document.activeLayerId],
+    activeLayerMaskId: null,
+    layerMaskIsolatedView: false,
     layerSelectionAnchorId: document.activeLayerId,
     collapsedGroupIds: [],
     animationPlaying: false,
@@ -216,8 +242,12 @@ export const sessionFromDocument = (document: SpriteDocument): DocumentSession =
     animationFrameSelectionAnchorId: null,
     selectedAnimationCellKeys: [],
     animationCellSelectionAnchorKey: null,
+    selectedAnimationMaskCellKeys: [],
+    animationMaskCellSelectionAnchorKey: null,
     animationCellClipboard: [],
     animationCellClipboardAnchorKey: null,
+    animationMaskClipboard: [],
+    animationMaskClipboardAnchorKey: null,
     animationFrameClipboard: [],
     revision: 0,
     contentRevision: 0,

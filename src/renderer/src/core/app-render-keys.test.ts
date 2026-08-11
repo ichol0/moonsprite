@@ -48,6 +48,11 @@ describe('app render keys', () => {
     expect(toolRailRenderKey(session)).not.toBe(fillRail)
     expect(toolOptionsRenderKey(session)).not.toBe(fillOptions)
 
+    const gradientOptions = toolOptionsRenderKey(session)
+    session.gradientTolerance = 64
+    session.gradientContiguous = false
+    expect(toolOptionsRenderKey(session)).not.toBe(gradientOptions)
+
     const menu = appMenuRenderKey(session)
     session.history.push({ label: 'edit', bytes: 1, undo: () => undefined, redo: () => undefined })
     expect(appMenuRenderKey(session)).not.toBe(menu)
@@ -62,6 +67,29 @@ describe('app render keys', () => {
     session.view.zoom = 8
     expect(statusBarRenderKey(session, null)).not.toBe(before)
     expect(statusBarRenderKey(session, 'saved')).toContain('saved')
+  })
+
+  it('tracks every brush dynamics mapping option', () => {
+    const session = createSession()
+    const changes = [
+      () => { session.brushDynamics.effects.size.sensor = 'pressure' },
+      () => { session.brushDynamics.effects.size.outputMin = 35 },
+      () => { session.brushDynamics.effects.size.outputMax = 90 },
+      () => { session.brushDynamics.effects.size.inputMin = 8 },
+      () => { session.brushDynamics.effects.size.inputMax = 75 },
+      () => { session.brushDynamics.effects.size.curve = 'hard' },
+      () => { session.brushDynamics.effects.size.direction = 'inverse' },
+      () => { session.brushDynamics.effects.strength.sensor = 'speed' },
+      () => { session.brushDynamics.effects.gradient.sensor = 'pressure' },
+      () => { session.brushDynamics.effects.gradient.outputMin = 12 },
+      () => { session.brushDynamics.gradientDither = 'bayer-4' }
+    ]
+
+    for (const change of changes) {
+      const before = toolOptionsRenderKey(session)
+      change()
+      expect(toolOptionsRenderKey(session)).not.toBe(before)
+    }
   })
 
   it('keeps the app coordinator stable for high-frequency canvas updates', () => {

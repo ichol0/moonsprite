@@ -293,7 +293,7 @@ export const DocumentTabs = memo(function DocumentTabs({ homeOpen, hiddenDocumen
       onContextMenu={(event) => { event.preventDefault(); event.stopPropagation(); onContextActivate(item.document.id); setContextMenu({ documentId: item.document.id, x: event.clientX, y: event.clientY }) }}
       onClick={(event) => { if (suppressClickRef.current || dragRef.current?.moved) { event.preventDefault(); return }; onActivate(item.document.id) }}
     >
-      <PixelUtilityIcon kind="project" />
+      <PixelUtilityIcon kind="image" />
       <span>{item.document.name}</span>
       {item.document.dirty && <i />}
       <span className="tab-close" role="button" tabIndex={0} aria-label={t('tabs.closeAria', { name: item.document.name })} onClick={(event) => { event.stopPropagation(); void useWorkspace.getState().closeDocument(item.document.id) }}><PixelUtilityIcon kind="close" /></span>
@@ -305,7 +305,7 @@ export const DocumentTabs = memo(function DocumentTabs({ homeOpen, hiddenDocumen
       <button className="context-menu-item" role="menuitem" onClick={() => openProjectFolder(contextMenu.documentId)}><PixelUtilityIcon kind="folderOpen" /><span>{t('app.menu.file.openFolder')}</span></button>
     </div>, document.body)}
     {dragPreview && createPortal(<div className="document-tab-drag-layer" aria-hidden="true">
-      <div className="document-tab-drag-ghost" data-document-tab-drag-ghost="true" style={{ left: dragPreview.pointerX - dragPreview.pointerOffsetX, top: dragPreview.pointerY - dragPreview.pointerOffsetY, width: dragPreview.width, height: dragPreview.height }}><PixelUtilityIcon kind="project" /><span>{dragPreview.name}</span></div>
+      <div className="document-tab-drag-ghost" data-document-tab-drag-ghost="true" style={{ left: dragPreview.pointerX - dragPreview.pointerOffsetX, top: dragPreview.pointerY - dragPreview.pointerOffsetY, width: dragPreview.width, height: dragPreview.height }}><PixelUtilityIcon kind="image" /><span>{dragPreview.name}</span></div>
     </div>, document.body)}
   </></PerformanceProfiler>
 })

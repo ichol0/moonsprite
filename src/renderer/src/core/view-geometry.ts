@@ -14,6 +14,19 @@ export interface ViewportBounds { left: number; top: number; right: number; bott
 
 const ROTATION_INDICATOR_MAX_FOOTPRINT = 204
 const ROTATION_INDICATOR_CLEARANCE_RATIO = 4 / 3
+const ROTATION_INDICATOR_HALF_WIDTH = 64
+const ROTATION_INDICATOR_HALF_HEIGHT = 96
+const ROTATION_INDICATOR_POINTER_GAP = 32
+
+export function rotationIndicatorPointBesidePointer(width: number, height: number, pointer: ViewportPoint): ViewportPoint {
+  const clampAxis = (value: number, size: number, halfSize: number): number => size <= halfSize * 2
+    ? size / 2
+    : Math.max(halfSize, Math.min(size - halfSize, value))
+  return {
+    x: clampAxis(pointer.x - ROTATION_INDICATOR_HALF_WIDTH - ROTATION_INDICATOR_POINTER_GAP, width, ROTATION_INDICATOR_HALF_WIDTH),
+    y: clampAxis(pointer.y, height, ROTATION_INDICATOR_HALF_HEIGHT)
+  }
+}
 
 export function viewRotationPivot(width: number, height: number, panX: number, panY: number, position: RotationIndicatorPosition): { x: number; y: number } {
   return {
@@ -85,6 +98,19 @@ const inverseDisplayPoint = (point: ViewportPoint, pivot: ViewportPoint, view: V
   return mirrorViewportPoint(unrotated, pivot, Boolean(view.mirrored), Boolean(view.mirroredVertical))
 }
 
+export function rotateViewAroundViewportPoint(view: ViewGeometryState, nextRotation: number, point: ViewportPoint, viewportWidth: number, viewportHeight: number, position: RotationIndicatorPosition): ViewGeometryState {
+  if (position === 'canvas') return { ...view, rotation: nextRotation }
+  const pivot = viewRotationPivot(viewportWidth, viewportHeight, view.panX, view.panY, position)
+  const currentUntransformedPoint = inverseDisplayPoint(point, pivot, view)
+  const rotatedView = { ...view, rotation: nextRotation }
+  const nextUntransformedPoint = inverseDisplayPoint(point, pivot, rotatedView)
+  return {
+    ...rotatedView,
+    panX: view.panX + nextUntransformedPoint.x - currentUntransformedPoint.x,
+    panY: view.panY + nextUntransformedPoint.y - currentUntransformedPoint.y
+  }
+}
+
 const rotateRelative = (point: ViewportPoint, degrees: number): ViewportPoint => {
   const radians = degrees * Math.PI / 180
   return { x: point.x * Math.cos(radians) - point.y * Math.sin(radians), y: point.x * Math.sin(radians) + point.y * Math.cos(radians) }
@@ -93,6 +119,31 @@ const rotateRelative = (point: ViewportPoint, degrees: number): ViewportPoint =>
 const displayRelative = (point: ViewportPoint, view: Pick<ViewGeometryState, 'rotation' | 'mirrored' | 'mirroredVertical'>): ViewportPoint => {
   const mirrored = { x: view.mirrored ? -point.x : point.x, y: view.mirroredVertical ? -point.y : point.y }
   return rotateRelative(mirrored, view.rotation)
+}
+
+export function clampCanvasViewPan<T extends ViewGeometryState>(viewportWidth: number, viewportHeight: number, documentWidth: number, documentHeight: number, view: T, position: RotationIndicatorPosition): T {
+  if (![viewportWidth, viewportHeight, documentWidth, documentHeight, view.zoom, view.panX, view.panY, view.rotation].every(Number.isFinite)) return view
+  if (viewportWidth <= 0 || viewportHeight <= 0 || documentWidth <= 0 || documentHeight <= 0 || view.zoom <= 0) return view
+  const radians = view.rotation * Math.PI / 180
+  const cosine = Math.abs(Math.cos(radians))
+  const sine = Math.abs(Math.sin(radians))
+  const scaledWidth = documentWidth * view.zoom
+  const scaledHeight = documentHeight * view.zoom
+  const displayedWidth = scaledWidth * cosine + scaledHeight * sine
+  const displayedHeight = scaledWidth * sine + scaledHeight * cosine
+  const displayedPan = position === 'canvas' ? { x: view.panX, y: view.panY } : displayRelative({ x: view.panX, y: view.panY }, view)
+  const axisOverscroll = (viewportSize: number, displayedSize: number): number => Math.min(viewportSize, displayedSize) / 2
+  const overscrollX = axisOverscroll(viewportWidth, displayedWidth)
+  const overscrollY = axisOverscroll(viewportHeight, displayedHeight)
+  const limitX = Math.abs(viewportWidth - displayedWidth) / 2 + overscrollX
+  const limitY = Math.abs(viewportHeight - displayedHeight) / 2 + overscrollY
+  const clampedPan = {
+    x: Math.min(limitX, Math.max(-limitX, displayedPan.x)),
+    y: Math.min(limitY, Math.max(-limitY, displayedPan.y))
+  }
+  if (clampedPan.x === displayedPan.x && clampedPan.y === displayedPan.y) return view
+  const delta = viewPanDeltaFromScreen(clampedPan.x - displayedPan.x, clampedPan.y - displayedPan.y, view.rotation, position, Boolean(view.mirrored), Boolean(view.mirroredVertical))
+  return { ...view, panX: view.panX + delta.x, panY: view.panY + delta.y }
 }
 
 export function documentPointFromViewportPointContinuous(point: ViewportPoint, viewportWidth: number, viewportHeight: number, documentWidth: number, documentHeight: number, view: ViewGeometryState, position: RotationIndicatorPosition): ViewportPoint {

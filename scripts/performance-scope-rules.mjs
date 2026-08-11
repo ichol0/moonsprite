@@ -1,4 +1,8 @@
-import { CANVAS_PERFORMANCE_SCENARIOS } from './canvas-performance-options.mjs'
+import {
+  CANVAS_PERFORMANCE_SCENARIOS,
+  LARGE_CANVAS_PERFORMANCE_SCENARIOS,
+  STANDARD_CANVAS_PERFORMANCE_SIZES,
+} from './canvas-performance-options.mjs'
 
 const normalized = (file) => file.replaceAll('\\', '/')
 
@@ -38,8 +42,16 @@ export function classifyPerformanceImpact(files) {
 
 const levelRank = { P0: 0, P1: 1, P2: 2, P3: 3, P4: 4 }
 
-const canvasSuite = (id, sizes, scenarios, repetitions = 1) => ({ id, kind: 'canvas', sizes, scenarios, repetitions })
+const canvasSuite = (id, sizes, scenarios, repetitions = 1, runtime = 'production') => ({ id, kind: 'canvas', sizes, scenarios, repetitions, runtime })
 const benchmarkSuite = (id, file) => ({ id, kind: 'vitest-benchmark', file })
+
+const largeCanvasSuites = () => [
+  canvasSuite('canvas-large-800', [800], [...LARGE_CANVAS_PERFORMANCE_SCENARIOS]),
+  canvasSuite('canvas-large-2048', [2048], [...LARGE_CANVAS_PERFORMANCE_SCENARIOS]),
+  canvasSuite('canvas-large-4000', [4000], [...LARGE_CANVAS_PERFORMANCE_SCENARIOS]),
+]
+
+const largeSentinelSuite = () => canvasSuite('canvas-large-sentinel', [2048, 4000], ['large-detail-pan', 'large-detail-draw'], 3)
 
 export function classifyPerformanceAudit(files, options = {}) {
   const paths = files.map(normalized).filter(Boolean)
@@ -61,17 +73,25 @@ export function classifyPerformanceAudit(files, options = {}) {
 
   if (level === 'P4') {
     suites.push(
-      canvasSuite('canvas-full', [128, 512, 1024], [...CANVAS_PERFORMANCE_SCENARIOS], 3),
-      canvasSuite('canvas-complex', [128, 512, 1024], ['complex-draw', 'complex-undo', 'complex-playback'], 3),
+      canvasSuite('canvas-standard', [...STANDARD_CANVAS_PERFORMANCE_SIZES], [...CANVAS_PERFORMANCE_SCENARIOS], 3),
+      canvasSuite('canvas-profile', [512, 1024], [...CANVAS_PERFORMANCE_SCENARIOS], 3, 'profile'),
+      canvasSuite('canvas-complex', [800, 1024], ['complex-draw', 'complex-undo', 'complex-playback'], 3),
+      ...largeCanvasSuites(),
+      largeSentinelSuite(),
       benchmarkSuite('selection', 'src/renderer/src/core/selection-performance.bench.ts'),
       benchmarkSuite('document-composite', 'src/renderer/src/core/document-performance.bench.ts'),
       { id: 'bundle', kind: 'bundle' },
       { id: 'desktop', kind: 'desktop' },
     )
   } else if (level === 'P3') {
-    suites.push(canvasSuite('canvas-full', [128, 512, 1024], [...CANVAS_PERFORMANCE_SCENARIOS]))
+    suites.push(
+      canvasSuite('canvas-standard', [...STANDARD_CANVAS_PERFORMANCE_SIZES], [...CANVAS_PERFORMANCE_SCENARIOS]),
+      canvasSuite('canvas-profile', [1024], ['zoom', 'draw', 'bucket-fill'], 3, 'profile'),
+      ...largeCanvasSuites(),
+      largeSentinelSuite(),
+    )
     if (includeReleaseComplexSuite || complexDocument) {
-      suites.push(canvasSuite('canvas-complex', [1024], ['complex-draw', 'complex-undo', 'complex-playback']))
+      suites.push(canvasSuite('canvas-complex', [1024], ['complex-draw', 'complex-undo', 'complex-playback'], includeReleaseComplexSuite ? 3 : 1))
     }
     if (complexDocument) suites.push(benchmarkSuite('document-composite', 'src/renderer/src/core/document-performance.bench.ts'))
     if (selectionAlgorithm) suites.push(benchmarkSuite('selection', 'src/renderer/src/core/selection-performance.bench.ts'))
@@ -84,8 +104,9 @@ export function classifyPerformanceAudit(files, options = {}) {
   }
 
   const commands = suites.map((suite) => {
-    if (suite.kind === 'canvas' && suite.id === 'canvas-full') return `pnpm bench:canvas -- --full${suite.repetitions > 1 ? `（连续 ${suite.repetitions} 次取中位数）` : ''}`
-    if (suite.kind === 'canvas') return `pnpm bench:canvas -- --size=${suite.sizes.join(',')} --scenario=${suite.scenarios.join(',')}`
+    if (suite.kind === 'canvas' && suite.id === 'canvas-standard') return `pnpm bench:canvas -- --full${suite.repetitions > 1 ? ` --repeat=${suite.repetitions}` : ''}`
+    if (suite.kind === 'canvas' && suite.runtime === 'profile') return `pnpm bench:canvas:profile -- --size=${suite.sizes.join(',')} --scenario=${suite.scenarios.join(',')}${suite.repetitions > 1 ? ` --repeat=${suite.repetitions}` : ''}`
+    if (suite.kind === 'canvas') return `pnpm bench:canvas -- --size=${suite.sizes.join(',')} --scenario=${suite.scenarios.join(',')} --runtime=${suite.runtime}`
     if (suite.kind === 'vitest-benchmark') return `pnpm exec vitest bench ${suite.file} --run`
     if (suite.kind === 'bundle') return 'pnpm build:web（记录包体积）'
     if (suite.kind === 'desktop') return 'pnpm test:desktop'

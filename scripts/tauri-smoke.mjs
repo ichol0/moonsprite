@@ -32,7 +32,8 @@ const child = spawn(executable, [startupProject], {
     ...process.env,
     APPDATA: appDataDirectory,
     LOCALAPPDATA: appDataDirectory,
-    WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${debugPort} --user-data-dir=${userDataDirectory}`
+    WEBVIEW2_USER_DATA_FOLDER: userDataDirectory,
+    WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${debugPort}`
   }
 })
 

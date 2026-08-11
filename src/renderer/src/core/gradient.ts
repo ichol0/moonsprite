@@ -1,8 +1,8 @@
 import type { GradientDither, RasterLayer, RgbaColor, SelectionMask, SpriteDocument } from '@shared/types'
-import { beginPixelEdit, recordPixel, type PixelEdit } from './history'
-import { ensureLayerCoversCanvas, findOrAddPaletteColor, isLayerEffectivelyLocked, layerIndexAt, readLayerColor } from './document'
+import { beginPixelEdit, preparePixelEdit, recordPixel, type PixelEdit } from './history'
+import { ensureLayerCoversCanvas, findOrAddPaletteColor, getLayerStorageOrigin, isLayerEffectivelyLocked, layerIndexAt, markLayerContentChanged, readLayerColor, readLayerPacked, writeLayerPacked } from './document'
 import { blendOver, packColor } from './raster'
-import { selectionContains } from './selection'
+import { magicWandSelection, selectionContains } from './selection'
 
 export const GRADIENT_DITHER_PRESETS: readonly GradientDither[] = [
   'none', 'bayer-2', 'bayer-4', 'bayer-8', 'checker', 'diagonal', 'diagonal-reverse', 'horizontal', 'vertical'
@@ -50,11 +50,11 @@ const BAYER_8 = expandBayer(BAYER_4)
 
 const clamp01 = (value: number): number => Math.max(0, Math.min(1, value))
 
-const interpolate = (start: RgbaColor, end: RgbaColor, amount: number): RgbaColor => ({
-  r: Math.round(start.r + (end.r - start.r) * amount),
-  g: Math.round(start.g + (end.g - start.g) * amount),
-  b: Math.round(start.b + (end.b - start.b) * amount),
-  a: Math.round(start.a + (end.a - start.a) * amount)
+export const interpolateRgbaColor = (start: RgbaColor, end: RgbaColor, amount: number): RgbaColor => ({
+  r: Math.round(start.r + (end.r - start.r) * clamp01(amount)),
+  g: Math.round(start.g + (end.g - start.g) * clamp01(amount)),
+  b: Math.round(start.b + (end.b - start.b) * clamp01(amount)),
+  a: Math.round(start.a + (end.a - start.a) * clamp01(amount))
 })
 
 const bayerThreshold = (matrix: number[][], x: number, y: number): number => {
@@ -81,6 +81,48 @@ export const gradientAmountAt = (x: number, y: number, start: { x: number; y: nu
   return clamp01(((x - start.x) * dx + (y - start.y) * dy) / lengthSquared)
 }
 
+export const gradientColorForAmount = (
+  startColor: RgbaColor,
+  endColor: RgbaColor,
+  amount: number,
+  x: number,
+  y: number,
+  dither: GradientDither = 'none'
+): RgbaColor => {
+  const normalizedAmount = clamp01(amount)
+  if (dither === 'none') return interpolateRgbaColor(startColor, endColor, normalizedAmount)
+  return normalizedAmount >= ditherThreshold(dither, x, y) ? { ...endColor } : { ...startColor }
+}
+
+export const createGradientColorSampler = (
+  startColor: RgbaColor,
+  endColor: RgbaColor,
+  start: { x: number; y: number },
+  end: { x: number; y: number },
+  dither: GradientDither = 'none'
+): ((x: number, y: number) => RgbaColor) => {
+  const dx = end.x - start.x
+  const dy = end.y - start.y
+  const lengthSquared = dx * dx + dy * dy
+  const deltaR = endColor.r - startColor.r
+  const deltaG = endColor.g - startColor.g
+  const deltaB = endColor.b - startColor.b
+  const deltaA = endColor.a - startColor.a
+  const colorForAmount: (amount: number, x: number, y: number) => RgbaColor = dither === 'none'
+    ? (amount: number): RgbaColor => ({
+        r: Math.round(startColor.r + deltaR * amount),
+        g: Math.round(startColor.g + deltaG * amount),
+        b: Math.round(startColor.b + deltaB * amount),
+        a: Math.round(startColor.a + deltaA * amount)
+      })
+    : (amount: number, x: number, y: number): RgbaColor => amount >= ditherThreshold(dither, x, y) ? { ...endColor } : { ...startColor }
+  if (lengthSquared === 0) return (x, y) => colorForAmount(0, x, y)
+  return (x, y) => {
+    const numerator = (x - start.x) * dx + (y - start.y) * dy
+    return colorForAmount(clamp01(numerator / lengthSquared), x, y)
+  }
+}
+
 export const gradientColorAt = (
   startColor: RgbaColor,
   endColor: RgbaColor,
@@ -89,11 +131,16 @@ export const gradientColorAt = (
   start: { x: number; y: number },
   end: { x: number; y: number },
   dither: GradientDither = 'none'
-): RgbaColor => {
-  const amount = gradientAmountAt(x, y, start, end)
-  if (dither === 'none') return interpolate(startColor, endColor, amount)
-  return amount >= ditherThreshold(dither, x, y) ? { ...endColor } : { ...startColor }
-}
+): RgbaColor => gradientColorForAmount(startColor, endColor, gradientAmountAt(x, y, start, end), x, y, dither)
+
+/** Resolves the color-matched area that a gradient is allowed to paint. */
+export const gradientRegionSelection = (
+  document: SpriteDocument,
+  layer: RasterLayer,
+  start: { x: number; y: number },
+  tolerance = 0,
+  contiguous = true
+): SelectionMask | null => magicWandSelection(document, layer, start.x, start.y, tolerance, contiguous)
 
 const gradientPaintValue = (document: SpriteDocument, layer: RasterLayer, index: number, color: RgbaColor): number => {
   if (color.a === 0) return layer.format === 'rgba' ? packColor(color) : 0
@@ -101,6 +148,72 @@ const gradientPaintValue = (document: SpriteDocument, layer: RasterLayer, index:
   return layer.format === 'rgba'
     ? packColor(blendOver(readLayerColor(document, layer, index), color))
     : findOrAddPaletteColor(document, blendOver(readLayerColor(document, layer, index), color))
+}
+
+const DENSE_GRADIENT_MIN_PIXELS = 512 * 512
+
+const applyDenseGradient = (
+  document: SpriteDocument,
+  layer: RasterLayer,
+  edit: PixelEdit,
+  left: number,
+  top: number,
+  right: number,
+  bottom: number,
+  sampleColor: (x: number, y: number) => RgbaColor,
+  selection?: SelectionMask | null,
+  paintRegion?: SelectionMask | null
+): PixelEdit | null => {
+  const width = right - left
+  const height = bottom - top
+  const before = new Uint32Array(width * height)
+  const after = new Uint32Array(width * height)
+  const changed = new Uint8Array(width * height)
+  const storageOrigin = getLayerStorageOrigin(layer)
+  let count = 0
+  let dirtyLeft = right
+  let dirtyTop = bottom
+  let dirtyRight = left
+  let dirtyBottom = top
+  const rgbaWords = layer.format === 'rgba' && layer.pixels.byteOffset % 4 === 0
+    ? new Uint32Array(layer.pixels.buffer as ArrayBuffer, layer.pixels.byteOffset, layer.pixels.byteLength / 4)
+    : null
+
+  preparePixelEdit(document, edit)
+  for (let y = top; y < bottom; y += 1) for (let x = left; x < right; x += 1) {
+    if (selection && !selectionContains(selection, x, y)) continue
+    if (paintRegion && !selectionContains(paintRegion, x, y)) continue
+    const index = layerIndexAt(layer, x, y)
+    if (index === null) continue
+    const current = rgbaWords ? rgbaWords[index] : readLayerPacked(document, layer, index)
+    const next = gradientPaintValue(document, layer, index, sampleColor(x, y))
+    if (current === next) continue
+    if (count === 0) markLayerContentChanged(layer)
+    const denseOffset = (y - top) * width + x - left
+    before[denseOffset] = current
+    after[denseOffset] = next
+    changed[denseOffset] = 1
+    count += 1
+    dirtyLeft = Math.min(dirtyLeft, x)
+    dirtyTop = Math.min(dirtyTop, y)
+    dirtyRight = Math.max(dirtyRight, x + 1)
+    dirtyBottom = Math.max(dirtyBottom, y + 1)
+    if (rgbaWords) rgbaWords[index] = next
+    else writeLayerPacked(document, layer, index, next)
+  }
+  if (count === 0) return null
+  edit.denseRegion = {
+    x: left - layer.offsetX + storageOrigin.x,
+    y: top - layer.offsetY + storageOrigin.y,
+    width,
+    height,
+    before,
+    after,
+    changed,
+    count
+  }
+  edit.dirtyRect = { x: dirtyLeft, y: dirtyTop, width: dirtyRight - dirtyLeft, height: dirtyBottom - dirtyTop }
+  return edit
 }
 
 /** Applies one linear gradient as a single undoable pixel edit. */
@@ -112,15 +225,26 @@ export const applyGradient = (
   startColor: RgbaColor,
   endColor: RgbaColor,
   selection?: SelectionMask | null,
-  dither: GradientDither = 'none'
+  dither: GradientDither = 'none',
+  paintRegion?: SelectionMask | null
 ): PixelEdit | null => {
-  if (isLayerEffectivelyLocked(document, layer) || !ensureLayerCoversCanvas(document, layer)) return null
+  if (paintRegion === null || isLayerEffectivelyLocked(document, layer) || !ensureLayerCoversCanvas(document, layer)) return null
+  const left = Math.ceil(Math.max(0, selection?.x ?? 0, paintRegion?.x ?? 0))
+  const top = Math.ceil(Math.max(0, selection?.y ?? 0, paintRegion?.y ?? 0))
+  const right = Math.min(document.width, selection ? selection.x + selection.width : document.width, paintRegion ? paintRegion.x + paintRegion.width : document.width)
+  const bottom = Math.min(document.height, selection ? selection.y + selection.height : document.height, paintRegion ? paintRegion.y + paintRegion.height : document.height)
+  if (right <= left || bottom <= top) return null
+  const sampleColor = createGradientColorSampler(startColor, endColor, start, end, dither)
   const edit = beginPixelEdit(layer.id)
-  for (let y = 0; y < document.height; y += 1) for (let x = 0; x < document.width; x += 1) {
+  if ((right - left) * (bottom - top) >= DENSE_GRADIENT_MIN_PIXELS) {
+    return applyDenseGradient(document, layer, edit, left, top, right, bottom, sampleColor, selection, paintRegion)
+  }
+  for (let y = top; y < bottom; y += 1) for (let x = left; x < right; x += 1) {
     if (selection && !selectionContains(selection, x, y)) continue
+    if (paintRegion && !selectionContains(paintRegion, x, y)) continue
     const index = layerIndexAt(layer, x, y)
     if (index === null) continue
-    const color = gradientColorAt(startColor, endColor, x, y, start, end, dither)
+    const color = sampleColor(x, y)
     recordPixel(document, layer, edit, index, gradientPaintValue(document, layer, index, color))
   }
   return edit.before.size > 0 ? edit : null

@@ -4,6 +4,7 @@ import { createDocument, createId, createLayer, getPaletteEntry, readLayerPacked
 import { TRANSPARENT, unpackColor } from './raster'
 import { translateCurrent as tr } from './localization'
 import { animationLayerAtFrame, ensureAnimationDocument, refreshActiveAnimationFrame, syncActiveAnimationFrame } from './animation'
+import { normalizePaletteSlots, PALETTE_GRID_COLUMNS } from './palette-layout'
 
 const ASE_MAGIC = 0xa5e0
 const FRAME_MAGIC = 0xf1fa
@@ -269,6 +270,8 @@ export function decodeAseprite(input: Uint8Array, fallbackName = tr('core.docume
   if (importedPalette.length) {
     document.palette = importedPalette
     document.paletteOrder = importedPalette.map((entry) => entry.id)
+    document.paletteColumns = PALETTE_GRID_COLUMNS
+    document.paletteSlots = normalizePaletteSlots(document.palette.map((entry) => entry.id), document.paletteOrder, undefined, document.paletteColumns)
     document.nextColorId = Math.max(...importedPalette.map((entry) => entry.id), 0) + 1
   }
   document.name = fallbackName

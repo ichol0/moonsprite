@@ -1,7 +1,14 @@
-export const CANVAS_PERFORMANCE_SIZES = [128, 512, 1024]
+export const STANDARD_CANVAS_PERFORMANCE_SIZES = [128, 512, 1024]
+export const LARGE_CANVAS_PERFORMANCE_SIZES = [800, 2048, 4000]
+export const CANVAS_PERFORMANCE_SIZES = [...new Set([
+  ...STANDARD_CANVAS_PERFORMANCE_SIZES,
+  ...LARGE_CANVAS_PERFORMANCE_SIZES,
+])]
 export const CANVAS_PERFORMANCE_SCENARIOS = ['pan', 'zoom', 'rotated-zoom', 'draw', 'shape', 'marquee', 'bucket-fill', 'gradient']
 export const COMPLEX_CANVAS_PERFORMANCE_SCENARIOS = ['complex-draw', 'complex-undo', 'complex-playback']
-const SUPPORTED_SCENARIOS = [...CANVAS_PERFORMANCE_SCENARIOS, ...COMPLEX_CANVAS_PERFORMANCE_SCENARIOS]
+export const LARGE_CANVAS_PERFORMANCE_SCENARIOS = ['large-pan', 'large-zoom', 'large-draw', 'large-shape', 'large-marquee', 'large-bucket-fill', 'large-gradient', 'large-detail-pan', 'large-detail-draw']
+const SUPPORTED_SCENARIOS = [...CANVAS_PERFORMANCE_SCENARIOS, ...COMPLEX_CANVAS_PERFORMANCE_SCENARIOS, ...LARGE_CANVAS_PERFORMANCE_SCENARIOS]
+const SUPPORTED_RUNTIMES = ['production', 'profile']
 
 const readOption = (args, name) => {
   const inline = args.find((argument) => argument.startsWith(`${name}=`))
@@ -16,8 +23,8 @@ export function parseCanvasPerformanceOptions(rawArgs) {
   const args = rawArgs.filter((argument) => argument !== '--')
   for (let index = 0; index < args.length; index += 1) {
     const argument = args[index]
-    if (argument === '--full' || argument.startsWith('--size=') || argument.startsWith('--scenario=') || argument.startsWith('--repeat=') || argument.startsWith('--output-json=')) continue
-    if (argument === '--size' || argument === '--scenario' || argument === '--repeat' || argument === '--output-json') {
+    if (argument === '--full' || argument.startsWith('--size=') || argument.startsWith('--scenario=') || argument.startsWith('--repeat=') || argument.startsWith('--output-json=') || argument.startsWith('--runtime=')) continue
+    if (argument === '--size' || argument === '--scenario' || argument === '--repeat' || argument === '--output-json' || argument === '--runtime') {
       if (!args[index + 1] || args[index + 1].startsWith('--')) throw new Error(`${argument} 缺少参数值。`)
       index += 1
       continue
@@ -29,8 +36,9 @@ export function parseCanvasPerformanceOptions(rawArgs) {
   const scenarioValues = parseList(readOption(args, '--scenario'))
   const repetitions = Number(readOption(args, '--repeat') ?? 1)
   const outputJson = readOption(args, '--output-json')
+  const runtime = readOption(args, '--runtime') ?? 'production'
   const sizes = full || !sizeValues
-    ? [...CANVAS_PERFORMANCE_SIZES]
+    ? [...STANDARD_CANVAS_PERFORMANCE_SIZES]
     : sizeValues.map((value) => Number(value))
   const scenarios = full || !scenarioValues
     ? [...CANVAS_PERFORMANCE_SCENARIOS]
@@ -38,11 +46,13 @@ export function parseCanvasPerformanceOptions(rawArgs) {
 
   const invalidSizes = sizes.filter((size) => !CANVAS_PERFORMANCE_SIZES.includes(size))
   const invalidScenarios = scenarios.filter((scenario) => !SUPPORTED_SCENARIOS.includes(scenario))
+  const scenarioFamilies = new Set(scenarios.map((scenario) => scenario.startsWith('complex-') ? 'complex' : scenario.startsWith('large-') ? 'large' : 'simple'))
   if (invalidSizes.length > 0) throw new Error(`不支持的画布尺寸：${invalidSizes.join(', ')}。可选值：${CANVAS_PERFORMANCE_SIZES.join(', ')}。`)
   if (invalidScenarios.length > 0) throw new Error(`不支持的画布场景：${invalidScenarios.join(', ')}。可选值：${SUPPORTED_SCENARIOS.join(', ')}。`)
-  if (scenarios.some((scenario) => scenario.startsWith('complex-')) && scenarios.some((scenario) => !scenario.startsWith('complex-'))) throw new Error('复杂工程场景不能与普通画布场景混合运行。')
+  if (scenarioFamilies.size > 1) throw new Error('简单、复杂和大画布工程场景不能在同一进程中混合运行。')
   if (full && (sizeValues || scenarioValues)) throw new Error('`--full` 不能与 `--size` 或 `--scenario` 同时使用。')
   if (!Number.isInteger(repetitions) || repetitions < 1 || repetitions > 10) throw new Error('`--repeat` 必须是 1 至 10 的整数。')
+  if (!SUPPORTED_RUNTIMES.includes(runtime)) throw new Error(`不支持的画布运行模式：${runtime}。可选值：${SUPPORTED_RUNTIMES.join(', ')}。`)
 
-  return { full, sizes, scenarios, repetitions, outputJson }
+  return { full, sizes, scenarios, repetitions, outputJson, runtime }
 }

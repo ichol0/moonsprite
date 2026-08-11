@@ -35,7 +35,7 @@ describe('HomeWorkspace', () => {
 
     render(<HomeWorkspace onNew={vi.fn()} onOpen={vi.fn()} onOpenProject={vi.fn(async () => true)} onRestoreRecovery={vi.fn(async () => true)} />)
 
-    expect(screen.getByText(/dev\.3/)).toBeInTheDocument()
+    expect(screen.getByText(/dev\.4/)).toBeInTheDocument()
     expect(document.querySelector('.start-screen-attribution')).toHaveTextContent('MoonSprite 是独立实现的像素画编辑器 · MIT License')
   })
 

@@ -8,18 +8,23 @@ const roadmapItems: Array<{ id: string; label: TranslationKey; category: Transla
   { id: 'gradient', label: 'roadmap.item.gradient', category: 'roadmap.category.tools', completed: true },
   { id: 'symmetry', label: 'roadmap.item.symmetry', category: 'roadmap.category.tools', completed: true },
   { id: 'grid', label: 'roadmap.item.grid', category: 'roadmap.category.canvas', completed: true },
-  { id: 'clipping-mask', label: 'roadmap.item.clippingMask', category: 'roadmap.category.masksLayers', completed: false },
-  { id: 'mask', label: 'roadmap.item.mask', category: 'roadmap.category.masksLayers', completed: false },
+  { id: 'clipping-mask', label: 'roadmap.item.clippingMask', category: 'roadmap.category.masksLayers', completed: true },
+  { id: 'mask', label: 'roadmap.item.mask', category: 'roadmap.category.masksLayers', completed: true },
   { id: 'layer-style', label: 'roadmap.item.layerStyle', category: 'roadmap.category.masksLayers', completed: false },
   { id: 'dither-brush', label: 'roadmap.item.ditherBrush', category: 'roadmap.category.tools', completed: false },
   { id: 'text', label: 'roadmap.item.text', category: 'roadmap.category.tools', completed: false },
   { id: 'pencil-smoothing', label: 'roadmap.item.pencilSmoothing', category: 'roadmap.category.tools', completed: false },
-  { id: 'pressure', label: 'roadmap.item.pressure', category: 'roadmap.category.input', completed: false },
+  { id: 'pressure', label: 'roadmap.item.pressure', category: 'roadmap.category.input', completed: true },
   { id: 'slice', label: 'roadmap.item.slice', category: 'roadmap.category.tools', completed: false },
   { id: 'tile', label: 'roadmap.item.tile', category: 'roadmap.category.canvas', completed: false },
   { id: 'gif-bead-export', label: 'roadmap.item.beadExport', category: 'roadmap.category.export', completed: false },
   { id: 'theme', label: 'roadmap.item.theme', category: 'roadmap.category.interface', completed: false },
-  { id: 'extension-support', label: 'roadmap.item.extensionSupport', category: 'roadmap.category.ecosystem', completed: false }
+  { id: 'extension-support', label: 'roadmap.item.extensionSupport', category: 'roadmap.category.ecosystem', completed: false },
+  { id: 'indexed-mode', label: 'roadmap.item.indexedMode', category: 'roadmap.category.export', completed: true },
+  { id: 'timelapse-animation', label: 'roadmap.item.timelapseAnimation', category: 'roadmap.category.animation', completed: true },
+  { id: 'custom-brush', label: 'roadmap.item.customBrush', category: 'roadmap.category.input', completed: true },
+  { id: 'sprite-sheet', label: 'roadmap.item.spriteSheet', category: 'roadmap.category.export', completed: true },
+  { id: 'animation-tags', label: 'roadmap.item.animationTags', category: 'roadmap.category.animation', completed: false }
 ]
 
 export function FutureRoadmapDialog({ onClose }: { onClose: () => void }) {

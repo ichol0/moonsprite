@@ -9,7 +9,51 @@ interface PersistedFloatingPosition extends FloatingPosition {
   viewportHeight?: number
 }
 
-interface ViewportSize { width: number; height: number }
+export interface ViewportSize { width: number; height: number }
+export interface FloatingAnchor { left: number; top: number; width: number; height: number }
+
+export interface FloatingResizeOptions {
+  responsiveToViewport: boolean
+  followViewportRight: boolean
+  userPositioned: boolean
+  initialRightOffset: number
+  minWidth: number
+  minHeight: number
+}
+
+const clampToRange = (value: number, minimum: number, maximum: number): number => Math.max(minimum, Math.min(maximum, value))
+const viewportAnchor = (viewport: ViewportSize): FloatingAnchor => ({ left: 0, top: 0, width: viewport.width, height: viewport.height })
+
+function remapCenterToAnchor(center: number, previousAnchorStart: number, previousAnchorSize: number, nextAnchorStart: number, nextAnchorSize: number): number {
+  if (previousAnchorSize <= 0 || nextAnchorSize <= 0) return center
+  const previousAnchorCenter = previousAnchorStart + previousAnchorSize / 2
+  const nextAnchorCenter = nextAnchorStart + nextAnchorSize / 2
+  const offset = center - previousAnchorCenter
+  const ratio = clampToRange(Math.abs(offset) / (previousAnchorSize / 2), 0, 1)
+  return nextAnchorCenter + Math.sign(offset) * ratio * (nextAnchorSize / 2)
+}
+
+export function resizeFloatingPosition(position: FloatingPosition, previousViewport: ViewportSize, viewport: ViewportSize, options: FloatingResizeOptions, measuredSize: { width?: number; height?: number } = {}, previousAnchor = viewportAnchor(previousViewport), nextAnchor = viewportAnchor(viewport)): FloatingPosition {
+  const width = position.width
+  const height = position.height
+  const visibleWidth = width ?? measuredSize.width ?? options.minWidth
+  const visibleHeight = height ?? measuredSize.height ?? options.minHeight
+  const rawX = options.responsiveToViewport
+    ? remapCenterToAnchor(position.x + visibleWidth / 2, previousAnchor.left, previousAnchor.width, nextAnchor.left, nextAnchor.width) - visibleWidth / 2
+    : options.followViewportRight && !options.userPositioned
+      ? viewport.width - options.initialRightOffset
+      : position.x
+  const rawY = options.responsiveToViewport
+    ? remapCenterToAnchor(position.y + visibleHeight / 2, previousAnchor.top, previousAnchor.height, nextAnchor.top, nextAnchor.height) - visibleHeight / 2
+    : position.y
+  const next: FloatingPosition = {
+    x: clampToRange(rawX, 0, Math.max(0, viewport.width - visibleWidth)),
+    y: clampToRange(rawY, 0, Math.max(0, viewport.height - visibleHeight))
+  }
+  if (width !== undefined) next.width = width
+  if (height !== undefined) next.height = height
+  return next
+}
 
 export function loadFloatingPosition(key: string | undefined, initialPosition: FloatingPosition | null, viewport: ViewportSize, responsiveToViewport: boolean, forceDocked: boolean, storage?: Storage): FloatingPosition | null {
   if (forceDocked || !key) return forceDocked ? null : initialPosition
@@ -18,15 +62,17 @@ export function loadFloatingPosition(key: string | undefined, initialPosition: F
     if (stored && Number.isFinite(stored.x) && Number.isFinite(stored.y)) {
       const scaleX = responsiveToViewport && stored.viewportWidth ? viewport.width / stored.viewportWidth : 1
       const scaleY = responsiveToViewport && stored.viewportHeight ? viewport.height / stored.viewportHeight : 1
-      const scaledWidth = typeof stored.width === 'number' && Number.isFinite(stored.width) ? stored.width * scaleX : undefined
-      const scaledHeight = typeof stored.height === 'number' && Number.isFinite(stored.height) ? stored.height * scaleY : undefined
-      const width = scaledWidth === undefined ? undefined : scaledWidth > viewport.width * 1.25 ? initialPosition?.width ?? 280 : Math.max(180, Math.min(viewport.width - 12, scaledWidth))
-      const height = scaledHeight === undefined ? undefined : scaledHeight > viewport.height * 1.25 ? initialPosition?.height ?? 240 : Math.max(120, Math.min(viewport.height - 12, scaledHeight))
+      const storedWidth = typeof stored.width === 'number' && Number.isFinite(stored.width) ? stored.width : undefined
+      const storedHeight = typeof stored.height === 'number' && Number.isFinite(stored.height) ? stored.height : undefined
+      const width = storedWidth === undefined ? undefined : storedWidth > viewport.width * 1.25 ? initialPosition?.width ?? 280 : Math.max(180, Math.min(viewport.width - 12, storedWidth))
+      const height = storedHeight === undefined ? undefined : storedHeight > viewport.height * 1.25 ? initialPosition?.height ?? 240 : Math.max(120, Math.min(viewport.height - 12, storedHeight))
       const measuredWidth = width ?? 220
       const measuredHeight = height ?? 130
+      const x = responsiveToViewport ? (stored.x + measuredWidth / 2) * scaleX - measuredWidth / 2 : stored.x
+      const y = responsiveToViewport ? (stored.y + measuredHeight / 2) * scaleY - measuredHeight / 2 : stored.y
       return {
-        x: Math.max(0, Math.min(Math.max(0, viewport.width - measuredWidth), stored.x * scaleX)),
-        y: Math.max(0, Math.min(Math.max(0, viewport.height - measuredHeight), stored.y * scaleY)),
+        x: Math.max(0, Math.min(Math.max(0, viewport.width - measuredWidth), x)),
+        y: Math.max(0, Math.min(Math.max(0, viewport.height - measuredHeight), y)),
         width,
         height
       }

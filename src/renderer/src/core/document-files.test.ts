@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { createDocument } from './document'
-import { decodeDocumentFile, encodeDocumentForPath, fileExtension, fileNameFromPath, normalizeSaveDialogPath, sanitizeFileStem, saveImageDialogFormat, saveImageKindForPath } from './document-files'
+import { decodeDocumentFile, encodeDocumentForPath, fileExtension, fileNameFromPath, joinDirectoryPath, normalizeSaveDialogPath, sanitizeFileStem, saveImageDialogFormat, saveImageKindForPath } from './document-files'
 import { encodeProject } from './project-format'
 
 describe('document file rules', () => {
@@ -8,6 +8,7 @@ describe('document file rules', () => {
     expect(fileNameFromPath('C:\\gallery\\sprite.moonsprite')).toBe('sprite.moonsprite')
     expect(fileExtension('/gallery/sprite.ASEPRITE')).toBe('aseprite')
     expect(sanitizeFileStem('8*8.aseprite', 'untitled')).toBe('8_8')
+    expect(sanitizeFileStem('walk.gif', 'untitled')).toBe('walk')
   })
 
   it('keeps save dialog formats and suffixes consistent', () => {
@@ -15,6 +16,12 @@ describe('document file rules', () => {
     expect(saveImageKindForPath('sprite.jpeg')).toBe('jpeg')
     expect(normalizeSaveDialogPath('sprite.png', 'aseprite')).toBe('sprite.aseprite')
     expect(normalizeSaveDialogPath('sprite.ase', 'aseprite')).toBe('sprite.ase')
+  })
+
+  it('joins default directories without changing their platform separator style', () => {
+    expect(joinDirectoryPath('', 'sprite.png')).toBe('sprite.png')
+    expect(joinDirectoryPath('D:\\MoonSprite\\exports\\', 'sprite.png')).toBe('D:\\MoonSprite\\exports\\sprite.png')
+    expect(joinDirectoryPath('/opt/moonsprite/exports/', 'sprite.png')).toBe('/opt/moonsprite/exports/sprite.png')
   })
 
   it('restores MoonSprite file identity and encodes project saves', async () => {

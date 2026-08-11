@@ -41,6 +41,7 @@ interface EditorWorkspaceShellProps {
   onPanelDockChange: (id: WorkspacePanelId, dock: PanelDock) => void
   onPanelVisibilityChange: (id: WorkspacePanelId, visible: boolean) => void
   relativeLuminanceInPreview: boolean
+  onOpenColorReplacement: () => void
 }
 
 export const EditorWorkspaceShell = memo(function EditorWorkspaceShell({
@@ -74,7 +75,8 @@ export const EditorWorkspaceShell = memo(function EditorWorkspaceShell({
   panelDocks,
   onPanelDockChange,
   onPanelVisibilityChange,
-  relativeLuminanceInPreview
+  relativeLuminanceInPreview,
+  onOpenColorReplacement
 }: EditorWorkspaceShellProps) {
   const { t } = useI18n()
   useAnimationPlaybackClock(session.document.id)
@@ -83,7 +85,7 @@ export const EditorWorkspaceShell = memo(function EditorWorkspaceShell({
     {hasLeftDock && <aside ref={setLeftDockHost} className="left-panel-dock" data-panel-dock-zone="left" />}
     {hasLeftDock && <div className="left-dock-resizer" role="separator" aria-orientation="vertical" aria-label={t('workspaceDock.resizeLeft')} onPointerDown={onLeftDockResize}><span aria-hidden="true" /></div>}
     <section ref={workAreaRef} className={`work-area ${hasBottomDock ? 'has-bottom-layers' : ''}`} style={{ '--bottom-layers-height': `${bottomDockHeight}px` } as CSSProperties}>
-      <EditorToolOptions />
+      <EditorToolOptions onOpenColorReplacement={onOpenColorReplacement} />
       <EditorCanvasHost documentPaneLayout={documentPaneLayout} documentPanePreview={documentPanePreview} onDocumentPaneLayoutChange={onDocumentPaneLayoutChange} onDocumentPaneMove={onDocumentPaneMove} onDocumentPaneReturnToTabs={onDocumentPaneReturnToTabs} />
       {hasBottomDock && <div className="bottom-layers-resizer" role="separator" aria-orientation="horizontal" aria-label={t('workspaceDock.resizeBottom')} onPointerDown={onBottomDockResize}><span /></div>}
       {hasBottomDock && <div ref={setBottomDockHost} className="bottom-layers-dock" data-panel-dock-zone="bottom" />}

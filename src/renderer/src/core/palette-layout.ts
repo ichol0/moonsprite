@@ -1,9 +1,199 @@
 import type { RgbaColor } from '@shared/types'
 import { colorEquals } from './raster'
 
-export type PaletteSwatchSize = 'small' | 'medium' | 'large'
-export const PALETTE_SWATCH_PIXELS: Record<PaletteSwatchSize, number> = { small: 22, medium: 30, large: 40 }
+export type PaletteSwatchSize = 'tiny' | 'small' | 'medium' | 'large' | 'huge'
+export const PALETTE_SWATCH_PIXELS: Record<PaletteSwatchSize, number> = { tiny: 22, small: 30, medium: 40, large: 52, huge: 64 }
+export const PALETTE_SWATCH_GAP = 0
+export const PALETTE_GRID_COLUMNS = 8
 export const isPaletteDeleteKey = (key: string): boolean => key === 'Delete' || key === 'Backspace'
+
+export const normalizePaletteColumns = (value: unknown): number =>
+  typeof value === 'number' && Number.isSafeInteger(value) ? Math.max(1, Math.min(256, value)) : PALETTE_GRID_COLUMNS
+
+const paletteSlotCount = (minimum: number, columns: number): number =>
+  Math.max(columns, Math.ceil(Math.max(0, minimum) / columns) * columns)
+
+export const paletteOrderFromSlots = (slots: readonly (number | null)[]): number[] => {
+  const seen = new Set<number>()
+  return slots.flatMap((id) => {
+    if (id === null || seen.has(id)) return []
+    seen.add(id)
+    return [id]
+  })
+}
+
+export const normalizePaletteSlots = (
+  paletteIds: readonly number[],
+  paletteOrder: readonly number[],
+  source?: readonly unknown[],
+  requestedColumns = PALETTE_GRID_COLUMNS
+): Array<number | null> => {
+  const columns = normalizePaletteColumns(requestedColumns)
+  const paletteIdSet = new Set(paletteIds)
+  const visibleIds: number[] = []
+  const visibleIdSet = new Set<number>()
+  for (const id of paletteOrder) {
+    if (!paletteIdSet.has(id) || visibleIdSet.has(id)) continue
+    visibleIds.push(id)
+    visibleIdSet.add(id)
+  }
+  const visibleSet = new Set(visibleIds)
+  const slots = new Array<number | null>(paletteSlotCount(Math.max(source?.length ?? 0, visibleIds.length), columns)).fill(null)
+  const placed = new Set<number>()
+
+  if (source) {
+    for (let index = 0; index < Math.min(source.length, slots.length); index += 1) {
+      const id = source[index]
+      if (typeof id !== 'number' || !Number.isSafeInteger(id) || !visibleSet.has(id) || placed.has(id)) continue
+      slots[index] = id
+      placed.add(id)
+    }
+  }
+
+  for (const id of visibleIds) {
+    if (placed.has(id)) continue
+    let index = slots.indexOf(null)
+    if (index < 0) {
+      index = slots.length
+      slots.push(...new Array<number | null>(columns).fill(null))
+    }
+    slots[index] = id
+    placed.add(id)
+  }
+  return slots
+}
+
+export const addPaletteIdToSlots = (slots: readonly (number | null)[], id: number, requestedColumns = PALETTE_GRID_COLUMNS): Array<number | null> => {
+  if (slots.includes(id)) return [...slots]
+  const columns = normalizePaletteColumns(requestedColumns)
+  const next = [...slots]
+  const emptyIndex = next.indexOf(null)
+  if (emptyIndex >= 0) next[emptyIndex] = id
+  else next.push(id, ...new Array<number | null>(columns - 1).fill(null))
+  return next
+}
+
+export interface PaletteGridLayout {
+  slots: Array<number | null>
+  columns: number
+  rows: number
+}
+
+export const fitPaletteSlotsToGrid = (
+  slots: readonly (number | null)[],
+  sourceColumnCount: number,
+  requestedColumnCount: number,
+  requestedRowCount: number
+): PaletteGridLayout => {
+  const sourceColumns = normalizePaletteColumns(sourceColumnCount)
+  const entries = slots.flatMap((id, index) => id === null ? [] : [{ id, x: index % sourceColumns, y: Math.floor(index / sourceColumns) }])
+  const occupiedColumns = entries.reduce((maximum, entry) => Math.max(maximum, entry.x + 1), 1)
+  const occupiedRows = entries.reduce((maximum, entry) => Math.max(maximum, entry.y + 1), 1)
+  const columns = Math.max(normalizePaletteColumns(requestedColumnCount), occupiedColumns)
+  const rows = Math.max(1, Math.trunc(requestedRowCount), occupiedRows)
+  const next = new Array<number | null>(columns * rows).fill(null)
+  for (const entry of entries) next[entry.y * columns + entry.x] = entry.id
+  return { slots: next, columns, rows }
+}
+
+export const paletteGridCapacity = (width: number, height: number, swatchSize: number, gap = PALETTE_SWATCH_GAP, padding = 8): { columns: number; rows: number } => ({
+  columns: Math.max(1, Math.floor((Math.max(0, width - padding * 2) + gap) / (swatchSize + gap))),
+  rows: Math.max(1, Math.floor((Math.max(0, height - padding * 2) + gap) / (swatchSize + gap)))
+})
+
+export const paletteRangeIds = (slots: readonly (number | null)[], columns: number, anchorId: number, targetId: number): number[] => {
+  const normalizedColumns = normalizePaletteColumns(columns)
+  const anchorIndex = slots.indexOf(anchorId)
+  const targetIndex = slots.indexOf(targetId)
+  if (anchorIndex < 0 || targetIndex < 0) return [targetId]
+  const left = Math.min(anchorIndex % normalizedColumns, targetIndex % normalizedColumns)
+  const right = Math.max(anchorIndex % normalizedColumns, targetIndex % normalizedColumns)
+  const top = Math.min(Math.floor(anchorIndex / normalizedColumns), Math.floor(targetIndex / normalizedColumns))
+  const bottom = Math.max(Math.floor(anchorIndex / normalizedColumns), Math.floor(targetIndex / normalizedColumns))
+  const result: number[] = []
+  for (let y = top; y <= bottom; y += 1) for (let x = left; x <= right; x += 1) {
+    const id = slots[y * normalizedColumns + x]
+    if (id !== null) result.push(id)
+  }
+  return result
+}
+
+export const paletteSlotRange = (columns: number, startSlot: number, endSlot: number): { left: number; top: number; right: number; bottom: number } => {
+  const normalizedColumns = normalizePaletteColumns(columns)
+  const start = Math.max(0, Math.trunc(startSlot))
+  const end = Math.max(0, Math.trunc(endSlot))
+  return {
+    left: Math.min(start % normalizedColumns, end % normalizedColumns),
+    top: Math.min(Math.floor(start / normalizedColumns), Math.floor(end / normalizedColumns)),
+    right: Math.max(start % normalizedColumns, end % normalizedColumns),
+    bottom: Math.max(Math.floor(start / normalizedColumns), Math.floor(end / normalizedColumns))
+  }
+}
+
+export const paletteRangeIdsBySlots = (slots: readonly (number | null)[], columns: number, startSlot: number, endSlot: number): number[] => {
+  const range = paletteSlotRange(columns, startSlot, endSlot)
+  const result: number[] = []
+  for (let y = range.top; y <= range.bottom; y += 1) for (let x = range.left; x <= range.right; x += 1) {
+    const id = slots[y * normalizePaletteColumns(columns) + x]
+    if (id !== null && id !== undefined) result.push(id)
+  }
+  return result
+}
+
+export const repositionPaletteSlots = (
+  slots: readonly (number | null)[],
+  ids: readonly number[],
+  targetSlot: number,
+  anchorId: number,
+  requestedColumns = PALETTE_GRID_COLUMNS
+): Array<number | null> => {
+  const columns = normalizePaletteColumns(requestedColumns)
+  const selected = new Set(ids)
+  const moving = slots.flatMap((id, index) => id !== null && selected.has(id)
+    ? [{ id, index, x: index % columns, y: Math.floor(index / columns) }]
+    : [])
+  const anchor = moving.find((entry) => entry.id === anchorId) ?? moving[0]
+  if (!anchor) return [...slots]
+
+  const targetIndex = Math.max(0, Math.trunc(targetSlot))
+  const targetX = targetIndex % columns
+  const targetY = Math.floor(targetIndex / columns)
+  const minimumX = Math.min(...moving.map((entry) => entry.x))
+  const maximumX = Math.max(...moving.map((entry) => entry.x))
+  const minimumY = Math.min(...moving.map((entry) => entry.y))
+  const deltaX = Math.max(-minimumX, Math.min(columns - 1 - maximumX, targetX - anchor.x))
+  const deltaY = Math.max(-minimumY, targetY - anchor.y)
+  const destinations = moving.map((entry) => (entry.y + deltaY) * columns + entry.x + deltaX)
+  const requiredLength = Math.max(...destinations) + 1
+  const next = [...slots, ...new Array<number | null>(Math.max(0, paletteSlotCount(requiredLength, columns) - slots.length)).fill(null)]
+  const sourceSlots: number[] = []
+  for (let index = 0; index < next.length; index += 1) {
+    if (next[index] !== null && selected.has(next[index]!)) {
+      sourceSlots.push(index)
+      next[index] = null
+    }
+  }
+
+  const displaced: number[] = []
+  for (let offset = 0; offset < moving.length; offset += 1) {
+    const destination = destinations[offset]
+    const occupant = next[destination]
+    if (occupant !== null) displaced.push(occupant)
+    next[destination] = moving[offset].id
+  }
+
+  const destinationSet = new Set(destinations)
+  for (const id of displaced) {
+    let destination = sourceSlots.find((index) => !destinationSet.has(index) && next[index] === null)
+    if (destination === undefined) destination = next.findIndex((entry, index) => entry === null && !destinationSet.has(index))
+    if (destination < 0) {
+      destination = next.length
+      next.push(...new Array<number | null>(columns).fill(null))
+    }
+    next[destination] = id
+  }
+  return next
+}
 
 export const paletteColorsEqual = (left: RgbaColor[], right: RgbaColor[]): boolean =>
   left.length === right.length && left.every((color, index) => colorEquals(color, right[index]))
@@ -22,22 +212,3 @@ export const paletteColorRoles = (color: RgbaColor, primary: RgbaColor, secondar
   primary: colorEquals(color, primary),
   secondary: colorEquals(color, secondary)
 })
-
-export const reorderPalettePreview = (order: number[], ids: number[], targetSlot: number): number[] => {
-  const selected = new Set(ids)
-  const moving = order.filter((id) => selected.has(id))
-  const remaining = order.filter((id) => !selected.has(id))
-  if (moving.length === 0) return order
-  remaining.splice(Math.max(0, Math.min(remaining.length, targetSlot)), 0, ...moving)
-  return remaining
-}
-
-export const paletteReorderTarget = (order: number[], ids: number[], preview: number[]): { id: number; insertAfter: boolean } | null => {
-  const selected = new Set(ids)
-  const movingCount = order.filter((id) => selected.has(id)).length
-  const firstMovingIndex = preview.findIndex((id) => selected.has(id))
-  if (movingCount === 0 || firstMovingIndex < 0 || movingCount === preview.length) return null
-  return firstMovingIndex === 0
-    ? { id: preview[movingCount], insertAfter: false }
-    : { id: preview[firstMovingIndex - 1], insertAfter: true }
-}

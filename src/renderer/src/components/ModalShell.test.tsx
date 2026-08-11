@@ -1,4 +1,5 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { createPortal } from 'react-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ModalShell } from './ModalShell'
 
@@ -84,6 +85,18 @@ describe('ModalShell', () => {
 
     fireEvent.pointerDown(screen.getByText('拖动弹窗'), { button: 0, pointerId: 7, clientX: 140, clientY: 100 })
     expect(capture).toHaveBeenCalledWith(7)
+  })
+
+  it('does not drag the parent modal from a portal-owned child title bar', () => {
+    const PortalEditor = () => createPortal(<section role="dialog" aria-label="颜色编辑"><header>颜色编辑标题</header></section>, document.body)
+    render(<ModalShell storageKey="portal-child" role="dialog" aria-label="父弹窗"><header>父弹窗标题</header><PortalEditor /></ModalShell>)
+    const parent = screen.getByRole('dialog', { name: '父弹窗' })
+    const capture = vi.fn()
+    Object.defineProperty(parent, 'setPointerCapture', { value: capture })
+
+    fireEvent.pointerDown(screen.getByText('颜色编辑标题'), { button: 0, pointerId: 11, clientX: 40, clientY: 40 })
+
+    expect(capture).not.toHaveBeenCalled()
   })
 
   it('moves without rerender jitter and keeps only the title reachable below the viewport', () => {

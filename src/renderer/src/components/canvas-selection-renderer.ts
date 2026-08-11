@@ -38,6 +38,18 @@ export function selectionScreenBox(
   }
 }
 
+export function selectionScreenPoint(
+  stageWidth: number,
+  stageHeight: number,
+  documentWidth: number,
+  documentHeight: number,
+  view: ViewState,
+  point: { x: number; y: number }
+): { x: number; y: number } {
+  const origin = viewCanvasOrigin(stageWidth, stageHeight, documentWidth, documentHeight, view)
+  return { x: origin.x + point.x * view.zoom, y: origin.y + point.y * view.zoom }
+}
+
 interface DrawSelectionOptions {
   context: RasterContext2D
   selection: SelectionMask
@@ -51,6 +63,7 @@ interface DrawSelectionOptions {
   outlineLight: string
   showOutline?: boolean
   showHandles?: boolean
+  handlePoints?: Array<{ x: number; y: number }>
 }
 
 export function drawSelectionOutline({
@@ -65,7 +78,8 @@ export function drawSelectionOutline({
   outlineDark,
   outlineLight,
   showOutline = true,
-  showHandles = true
+  showHandles = true,
+  handlePoints
 }: DrawSelectionOptions): SelectionBoundaryCache {
   const phase = Math.floor(performance.now() / 180) % 8
   let nextCache = cache
@@ -129,7 +143,8 @@ export function drawSelectionOutline({
     ['w', box.x, box.y + box.height / 2], ['e', box.x + box.width, box.y + box.height / 2],
     ['sw', box.x, box.y + box.height], ['s', box.x + box.width / 2, box.y + box.height], ['se', box.x + box.width, box.y + box.height]
   ]
-  for (const [, x, y] of handles) {
+  const renderedHandles = handlePoints ?? handles.map(([, x, y]) => ({ x, y }))
+  for (const { x, y } of renderedHandles) {
     context.fillStyle = outlineLight
     context.fillRect(Math.round(x) - 4, Math.round(y) - 4, 8, 8)
     context.strokeStyle = outlineDark

@@ -1,5 +1,5 @@
-import type { AnimationCel, AnimationCelSurface, AnimationFrame, AnimationTimeline, PaletteEntry, RasterLayer, SpriteDocument } from '@shared/types'
-import { getLayerStorageOrigin, setLayerStorageOrigin } from './document'
+import type { AnimationCel, AnimationCelSurface, AnimationFrame, AnimationGroupMask, AnimationTimeline, LayerMask, PaletteEntry, RasterLayer, SelectionMask, SpriteDocument } from '@shared/types'
+import { animationMaskAt, createId, getLayerStorageOrigin, resolveAnimationMask, setLayerStorageOrigin } from './document'
 
 export const DEFAULT_FRAME_DURATION = 100
 export const MAX_ANIMATION_FRAME_DURATION = 60_000
@@ -7,6 +7,7 @@ export const MAX_ANIMATION_FRAME_DURATION = 60_000
 export const createDefaultAnimationTimeline = (): AnimationTimeline => ({
   frames: [{ id: 'frame-1', duration: DEFAULT_FRAME_DURATION }],
   cels: [],
+  groupMasks: [],
   activeFrameId: 'frame-1',
   loop: true
 })
@@ -40,6 +41,68 @@ const normalizeSurface = (value: unknown): AnimationCelSurface | undefined => {
   return undefined
 }
 
+const normalizeLayerMask = (value: unknown, ownerId: string, ownerKind: LayerMask['ownerKind'] = 'cel'): LayerMask | undefined => {
+  if (!value || typeof value !== 'object') return undefined
+  const candidate = value as Partial<LayerMask>
+  const width = Number(candidate.width)
+  const height = Number(candidate.height)
+  if (typeof candidate.id !== 'string' || !candidate.id || !Number.isSafeInteger(width) || !Number.isSafeInteger(height) || width < 1 || height < 1) return undefined
+  if (!(candidate.pixels instanceof Uint8ClampedArray) || candidate.pixels.length !== width * height * 4) return undefined
+  return {
+    id: candidate.id,
+    name: typeof candidate.name === 'string' ? candidate.name : '',
+    description: typeof candidate.description === 'string' ? candidate.description : '',
+    visible: true,
+    locked: false,
+    opacity: 1,
+    blendMode: 'normal',
+    width,
+    height,
+    offsetX: Number.isFinite(candidate.offsetX) ? Math.trunc(Number(candidate.offsetX)) : 0,
+    offsetY: Number.isFinite(candidate.offsetY) ? Math.trunc(Number(candidate.offsetY)) : 0,
+    format: 'rgba',
+    pixels: candidate.pixels,
+    ownerKind,
+    ownerId,
+    ...(typeof candidate.linkedMaskId === 'string' ? { linkedMaskId: candidate.linkedMaskId } : {})
+  }
+}
+
+const normalizeGroupMasks = (value: unknown, frameIds: Set<string>): AnimationGroupMask[] => {
+  if (!Array.isArray(value)) return []
+  const result: AnimationGroupMask[] = []
+  const slots = new Set<string>()
+  const maskIds = new Set<string>()
+  for (const item of value) {
+    if (!item || typeof item !== 'object') continue
+    const candidate = item as Partial<AnimationGroupMask>
+    if (typeof candidate.groupId !== 'string' || !candidate.groupId || typeof candidate.frameId !== 'string' || !frameIds.has(candidate.frameId)) continue
+    const slot = `${candidate.groupId}\u0000${candidate.frameId}`
+    if (slots.has(slot)) continue
+    const mask = normalizeLayerMask(candidate.mask, candidate.groupId, 'group')
+    if (!mask || maskIds.has(mask.id)) continue
+    slots.add(slot)
+    maskIds.add(mask.id)
+    result.push({ groupId: candidate.groupId, frameId: candidate.frameId, mask })
+  }
+  return result
+}
+
+const cloneLayerMaskForCel = (mask: LayerMask, ownerId: string, id = mask.id): LayerMask => ({
+  ...mask,
+  id,
+  ownerKind: 'cel',
+  ownerId,
+  linkedMaskId: id === mask.id ? mask.linkedMaskId : null,
+  pixels: new Uint8ClampedArray(mask.pixels)
+})
+
+export const cloneAnimationGroupMask = (entry: AnimationGroupMask, groupId = entry.groupId, frameId = entry.frameId, maskId = entry.mask.id): AnimationGroupMask => ({
+  groupId,
+  frameId,
+  mask: { ...entry.mask, id: maskId, ownerKind: 'group', ownerId: groupId, linkedMaskId: maskId === entry.mask.id ? entry.mask.linkedMaskId : null, pixels: new Uint8ClampedArray(entry.mask.pixels) }
+})
+
 const normalizeCels = (value: unknown, frameIds: Set<string>): AnimationCel[] => {
   if (!Array.isArray(value)) return []
   const result: AnimationCel[] = []
@@ -55,13 +118,15 @@ const normalizeCels = (value: unknown, frameIds: Set<string>): AnimationCel[] =>
     ids.add(candidate.id)
     slots.add(slot)
     const surface = normalizeSurface(candidate.surface)
+    const mask = normalizeLayerMask(candidate.mask, candidate.id)
     result.push({
       id: candidate.id,
       layerId: candidate.layerId,
       frameId: candidate.frameId,
       ...(typeof candidate.linkedCelId === 'string' ? { linkedCelId: candidate.linkedCelId } : {}),
       ...(Number.isFinite(candidate.opacity) ? { opacity: Math.max(0, Math.min(1, Number(candidate.opacity))) } : {}),
-      ...(surface ? { surface } : {})
+      ...(surface ? { surface } : {}),
+      ...(mask ? { mask } : {})
     })
   }
   return result
@@ -80,6 +145,7 @@ export const normalizeAnimationTimeline = (value: unknown): AnimationTimeline =>
   return {
     frames,
     cels: normalizeCels(candidate.cels, frameIds),
+    groupMasks: normalizeGroupMasks(candidate.groupMasks, frameIds),
     activeFrameId: typeof candidate.activeFrameId === 'string' && frameIds.has(candidate.activeFrameId) ? candidate.activeFrameId : frames[0].id,
     loop: candidate.loop !== false
   }
@@ -90,6 +156,9 @@ export const animationFrameAt = (timeline: AnimationTimeline, frameId: string): 
 
 export const animationCelAt = (timeline: AnimationTimeline, layerId: string, frameId: string): AnimationCel | null =>
   timeline.cels.find((cel) => cel.layerId === layerId && cel.frameId === frameId) ?? null
+
+export const animationGroupMaskAt = (timeline: AnimationTimeline, groupId: string, frameId: string): LayerMask | null =>
+  animationMaskAt(timeline, groupId, frameId)
 
 export interface AnimationCelLookup {
   at: (layerId: string, frameId: string) => AnimationCel | null
@@ -145,6 +214,53 @@ export const animationCelHasContent = (cel: AnimationCel | null, palette: readon
   if (palette.length === 0) return cel.surface.pixels.some((pixel) => pixel !== 0)
   const opaqueIds = new Set(palette.filter((entry) => entry.color.a > 0).map((entry) => entry.id))
   return cel.surface.pixels.some((pixel) => opaqueIds.has(pixel))
+}
+
+/** Builds a canvas-clipped selection from every visible pixel in one cel. */
+export const animationCelContentSelection = (cel: AnimationCel | null, palette: readonly PaletteEntry[], canvasWidth: number, canvasHeight: number): SelectionMask | null => {
+  const surface = cel?.surface
+  const documentWidth = Math.max(0, Math.trunc(canvasWidth))
+  const documentHeight = Math.max(0, Math.trunc(canvasHeight))
+  if (!surface || documentWidth < 1 || documentHeight < 1) return null
+  const sourceLeft = Math.max(0, -surface.offsetX)
+  const sourceTop = Math.max(0, -surface.offsetY)
+  const sourceRight = Math.min(surface.width, documentWidth - surface.offsetX)
+  const sourceBottom = Math.min(surface.height, documentHeight - surface.offsetY)
+  if (sourceRight <= sourceLeft || sourceBottom <= sourceTop) return null
+
+  const opaquePaletteIds = surface.format === 'indexed'
+    ? new Set(palette.filter((entry) => entry.color.a > 0).map((entry) => entry.id))
+    : null
+  const opaqueAt = surface.format === 'rgba'
+    ? (x: number, y: number): boolean => surface.pixels[(y * surface.width + x) * 4 + 3] > 0
+    : palette.length === 0
+      ? (x: number, y: number): boolean => surface.pixels[y * surface.width + x] !== 0
+      : (x: number, y: number): boolean => opaquePaletteIds!.has(surface.pixels[y * surface.width + x])
+
+  let minX = sourceRight
+  let minY = sourceBottom
+  let maxX = -1
+  let maxY = -1
+  for (let y = sourceTop; y < sourceBottom; y += 1) for (let x = sourceLeft; x < sourceRight; x += 1) {
+    if (!opaqueAt(x, y)) continue
+    if (x < minX) minX = x
+    if (x > maxX) maxX = x
+    if (y < minY) minY = y
+    if (y > maxY) maxY = y
+  }
+  if (maxX < minX || maxY < minY) return null
+
+  const width = maxX - minX + 1
+  const height = maxY - minY + 1
+  const mask = new Uint8Array(width * height)
+  let selected = 0
+  for (let y = minY; y <= maxY; y += 1) for (let x = minX; x <= maxX; x += 1) {
+    if (!opaqueAt(x, y)) continue
+    mask[(y - minY) * width + x - minX] = 1
+    selected += 1
+  }
+  const selection = { x: surface.offsetX + minX, y: surface.offsetY + minY, width, height }
+  return selected === width * height ? selection : { ...selection, mask }
 }
 
 export const animationCelKey = (layerId: string, frameId: string): string => `${layerId}:${frameId}`
@@ -290,7 +406,8 @@ export const resizeAnimationCelsAt = (document: SpriteDocument, offsetX: number,
 
 export const cloneAnimationCel = (cel: AnimationCel): AnimationCel => ({
   ...cel,
-  surface: cel.surface ? cloneAnimationCelSurface(cel.surface) : undefined
+  surface: cel.surface ? cloneAnimationCelSurface(cel.surface) : undefined,
+  mask: cel.mask ? cloneLayerMaskForCel(cel.mask, cel.id) : undefined
 })
 
 /** Create an isolated document snapshot for read-only animation previewing. */
@@ -306,12 +423,15 @@ export const cloneDocumentForAnimationFrame = (document: SpriteDocument, frameId
     groups: document.groups.map((group) => ({ ...group })),
     palette: document.palette.map((entry) => ({ ...entry, color: { ...entry.color } })),
     paletteOrder: [...document.paletteOrder],
+    paletteSlots: document.paletteSlots ? [...document.paletteSlots] : undefined,
+    paletteColumns: document.paletteColumns,
     customBrushes: document.customBrushes?.map((brush) => ({ ...brush, coverage: brush.coverage.slice(), colors: brush.colors?.slice() })),
     animation: document.animation
       ? {
           ...document.animation,
           frames: document.animation.frames.map((frame) => ({ ...frame })),
-          cels: document.animation.cels.map((cel) => ({ ...cel, surface: cel.surface ? shareAnimationCelSurface(cel.surface) : undefined }))
+          cels: document.animation.cels.map((cel) => ({ ...cel, surface: cel.surface ? shareAnimationCelSurface(cel.surface) : undefined, mask: cel.mask ? { ...cel.mask, pixels: cel.mask.pixels } : undefined })),
+          groupMasks: (document.animation.groupMasks ?? []).map((entry) => ({ ...entry, mask: { ...entry.mask, pixels: entry.mask.pixels } }))
         }
       : undefined
   }
@@ -397,6 +517,27 @@ const normalizeAnimationCelLinks = (timeline: AnimationTimeline): void => {
     cel.linkedCelId = current.id
     cel.surface = current.surface
     cel.opacity = current.opacity
+    if (!current.mask && cel.mask) current.mask = cloneLayerMaskForCel(cel.mask, current.id, `mask-${current.id}`)
+    if (current.mask) {
+      if (!cel.mask) cel.mask = cloneLayerMaskForCel(current.mask, cel.id, `mask-${cel.id}`)
+      cel.mask.linkedMaskId = current.mask.id
+    } else delete cel.mask
+  }
+}
+
+const normalizeAnimationMaskLinks = (timeline: AnimationTimeline): void => {
+  const masks = [...timeline.cels.flatMap((cel) => cel.mask ? [cel.mask] : []), ...(timeline.groupMasks ?? []).map((entry) => entry.mask)]
+  const byId = new Map(masks.map((mask) => [mask.id, mask]))
+  for (const mask of masks) {
+    if (!mask.linkedMaskId) continue
+    const linked = byId.get(mask.linkedMaskId)
+    if (!linked || linked.id === mask.id) mask.linkedMaskId = null
+  }
+  for (const mask of masks) {
+    if (!mask.linkedMaskId) continue
+    const resolved = resolveAnimationMask(timeline, mask)
+    if (!resolved || resolved === mask) mask.linkedMaskId = null
+    else mask.linkedMaskId = resolved.id
   }
 }
 
@@ -406,7 +547,9 @@ export const ensureAnimationDocument = (document: SpriteDocument): AnimationTime
   document.animation = timeline
   const frameIds = new Set(timeline.frames.map((frame) => frame.id))
   const layers = new Map(document.layers.map((layer) => [layer.id, layer]))
+  const groups = new Set(document.groups.map((group) => group.id))
   timeline.cels = timeline.cels.filter((cel) => frameIds.has(cel.frameId) && layers.has(cel.layerId))
+  timeline.groupMasks = (timeline.groupMasks ?? []).filter((entry) => frameIds.has(entry.frameId) && groups.has(entry.groupId))
   const celsBySlot = new Map(timeline.cels.map((cel) => [celSlotKey(cel.layerId, cel.frameId), cel]))
   const nextCelId = createAnimationIdAllocator(timeline, 'cel')
   for (const layer of document.layers) {
@@ -434,6 +577,7 @@ export const ensureAnimationDocument = (document: SpriteDocument): AnimationTime
     }
   }
   normalizeAnimationCelLinks(timeline)
+  normalizeAnimationMaskLinks(timeline)
   return timeline
 }
 
@@ -456,16 +600,22 @@ export const connectAnimationCels = (document: SpriteDocument, celIds: readonly 
     const firstContent = cels.find((cel) => animationCelHasContent(resolveAnimationCel(timeline, cel), document.palette))
     if (!firstContent) continue
     const source = resolveAnimationCel(timeline, firstContent) ?? firstContent
+    const sourceMask = source.mask ?? cels.map((cel) => animationMaskAt(timeline, cel.layerId, cel.frameId)).find((mask): mask is LayerMask => Boolean(mask))
+    if (!source.mask && sourceMask) source.mask = cloneLayerMaskForCel(sourceMask, source.id, `mask-${source.id}`)
     for (const cel of cels) {
       if (cel.id === source.id) {
         if (cel.linkedCelId) changed = true
         cel.linkedCelId = null
         continue
       }
-      if (cel.linkedCelId !== source.id || cel.surface !== source.surface || cel.opacity !== source.opacity) changed = true
+      if (cel.linkedCelId !== source.id || cel.surface !== source.surface || cel.opacity !== source.opacity || cel.mask?.linkedMaskId !== source.mask?.id) changed = true
       cel.linkedCelId = source.id
       cel.surface = source.surface
       cel.opacity = source.opacity
+      if (source.mask) {
+        if (!cel.mask) cel.mask = cloneLayerMaskForCel(source.mask, cel.id, `mask-${cel.id}`)
+        cel.mask.linkedMaskId = source.mask.id
+      } else delete cel.mask
     }
   }
   normalizeAnimationCelLinks(timeline)
@@ -493,8 +643,10 @@ export const disconnectAnimationCels = (document: SpriteDocument, celIds: readon
     if ((!selected.has(cel.id) && !selectedThroughSource) || !cel.linkedCelId) continue
     const source = resolveAnimationCel(timeline, cel)
     if (!source) continue
+    const resolvedMask = animationMaskAt(timeline, cel.layerId, cel.frameId)
     cel.surface = source.surface ? cloneAnimationCelSurface(source.surface) : undefined
     cel.opacity = source.opacity
+    cel.mask = resolvedMask ? cloneLayerMaskForCel(resolvedMask, cel.id, `mask-${cel.id}`) : undefined
     cel.linkedCelId = null
     changed = true
   }
@@ -511,6 +663,38 @@ export const syncActiveAnimationFrame = (document: SpriteDocument): void => {
 export const refreshActiveAnimationFrame = (document: SpriteDocument): void => {
   const timeline = ensureAnimationDocument(document)
   applyFrameSurfaces(document, timeline)
+}
+
+export const animationCelOffsetsForKeys = (document: SpriteDocument, keys: readonly string[]): Record<string, { x: number; y: number }> => {
+  const timeline = ensureAnimationDocument(document)
+  const lookup = createAnimationCelLookup(timeline)
+  const offsets: Record<string, { x: number; y: number }> = {}
+  for (const key of keys) {
+    const target = parseAnimationCelKey(key)
+    if (!target) continue
+    const cel = lookup.resolve(lookup.at(target.layerId, target.frameId))
+    if (!cel?.surface) continue
+    offsets[key] = { x: cel.surface.offsetX, y: cel.surface.offsetY }
+  }
+  return offsets
+}
+
+export const setAnimationCelOffsetsForKeys = (document: SpriteDocument, offsets: Readonly<Record<string, { x: number; y: number }>>): void => {
+  const timeline = ensureAnimationDocument(document)
+  const lookup = createAnimationCelLookup(timeline)
+  for (const [key, offset] of Object.entries(offsets)) {
+    const target = parseAnimationCelKey(key)
+    if (!target) continue
+    const cel = lookup.resolve(lookup.at(target.layerId, target.frameId))
+    if (!cel?.surface) continue
+    cel.surface.offsetX = offset.x
+    cel.surface.offsetY = offset.y
+  }
+  applyFrameSurfaces(document, timeline)
+}
+
+export const setAnimationCelOffsets = (document: SpriteDocument, frameId: string, offsets: Readonly<Record<string, { x: number; y: number }>>): void => {
+  setAnimationCelOffsetsForKeys(document, Object.fromEntries(Object.entries(offsets).map(([layerId, offset]) => [animationCelKey(layerId, frameId), offset])))
 }
 
 export const activateAnimationFrame = (document: SpriteDocument, frameId: string): boolean => {
@@ -547,8 +731,14 @@ export const duplicateAnimationFrame = (document: SpriteDocument): string => {
   const nextCelId = createAnimationIdAllocator(timeline, 'cel')
   for (const layer of document.layers) {
     const sourceCel = sourceCels.get(layer.id)
-    const source = sourceCel?.surface ?? blankSurfaceFromLayer(layer)
-    timeline.cels.push({ id: nextCelId(), layerId: layer.id, frameId: id, opacity: sourceCel?.opacity ?? layer.opacity, surface: cloneAnimationCelSurface(source) })
+    const resolvedSourceCel = resolveAnimationCel(timeline, sourceCel ?? null)
+    const source = resolvedSourceCel?.surface ?? blankSurfaceFromLayer(layer)
+    const celId = nextCelId()
+    const sourceMask = animationMaskAt(timeline, layer.id, sourceId)
+    timeline.cels.push({ id: celId, layerId: layer.id, frameId: id, opacity: resolvedSourceCel?.opacity ?? layer.opacity, surface: cloneAnimationCelSurface(source), mask: sourceMask ? cloneLayerMaskForCel(sourceMask, celId, `mask-${celId}`) : undefined })
+  }
+  for (const entry of (timeline.groupMasks ?? []).filter((candidate) => candidate.frameId === sourceId)) {
+    timeline.groupMasks!.push(cloneAnimationGroupMask(entry, entry.groupId, id, createId('mask')))
   }
   timeline.activeFrameId = id
   applyFrameSurfaces(document, timeline)
@@ -563,6 +753,7 @@ export const deleteAnimationFrame = (document: SpriteDocument, frameId = documen
   syncFrameSurfaces(document, timeline)
   timeline.frames.splice(index, 1)
   timeline.cels = timeline.cels.filter((cel) => cel.frameId !== frameId)
+  timeline.groupMasks = (timeline.groupMasks ?? []).filter((entry) => entry.frameId !== frameId)
   if (timeline.activeFrameId === frameId) {
     timeline.activeFrameId = timeline.frames[Math.min(index, timeline.frames.length - 1)].id
     applyFrameSurfaces(document, timeline)
@@ -595,13 +786,16 @@ export const cloneAnimationCelsForLayer = (document: SpriteDocument, sourceLayer
   const nextCelId = createAnimationIdAllocator(timeline, 'cel')
   for (const frame of timeline.frames) {
     const sourceCel = sourceCels.get(frame.id)
-    const source = sourceCel?.surface
+    const resolvedSourceCel = resolveAnimationCel(timeline, sourceCel ?? null)
+    const source = resolvedSourceCel?.surface
+    const celId = nextCelId()
     timeline.cels.push({
-      id: nextCelId(),
+      id: celId,
       layerId: targetLayer.id,
       frameId: frame.id,
       opacity: sourceCel?.opacity ?? targetLayer.opacity,
-      surface: source ? cloneAnimationCelSurface(source) : blankSurfaceFromLayer(targetLayer)
+      surface: source ? cloneAnimationCelSurface(source) : blankSurfaceFromLayer(targetLayer),
+      mask: animationMaskAt(timeline, sourceLayerId, frame.id) ? cloneLayerMaskForCel(animationMaskAt(timeline, sourceLayerId, frame.id)!, celId, `mask-${celId}`) : undefined
     })
   }
   const active = animationCelAt(timeline, targetLayer.id, timeline.activeFrameId)
@@ -621,7 +815,7 @@ export const restoreAnimationCels = (document: SpriteDocument, cels: readonly An
   const incomingSlots = new Set(cels.map((cel) => `${cel.layerId}:${cel.frameId}`))
   timeline.cels = timeline.cels.filter((cel) => !incomingSlots.has(`${cel.layerId}:${cel.frameId}`))
   for (const cel of cels) {
-    timeline.cels.push({ ...cel, surface: cel.surface ? cloneAnimationCelSurface(cel.surface) : undefined })
+    timeline.cels.push(cloneAnimationCel(cel))
   }
   refreshActiveAnimationFrame(document)
 }

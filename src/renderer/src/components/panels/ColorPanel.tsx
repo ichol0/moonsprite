@@ -13,7 +13,7 @@ export function ColorPanel({ session, docked = false, onDockDragStart, onPanelCo
   const setPrimary = useWorkspace((state) => state.setPrimaryColor)
   const setSecondary = useWorkspace((state) => state.setSecondaryColor)
   const addPaletteColor = useWorkspace((state) => state.addPaletteColor)
-  const floating = useFloatingPanel(null, false, true, 'moonsprite.color-panel.v1', false, onFloatingDock, docked)
+  const floating = useFloatingPanel(null, false, true, 'moonsprite.color-panel.v1', true, onFloatingDock, docked)
   const schemeButtonRef = useRef<HTMLButtonElement>(null)
   const schemeMenuRef = useRef<HTMLSpanElement>(null)
   const [schemeMenuOpen, setSchemeMenuOpen] = useState(false)

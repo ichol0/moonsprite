@@ -5,6 +5,7 @@ import { useI18n } from '@/components/I18nProvider'
 import { ModalShell } from '@/components/ModalShell'
 import { NumberInput } from '@/components/NumberInput'
 import { PixelUtilityIcon } from '@/components/PixelUtilityIcon'
+import { LivePreviewToggle } from '@/components/LivePreviewToggle'
 import { defaultOutlineSettings, normalizeOutlineSettings } from '@/core/outline-settings'
 import { useWorkspace, type DocumentSession } from '@/store/workspace'
 
@@ -123,7 +124,7 @@ export function OutlineDialog({ open, session, onClose }: { open: boolean; sessi
             })}</div></div>
           </div>
         </fieldset>
-        <label className="outline-preview-toggle"><span className="outline-preview-label"><PixelUtilityIcon kind="eye" />{t('common.livePreview')}</span><input type="checkbox" checked={previewEnabled} onChange={(event) => setPreviewEnabled(event.target.checked)} /><span className="toggle-track" aria-hidden="true"><i /></span></label>
+        <LivePreviewToggle checked={previewEnabled} onChange={setPreviewEnabled} />
       </div>
       <footer><button type="button" className="quiet-button" onClick={close}>{t('common.cancel')}</button><button type="submit" className="primary-button">{t('outline.apply')}</button></footer>
     </ModalShell>

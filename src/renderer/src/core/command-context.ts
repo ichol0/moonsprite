@@ -1,5 +1,7 @@
 export type EditorCommandScope = 'canvas' | 'layers' | 'palette'
 
+export const COMMAND_SCOPE_EVENT = 'moonsprite:command-scope'
+
 export type DeleteCommandTarget = 'selection' | 'layers' | 'palette' | null
 export type CopyCommandTarget = 'selection' | 'layers' | null
 

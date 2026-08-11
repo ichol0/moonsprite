@@ -47,7 +47,7 @@ const MemoLayersPanel = memo(function MemoLayersPanel({ renderKey: _renderKey, .
 
 const MemoPreviewPanel = memo(function MemoPreviewPanel({ renderKey: _renderKey, ...props }: PanelRenderProps<ComponentProps<typeof PreviewPanel>>) {
   return <PreviewPanel {...props} />
-}, (previous, next) => samePanelRender(previous, next) && previous.relativeLuminanceInPreview === next.relativeLuminanceInPreview)
+}, (previous, next) => samePanelRender(previous, next) && previous.relativeLuminanceInPreview === next.relativeLuminanceInPreview && previous.relativeLuminanceOverride === next.relativeLuminanceOverride)
 
 export function inspectorDockHitAtPoint(movingId: WorkspacePanelId, clientX: number, clientY: number): InspectorDockHit | null {
   const zone = panelDockZoneAt(clientX, clientY)
@@ -110,6 +110,7 @@ export function InspectorPanels({ session, panelVisibility, onClosePreview, pane
   const [detachPreview, setDetachPreview] = useState<React.CSSProperties | null>(null)
   const [dockDropTarget, setDockDropTarget] = useState<InspectorDockTarget | null>(null)
   const [panelContextMenu, setPanelContextMenu] = useState<{ id: WorkspacePanelId; x: number; y: number; bounds: { left: number; top: number; width: number; height: number } } | null>(null)
+  const [previewRelativeLuminanceOverride, setPreviewRelativeLuminanceOverride] = useState<boolean | null>(null)
   const sizesRef = useRef(sizes)
   const bottomWidthsRef = useRef(bottomWidths)
   const orderRef = useRef(order)
@@ -118,6 +119,7 @@ export function InspectorPanels({ session, panelVisibility, onClosePreview, pane
   const dockDropTargetRef = useRef<InspectorDockTarget | null>(null)
   const resizeRef = useRef<{ upper: WorkspacePanelId; dock: 'left' | 'right'; startY: number; startSizes: Record<WorkspacePanelId, number> } | null>(null)
   const bottomResizeRef = useRef<{ leading: WorkspacePanelId; trailing: WorkspacePanelId; startX: number; startWidths: Record<WorkspacePanelId, number> } | null>(null)
+  const previewRelativeLuminance = previewRelativeLuminanceOverride ?? (session.view.relativeLuminance && relativeLuminanceInPreview)
   const dockDragRef = useRef<{ id: WorkspacePanelId; startX: number; startY: number; detach: (clientX: number, clientY: number, continueDrag?: boolean) => void; moved: boolean } | null>(null)
   sizesRef.current = sizes
   bottomWidthsRef.current = bottomWidths
@@ -141,16 +143,18 @@ export function InspectorPanels({ session, panelVisibility, onClosePreview, pane
     }
   }, [panelContextMenu])
 
+  useEffect(() => setPreviewRelativeLuminanceOverride(null), [session.document.id])
+
   const openPanelContextMenu = (id: WorkspacePanelId, event: ReactMouseEvent<HTMLElement>): void => {
     const header = (event.target as HTMLElement).closest('header')
-    if (!header || header.parentElement !== event.currentTarget) return
+    if (id !== 'preview' && (!header || header.parentElement !== event.currentTarget)) return
     event.preventDefault()
     event.stopPropagation()
     const bounds = event.currentTarget.getBoundingClientRect()
     setPanelContextMenu({
       id,
       x: Math.max(4, Math.min(window.innerWidth - 228, event.clientX)),
-      y: Math.max(4, Math.min(window.innerHeight - 226, event.clientY)),
+      y: Math.max(4, Math.min(window.innerHeight - (id === 'preview' ? 266 : 226), event.clientY)),
       bounds: { left: bounds.left, top: bounds.top, width: bounds.width, height: bounds.height }
     })
   }
@@ -375,7 +379,7 @@ export function InspectorPanels({ session, panelVisibility, onClosePreview, pane
         ? <MemoPalettePanel renderKey={palettePanelRenderKey(session)} session={session} {...dockProps} />
         : id === 'layers'
           ? <MemoLayersPanel renderKey={layersPanelRenderKey(session)} session={session} {...dockProps} />
-          : <MemoPreviewPanel renderKey={previewPanelRenderKey(session)} session={session} onClose={onClosePreview} relativeLuminanceInPreview={relativeLuminanceInPreview} {...dockProps} />
+          : <MemoPreviewPanel renderKey={previewPanelRenderKey(session)} session={session} onClose={onClosePreview} relativeLuminanceInPreview={relativeLuminanceInPreview} relativeLuminanceOverride={previewRelativeLuminanceOverride} {...dockProps} />
     return <PerformanceProfiler id={`Panel:${id}`}>{panel}</PerformanceProfiler>
   }
 
@@ -429,6 +433,7 @@ export function InspectorPanels({ session, panelVisibility, onClosePreview, pane
       <button className="context-menu-item" type="button" role="menuitem" onClick={() => { onPanelVisibilityChange(panelContextMenu.id, false); setPanelContextMenu(null) }}><PixelUtilityIcon kind="eyeOff" /><span>{t('panel.hide', { panel: panelLabels[panelContextMenu.id] })}</span></button>
       <span className="context-menu-divider" />
       {(['left', 'right', 'bottom', 'floating'] as PanelDock[]).map((dock) => <button key={dock} className="context-menu-item" type="button" role="menuitemradio" aria-checked={dockFor(panelContextMenu.id) === dock} onClick={() => movePanelFromMenu(panelContextMenu.id, dock)}>{dockFor(panelContextMenu.id) === dock ? <PixelUtilityIcon kind="check" /> : <PixelUtilityIcon kind="move" />}<span>{panelDockLabels[dock]}</span></button>)}
+      {panelContextMenu.id === 'preview' && <><span className="context-menu-divider" /><button className="context-menu-item" type="button" role="menuitemcheckbox" aria-checked={previewRelativeLuminance} onClick={() => { setPreviewRelativeLuminanceOverride(!previewRelativeLuminance); setPanelContextMenu(null) }}>{previewRelativeLuminance ? <PixelUtilityIcon kind="check" /> : <span />}<span>{t('preview.relativeLuminance')}</span></button></>}
     </div>, document.body)}
   </></PerformanceProfiler>
 }

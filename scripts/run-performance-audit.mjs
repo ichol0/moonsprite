@@ -32,10 +32,11 @@ let metrics = normalizeSuiteReports(scope.suites, reports)
 let analysis = analyzePerformance(metrics, baseline, environment)
 
 if (analysis.candidate?.target.kind === 'canvas') {
+  const candidateId = analysis.candidate.id
   const suite = scope.suites.find((item) => item.id === analysis.candidate.suiteId)
   reports[suite.id] = await confirmCanvasCandidate(suite, analysis.candidate, directory, reports[suite.id])
   metrics = normalizeSuiteReports(scope.suites, reports)
-  analysis = analyzePerformance(metrics, baseline, environment)
+  analysis = analyzePerformance(metrics, baseline, environment, { candidateId })
 }
 
 const audit = {

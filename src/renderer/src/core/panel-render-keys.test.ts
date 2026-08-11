@@ -14,6 +14,8 @@ const session = () => ({
   animationPlaying: false,
   animationPlaybackRate: 1,
   animationReturnToStart: false,
+  activeLayerMaskId: null as string | null,
+  layerMaskIsolatedView: false,
   revision: 0,
   contentRevision: 0,
   layersPanelRevision: 0,
@@ -72,6 +74,14 @@ describe('panel render keys', () => {
     current.revision += 1
     expect(layersPanelRenderKey(current)).toBe(before)
     current.animationPlaying = false
+    expect(layersPanelRenderKey(current)).not.toBe(before)
+  })
+
+  it('invalidates the layer panel when a mask enters isolated view', () => {
+    const current = session()
+    current.activeLayerMaskId = 'mask'
+    const before = layersPanelRenderKey(current)
+    current.layerMaskIsolatedView = true
     expect(layersPanelRenderKey(current)).not.toBe(before)
   })
 })

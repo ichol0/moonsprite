@@ -1,5 +1,6 @@
 import type {
   AnimationCel,
+  AnimationGroupMask,
   BrushPaintMode,
   BrushShape,
   BrushTexture,
@@ -7,6 +8,7 @@ import type {
   FillMode,
   GradientDither,
   ImageBrush,
+  LayerMask,
   ImageBrushSettings,
   OutlineDirections,
   OutlineKernel,
@@ -18,6 +20,7 @@ import type {
   SelectionKind,
   SelectionMask,
   SelectionMode,
+  SelectionRect,
   ShapeKind,
   ShapeRatio,
   SpriteDocument,
@@ -25,9 +28,11 @@ import type {
   ViewState
 } from '@shared/types'
 import type { ContentInvalidationHint, HistoryStack, PixelEdit } from '@/core/history'
-import type { SelectionTransformSource } from '@/core/tools'
+import type { SelectionShearTransform } from '@/core/selection'
+import type { SelectionTransformSource, SelectionTranslationPreview } from '@/core/tools'
 import type { SymmetryAxes, SymmetryCenter } from '@/core/symmetry'
 import type { BrushTool } from '@/core/tool-preferences'
+import type { BrushDynamicsSettings, BrushPressureSettings } from '@/core/pressure'
 
 export interface CanvasResizePreview {
   width: number
@@ -64,6 +69,12 @@ export interface AnimationFrameClipboardItem {
   frameId: string
   duration: number
   cels: AnimationCel[]
+  groupMasks: AnimationGroupMask[]
+}
+
+export interface AnimationMaskClipboardItem {
+  key: string
+  mask: LayerMask
 }
 
 export interface FloatingPaste {
@@ -71,7 +82,11 @@ export interface FloatingPaste {
   beforeSelection: SelectionMask | null
   source: SelectionTransformSource
   target: SelectionMask
-  previewEdit: PixelEdit
+  transformTarget?: SelectionRect
+  transformAngle?: number
+  transformShear?: SelectionShearTransform
+  previewEdit: PixelEdit | null
+  translationPreview: SelectionTranslationPreview | null
   copy: boolean
   label: string
 }
@@ -89,6 +104,8 @@ export interface BrushProfile {
   proceduralBrushSettings: Record<ProceduralBrushId, ProceduralBrushSettings>
   proceduralAntialias: boolean
   proceduralAntialiasStrength: number
+  brushDynamics: BrushDynamicsSettings
+  brushPressure: BrushPressureSettings
 }
 
 export type DocumentContentInvalidation = ContentInvalidationHint & {
@@ -115,10 +132,15 @@ export interface DocumentSession {
   proceduralBrushSettings: Record<ProceduralBrushId, ProceduralBrushSettings>
   proceduralAntialias: boolean
   proceduralAntialiasStrength: number
+  brushDynamics: BrushDynamicsSettings
+  brushPressure: BrushPressureSettings
   shapeKind: ShapeKind
   shapeRatio: ShapeRatio | null
   fillMode: FillMode
   fillKind: FillKind
+  fillTolerance: number
+  gradientTolerance: number
+  gradientContiguous: boolean
   gradientDither: GradientDither
   moveAutoSelect: boolean
   selection: SelectionMask | null
@@ -142,6 +164,8 @@ export interface DocumentSession {
   selectedGroupId: string | null
   selectedGroupIds: string[]
   selectedLayerIds: string[]
+  activeLayerMaskId: string | null
+  layerMaskIsolatedView: boolean
   layerSelectionAnchorId: string | null
   collapsedGroupIds: string[]
   animationPlaying: boolean
@@ -152,8 +176,13 @@ export interface DocumentSession {
   animationFrameSelectionAnchorId: string | null
   selectedAnimationCellKeys: string[]
   animationCellSelectionAnchorKey: string | null
+  /** Timeline cells whose attached masks are selected in the panel. */
+  selectedAnimationMaskCellKeys: string[]
+  animationMaskCellSelectionAnchorKey: string | null
   animationCellClipboard: AnimationCel[]
   animationCellClipboardAnchorKey: string | null
+  animationMaskClipboard: AnimationMaskClipboardItem[]
+  animationMaskClipboardAnchorKey: string | null
   animationFrameClipboard: AnimationFrameClipboardItem[]
   revision: number
   contentRevision: number

@@ -1,21 +1,28 @@
 import type { MoonSpriteApi, SpriteDocument, TimelapseVideoFormat } from '@shared/types'
 import { checkResourceLimit, checkTypedArrayLimit } from '@/core/resource-policy'
-import { decodeDocumentFileAsync, encodeDocumentForPath, normalizeSaveDialogPath, sanitizeFileStem, saveImageDialogFormat, saveImageExtension, saveImageKindForPath } from '@/core/document-files'
+import { decodeDocumentFileAsync, encodeDocumentForPath, joinDirectoryPath, normalizeSaveDialogPath, sanitizeFileStem, saveImageDialogFormat, saveImageExtension, saveImageKindForPath } from '@/core/document-files'
 import { exportDocumentImage, type ImageExportKind, type SaveImageKind } from '@/core/png'
 import { loadEditorPreferences } from '@/core/file-preferences'
 import { translate } from '@/core/localization'
 import { exportAnimationGif, type GifDirection } from '@/core/gif'
 import { encodeTimelapseVideo, type TimelapseExportOptions } from '@/core/timelapse'
 import { normalizeTimelapseSettings } from '@/core/project-metadata'
+import { RECENT_EXPORTS_CHANGED_EVENT, recordRecentExportPath } from '@/core/export-settings'
 
 export interface ExportOptions {
   name: string
   format: ImageExportKind
   scalePercent: number
+  directory?: string
   gifFrameRange?: 'all' | 'range'
   gifFrameStart?: number
   gifFrameEnd?: number
   gifDirection?: GifDirection
+}
+
+function rememberExportPath(filePath: string): void {
+  if (!recordRecentExportPath(filePath)) return
+  if (typeof window !== 'undefined') window.dispatchEvent(new Event(RECENT_EXPORTS_CHANGED_EVENT))
 }
 
 export interface SaveAsOptions {
@@ -27,11 +34,16 @@ export interface SaveAsOptions {
 interface SaveDocumentRequest {
   api: MoonSpriteApi
   documentId: string
-  getDocument: () => SpriteDocument | null
+  getDocument: () => { document: SpriteDocument; revision: number } | null
   saveAs: boolean
   options?: SaveAsOptions
   preferredImageFormat: SaveImageKind | null
   lifecycle?: FileOperationLifecycle
+}
+
+export interface SaveDocumentResult {
+  filePath: string
+  revision: number
 }
 
 export interface FileOperationLifecycle {
@@ -40,39 +52,42 @@ export interface FileOperationLifecycle {
   onWriteStart?: () => void
 }
 
-const saveOperations = new Map<string, Promise<string | null>>()
+const saveOperations = new Map<string, Promise<SaveDocumentResult | null>>()
 
-export function saveDocumentFile(request: SaveDocumentRequest): Promise<string | null> {
+export function saveDocumentFile(request: SaveDocumentRequest): Promise<SaveDocumentResult | null> {
   const pending = saveOperations.get(request.documentId)
-  if (pending) return pending
-  const operation = (async (): Promise<string | null> => {
+  const operation = (async (): Promise<SaveDocumentResult | null> => {
+    if (pending) {
+      try { await pending } catch { /* A failed earlier save must not block the queued retry. */ }
+    }
     const initial = request.getDocument()
     if (!initial) return null
-    const existingFormat = initial.filePath
-      ? (/\.moonsprite$/i.test(initial.filePath) ? 'moonsprite' as const : saveImageKindForPath(initial.filePath))
+    const existingFormat = initial.document.filePath
+      ? (/\.moonsprite$/i.test(initial.document.filePath) ? 'moonsprite' as const : saveImageKindForPath(initial.document.filePath))
       : null
     const selectedFormat: 'moonsprite' | SaveImageKind = request.options?.format ?? existingFormat ?? request.preferredImageFormat ?? 'moonsprite'
     const imageFormat = selectedFormat === 'moonsprite' ? null : selectedFormat
-    const fallbackName = sanitizeFileStem(initial.name, 'MoonSprite-export')
+    const fallbackName = sanitizeFileStem(initial.document.name, 'MoonSprite-export')
     const requestedName = sanitizeFileStem(request.options?.name ?? fallbackName, fallbackName)
-    let filePath = initial.filePath
+    const saveDirectory = loadEditorPreferences().saveDirectory
+    let filePath = initial.document.filePath
     if ((!filePath || request.saveAs) && imageFormat) {
       const extension = saveImageExtension(imageFormat)
-      const result = await request.api.saveProject(`${requestedName}.${extension}`, saveImageDialogFormat(imageFormat))
+      const result = await request.api.saveProject(joinDirectoryPath(saveDirectory, `${requestedName}.${extension}`), saveImageDialogFormat(imageFormat))
       if (result.canceled || !result.filePath || !request.getDocument()) return null
       filePath = normalizeSaveDialogPath(result.filePath, imageFormat)
     } else if (!filePath || request.saveAs) {
-      const result = await request.api.saveProject(`${requestedName}.moonsprite`)
+      const result = await request.api.saveProject(joinDirectoryPath(saveDirectory, `${requestedName}.moonsprite`))
       if (result.canceled || !result.filePath || !request.getDocument()) return null
       filePath = result.filePath.endsWith('.moonsprite') ? result.filePath : `${result.filePath}.moonsprite`
     }
-    const document = request.getDocument()
-    if (!document || !filePath) return null
+    const source = request.getDocument()
+    if (!source || !filePath) return null
     request.lifecycle?.onEncodeStart?.()
-    const data = await encodeDocumentForPath(document, filePath, imageFormat, request.options?.scalePercent ?? 100)
+    const data = await encodeDocumentForPath(source.document, filePath, imageFormat, request.options?.scalePercent ?? 100)
     request.lifecycle?.onWriteStart?.()
     await request.api.writeBinaryAtomic(filePath, data)
-    return filePath
+    return { filePath, revision: source.revision }
   })()
   saveOperations.set(request.documentId, operation)
   void operation.finally(() => {
@@ -94,7 +109,8 @@ export async function exportDocumentFile(api: MoonSpriteApi, document: SpriteDoc
   const format = options?.format ?? 'png-auto'
   const extension = format === 'gif' ? 'gif' : saveImageExtension(format)
   const dialogFormat = extension === 'jpg' ? 'jpeg' : extension === 'png' ? 'png' : extension === 'svg' ? 'svg' : extension === 'gif' ? 'gif' : 'webp'
-  const result = await api.exportImage(`${requestedName}.${extension}`, dialogFormat)
+  const exportDirectory = options?.directory?.trim() || loadEditorPreferences().exportDirectory
+  const result = await api.exportImage(joinDirectoryPath(exportDirectory, `${requestedName}.${extension}`), dialogFormat)
   if (result.canceled || !result.filePath) return null
   lifecycle?.onEncodeStart?.()
   const output = format === 'gif'
@@ -103,19 +119,21 @@ export async function exportDocumentFile(api: MoonSpriteApi, document: SpriteDoc
   const path = result.filePath.toLowerCase().endsWith(`.${output.extension}`) ? result.filePath : `${result.filePath}.${output.extension}`
   lifecycle?.onWriteStart?.()
   await api.writeBinaryAtomic(path, output.bytes)
+  rememberExportPath(path)
   return output.indexed ? translate(loadEditorPreferences().language, 'file.export.indexed') : translate(loadEditorPreferences().language, 'file.export.image', { extension: output.extension.toUpperCase() })
 }
 
 export async function exportTimelapseFile(api: MoonSpriteApi, document: SpriteDocument, format: TimelapseVideoFormat, options: TimelapseExportOptions, lifecycle?: FileOperationLifecycle): Promise<string | null> {
   const settings = normalizeTimelapseSettings(document.timelapse, document.timelapse?.snapshots ?? [])
   const fallbackName = sanitizeFileStem(document.name, 'MoonSprite-timelapse')
-  const result = await api.exportImage(`${fallbackName}-timelapse.${format}`, format)
+  const result = await api.exportImage(joinDirectoryPath(loadEditorPreferences().exportDirectory, `${fallbackName}-timelapse.${format}`), format)
   if (result.canceled || !result.filePath) return null
   lifecycle?.onEncodeStart?.()
   const bytes = await encodeTimelapseVideo(settings, format, options, (value) => lifecycle?.onEncodeProgress?.(value))
   const filePath = result.filePath.toLowerCase().endsWith(`.${format}`) ? result.filePath : `${result.filePath}.${format}`
   lifecycle?.onWriteStart?.()
   await api.writeBinaryAtomic(filePath, bytes)
+  rememberExportPath(filePath)
   return translate(loadEditorPreferences().language, 'timelapse.exported', { format: format.toUpperCase() })
 }
 

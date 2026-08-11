@@ -47,6 +47,17 @@ pub fn write_clipboard_image(width: usize, height: usize, data: Vec<u8>) -> Resu
 }
 
 #[tauri::command]
+pub fn read_clipboard_text() -> Result<Option<String>, String> {
+    let mut clipboard = Clipboard::new()
+        .map_err(|error| format!("Unable to access the system clipboard: {error}"))?;
+    match clipboard.get_text() {
+        Ok(text) => Ok(Some(text)),
+        Err(arboard::Error::ContentNotAvailable) => Ok(None),
+        Err(error) => Err(format!("Unable to read clipboard text: {error}")),
+    }
+}
+
+#[tauri::command]
 pub fn read_clipboard_image() -> Result<Option<ClipboardImage>, String> {
     let mut clipboard = Clipboard::new().map_err(|error| format!("无法访问系统剪贴板：{error}"))?;
     match clipboard.get_image() {

@@ -29,7 +29,7 @@ describe('theme definitions', () => {
   })
 
   it('provides complete and readable variables for every built-in theme', () => {
-    expect(BUILT_IN_THEMES.map((theme) => theme.id)).toEqual(expect.arrayContaining(['ocean', 'forest', 'sunset', 'classic', 'slate', 'copper']))
+    expect(BUILT_IN_THEMES.map((theme) => theme.id)).toEqual(expect.arrayContaining(['ocean', 'forest', 'sunset', 'classic', 'slate', 'copper', 'pink']))
     for (const definition of BUILT_IN_THEMES) {
       const resolved = resolveTheme({ ...DEFAULT_THEME_PREFERENCES, activeThemeId: definition.id })
       expect(Object.keys(resolved.variables).length).toBeGreaterThan(45)
@@ -54,6 +54,15 @@ describe('theme definitions', () => {
     expect(resolved.variables['--theme-accent-soft']).toBe('#182a46')
     expect(resolved.variables['--theme-surface-active']).toBe('#212c40')
     expect(resolved.variables['--theme-accent-hover']).toBe('#478bff')
+  })
+
+  it('provides a readable light pink theme with distinct interaction layers', () => {
+    const resolved = resolveTheme({ ...DEFAULT_THEME_PREFERENCES, activeThemeId: 'pink' })
+    expect(resolved.mode).toBe('light')
+    expect(resolved.variables['--theme-surface']).toBe('#fff7fb')
+    expect(resolved.variables['--theme-surface-hover']).toBe('#fde7f2')
+    expect(resolved.variables['--theme-surface-active']).toBe('#f6cfe1')
+    expect(contrastRatio(resolved.variables['--theme-on-accent'], resolved.variables['--theme-accent'])).toBeGreaterThanOrEqual(4.5)
   })
 
   it('applies auxiliary visual overrides without mutating the built-in theme', () => {

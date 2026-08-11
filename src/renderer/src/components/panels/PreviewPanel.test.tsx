@@ -76,23 +76,68 @@ describe('PreviewPanel animation controls', () => {
     expect(screen.queryByText('66.67%')).not.toBeInTheDocument()
   })
 
-  it('uses Space plus the primary pointer button to pan the preview', () => {
-    const document = createDocument('space preview pan', 8, 8, 'rgba')
+  it('keeps preview zoom available while following the canvas position', () => {
+    const document = createDocument('followed preview', 8, 8, 'rgba')
     useWorkspace.getState().addSession(document)
     render(<PreviewPanel session={useWorkspace.getState().sessions[0]} onClose={vi.fn()} docked />)
 
+    const follow = screen.getByRole('button', { name: '跟随画布视窗' })
+    const zoomOut = screen.getByRole('button', { name: '缩小预览' })
+    const zoomIn = screen.getByRole('button', { name: '放大预览' })
+    expect(follow).toHaveAttribute('aria-pressed', 'false')
+    expect(zoomOut).toBeEnabled()
+    expect(zoomIn).toBeEnabled()
+
+    fireEvent.click(follow)
+    expect(follow).toHaveAttribute('aria-pressed', 'true')
+    expect(zoomOut).toBeEnabled()
+    expect(zoomIn).toBeEnabled()
+    fireEvent.click(zoomIn)
+
+    fireEvent.click(follow)
+    expect(follow).toHaveAttribute('aria-pressed', 'false')
+    expect(zoomOut).toBeEnabled()
+    expect(zoomIn).toBeEnabled()
+  })
+
+  it('uses the primary pointer button to pan the preview directly', () => {
+    const document = createDocument('direct preview pan', 8, 8, 'rgba')
+    useWorkspace.getState().addSession(document)
+    render(<PreviewPanel session={useWorkspace.getState().sessions[0]} onClose={vi.fn()} docked />)
+
+    const surface = window.document.querySelector('.preview-canvas-wrap') as HTMLDivElement
+    expect(surface).not.toHaveClass('space-pan-ready')
+    expect(surface).not.toHaveClass('space-panning')
+    surface.setPointerCapture = vi.fn()
+    surface.hasPointerCapture = vi.fn(() => true)
+    surface.releasePointerCapture = vi.fn()
+
+    fireEvent.pointerDown(surface, { button: 0, pointerId: 7, clientX: 20, clientY: 30 })
+    expect(surface).toHaveClass('space-panning')
+    fireEvent.pointerUp(surface, { button: 0, pointerId: 7, clientX: 28, clientY: 34 })
+    expect(surface).not.toHaveClass('space-panning')
+  })
+
+  it('hands a followed preview position to manual panning without blocking the drag', () => {
+    const document = createDocument('follow to manual preview pan', 8, 8, 'rgba')
+    useWorkspace.getState().addSession(document)
+    vi.spyOn(HTMLCanvasElement.prototype, 'getBoundingClientRect').mockReturnValue({
+      x: 0, y: 0, top: 0, left: 0, right: 200, bottom: 200, width: 200, height: 200, toJSON: () => ({})
+    })
+    render(<PreviewPanel session={useWorkspace.getState().sessions[0]} onClose={vi.fn()} docked />)
+
+    const follow = screen.getByRole('button', { name: '跟随画布视窗' })
     const surface = window.document.querySelector('.preview-canvas-wrap') as HTMLDivElement
     surface.setPointerCapture = vi.fn()
     surface.hasPointerCapture = vi.fn(() => true)
     surface.releasePointerCapture = vi.fn()
 
-    fireEvent.keyDown(window, { code: 'Space' })
-    expect(surface).toHaveClass('space-pan-ready')
-    fireEvent.pointerDown(surface, { button: 0, pointerId: 7, clientX: 20, clientY: 30 })
+    fireEvent.click(follow)
+    expect(follow).toHaveAttribute('aria-pressed', 'true')
+    fireEvent.pointerDown(surface, { button: 0, pointerId: 8, clientX: 20, clientY: 30 })
+    expect(follow).toHaveAttribute('aria-pressed', 'false')
     expect(surface).toHaveClass('space-panning')
-    fireEvent.pointerUp(surface, { button: 0, pointerId: 7, clientX: 28, clientY: 34 })
-    expect(surface).not.toHaveClass('space-panning')
-    fireEvent.keyUp(window, { code: 'Space' })
-    expect(surface).not.toHaveClass('space-pan-ready')
+    fireEvent.pointerUp(surface, { button: 0, pointerId: 8, clientX: 28, clientY: 34 })
   })
+
 })

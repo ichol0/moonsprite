@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use std::{
+    ffi::OsString,
     path::PathBuf,
     sync::{Arc, Mutex},
     time::Duration,
@@ -27,9 +28,9 @@ struct AppState {
     startup_files: Mutex<Vec<String>>,
 }
 
-fn startup_file_paths() -> Vec<String> {
-    std::env::args_os()
-        .skip(1)
+fn supported_file_paths(arguments: impl IntoIterator<Item = OsString>) -> Vec<String> {
+    arguments
+        .into_iter()
         .map(PathBuf::from)
         .filter(|path| {
             path.is_file()
@@ -53,6 +54,10 @@ fn startup_file_paths() -> Vec<String> {
         })
         .map(|path| path.to_string_lossy().to_string())
         .collect()
+}
+
+fn startup_file_paths() -> Vec<String> {
+    supported_file_paths(std::env::args_os().skip(1))
 }
 
 #[tauri::command]
@@ -85,6 +90,20 @@ fn confirm_unsaved(_name: String) -> String {
 pub fn run() {
     let startup_files = startup_file_paths();
     tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(
+            |app, arguments, _cwd| {
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.unminimize();
+                    let _ = window.show();
+                    let _ = window.set_focus();
+                    let paths =
+                        supported_file_paths(arguments.into_iter().skip(1).map(OsString::from));
+                    if !paths.is_empty() {
+                        let _ = window.emit("app:file-drop", paths);
+                    }
+                }
+            },
+        ))
         .manage(AppState {
             startup_files: Mutex::new(startup_files),
             ..AppState::default()
@@ -94,6 +113,7 @@ pub fn run() {
             let recovery_state = app.state::<platform_recovery::RecoveryState>();
             platform_recovery::initialize_session_marker(app.handle(), &recovery_state)?;
             let _ = platform_gallery::ensure_builtin_example(app.handle().clone());
+            let _ = platform_paths::export_directory();
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -104,10 +124,13 @@ pub fn run() {
             platform_dialogs::save_palette_image,
             platform_dialogs::save_shortcut_file,
             platform_dialogs::save_theme_file,
+            platform_dialogs::default_file_directories,
+            platform_dialogs::choose_directory,
             platform_files::file_exists,
             platform_files::read_binary,
             platform_files::write_binary_atomic,
             platform_clipboard::write_clipboard_image,
+            platform_clipboard::read_clipboard_text,
             platform_clipboard::read_clipboard_image,
             platform_clipboard::read_clipboard_image_size,
             platform_resources::get_resource_info,

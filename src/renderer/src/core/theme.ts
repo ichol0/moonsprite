@@ -69,6 +69,11 @@ const LIGHT_SEEDS: ThemeSeedColors = {
   border: '#b7c0cc', borderStrong: '#7b8797', controlBackground: '#ffffff', textPrimary: '#17202b', textSecondary: '#334155', textMuted: '#667386',
   accent: '#1d63d8', danger: '#b8323a', success: '#247a4d', warning: '#9a5a00'
 }
+const PINK_SEEDS: ThemeSeedColors = {
+  workspace: '#f1dce8', surface: '#fff7fb', raisedSurface: '#ffffff', deepSurface: '#f6e6ef', canvasSurround: '#e7cedb',
+  border: '#e3bfd1', borderStrong: '#aa7aa0', controlBackground: '#fffafd', textPrimary: '#49283a', textSecondary: '#70485d', textMuted: '#956f82',
+  accent: '#b73575', danger: '#b92f55', success: '#34765f', warning: '#8f5a18'
+}
 const GRAY_SEEDS: ThemeSeedColors = {
   workspace: '#303339', surface: '#3b3f46', raisedSurface: '#474c54', deepSurface: '#292c32', canvasSurround: '#5b6068',
   border: '#555b65', borderStrong: '#737a85', controlBackground: '#282b31', textPrimary: '#f1f3f5', textSecondary: '#d5d9de', textMuted: '#adb3bb',
@@ -121,6 +126,7 @@ const COPPER_SEEDS: ThemeSeedColors = {
 }
 const DARK_VISUALS: ThemeVisualDefaults = { checkerLight: { r: 215, g: 215, b: 217, a: 255 }, checkerDark: { r: 155, g: 155, b: 159, a: 255 }, pixelGrid: { r: 69, g: 77, b: 92, a: 143 }, customGrid: { r: 0, g: 0, b: 255, a: 255 }, onionPrevious: { r: 239, g: 83, b: 80, a: 255 }, onionNext: { r: 41, g: 121, b: 255, a: 255 }, symmetryAxis: { r: 41, g: 121, b: 255, a: 242 } }
 const LIGHT_VISUALS: ThemeVisualDefaults = { checkerLight: { r: 245, g: 246, b: 248, a: 255 }, checkerDark: { r: 210, g: 214, b: 220, a: 255 }, pixelGrid: { r: 119, g: 128, b: 142, a: 150 }, customGrid: { r: 30, g: 80, b: 210, a: 255 }, onionPrevious: { r: 205, g: 55, b: 53, a: 255 }, onionNext: { r: 31, g: 97, b: 210, a: 255 }, symmetryAxis: { r: 31, g: 97, b: 210, a: 242 } }
+const PINK_VISUALS: ThemeVisualDefaults = { checkerLight: { r: 255, g: 248, b: 252, a: 255 }, checkerDark: { r: 231, g: 211, b: 222, a: 255 }, pixelGrid: { r: 166, g: 112, b: 141, a: 145 }, customGrid: { r: 183, g: 53, b: 117, a: 255 }, onionPrevious: { r: 192, g: 45, b: 82, a: 255 }, onionNext: { r: 83, g: 121, b: 190, a: 255 }, symmetryAxis: { r: 183, g: 53, b: 117, a: 242 } }
 const GRAY_VISUALS: ThemeVisualDefaults = { checkerLight: { r: 215, g: 217, b: 220, a: 255 }, checkerDark: { r: 157, g: 160, b: 165, a: 255 }, pixelGrid: { r: 193, g: 198, b: 207, a: 145 }, customGrid: { r: 76, g: 142, b: 232, a: 255 }, onionPrevious: { r: 239, g: 83, b: 80, a: 255 }, onionNext: { r: 41, g: 121, b: 255, a: 255 }, symmetryAxis: { r: 41, g: 121, b: 255, a: 242 } }
 const AMBER_VISUALS: ThemeVisualDefaults = { checkerLight: { r: 218, g: 210, b: 200, a: 255 }, checkerDark: { r: 143, g: 132, b: 119, a: 255 }, pixelGrid: { r: 183, g: 158, b: 126, a: 145 }, customGrid: { r: 224, g: 162, b: 59, a: 255 }, onionPrevious: { r: 223, g: 98, b: 88, a: 255 }, onionNext: { r: 224, g: 162, b: 59, a: 255 }, symmetryAxis: { r: 224, g: 162, b: 59, a: 242 } }
 const MINT_VISUALS: ThemeVisualDefaults = { checkerLight: { r: 211, g: 225, b: 222, a: 255 }, checkerDark: { r: 117, g: 145, b: 141, a: 255 }, pixelGrid: { r: 151, g: 197, b: 187, a: 145 }, customGrid: { r: 56, g: 169, b: 144, a: 255 }, onionPrevious: { r: 220, g: 98, b: 93, a: 255 }, onionNext: { r: 56, g: 169, b: 144, a: 255 }, symmetryAxis: { r: 56, g: 169, b: 144, a: 242 } }
@@ -150,6 +156,7 @@ interface PixelThemeDerivedColors {
 }
 
 const PIXEL_THEME_DERIVED: Record<string, PixelThemeDerivedColors> = {
+  pink: { surfaceMuted: '#faedf4', surfaceDisabled: '#f1e1ea', dangerSoft: '#f9d9e2', successSoft: '#dcece6', warningSoft: '#f5e7cf', scrollbarTrack: '#efd9e5', scrollbarThumb: '#bd88a5', surfaceHover: '#fde7f2', surfaceActive: '#f6cfe1', textFaint: '#a47c91', textDisabled: '#bca0af', accentHover: '#c04482', accentSelected: '#98295f', accentSoft: '#f9d8e8' },
   amber: { surfaceHover: '#4a3a2c', surfaceActive: '#594523', textFaint: '#9b8976', textDisabled: '#776858', accentHover: '#b8791f', accentSelected: '#754a10', accentSoft: '#4a3215' },
   mint: { surfaceHover: '#2a5250', surfaceActive: '#2b5b54', textFaint: '#759a91', textDisabled: '#5c7b75', accentHover: '#1d9a82', accentSelected: '#106653', accentSoft: '#163f37' },
   plum: { surfaceHover: '#4b375a', surfaceActive: '#5a3b6b', textFaint: '#987fa2', textDisabled: '#765f80', accentHover: '#9650c0', accentSelected: '#642889', accentSoft: '#422050' },
@@ -165,6 +172,7 @@ export const BUILT_IN_THEMES: readonly ThemeDefinition[] = [
   { kind: 'moonsprite-theme', schemaVersion: 2, id: 'dark', name: 'MoonSprite Dark', seeds: DARK_SEEDS, visualDefaults: DARK_VISUALS },
   { kind: 'moonsprite-theme', schemaVersion: 2, id: 'light', name: 'MoonSprite Light', seeds: LIGHT_SEEDS, visualDefaults: LIGHT_VISUALS },
   { kind: 'moonsprite-theme', schemaVersion: 2, id: 'gray', name: 'MoonSprite Gray', seeds: GRAY_SEEDS, visualDefaults: GRAY_VISUALS },
+  { kind: 'moonsprite-theme', schemaVersion: 2, id: 'pink', name: 'MoonSprite Pink', seeds: PINK_SEEDS, visualDefaults: PINK_VISUALS },
   { kind: 'moonsprite-theme', schemaVersion: 2, id: 'classic', name: 'Pixel Classic', seeds: CLASSIC_SEEDS, visualDefaults: CLASSIC_VISUALS },
   { kind: 'moonsprite-theme', schemaVersion: 2, id: 'slate', name: 'Pixel Moss', seeds: SLATE_SEEDS, visualDefaults: SLATE_VISUALS },
   { kind: 'moonsprite-theme', schemaVersion: 2, id: 'copper', name: 'Pixel Copper', seeds: COPPER_SEEDS, visualDefaults: COPPER_VISUALS },
@@ -204,7 +212,7 @@ export function resolveTheme(preferences: ThemePreferences): ResolvedTheme {
   const s = definition.seeds
   const dark = definition.id === 'dark'
   const gray = definition.id === 'gray'
-  const classic = definition.id === 'classic' || definition.id === 'slate' || definition.id === 'copper'
+  const classic = definition.id === 'classic' || definition.id === 'slate' || definition.id === 'copper' || definition.id === 'pink'
   const pixelTheme = PIXEL_THEME_DERIVED[definition.id as keyof typeof PIXEL_THEME_DERIVED]
   const pixel = Boolean(pixelTheme)
   const onAccent = '#ffffff'

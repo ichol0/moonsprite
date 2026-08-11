@@ -1,6 +1,9 @@
-import type { MoonSpriteApi } from '@shared/types'
+import type { FillKind, MoonSpriteApi, ShapeKind, ToolId, ViewState } from '@shared/types'
 
 declare global {
+  const __MOONSPRITE_PERFORMANCE_BUILD__: boolean
+  const __MOONSPRITE_REACT_PROFILE__: boolean
+
   interface Window {
     moonSprite: MoonSpriteApi
     __TAURI_INTERNALS__?: unknown
@@ -8,6 +11,16 @@ declare global {
       recordDraw(duration: number): void
       recordInput?(kind: 'pointer-down' | 'pointer-move' | 'pointer-up', duration: number): void
       recordReactCommit?(region: string, duration: number, phase: 'mount' | 'update' | 'nested-update'): void
+    }
+    __moonSpritePerformanceHarness?: {
+      createSimpleDocument(size: number): Promise<{ uniquePixelBytes: number; layerCount: number; frameCount: number }>
+      createComplexDocument(size: number): Promise<{ uniquePixelBytes: number; layerCount: number; frameCount: number }>
+      createLargeDocument(size: number): Promise<{ uniquePixelBytes: number; layerCount: number; frameCount: number }>
+      activeView(): ViewState | null
+      resetScenario(view: ViewState): void
+      prepareTool(tool: ToolId, fillKind?: FillKind | null, shapeKind?: ShapeKind | null): void
+      undoRedo(count: number): Promise<number>
+      playAnimation(): Promise<number>
     }
   }
 }

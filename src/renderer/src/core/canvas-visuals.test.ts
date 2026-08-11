@@ -1,7 +1,17 @@
 import { describe, expect, it } from 'vitest'
-import { canvasCursors, canvasStatusTextColor, canvasToolCursor, selectionCreationCursor, selectionCursorCornerRects, selectionPathPreviewPixelVisible, selectionPreviewPixels, selectionTransformDragCursor, transparencyColorAt } from './canvas-visuals'
+import { canvasCursors, canvasStatusTextColor, canvasToolCursor, selectionCreationCursor, selectionCursorCornerRects, selectionPathPreviewPixelVisible, selectionPreviewPixels, selectionRotationCursorForPosition, selectionTransformDragCursor, transparencyColorAt } from './canvas-visuals'
 
 describe('canvas visual rules', () => {
+  it('chooses rotation cursors from the displayed corner position', () => {
+    const center = { x: 100, y: 100 }
+    expect(selectionRotationCursorForPosition({ x: 80, y: 80 }, center)).toBe('rotate-nw')
+    expect(selectionRotationCursorForPosition({ x: 120, y: 80 }, center)).toBe('rotate-ne')
+    expect(selectionRotationCursorForPosition({ x: 100, y: 80 }, center)).toBe('rotate-n')
+    expect(selectionRotationCursorForPosition({ x: 120, y: 120 }, center)).toBe('rotate-se')
+    expect(selectionRotationCursorForPosition({ x: 100, y: 120 }, center)).toBe('rotate-s')
+    expect(selectionRotationCursorForPosition({ x: 80, y: 120 }, center)).toBe('rotate-sw')
+  })
+
   it('chooses a visible cursor from the sampled canvas color', () => {
     expect(canvasToolCursor('pencil', { r: 0, g: 0, b: 0, a: 255 })).toBe(canvasCursors.pencilWhite)
     expect(canvasToolCursor('pencil', { r: 255, g: 255, b: 255, a: 255 })).toBe(canvasCursors.pencilBlack)

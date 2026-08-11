@@ -15,7 +15,9 @@ import {
   type EyedropperMagnifierStyle,
   type RelativeLuminanceScope,
   type RotationIndicatorPosition,
+  type ToolIconScale,
   type UiScale,
+  type WheelZoomMode,
   type ZoomToolDragMode
 } from '@/core/file-preferences'
 import { PixelUtilityIcon } from '@/components/PixelUtilityIcon'
@@ -44,6 +46,7 @@ export function PreferencesDialog({ onClose, onPresetChange }: PreferencesDialog
   const { locale, t } = useI18n()
   const [section, setSection] = useState<PreferenceSection>('general')
   const [preferences, setPreferences] = useState(loadEditorPreferences)
+  const [defaultDirectories, setDefaultDirectories] = useState({ saveDirectory: 'gallery', exportDirectory: 'exports' })
   const [draggedColorMode, setDraggedColorMode] = useState<number | null>(null)
   const colorModePointerDragRef = useRef<{ index: number } | null>(null)
   const update = <K extends keyof typeof preferences>(key: K, value: typeof preferences[K]): void => setPreferences((current) => ({ ...current, [key]: value }))
@@ -96,6 +99,14 @@ export function PreferencesDialog({ onClose, onPresetChange }: PreferencesDialog
     applyThemeToDocument(preferences.theme)
     window.dispatchEvent(new Event('moonsprite:preferences-changed'))
   }, [preferences])
+  useEffect(() => {
+    if (typeof window.moonSprite?.getDefaultFileDirectories !== 'function') return
+    let active = true
+    void window.moonSprite.getDefaultFileDirectories().then((directories) => {
+      if (active) setDefaultDirectories(directories)
+    }).catch(() => undefined)
+    return () => { active = false }
+  }, [])
   useEffect(() => () => {
     setEditorPreferencesPreview(null)
     applyThemeToDocument(loadEditorPreferences().theme)
@@ -129,6 +140,16 @@ export function PreferencesDialog({ onClose, onPresetChange }: PreferencesDialog
     }
   }, [])
   const recoveryValue = preferences.recovery ? String(preferences.recoveryMinutes) : 'off'
+  const choosePreferenceDirectory = async (kind: 'saveDirectory' | 'exportDirectory'): Promise<void> => {
+    if (typeof window.moonSprite?.chooseDirectory !== 'function') return
+    const currentPath = preferences[kind] || defaultDirectories[kind]
+    try {
+      const result = await window.moonSprite.chooseDirectory(currentPath)
+      if (!result.canceled && result.directoryPath) update(kind, result.directoryPath)
+    } catch {
+      useWorkspace.getState().setMessage(t('preferences.directorySelectFailed'))
+    }
+  }
   const persist = (): void => {
     const documentSizePresets = parseDocumentSizePresets(JSON.stringify(preferences.documentSizePresets))
     const exportScalePresets = parseExportScalePresets(JSON.stringify(preferences.exportScalePresets))
@@ -159,7 +180,8 @@ export function PreferencesDialog({ onClose, onPresetChange }: PreferencesDialog
     <div className="settings-layout"><nav>{([['general', 'preferences.sections.general'], ['theme', 'preferences.sections.theme'], ['files', 'preferences.sections.files'], ['cursor', 'preferences.sections.cursor'], ['toolPreview', 'preferences.sections.toolPreview'], ['background', 'preferences.sections.background'], ['editing', 'preferences.sections.editing'], ['colors', 'preferences.sections.colors'], ['layers', 'preferences.sections.layers'], ['presets', 'preferences.sections.presets'], ['reset', 'preferences.sections.reset']] as Array<[PreferenceSection, Parameters<typeof t>[0]]>).map(([id, labelKey]) => <button key={id} className={section === id ? 'selected' : ''} onClick={() => setSection(id)}>{t(labelKey)}</button>)}</nav><main>
       {section === 'general' && <>
         <label className="preference-field">{t('preferences.language')}<ThemedSelect value={preferences.language} groups={[{ label: t('preferences.languageGroup'), options: AVAILABLE_APP_LOCALES.map((value) => ({ value, label: localeDisplayName(value, locale) })) }]} label={t('preferences.language')} onChange={(value) => update('language', value as AppLocale)} /></label>
-        <label className="preference-field">{t('preferences.uiScale')}<ThemedSelect value={String(preferences.uiScale)} groups={[{ label: t('preferences.uiScaleGroup'), options: UI_SCALE_VALUES.map((value) => ({ value: String(value), label: `${Math.round(value * 100)}%` })) }]} label={t('preferences.uiScale')} onChange={(value) => update('uiScale', Number(value) as UiScale)} /></label>
+        <label className="preference-field">{t('preferences.uiScale')}<ThemedSelect value={String(preferences.uiScale)} groups={[{ label: t('preferences.uiScaleGroup'), options: UI_SCALE_VALUES.map((value) => ({ value: String(value), label: `${Math.round(value * 100)}%`, description: value === 0.75 ? t('preferences.uiScaleFractionalHint') : undefined })) }]} label={t('preferences.uiScale')} onChange={(value) => update('uiScale', Number(value) as UiScale)} /></label>
+        <label className="preference-field">{t('preferences.toolIconScale')}<ThemedSelect value={String(preferences.toolIconScale)} groups={[{ label: t('preferences.toolIconScaleGroup'), options: [{ value: '1', label: t('preferences.toolIconScale.normal') }, { value: '2', label: t('preferences.toolIconScale.large') }] }]} label={t('preferences.toolIconScale')} onChange={(value) => update('toolIconScale', Number(value) as ToolIconScale)} /></label>
         {toggle(t('preferences.timelapseRecording'), preferences.timelapseRecordingEnabled, (value) => update('timelapseRecordingEnabled', value), t('preferences.timelapseRecordingHint'))}
         <label className="preference-field">{t('preferences.position')}<ThemedSelect value={preferences.rotationIndicatorPosition} groups={[{ label: t('preferences.positionGroup'), options: [{ value: 'view', label: t('preferences.position.view') }, { value: 'canvas', label: t('preferences.position.canvas') }] }]} label={t('preferences.position')} onChange={(value) => update('rotationIndicatorPosition', value as RotationIndicatorPosition)} /></label>
         <label className="preference-field">{t('preferences.zoomMode')}<ThemedSelect value={preferences.zoomToolDragMode} groups={[{ label: t('preferences.zoomModeGroup'), options: [{ value: 'smooth', label: t('preferences.zoomMode.smooth') }, { value: 'stepped', label: t('preferences.zoomMode.stepped') }] }]} label={t('preferences.zoomMode')} onChange={(value) => update('zoomToolDragMode', value as ZoomToolDragMode)} /></label>
@@ -167,6 +189,8 @@ export function PreferencesDialog({ onClose, onPresetChange }: PreferencesDialog
       </>}
       {section === 'theme' && <ThemePreferencesSection preferences={preferences} onChange={setPreferences} />}
       {section === 'files' && <>
+        <div className="preference-field preference-path-field"><span>{t('preferences.saveDirectory')}</span><div className="preference-path-control"><input readOnly value={preferences.saveDirectory || defaultDirectories.saveDirectory} title={preferences.saveDirectory || defaultDirectories.saveDirectory} /><button type="button" className="icon-button" title={t('preferences.chooseDirectory')} aria-label={t('preferences.chooseSaveDirectory')} onClick={() => void choosePreferenceDirectory('saveDirectory')}><PixelUtilityIcon kind="folderOpen" /></button><button type="button" className="icon-button" title={t('preferences.restoreDefaultDirectory')} aria-label={t('preferences.restoreDefaultSaveDirectory')} disabled={!preferences.saveDirectory} onClick={() => update('saveDirectory', '')}><PixelUtilityIcon kind="restore" /></button></div><small>{preferences.saveDirectory ? t('preferences.directory.custom') : t('preferences.directory.default')}</small></div>
+        <div className="preference-field preference-path-field"><span>{t('preferences.exportDirectory')}</span><div className="preference-path-control"><input readOnly value={preferences.exportDirectory || defaultDirectories.exportDirectory} title={preferences.exportDirectory || defaultDirectories.exportDirectory} /><button type="button" className="icon-button" title={t('preferences.chooseDirectory')} aria-label={t('preferences.chooseExportDirectory')} onClick={() => void choosePreferenceDirectory('exportDirectory')}><PixelUtilityIcon kind="folderOpen" /></button><button type="button" className="icon-button" title={t('preferences.restoreDefaultDirectory')} aria-label={t('preferences.restoreDefaultExportDirectory')} disabled={!preferences.exportDirectory} onClick={() => update('exportDirectory', '')}><PixelUtilityIcon kind="restore" /></button></div><small>{preferences.exportDirectory ? t('preferences.directory.custom') : t('preferences.directory.default')}</small></div>
         <label className="preference-field">{t('preferences.saveFormat')}<ThemedSelect value={preferences.saveFormat} groups={[{ label: t('preferences.saveFormatGroup'), options: [{ value: 'moonsprite', label: '.moonsprite' }, { value: 'png', label: '.png' }, { value: 'jpeg', label: '.jpg / .jpeg' }, { value: 'webp', label: '.webp' }, { value: 'ase', label: '.ase' }, { value: 'aseprite', label: '.aseprite' }] }]} label={t('preferences.saveFormat')} onChange={(value) => update('saveFormat', value)} /></label>
         <label className="preference-field">{t('preferences.exportFormat')}<ThemedSelect value={preferences.exportFormat} groups={[{ label: t('preferences.exportFormatGroup'), options: [{ value: 'png', label: 'PNG' }, { value: 'jpeg', label: 'JPEG' }, { value: 'webp', label: 'WebP' }, { value: 'svg', label: 'SVG' }, { value: 'gif', label: 'GIF' }] }]} label={t('preferences.exportFormat')} onChange={(value) => update('exportFormat', value)} /></label>
         <label className="preference-field">{t('preferences.recovery')}<ThemedSelect value={recoveryValue} groups={[{ label: t('preferences.recoveryGroup'), options: [{ value: 'off', label: t('preferences.recovery.off') }, { value: '0.5', label: t('preferences.recovery.seconds30') }, { value: '1', label: t('preferences.recovery.minutes1') }, { value: '2', label: t('preferences.recovery.minutes2') }, { value: '5', label: t('preferences.recovery.minutes5') }, { value: '10', label: t('preferences.recovery.minutes10') }] }]} label={t('preferences.recovery')} onChange={(value) => setPreferences((current) => value === 'off' ? { ...current, recovery: false } : { ...current, recovery: true, recoveryMinutes: Number(value) })} /></label>
@@ -192,6 +216,7 @@ export function PreferencesDialog({ onClose, onPresetChange }: PreferencesDialog
       </>}
       {section === 'editing' && <>
         {toggle(t('preferences.wheelZoom'), preferences.wheelZoomEnabled, (value) => update('wheelZoomEnabled', value))}
+        <label className="preference-field">{t('preferences.wheelZoomMode')}<ThemedSelect value={preferences.wheelZoomMode} groups={[{ label: t('preferences.wheelZoomModeGroup'), options: [{ value: 'smooth', label: t('preferences.wheelZoomMode.smooth') }, { value: 'stepped', label: t('preferences.wheelZoomMode.stepped') }] }]} label={t('preferences.wheelZoomMode')} disabled={!preferences.wheelZoomEnabled} onChange={(value) => update('wheelZoomMode', value as WheelZoomMode)} /></label>
         {toggle(t('preferences.shiftLinePreview'), preferences.shiftLinePreviewEnabled, (value) => update('shiftLinePreviewEnabled', value))}
         {toggle(t('preferences.balancedLine'), preferences.balancedShiftLineEnabled, (value) => update('balancedShiftLineEnabled', value), t('preferences.balancedLineHint'))}
         <label className="preference-field"><Tooltip content={t('preferences.lineDirectionStepHint')}><span>{t('preferences.lineDirectionStep')}</span></Tooltip><NumberInput aria-label={t('preferences.lineDirectionStep')} min={1} max={16} value={preferences.lineDirectionStep} onValueChange={(value) => update('lineDirectionStep', Math.round(value))} /></label>

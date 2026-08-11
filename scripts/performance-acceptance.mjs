@@ -1,6 +1,6 @@
 const acceptedOutcomes = new Set(['adopted', 'not-adopted', 'approved-no-change'])
 
-export function validateAcceptance(audit, { outcome, reason, userApproved }) {
+export function validateAcceptance(audit, { outcome, reason, userApproved, sourceFingerprint }) {
   const errors = []
   const latestAttempt = audit.attempts.at(-1)
   if (!acceptedOutcomes.has(outcome)) errors.push('结果必须是 adopted、not-adopted 或 approved-no-change。')
@@ -8,6 +8,12 @@ export function validateAcceptance(audit, { outcome, reason, userApproved }) {
   if (outcome === 'adopted' && latestAttempt?.comparison?.status !== 'accepted') errors.push('adopted 需要最近一次定向复测已经接受。')
   if (outcome === 'not-adopted' && (!latestAttempt || latestAttempt.comparison?.accepted)) errors.push('not-adopted 需要至少一次未接受的定向复测。')
   if (outcome === 'approved-no-change' && !userApproved) errors.push('approved-no-change 需要明确的用户批准标记。')
+  const expectedFingerprint = outcome === 'adopted' ? latestAttempt?.sourceFingerprint : audit.sourceFingerprint
+  if (sourceFingerprint && expectedFingerprint?.value !== sourceFingerprint.value) {
+    errors.push(outcome === 'adopted'
+      ? '当前性能相关源码与最后一次已接受复测不一致，必须重新复测。'
+      : '当前性能相关源码与初始审计不一致，必须恢复未采纳改动或重新审计。')
+  }
   return errors
 }
 

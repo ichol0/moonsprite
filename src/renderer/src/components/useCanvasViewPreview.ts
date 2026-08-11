@@ -2,7 +2,7 @@ import { useEffect, useRef } from 'react'
 import type { ViewState } from '@shared/types'
 import type { CanvasPoint as Point } from '@/core/canvas-input'
 import { useWorkspace } from '@/store/workspace'
-import { registerViewPreviewFlusher } from '@/core/view-preview-lifecycle'
+import { notifyViewPreview, registerViewPreviewFlusher } from '@/core/view-preview-lifecycle'
 
 interface CanvasViewPreviewOptions {
   documentId: string
@@ -65,6 +65,7 @@ export function useCanvasViewPreview({ documentId, sessionView, activeViewDrag, 
         if (!zoomPreviewStartRef.current) return
         applyRotationStyle(liveViewRef.current)
         drawRef.current()
+        notifyViewPreview(documentId, liveViewRef.current)
       })
     }
     if (zoomCommitTimerRef.current !== null) window.clearTimeout(zoomCommitTimerRef.current)
@@ -85,7 +86,10 @@ export function useCanvasViewPreview({ documentId, sessionView, activeViewDrag, 
       panPreviewFrameRef.current = null
       const pending = pendingPanPreviewOffsetRef.current
       pendingPanPreviewOffsetRef.current = null
-      if (pending) drawRef.current()
+      if (pending) {
+        drawRef.current()
+        notifyViewPreview(documentId, liveViewRef.current)
+      }
     })
   }
 

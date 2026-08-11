@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest'
-import { cursorPreferenceSource } from './cursor-theme'
+import { CURSOR_ICON_LIBRARY, cursorPreferenceSource } from './cursor-theme'
+
+describe('cursor icon library', () => {
+  it('exposes every registered cursor asset with a unique CSS variable', () => {
+    expect(CURSOR_ICON_LIBRARY.length).toBeGreaterThan(0)
+    expect(new Set(CURSOR_ICON_LIBRARY.map((item) => item.variable)).size).toBe(CURSOR_ICON_LIBRARY.length)
+    expect(CURSOR_ICON_LIBRARY.every((item) => item.variable.startsWith('--cursor-') && item.source.length > 0 && item.fallback.length > 0)).toBe(true)
+  })
+})
 
 describe('cursor preference source', () => {
   it('uses system cursors for supported scenes and MoonSprite cursors for missing scenes', () => {
@@ -8,6 +16,8 @@ describe('cursor preference source', () => {
     expect(cursorPreferenceSource('--cursor-crosshair', true)).toBe('moonsprite')
     expect(cursorPreferenceSource('--cursor-eyedropper', true)).toBe('moonsprite')
     expect(cursorPreferenceSource('--cursor-selection-rotate-ne', true)).toBe('moonsprite')
+    expect(cursorPreferenceSource('--cursor-selection-rotate-n', true)).toBe('moonsprite')
+    expect(cursorPreferenceSource('--cursor-selection-rotate-s', true)).toBe('moonsprite')
     expect(cursorPreferenceSource('--cursor-rotate', true)).toBe('moonsprite')
   })
 

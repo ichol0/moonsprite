@@ -20,6 +20,7 @@ export interface LayerClipboard {
   locked: boolean
   opacity: number
   blendMode: RasterLayer['blendMode']
+  clippingMask?: boolean
   displayColor?: RasterLayer['displayColor']
   description?: string
   groupKey?: string | null
@@ -34,6 +35,7 @@ export interface LayerClipboard {
     storageOriginY?: number
     opacity?: number
     pixels: Uint8ClampedArray
+    mask?: LayerMaskClipboard
   }>
 }
 
@@ -44,10 +46,20 @@ export interface LayerGroupClipboard {
   locked: boolean
   opacity: number
   blendMode: RasterLayer['blendMode']
+  clippingMask?: boolean
+  cumulativeBlend?: boolean
   displayColor?: RasterLayer['displayColor']
   description?: string
   parentKey?: string | null
   collapsed?: boolean
+}
+
+export interface LayerMaskClipboard {
+  width: number
+  height: number
+  offsetX: number
+  offsetY: number
+  pixels: Uint8ClampedArray
 }
 
 export interface LayerCollectionClipboard {
@@ -72,7 +84,7 @@ const cloneLayerClipboard = (clipboard: LayerClipboard): LayerClipboard => ({
   ...clipboard,
   displayColor: clipboard.displayColor ? { ...clipboard.displayColor } : undefined,
   pixels: clipboard.pixels.slice(),
-  animationCels: clipboard.animationCels?.map((cel) => ({ ...cel, pixels: cel.pixels.slice() }))
+  animationCels: clipboard.animationCels?.map((cel) => ({ ...cel, pixels: cel.pixels.slice(), mask: cel.mask ? { ...cel.mask, pixels: cel.mask.pixels.slice() } : undefined }))
 })
 
 const cloneLayerCollectionClipboard = (clipboard: LayerCollectionClipboard): LayerCollectionClipboard => ({

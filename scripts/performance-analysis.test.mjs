@@ -18,14 +18,25 @@ test('中位数与噪声不受单个最长异常值支配', () => {
   assert.equal(noisePercent([10, 10, 100]), 0)
 })
 
-test('Canvas 结果归一化重复样本并保留 React 区域', () => {
-  const metrics = normalizeCanvasResults([
+test('Canvas 结果归一化重复样本并在 profiling 报告保留 React 区域', () => {
+  const samples = [
     { canvasSize: 512, scenario: 'draw', p95: 4, over25Percent: 0, drawP95: 1, inputP95: 0.5, reactCommitP95: 12, reactByRegion: { LayersPanel: { p95: 9 } } },
     { canvasSize: 512, scenario: 'draw', p95: 4.2, over25Percent: 0, drawP95: 1.2, inputP95: 0.5, reactCommitP95: 13, reactByRegion: { LayersPanel: { p95: 10 } } },
     { canvasSize: 512, scenario: 'draw', p95: 40, over25Percent: 1, drawP95: 1.1, inputP95: 0.6, reactCommitP95: 12.5, reactByRegion: { LayersPanel: { p95: 9.5 } } },
-  ], 'canvas-full')
+  ]
+  const metrics = normalizeCanvasResults(samples, 'canvas-standard')
+  const profiling = normalizeCanvasResults(samples, 'canvas-profile', { reactOnly: true })
   assert.equal(metrics.find((item) => item.id.endsWith(':p95')).value, 4.2)
-  assert.equal(metrics.find((item) => item.kind === 'react-region').target.region, 'LayersPanel')
+  assert.equal(profiling.find((item) => item.kind === 'react-region').target.region, 'LayersPanel')
+})
+
+test('生产 Canvas 与 profiling Canvas 使用互不混合的指标', () => {
+  const sample = { canvasSize: 1024, scenario: 'draw', p95: 7, over25Percent: 0, drawP95: 2, inputP95: 1, reactCommitP95: 9, reactByRegion: { LayersPanel: { p95: 6 } } }
+  const production = normalizeCanvasResults([sample], 'canvas-production')
+  const profiling = normalizeCanvasResults([sample, sample, sample], 'canvas-profile', { reactOnly: true })
+  assert.equal(production.some((item) => item.kind.startsWith('react')), false)
+  assert.equal(profiling.every((item) => item.kind.startsWith('react')), true)
+  assert.equal(profiling.find((item) => item.kind === 'react-root').samples, 3)
 })
 
 test('Vitest 与包体积报告归一化为统一指标', () => {
@@ -57,6 +68,26 @@ test('5% 与 15% 阈值分别标记关注和阻断', () => {
   assert.equal(result.severity, 'blocking')
 })
 
+test('Canvas 单次样本不声明历史退化，但候选补齐三次后可以比较', () => {
+  const single = { id: 'canvas', suiteId: 's', kind: 'canvas', label: 'canvas', value: 120, samples: 1, noisePercent: 0, budget: 200, target: { kind: 'canvas' } }
+  const baseline = { environment, metrics: [{ ...single, value: 100, samples: 3 }] }
+  const first = analyzePerformance([single], baseline, environment)
+  assert.equal(first.metrics[0].historicalComparable, false)
+  assert.equal(first.metrics[0].deltaPercent, null)
+
+  const confirmed = analyzePerformance([{ ...single, samples: 3 }], baseline, environment)
+  assert.equal(confirmed.metrics[0].historicalComparable, true)
+  assert.equal(confirmed.metrics[0].deltaPercent, 20)
+})
+
+test('Canvas 候选补样后保持锁定，不被其他单次指标替换', () => {
+  const metrics = [
+    { id: 'confirmed', suiteId: 's', kind: 'canvas', label: 'confirmed', value: 8, samples: 3, noisePercent: 1, budget: 16.7, target: { kind: 'canvas' } },
+    { id: 'single', suiteId: 's', kind: 'canvas', label: 'single', value: 15, samples: 1, noisePercent: 0, budget: 16.7, target: { kind: 'canvas' } },
+  ]
+  assert.equal(analyzePerformance(metrics, null, environment, { candidateId: 'confirmed' }).candidate.id, 'confirmed')
+})
+
 test('正常结果仍选一个候选且仅具体 React 区域允许低风险自动化', () => {
   const metrics = [
     { id: 'frame', suiteId: 's', kind: 'canvas', label: 'frame', value: 5, samples: 3, noisePercent: 1, budget: 16.7, target: { kind: 'canvas' } },
@@ -79,4 +110,23 @@ test('优化必须超过噪声且不能让相邻指标退化', () => {
   const regressed = compareOptimization(before, [{ ...before[0], value: 90 }, { ...before[1], value: 60 }], candidate, 2)
   assert.equal(regressed.accepted, false)
   assert.equal(regressed.status, 'rejected-final')
+})
+
+test('Canvas 相邻指标限定为同一尺寸和场景', () => {
+  const target = { id: 'draw:p95', suiteId: 'canvas', value: 100, noisePercent: 1, target: { kind: 'canvas', canvasSize: 1024, scenario: 'draw' } }
+  const sameScenario = { id: 'draw:input', suiteId: 'canvas', value: 20, noisePercent: 1, target: { kind: 'canvas', canvasSize: 1024, scenario: 'draw' } }
+  const otherScenario = { id: 'pan:p95', suiteId: 'canvas', value: 20, noisePercent: 1, target: { kind: 'canvas', canvasSize: 1024, scenario: 'pan' } }
+  const candidate = { ...target }
+  const comparison = compareOptimization(
+    [target, sameScenario, otherScenario],
+    [{ ...target, value: 90 }, sameScenario, { ...otherScenario, value: 40 }],
+    candidate,
+  )
+  assert.equal(comparison.accepted, true)
+  const sameScenarioRegression = compareOptimization(
+    [target, sameScenario, otherScenario],
+    [{ ...target, value: 90 }, { ...sameScenario, value: 30 }, otherScenario],
+    candidate,
+  )
+  assert.equal(sameScenarioRegression.accepted, false)
 })

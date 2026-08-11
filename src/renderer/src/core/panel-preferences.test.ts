@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { loadFloatingPosition, parseColorPickerConfig, saveColorPickerConfig, saveFloatingPosition } from './panel-preferences'
+import { loadFloatingPosition, parseColorPickerConfig, resizeFloatingPosition, saveColorPickerConfig, saveFloatingPosition } from './panel-preferences'
 
 function createStorage(): Storage {
   const values = new Map<string, string>()
@@ -14,10 +14,34 @@ function createStorage(): Storage {
 }
 
 describe('panel preference boundaries', () => {
+  it('keeps floating panels proportionally placed while preserving fit-content height', () => {
+    const resized = resizeFloatingPosition(
+      { x: 700, y: 500, width: 300 },
+      { width: 1000, height: 800 },
+      { width: 500, height: 400 },
+      { responsiveToViewport: true, followViewportRight: false, userPositioned: false, initialRightOffset: 300, minWidth: 180, minHeight: 120 },
+      { width: 300, height: 260 }
+    )
+    expect(resized).toEqual({ x: 200, y: 140, width: 300 })
+  })
+
+  it('maps each side from the canvas center using the same percentage', () => {
+    const resized = resizeFloatingPosition(
+      { x: 550, y: 260, width: 200, height: 160 },
+      { width: 1000, height: 800 },
+      { width: 1000, height: 800 },
+      { responsiveToViewport: true, followViewportRight: false, userPositioned: true, initialRightOffset: 0, minWidth: 180, minHeight: 120 },
+      {},
+      { left: 200, top: 100, width: 600, height: 600 },
+      { left: 100, top: 50, width: 800, height: 700 }
+    )
+    expect(resized).toEqual({ x: 600, y: 250, width: 200, height: 160 })
+  })
+
   it('restores floating positions with viewport-aware scaling and clamps', () => {
     const storage = createStorage()
     saveFloatingPosition('panel', { x: 700, y: 500, width: 300, height: 200 }, { width: 1000, height: 800 }, storage)
-    expect(loadFloatingPosition('panel', null, { width: 500, height: 400 }, true, false, storage)).toEqual({ x: 320, y: 250, width: 180, height: 120 })
+    expect(loadFloatingPosition('panel', null, { width: 500, height: 400 }, true, false, storage)).toEqual({ x: 200, y: 200, width: 300, height: 200 })
   })
 
   it('falls back to the initial position for malformed floating data', () => {

@@ -16,11 +16,11 @@ if (!options.auditId) throw new Error('用法：pnpm check:performance:accept --
 const auditPath = resolve(PERFORMANCE_ARTIFACT_ROOT, options.auditId, 'audit.json')
 const audit = await readJson(auditPath)
 if (audit.releaseLabel !== currentReleaseLabel()) throw new Error('审计版本与当前发布目标不一致。')
-const errors = validateAcceptance(audit, options)
+const sourceFingerprint = performanceSourceFingerprint()
+const errors = validateAcceptance(audit, { ...options, sourceFingerprint })
 if (errors.length > 0) throw new Error(errors.join('\n'))
 
 const acceptedAt = new Date().toISOString()
-const sourceFingerprint = performanceSourceFingerprint()
 const historyPath = 'docs/testing/performance-history.md'
 const history = await readFile(historyPath, 'utf8')
 const accepted = buildAcceptedPerformanceState({
