@@ -997,7 +997,7 @@ export default function App() {
         return
       }
       if (target?.tagName === 'INPUT' || target?.tagName === 'TEXTAREA' || target?.tagName === 'SELECT') return
-      if (session?.document.animation && session.document.animation.frames.length > 1
+      if (!runtimePreferences.timelineHidden && session?.document.animation && session.document.animation.frames.length > 1
         && !session.selection && !event.ctrlKey && !event.metaKey && !event.shiftKey && !event.altKey
         && !document.querySelector('.modal-backdrop') && !openMenu
         && (key === 'arrowleft' || key === 'arrowright')) {
@@ -1103,9 +1103,9 @@ export default function App() {
       if (runCommand('createLayerGroup', () => workspace.createLayerGroup())) return
       if (runCommand('toggleClippingMask', () => workspace.toggleActiveClippingMask())) return
       if (runCommand('newLayer', () => { void workspace.addLayer() })) return
-      if (runCommand('addAnimationFrame', () => { if (session) workspace.duplicateAnimationFrame() })) return
-      if (runCommand('addBlankAnimationFrame', () => { if (session) workspace.addAnimationFrame() })) return
-      if (runCommand('deleteAnimationFrame', () => { if (session) workspace.deleteSelectedAnimationItems() })) return
+      if (runCommand('addAnimationFrame', () => { if (session && !runtimePreferences.timelineHidden) workspace.duplicateAnimationFrame() })) return
+      if (runCommand('addBlankAnimationFrame', () => { if (session && !runtimePreferences.timelineHidden) workspace.addAnimationFrame() })) return
+      if (runCommand('deleteAnimationFrame', () => { if (session && !runtimePreferences.timelineHidden) workspace.deleteSelectedAnimationItems() })) return
       if (runCommand('duplicateLayer', () => workspace.duplicateActiveLayer())) return
       if (runCommand('mergeLayerDown', () => workspace.mergeActiveLayerDown())) return
       if (runCommand('mergeSelectedLayers', () => workspace.mergeSelectedLayers())) return
@@ -1176,7 +1176,7 @@ export default function App() {
     window.addEventListener('keydown', keydown, true)
     window.addEventListener('keyup', keyup, true)
     return () => { window.removeEventListener('keydown', keydown, true); window.removeEventListener('keyup', keyup, true) }
-  }, [adjustmentOpen, advancedMode, aboutOpen, blockedShortcuts, canvasResizeOpen, colorReplacementOpen, componentLibraryOpen, cycleAdvancedMode, exportOpen, gridSettingsOpen, homeOpen, imageResizeOpen, latestReleaseOpen, newOpen, openMenu, openSaveAs, outlineOpen, preferencesOpen, projectInfoOpen, roadmapOpen, saveAsOpen, shortcutOpen, timelapseOpen, toggleMirrorView, updatePanelVisibility, updateToolRailSide, workspace, workspaceManagerOpen, workspaceSaveOpen, session?.brushSize, session?.document.id, session?.selection, shortcuts])
+  }, [adjustmentOpen, advancedMode, aboutOpen, blockedShortcuts, canvasResizeOpen, colorReplacementOpen, componentLibraryOpen, cycleAdvancedMode, exportOpen, gridSettingsOpen, homeOpen, imageResizeOpen, latestReleaseOpen, newOpen, openMenu, openSaveAs, outlineOpen, preferencesOpen, projectInfoOpen, roadmapOpen, runtimePreferences.timelineHidden, saveAsOpen, shortcutOpen, timelapseOpen, toggleMirrorView, updatePanelVisibility, updateToolRailSide, workspace, workspaceManagerOpen, workspaceSaveOpen, session?.brushSize, session?.document.id, session?.selection, shortcuts])
 
   useEffect(() => { void window.moonSprite.getResourceInfo().then((info) => setResourceLabel(t('app.resource.freeMemory', { value: formatBytes(info.freeBytes) }))) }, [t])
   useEffect(() => {

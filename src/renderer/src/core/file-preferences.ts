@@ -42,6 +42,7 @@ export const LINE_DIRECTION_STEP_PREFERENCE_KEY = 'moonsprite.preference.line-di
 export const LAYER_DISPLAY_COLOR_PRESETS_KEY = 'moonsprite.preference.layer-display-color-presets'
 export const COLOR_EDITOR_MODES_PREFERENCE_KEY = 'moonsprite.preference.color-editor-modes'
 export const ONION_SKIN_PREFERENCE_KEY = 'moonsprite.preference.onion-skin'
+export const TIMELINE_HIDDEN_PREFERENCE_KEY = 'moonsprite.preference.timeline-hidden'
 export const SYMMETRY_AXIS_PREFERENCE_KEY = 'moonsprite.preference.symmetry-axis'
 export const TIMELAPSE_RECORDING_ENABLED_PREFERENCE_KEY = 'moonsprite.preference.timelapse-recording-enabled'
 export const UI_SCALE_PREFERENCE_KEY = 'moonsprite.preference.ui-scale'
@@ -256,6 +257,7 @@ export interface EditorPreferences {
   layerDisplayColorPresets: RgbaColor[]
   colorEditorModes: ColorEditorModePreference[]
   onionSkin: OnionSkinPreferences
+  timelineHidden: boolean
   symmetryAxis: SymmetryAxisPreferences
   timelapseRecordingEnabled: boolean
   theme: ThemePreferences
@@ -299,6 +301,7 @@ export const DEFAULT_EDITOR_PREFERENCES: EditorPreferences = {
   layerDisplayColorPresets: DEFAULT_LAYER_DISPLAY_COLOR_PRESETS,
   colorEditorModes: DEFAULT_COLOR_EDITOR_MODES,
   onionSkin: DEFAULT_ONION_SKIN_PREFERENCES,
+  timelineHidden: false,
   symmetryAxis: DEFAULT_SYMMETRY_AXIS_PREFERENCES,
   timelapseRecordingEnabled: true,
   theme: DEFAULT_THEME_PREFERENCES
@@ -574,6 +577,7 @@ export function loadEditorPreferences(storage?: Storage): EditorPreferences {
     layerDisplayColorPresets: parseLayerDisplayColorPresets(get(LAYER_DISPLAY_COLOR_PRESETS_KEY)),
     colorEditorModes: parseColorEditorModes(get(COLOR_EDITOR_MODES_PREFERENCE_KEY)),
     onionSkin: theme.onionSkin,
+    timelineHidden: get(TIMELINE_HIDDEN_PREFERENCE_KEY) === 'true',
     symmetryAxis: theme.symmetryAxis,
     timelapseRecordingEnabled: get(TIMELAPSE_RECORDING_ENABLED_PREFERENCE_KEY) !== 'false',
     theme: theme.theme
@@ -622,6 +626,7 @@ export function saveEditorPreferences(preferences: EditorPreferences, storage?: 
     [LAYER_DISPLAY_COLOR_PRESETS_KEY]: JSON.stringify(parseLayerDisplayColorPresets(JSON.stringify(preferences.layerDisplayColorPresets))),
     [COLOR_EDITOR_MODES_PREFERENCE_KEY]: JSON.stringify(parseColorEditorModes(JSON.stringify(preferences.colorEditorModes))),
     [ONION_SKIN_PREFERENCE_KEY]: JSON.stringify(parseOnionSkinPreferences(JSON.stringify(preferences.onionSkin))),
+    [TIMELINE_HIDDEN_PREFERENCE_KEY]: String(preferences.timelineHidden),
     [SYMMETRY_AXIS_PREFERENCE_KEY]: JSON.stringify(parseSymmetryAxisPreferences(JSON.stringify(preferences.symmetryAxis))),
     [TIMELAPSE_RECORDING_ENABLED_PREFERENCE_KEY]: String(preferences.timelapseRecordingEnabled)
   }

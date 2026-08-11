@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { BRUSH_SHIFT_LINE_ENABLED_KEY, DEFAULT_GRID_COLOR, DEFAULT_PIXEL_GRID_COLOR, EXPORT_DIRECTORY_PREFERENCE_KEY, EXPORT_FORMAT_PREFERENCE_KEY, GRID_COLOR_PREFERENCE_KEY, LANGUAGE_PREFERENCE_KEY, LAYER_DISPLAY_COLOR_PRESETS_KEY, MOVE_LAYER_CONTENT_PREVIEW_ENABLED_PREFERENCE_KEY, NEW_DOCUMENT_SIZE_PRESETS_KEY, PIXEL_GRID_COLOR_PREFERENCE_KEY, RECOVERY_MINUTES_PREFERENCE_KEY, SAVE_DIRECTORY_PREFERENCE_KEY, SAVE_FORMAT_PREFERENCE_KEY, SYMMETRY_AXIS_PREFERENCE_KEY, THEME_PREFERENCE_KEY, TIMELAPSE_RECORDING_ENABLED_PREFERENCE_KEY, TOOL_ICON_SCALE_PREFERENCE_KEY, UI_SCALE_PREFERENCE_KEY, WHEEL_ZOOM_MODE_PREFERENCE_KEY, ZOOM_TOOL_DRAG_MODE_PREFERENCE_KEY, imageExportKindForPreference, loadEditorPreferences, parseBrushPreviewMode, parseBrushShiftLineEnabled, parseCheckerSize, parseCursorScale, parseDocumentSizePresets, parseDrawingBrushPreviewEnabled, parseExportScalePresets, parseEyedropperMagnifierStyle, parseLayerDisplayColorPresets, parseLineDirectionStep, parseRelativeLuminanceScope, parseSymmetryAxisPreferences, parseToolIconScale, parseUiScale, parseWheelZoomMode, parseZoomToolDragMode, saveEditorPreferences, saveImageKindForPreference } from './file-preferences'
+import { BRUSH_SHIFT_LINE_ENABLED_KEY, DEFAULT_GRID_COLOR, DEFAULT_PIXEL_GRID_COLOR, EXPORT_DIRECTORY_PREFERENCE_KEY, EXPORT_FORMAT_PREFERENCE_KEY, GRID_COLOR_PREFERENCE_KEY, LANGUAGE_PREFERENCE_KEY, LAYER_DISPLAY_COLOR_PRESETS_KEY, MOVE_LAYER_CONTENT_PREVIEW_ENABLED_PREFERENCE_KEY, NEW_DOCUMENT_SIZE_PRESETS_KEY, PIXEL_GRID_COLOR_PREFERENCE_KEY, RECOVERY_MINUTES_PREFERENCE_KEY, SAVE_DIRECTORY_PREFERENCE_KEY, SAVE_FORMAT_PREFERENCE_KEY, SYMMETRY_AXIS_PREFERENCE_KEY, THEME_PREFERENCE_KEY, TIMELAPSE_RECORDING_ENABLED_PREFERENCE_KEY, TIMELINE_HIDDEN_PREFERENCE_KEY, TOOL_ICON_SCALE_PREFERENCE_KEY, UI_SCALE_PREFERENCE_KEY, WHEEL_ZOOM_MODE_PREFERENCE_KEY, ZOOM_TOOL_DRAG_MODE_PREFERENCE_KEY, imageExportKindForPreference, loadEditorPreferences, parseBrushPreviewMode, parseBrushShiftLineEnabled, parseCheckerSize, parseCursorScale, parseDocumentSizePresets, parseDrawingBrushPreviewEnabled, parseExportScalePresets, parseEyedropperMagnifierStyle, parseLayerDisplayColorPresets, parseLineDirectionStep, parseRelativeLuminanceScope, parseSymmetryAxisPreferences, parseToolIconScale, parseUiScale, parseWheelZoomMode, parseZoomToolDragMode, saveEditorPreferences, saveImageKindForPreference } from './file-preferences'
 import { resolveTheme } from './theme'
 
 describe('file format preferences', () => {
@@ -178,9 +178,11 @@ describe('editor preferences persistence boundary', () => {
     expect(loadEditorPreferences(adapter).wheelZoomMode).toBe('smooth')
     saveEditorPreferences({ ...loadEditorPreferences(adapter), brushShiftLineEnabled: false }, adapter)
     expect(storage.get(BRUSH_SHIFT_LINE_ENABLED_KEY)).toBe('false')
-    saveEditorPreferences({ ...loadEditorPreferences(adapter), timelapseRecordingEnabled: false, eyedropperMagnifierEnabled: false, eyedropperMagnifierDistortionEnabled: false, moveLayerContentPreviewEnabled: false }, adapter)
+    saveEditorPreferences({ ...loadEditorPreferences(adapter), timelapseRecordingEnabled: false, timelineHidden: true, eyedropperMagnifierEnabled: false, eyedropperMagnifierDistortionEnabled: false, moveLayerContentPreviewEnabled: false }, adapter)
     expect(storage.get(TIMELAPSE_RECORDING_ENABLED_PREFERENCE_KEY)).toBe('false')
     expect(loadEditorPreferences(adapter).timelapseRecordingEnabled).toBe(false)
+    expect(storage.get(TIMELINE_HIDDEN_PREFERENCE_KEY)).toBe('true')
+    expect(loadEditorPreferences(adapter).timelineHidden).toBe(true)
     expect(loadEditorPreferences(adapter).eyedropperMagnifierEnabled).toBe(false)
     expect(loadEditorPreferences(adapter).eyedropperMagnifierDistortionEnabled).toBe(false)
     expect(storage.get(MOVE_LAYER_CONTENT_PREVIEW_ENABLED_PREFERENCE_KEY)).toBe('false')

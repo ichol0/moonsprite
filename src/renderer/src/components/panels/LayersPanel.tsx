@@ -226,7 +226,7 @@ const selectedRowsForProperties = (session: DocumentSession): LayerFormTarget[] 
     ...layerIds.map((id) => ({ id, kind: 'layer' as const }))
   ]
 }
-export function LayersPanel({ session, docked = false, onDockDragStart, onPanelContextMenu, onFloatingDock }: { session: DocumentSession } & DockDragProps) {
+export function LayersPanel({ session, docked = false, sideDocked = false, onDockDragStart, onPanelContextMenu, onFloatingDock }: { session: DocumentSession; sideDocked?: boolean } & DockDragProps) {
   const { t } = useI18n()
   const blendOptions: Array<{ value: BlendMode; label: string }> = [
     { value: 'normal', label: t('blend.normal') }, { value: 'darken', label: t('blend.darken') }, { value: 'multiply', label: t('blend.multiply') },
@@ -289,6 +289,7 @@ export function LayersPanel({ session, docked = false, onDockDragStart, onPanelC
   const [animationCellSelectionOutlineVisible, setAnimationCellSelectionOutlineVisible] = useState(() => session.selectedAnimationCellKeys.length > 0 || session.selectedAnimationMaskCellKeys.length > 0)
   const hiddenAnimationCellSelectionSignatureRef = useRef<string | null>(null)
   const suppressAnimationClickRef = useRef(false)
+  const suppressMaskRowClickRef = useRef(false)
   const [draggingAnimationFrameIds, setDraggingAnimationFrameIds] = useState<string[]>([])
   const [draggingAnimationCellKeys, setDraggingAnimationCellKeys] = useState<string[]>([])
   const [animationCelDropTargetKey, setAnimationCelDropTargetKey] = useState<string | null>(null)
@@ -302,7 +303,10 @@ export function LayersPanel({ session, docked = false, onDockDragStart, onPanelC
   const [frameProperties, setFrameProperties] = useState<{ frameId: string; duration: number } | null>(null)
   const [celProperties, setCelProperties] = useState<{ layerId: string; frameId: string; opacity: number } | null>(null)
   const [layerSettingsOpen, setLayerSettingsOpen] = useState(false)
-  const [layerSettings, setLayerSettings] = useState<{ density: LayerDisplayDensity; onionSkin: OnionSkinPreferences }>({ density: loadLayerDensity(), onionSkin: loadEditorPreferences().onionSkin })
+  const [layerSettings, setLayerSettings] = useState<{ density: LayerDisplayDensity; onionSkin: OnionSkinPreferences; timelineHidden: boolean }>(() => {
+    const preferences = loadEditorPreferences()
+    return { density: loadLayerDensity(), onionSkin: preferences.onionSkin, timelineHidden: preferences.timelineHidden }
+  })
   const [layerSettingsSlider, setLayerSettingsSlider] = useState<'previousOpacity' | 'nextOpacity' | null>(null)
   const [layerLabelWidth, setLayerLabelWidth] = useState(loadLayerLabelWidth)
   const [layerDensity, setLayerDensity] = useState<LayerDisplayDensity>(loadLayerDensity)
@@ -441,15 +445,23 @@ export function LayersPanel({ session, docked = false, onDockDragStart, onPanelC
     return keys
   }
   const openLayerSettings = (): void => {
-    setLayerSettings({ density: layerDensity, onionSkin: loadEditorPreferences().onionSkin })
+    const preferences = loadEditorPreferences()
+    setLayerSettings({ density: layerDensity, onionSkin: preferences.onionSkin, timelineHidden: preferences.timelineHidden })
     setLayerSettingsSlider(null)
     setLayerSettingsOpen(true)
   }
-  const applyLayerSettings = (next: { density: LayerDisplayDensity; onionSkin: OnionSkinPreferences }): void => {
+  const applyLayerSettings = (next: { density: LayerDisplayDensity; onionSkin: OnionSkinPreferences; timelineHidden: boolean }): void => {
+    if (layerSettings.timelineHidden && next.timelineHidden && next.onionSkin !== layerSettings.onionSkin) return
     setLayerSettings(next)
     setLayerDensity(next.density)
     localStorage.setItem(layerDensityKey, next.density)
-    saveEditorPreferences({ ...loadEditorPreferences(), onionSkin: next.onionSkin })
+    saveEditorPreferences({ ...loadEditorPreferences(), onionSkin: next.onionSkin, timelineHidden: next.timelineHidden })
+    if (next.timelineHidden) {
+      setLayerSettingsSlider(null)
+      store.setAnimationPlaying(false)
+      store.clearAnimationSelection()
+      setAnimationMenu(null)
+    }
     window.dispatchEvent(new Event('moonsprite:preferences-changed'))
   }
   const saveLayerSettings = (): void => {
@@ -458,6 +470,7 @@ export function LayersPanel({ session, docked = false, onDockDragStart, onPanelC
   }
   const resetLayerSettings = (): void => applyLayerSettings({
     density: 'normal',
+    timelineHidden: false,
     onionSkin: {
       ...DEFAULT_ONION_SKIN_PREFERENCES,
       previousColor: { ...DEFAULT_ONION_SKIN_PREFERENCES.previousColor },
@@ -466,7 +479,7 @@ export function LayersPanel({ session, docked = false, onDockDragStart, onPanelC
   })
   const toggleOnionSkin = (): void => {
     const current = loadEditorPreferences().onionSkin
-    applyLayerSettings({ density: layerDensity, onionSkin: { ...current, enabled: !current.enabled } })
+    applyLayerSettings({ density: layerDensity, onionSkin: { ...current, enabled: !current.enabled }, timelineHidden: layerSettings.timelineHidden })
   }
   const selectAnimationFrame = (frameId: string, mode: 'replace' | 'toggle' | 'range' = 'replace'): void => {
     store.setAnimationPlaying(false)
@@ -683,10 +696,19 @@ export function LayersPanel({ session, docked = false, onDockDragStart, onPanelC
     animationPointerDragRef.current = drag
     event.preventDefault()
   }
+  const toggleAnimationMaskIsolatedView = (layerId: string, frameId: string, additive = false): boolean => {
+    const key = animationCelKey(layerId, frameId)
+    const cel = celLookup.at(layerId, frameId)
+    const mask = animationMaskAt(timeline, layerId, frameId)
+    if (!mask) return false
+    if (!additive && session.layerMaskIsolatedView && session.activeLayerMaskId === mask.id) store.selectAnimationMaskCell(key)
+    else if (cel) store.selectLayerMask(cel.id, additive)
+    else store.selectGroupMask(layerId, frameId, additive)
+    return true
+  }
   const beginAnimationMaskDrag = (event: React.PointerEvent<HTMLButtonElement>, layerId: string, frameId: string): void => {
     if (event.button !== 0) return
     const key = animationCelKey(layerId, frameId)
-    const cel = celLookup.at(layerId, frameId)
     const mask = animationMaskAt(timeline, layerId, frameId)
     if (!mask) {
       if (event.shiftKey || event.ctrlKey) event.preventDefault()
@@ -694,8 +716,7 @@ export function LayersPanel({ session, docked = false, onDockDragStart, onPanelC
     }
     if (event.altKey) {
       cancelAnimationPointerDrag()
-      if (cel) store.selectLayerMask(cel.id, event.shiftKey)
-      else store.selectGroupMask(layerId, frameId, event.shiftKey)
+      toggleAnimationMaskIsolatedView(layerId, frameId, event.shiftKey)
       suppressAnimationClickRef.current = true
       window.setTimeout(() => { suppressAnimationClickRef.current = false }, 0)
       event.preventDefault()
@@ -1770,8 +1791,8 @@ export function LayersPanel({ session, docked = false, onDockDragStart, onPanelC
     const selectedRoots = new Set(masks.flatMap((item) => selected.has(item.key) ? [resolveAnimationMask(timeline, item.mask)?.id ?? item.mask.id] : []))
     return masks.some((item) => Boolean(item.mask.linkedMaskId && (selected.has(item.key) || selectedRoots.has(resolveAnimationMask(timeline, item.mask)?.id ?? ''))))
   })()
-  return <><section ref={floating.ref} className={`panel layers-panel layer-density-${layerDensity} ${session.animationPlaying ? 'animation-playing' : ''} ${animationItemDragging ? 'animation-item-dragging' : ''} ${floating.style ? 'floating-panel' : ''} ${draggingCopy ? 'layer-copy-drag' : ''}`} data-command-scope="layers" style={floating.style} onPointerDown={floating.bringToFront} onWheel={handleLayerPanelWheel} onContextMenu={onPanelContextMenu}>
-    <header onPointerDown={(event) => floating.style ? floating.startDrag(event) : onDockDragStart?.(event, floating.startDetachedDrag)}><div className="layer-animation-toolbar" onPointerDown={(event) => event.stopPropagation()}><span className="layer-animation-playback">
+  return <><section ref={floating.ref} className={`panel layers-panel layer-density-${layerDensity} ${layerSettings.timelineHidden ? 'timeline-hidden' : ''} ${session.animationPlaying ? 'animation-playing' : ''} ${animationItemDragging ? 'animation-item-dragging' : ''} ${floating.style ? 'floating-panel' : ''} ${draggingCopy ? 'layer-copy-drag' : ''}`} data-command-scope="layers" style={floating.style} onPointerDown={floating.bringToFront} onWheel={handleLayerPanelWheel} onContextMenu={onPanelContextMenu}>
+    <header onPointerDown={(event) => floating.style ? floating.startDrag(event) : onDockDragStart?.(event, floating.startDetachedDrag)}>{layerSettings.timelineHidden && <strong className="layer-panel-title">{t('panel.layers')}</strong>}<div className="layer-animation-toolbar" onPointerDown={(event) => event.stopPropagation()}><span className="layer-animation-playback">
         <button type="button" title={t('timeline.firstFrame')} aria-label={t('timeline.firstFrame')} onClick={() => selectAnimationEdge('first')}><PlaybackPixelIcon kind="first" /></button>
         <button type="button" title={t('timeline.previousFrame')} aria-label={t('timeline.previousFrame')} onClick={() => selectAnimationStep(-1)}><PlaybackPixelIcon kind="previous" /></button>
         <button type="button" className={session.animationPlaying ? 'active' : ''} title={session.animationPlaying ? t('timeline.pause') : t('timeline.play')} aria-label={session.animationPlaying ? t('timeline.pause') : t('timeline.play')} onClick={() => store.setAnimationPlaying(!session.animationPlaying)} onContextMenu={(event) => openAnimationMenu(event, { kind: 'playback', x: event.clientX, y: event.clientY })}><PlaybackPixelIcon kind={session.animationPlaying ? 'pause' : 'play'} /></button>
@@ -1779,19 +1800,20 @@ export function LayersPanel({ session, docked = false, onDockDragStart, onPanelC
         <button type="button" title={t('timeline.lastFrame')} aria-label={t('timeline.lastFrame')} onClick={() => selectAnimationEdge('last')}><PlaybackPixelIcon kind="last" /></button>
       </span><span className="layer-animation-edit">
         <button type="button" className={layerSettings.onionSkin.enabled ? 'active' : ''} title={t('layers.onionSkinEnabled')} aria-label={t('layers.onionSkinEnabled')} aria-pressed={layerSettings.onionSkin.enabled} onClick={toggleOnionSkin}><PixelUtilityIcon kind="onion" /></button>
-        <button type="button" title={t('timeline.addFrame')} aria-label={t('timeline.addFrame')} onClick={() => store.duplicateAnimationFrame()}><PixelUtilityIcon kind="plus" /></button>
-        <button type="button" title={t('timeline.deleteFrame')} aria-label={t('timeline.deleteFrame')} disabled={timeline.frames.length <= 1} onClick={() => store.deleteSelectedAnimationItems()}><PixelUtilityIcon kind="delete" /></button>
-      </span></div><span className="panel-actions" onPointerDown={(event) => event.stopPropagation()}><button title={t('layers.new')} aria-label={t('layers.new')} onClick={() => void store.addLayer()}><PixelUtilityIcon kind="plus" /></button><button title={t('layers.newGroupShortcut')} aria-label={t('layers.newGroup')} onClick={() => store.createLayerGroup()}><PixelUtilityIcon kind="newFolder" /></button><button title={t('layers.deleteSelected')} aria-label={t('layers.deleteSelected')} onClick={() => store.deleteSelectedLayers()}><PixelUtilityIcon kind="delete" /></button><button title={t('layers.settings')} aria-label={t('layers.settings')} onClick={openLayerSettings}><PixelUtilityIcon kind="properties" /></button></span></header>
+        {!sideDocked && <button type="button" className="timeline-frame-edit-button" title={t('timeline.addFrame')} aria-label={t('timeline.addFrame')} onClick={() => store.duplicateAnimationFrame()}><PixelUtilityIcon kind="plus" /></button>}
+        {!sideDocked && <button type="button" className="timeline-frame-edit-button" title={t('timeline.deleteFrame')} aria-label={t('timeline.deleteFrame')} disabled={timeline.frames.length <= 1} onClick={() => store.deleteSelectedAnimationItems()}><PixelUtilityIcon kind="delete" /></button>}
+      </span></div><span className="panel-actions" onPointerDown={(event) => event.stopPropagation()}>{!sideDocked && <button className="layer-structure-edit-button" title={t('layers.new')} aria-label={t('layers.new')} onClick={() => void store.addLayer()}><PixelUtilityIcon kind="plus" /></button>}{!sideDocked && <button className="layer-structure-edit-button" title={t('layers.newGroupShortcut')} aria-label={t('layers.newGroup')} onClick={() => store.createLayerGroup()}><PixelUtilityIcon kind="newFolder" /></button>}{!sideDocked && <button className="layer-structure-edit-button" title={t('layers.deleteSelected')} aria-label={t('layers.deleteSelected')} onClick={() => store.deleteSelectedLayers()}><PixelUtilityIcon kind="delete" /></button>}<button title={t('layers.settings')} aria-label={t('layers.settings')} onClick={openLayerSettings}><PixelUtilityIcon kind="properties" /></button></span></header>
     <div ref={layerListRef} className="layer-list layer-animation-list component-scrollbar" style={{ '--layer-frame-count': timeline.frames.length, '--layer-label-width': `${layerLabelWidth}px` } as CSSProperties} onPointerDown={(event) => { if (event.target === event.currentTarget) { store.clearLayerSelection(); store.clearAnimationSelection() } }} onContextMenu={(event) => { const target = (event.target as HTMLElement).closest<HTMLElement>('[data-layer-id], [data-group-id]'); if (target?.dataset.layerId) openLayerContextMenu(event, 'layer', target.dataset.layerId); else if (target?.dataset.groupId) openLayerContextMenu(event, 'group', target.dataset.groupId) }}><div className="layer-animation-tree"><div className="layer-animation-corner"><ActiveFrameSync documentId={session.document.id} frameIds={timeline.frames.map((frame) => frame.id)} containerRef={layerListRef} suppressActiveGuide={suppressCellSelectionGuides} /></div><span className="layer-animation-column-resizer" role="separator" aria-label={t('timeline.resizeLayerArea')} aria-orientation="vertical" aria-valuemin={layerLabelWidthLimits.min} aria-valuemax={layerLabelWidthLimits.max} aria-valuenow={layerLabelWidth} tabIndex={0} onPointerDown={beginLayerLabelResize} onKeyDown={(event) => { if (event.key === 'ArrowLeft') { event.preventDefault(); setStoredLayerLabelWidth(layerLabelWidth - 12) } else if (event.key === 'ArrowRight') { event.preventDefault(); setStoredLayerLabelWidth(layerLabelWidth + 12) } }} />{displayRows.map((displayRow) => {
       if (displayRow.kind === 'mask') {
         const activeCel = displayRow.ownerKind === 'layer' ? celLookup.at(displayRow.owner.id, timeline.activeFrameId) : null
         const activeMask = animationMaskAt(timeline, displayRow.owner.id, timeline.activeFrameId)
         const rowSelected = !suppressCellSelectionGuides && (session.selectedAnimationMaskCellKeys.some((key) => parseAnimationCelKey(key)?.layerId === displayRow.owner.id) || Boolean(activeMask && session.activeLayerMaskId === activeMask.id))
         const maskNameKey = displayRow.ownerKind === 'group' ? 'core.document.layerGroupMask' : 'core.document.layerMask'
+        const maskRowTooltip = <><strong>{t(maskNameKey)}</strong><span>{t('layers.layerMaskDescription')}</span><small>{t('layers.layerMaskUsage')}</small></>
         const maskVisibilityTarget: LayerPanelToggleTarget | null = displayRow.ownerKind === 'layer'
           ? activeCel ? { control: 'visibility', ownerKind: 'layer-mask', id: activeCel.id } : null
           : { control: 'visibility', ownerKind: 'group-mask', id: displayRow.owner.id, frameId: timeline.activeFrameId }
-        return <button type="button" key={`mask-row-${displayRow.owner.id}`} data-layer-mask-row-owner={displayRow.owner.id} className={`layer-row layer-mask-row ${rowSelected ? 'selected' : ''}`} style={{ '--layer-depth': displayRow.depth } as React.CSSProperties} onClick={() => { if (activeMask) store.selectAnimationMaskCell(animationCelKey(displayRow.owner.id, timeline.activeFrameId)) }} onContextMenu={(event) => { event.stopPropagation(); openCelMenu(event, displayRow.owner.id, timeline.activeFrameId, 'mask') }}><span className="layer-visibility layer-mask-row-visibility" role="button" tabIndex={-1} aria-label={t(activeMask?.visible === false ? 'layers.showLayer' : 'layers.hideLayer')} onPointerDown={(event) => { if (activeMask && maskVisibilityTarget) beginLayerPanelToggle(event, maskVisibilityTarget, activeMask.visible); else event.stopPropagation() }} onPointerEnter={(event) => { if (maskVisibilityTarget) continueLayerPanelToggle(event, maskVisibilityTarget) }} onPointerUp={endLayerPanelToggle} onDoubleClick={(event) => event.stopPropagation()} onClick={finishLayerPanelToggleClick}>{activeMask?.visible === false ? <PixelUtilityIcon kind="eyeOff" /> : <PixelUtilityIcon kind="eye" />}</span><span className="layer-mask-row-lock-slot" aria-hidden="true" /><span className="layer-name"><span>{t(maskNameKey)}</span><small>{displayRow.owner.name}</small></span><Tooltip className="layer-status-icon-tooltip layer-mask-row-layer-icon" content={layerMaskTooltip}><span className="layer-mask-row-icon" aria-hidden="true"><PixelUtilityIcon kind="layerMask" /></span></Tooltip></button>
+        return <button type="button" key={`mask-row-${displayRow.owner.id}`} data-layer-mask-row-owner={displayRow.owner.id} className={`layer-row layer-mask-row ${rowSelected ? 'selected' : ''} ${activeMask && altCopyReady ? 'mask-edit-ready' : ''}`} style={{ '--layer-depth': displayRow.depth } as React.CSSProperties} onPointerDown={(event) => { if (event.button !== 0) return; if (!event.altKey || !activeMask) { suppressMaskRowClickRef.current = false; return } if (!toggleAnimationMaskIsolatedView(displayRow.owner.id, timeline.activeFrameId, event.shiftKey)) return; suppressMaskRowClickRef.current = true; event.preventDefault(); event.stopPropagation() }} onPointerCancel={() => { suppressMaskRowClickRef.current = false }} onClick={(event) => { if (suppressMaskRowClickRef.current || event.altKey) { suppressMaskRowClickRef.current = false; event.preventDefault(); event.stopPropagation(); return } if (activeMask) { store.selectAnimationMaskCell(animationCelKey(displayRow.owner.id, timeline.activeFrameId)); hideAnimationCellSelectionOutline() } }} onContextMenu={(event) => { event.stopPropagation(); openCelMenu(event, displayRow.owner.id, timeline.activeFrameId, 'mask') }}><span className="layer-visibility layer-mask-row-visibility" role="button" tabIndex={-1} aria-label={t(activeMask?.visible === false ? 'layers.showLayer' : 'layers.hideLayer')} onPointerDown={(event) => { if (activeMask && maskVisibilityTarget) beginLayerPanelToggle(event, maskVisibilityTarget, activeMask.visible); else event.stopPropagation() }} onPointerEnter={(event) => { if (maskVisibilityTarget) continueLayerPanelToggle(event, maskVisibilityTarget) }} onPointerUp={endLayerPanelToggle} onDoubleClick={(event) => event.stopPropagation()} onClick={finishLayerPanelToggleClick}>{activeMask?.visible === false ? <PixelUtilityIcon kind="eyeOff" /> : <PixelUtilityIcon kind="eye" />}</span><span className="layer-mask-row-lock-slot" aria-hidden="true" /><span className="layer-name"><span>{t(maskNameKey)}</span><small>{displayRow.owner.name}</small></span><Tooltip className="layer-status-icon-tooltip layer-mask-row-layer-icon" content={maskRowTooltip}><span className="layer-mask-row-icon" aria-hidden="true"><PixelUtilityIcon kind="layerMask" /></span></Tooltip></button>
       }
       const node = displayRow.node
       if (node.kind === 'group') {
@@ -1931,11 +1953,12 @@ export function LayersPanel({ session, docked = false, onDockDragStart, onPanelC
       </ModalShell>
     </div>}
     {layerSettingsOpen && <div className="modal-backdrop" role="presentation" onPointerDown={(event) => { if (event.target === event.currentTarget) setLayerSettingsOpen(false) }}>
-      <ModalShell as="form" storageKey="layer-settings-layout-v11" defaultWidth={360} defaultHeight={530} minWidth={340} minHeight={470} maxWidth={420} maxHeight={700} className="layer-modal layer-settings-modal" onSubmit={(event) => { event.preventDefault(); saveLayerSettings() }}>
+      <ModalShell as="form" storageKey="layer-settings-layout-v12" defaultWidth={360} defaultHeight={570} minWidth={340} minHeight={510} maxWidth={420} maxHeight={740} className={`layer-modal layer-settings-modal ${layerSettings.timelineHidden ? 'timeline-disabled' : ''}`} onSubmit={(event) => { event.preventDefault(); saveLayerSettings() }}>
         <header><div><h2>{t('layers.settings')}</h2></div><button type="button" className="icon-button" aria-label={t('common.close')} onClick={() => setLayerSettingsOpen(false)}><PixelUtilityIcon kind="close" /></button></header>
         <div className="modal-body" onPointerDown={(event) => { if (!(event.target as Element).closest('.layer-setting-percent')) setLayerSettingsSlider(null) }}>
           <section className="layer-settings-density"><strong>{t('layers.thumbnailSize')}</strong><div><input aria-label={t('layers.thumbnailSize')} type="range" min={0} max={layerDensityOrder.length - 1} step={1} value={layerDensityOrder.indexOf(layerSettings.density)} onChange={(event) => applyLayerSettings({ ...layerSettings, density: layerDensityOrder[Number(event.target.value)] })} /><output>{t(layerDensityLabelKeys[layerSettings.density])}</output></div></section>
-          <fieldset className="layer-settings-onion"><legend>{t('layers.onionSkin')}</legend><label className="preference-toggle outline-preview-toggle layer-onion-toggle"><span>{t('layers.onionSkinEnabled')}</span><input type="checkbox" checked={layerSettings.onionSkin.enabled} onChange={(event) => applyLayerSettings({ ...layerSettings, onionSkin: { ...layerSettings.onionSkin, enabled: event.target.checked } })} /><span className="toggle-track" aria-hidden="true"><i /></span></label><div className="layer-settings-pair"><label>{t('layers.previousFrames')}<NumberInput min={0} max={8} value={layerSettings.onionSkin.previousFrames} onValueChange={(value) => applyLayerSettings({ ...layerSettings, onionSkin: { ...layerSettings.onionSkin, previousFrames: value } })} /></label><label>{t('layers.nextFrames')}<NumberInput min={0} max={8} value={layerSettings.onionSkin.nextFrames} onValueChange={(value) => applyLayerSettings({ ...layerSettings, onionSkin: { ...layerSettings.onionSkin, nextFrames: value } })} /></label><label>{t('layers.previousOpacity')}<div className="brush-size-control layer-setting-percent" onPointerDown={() => setLayerSettingsSlider('previousOpacity')}><NumberInput min={0} max={100} suffix="%" value={layerSettings.onionSkin.previousOpacity} onValueChange={(value) => applyLayerSettings({ ...layerSettings, onionSkin: { ...layerSettings.onionSkin, previousOpacity: value } })} onFocus={() => setLayerSettingsSlider('previousOpacity')} />{layerSettingsSlider === 'previousOpacity' && <div className="brush-size-popover" role="dialog"><input aria-label={t('layers.previousOpacity')} type="range" min={0} max={100} value={layerSettings.onionSkin.previousOpacity} onChange={(event) => applyLayerSettings({ ...layerSettings, onionSkin: { ...layerSettings.onionSkin, previousOpacity: Number(event.target.value) } })} onBlur={() => setLayerSettingsSlider(null)} /><strong>{layerSettings.onionSkin.previousOpacity}%</strong></div>}</div></label><label>{t('layers.nextOpacity')}<div className="brush-size-control layer-setting-percent" onPointerDown={() => setLayerSettingsSlider('nextOpacity')}><NumberInput min={0} max={100} suffix="%" value={layerSettings.onionSkin.nextOpacity} onValueChange={(value) => applyLayerSettings({ ...layerSettings, onionSkin: { ...layerSettings.onionSkin, nextOpacity: value } })} onFocus={() => setLayerSettingsSlider('nextOpacity')} />{layerSettingsSlider === 'nextOpacity' && <div className="brush-size-popover" role="dialog"><input aria-label={t('layers.nextOpacity')} type="range" min={0} max={100} value={layerSettings.onionSkin.nextOpacity} onChange={(event) => applyLayerSettings({ ...layerSettings, onionSkin: { ...layerSettings.onionSkin, nextOpacity: Number(event.target.value) } })} onBlur={() => setLayerSettingsSlider(null)} /><strong>{layerSettings.onionSkin.nextOpacity}%</strong></div>}</div></label><label>{t('layers.previousColor')}<ColorValueControl color={layerSettings.onionSkin.previousColor} onChange={(color) => applyLayerSettings({ ...layerSettings, onionSkin: { ...layerSettings.onionSkin, previousColor: color } })} label={t('layers.previousColor')} /></label><label>{t('layers.nextColor')}<ColorValueControl color={layerSettings.onionSkin.nextColor} onChange={(color) => applyLayerSettings({ ...layerSettings, onionSkin: { ...layerSettings.onionSkin, nextColor: color } })} label={t('layers.nextColor')} /></label></div></fieldset>
+          <label className="preference-toggle outline-preview-toggle layer-timeline-toggle"><Tooltip content={t('layers.hideTimelineDescription')}><span>{t('layers.hideTimeline')}</span></Tooltip><input type="checkbox" aria-label={t('layers.hideTimeline')} checked={layerSettings.timelineHidden} onChange={(event) => applyLayerSettings({ ...layerSettings, timelineHidden: event.target.checked })} /><span className="toggle-track" aria-hidden="true"><i /></span></label>
+          <fieldset className="layer-settings-onion" disabled={layerSettings.timelineHidden} aria-disabled={layerSettings.timelineHidden}><legend>{t('layers.onionSkin')}</legend><label className="preference-toggle outline-preview-toggle layer-onion-toggle"><span>{t('layers.onionSkinEnabled')}</span><input type="checkbox" checked={layerSettings.onionSkin.enabled} onChange={(event) => applyLayerSettings({ ...layerSettings, onionSkin: { ...layerSettings.onionSkin, enabled: event.target.checked } })} /><span className="toggle-track" aria-hidden="true"><i /></span></label><div className="layer-settings-pair"><label>{t('layers.previousFrames')}<NumberInput min={0} max={8} value={layerSettings.onionSkin.previousFrames} onValueChange={(value) => applyLayerSettings({ ...layerSettings, onionSkin: { ...layerSettings.onionSkin, previousFrames: value } })} /></label><label>{t('layers.nextFrames')}<NumberInput min={0} max={8} value={layerSettings.onionSkin.nextFrames} onValueChange={(value) => applyLayerSettings({ ...layerSettings, onionSkin: { ...layerSettings.onionSkin, nextFrames: value } })} /></label><label>{t('layers.previousOpacity')}<div className="brush-size-control layer-setting-percent" onPointerDown={() => setLayerSettingsSlider('previousOpacity')}><NumberInput min={0} max={100} suffix="%" value={layerSettings.onionSkin.previousOpacity} onValueChange={(value) => applyLayerSettings({ ...layerSettings, onionSkin: { ...layerSettings.onionSkin, previousOpacity: value } })} onFocus={() => setLayerSettingsSlider('previousOpacity')} />{layerSettingsSlider === 'previousOpacity' && <div className="brush-size-popover" role="dialog"><input aria-label={t('layers.previousOpacity')} type="range" min={0} max={100} value={layerSettings.onionSkin.previousOpacity} onChange={(event) => applyLayerSettings({ ...layerSettings, onionSkin: { ...layerSettings.onionSkin, previousOpacity: Number(event.target.value) } })} onBlur={() => setLayerSettingsSlider(null)} /><strong>{layerSettings.onionSkin.previousOpacity}%</strong></div>}</div></label><label>{t('layers.nextOpacity')}<div className="brush-size-control layer-setting-percent" onPointerDown={() => setLayerSettingsSlider('nextOpacity')}><NumberInput min={0} max={100} suffix="%" value={layerSettings.onionSkin.nextOpacity} onValueChange={(value) => applyLayerSettings({ ...layerSettings, onionSkin: { ...layerSettings.onionSkin, nextOpacity: value } })} onFocus={() => setLayerSettingsSlider('nextOpacity')} />{layerSettingsSlider === 'nextOpacity' && <div className="brush-size-popover" role="dialog"><input aria-label={t('layers.nextOpacity')} type="range" min={0} max={100} value={layerSettings.onionSkin.nextOpacity} onChange={(event) => applyLayerSettings({ ...layerSettings, onionSkin: { ...layerSettings.onionSkin, nextOpacity: Number(event.target.value) } })} onBlur={() => setLayerSettingsSlider(null)} /><strong>{layerSettings.onionSkin.nextOpacity}%</strong></div>}</div></label><label>{t('layers.previousColor')}<ColorValueControl color={layerSettings.onionSkin.previousColor} onChange={(color) => applyLayerSettings({ ...layerSettings, onionSkin: { ...layerSettings.onionSkin, previousColor: color } })} label={t('layers.previousColor')} /></label><label>{t('layers.nextColor')}<ColorValueControl color={layerSettings.onionSkin.nextColor} onChange={(color) => applyLayerSettings({ ...layerSettings, onionSkin: { ...layerSettings.onionSkin, nextColor: color } })} label={t('layers.nextColor')} /></label></div></fieldset>
         </div>
         <footer><button type="button" className="quiet-button" onClick={resetLayerSettings}><PixelUtilityIcon kind="restore" />{t('common.reset')}</button><span className="modal-footer-spacer" /><button type="button" className="quiet-button" onClick={() => setLayerSettingsOpen(false)}>{t('common.cancel')}</button><button type="submit" className="primary-button">{t('common.save')}</button></footer>
       </ModalShell>

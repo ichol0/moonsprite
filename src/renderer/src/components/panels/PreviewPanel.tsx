@@ -54,6 +54,7 @@ export function PreviewPanel({ session, onClose, docked = false, onDockDragStart
   const [checkerboard, setCheckerboard] = useState<CheckerboardPreferences>(() => loadEditorPreferences().checkerboard)
   const [canvasSurround, setCanvasSurround] = useState(() => resolveTheme(loadEditorPreferences().theme).definition.seeds.canvasSurround)
   const [rotationIndicatorPosition, setRotationIndicatorPosition] = useState(() => loadEditorPreferences().rotationIndicatorPosition)
+  const [timelineHidden, setTimelineHidden] = useState(() => loadEditorPreferences().timelineHidden)
   const [playbackMenu, setPlaybackMenu] = useState<{ x: number; y: number } | null>(null)
   const timeline = ensureAnimationDocument(session.document)
   const initialFrameId = timeline.activeFrameId
@@ -161,10 +162,20 @@ export function PreviewPanel({ session, onClose, docked = false, onDockDragStart
       setCheckerboard(preferences.checkerboard)
       setCanvasSurround(resolveTheme(preferences.theme).definition.seeds.canvasSurround)
       setRotationIndicatorPosition(preferences.rotationIndicatorPosition)
+      setTimelineHidden(preferences.timelineHidden)
     }
     window.addEventListener('moonsprite:preferences-changed', syncPreferences)
     return () => window.removeEventListener('moonsprite:preferences-changed', syncPreferences)
   }, [])
+
+  useEffect(() => {
+    if (timelineHidden) {
+      setPreviewPlayingState(false)
+      setPlaybackMenu(null)
+    }
+  // setPreviewPlayingState deliberately follows the current playback state.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [timelineHidden])
 
   useEffect(() => {
     const blur = (): void => {
@@ -375,7 +386,7 @@ export function PreviewPanel({ session, onClose, docked = false, onDockDragStart
     if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId)
   }
   return <section ref={floating.ref} className={`panel preview-panel ${floating.style ? 'floating-panel' : ''}`} style={floating.style} onPointerDown={floating.bringToFront} onContextMenu={onPanelContextMenu}>
-    <header onPointerDown={(event) => floating.style ? floating.startDrag(event) : onDockDragStart?.(event, floating.startDetachedDrag)}><span>{t('panel.preview')}</span><span className="panel-actions"><button className={followViewport ? 'active' : ''} title={t('preview.followViewport')} aria-label={t('preview.followViewport')} aria-pressed={followViewport} onClick={toggleFollowViewport}><PixelUtilityIcon kind="follow" /></button><button title={t('preview.zoomOut')} aria-label={t('preview.zoomOut')} onClick={() => adjustZoom(false)}><PixelUtilityIcon kind="minus" /></button><button title={t('preview.zoomIn')} aria-label={t('preview.zoomIn')} onClick={() => adjustZoom(true)}><PixelUtilityIcon kind="plus" /></button><button className={previewPlaying ? 'active' : ''} disabled={timeline.frames.length <= 1} title={t(previewPlaying ? 'timeline.pause' : 'timeline.play')} aria-label={t(previewPlaying ? 'timeline.pause' : 'timeline.play')} onClick={() => setPreviewPlayingState(!previewPlaying)} onContextMenu={(event) => { event.preventDefault(); event.stopPropagation(); setPlaybackMenu({ x: event.clientX, y: event.clientY }) }}><PlaybackPixelIcon kind={previewPlaying ? 'pause' : 'play'} /></button><button title={t('preview.close')} aria-label={t('preview.close')} onClick={onClose}><PixelUtilityIcon kind="close" /></button></span></header>
+    <header onPointerDown={(event) => floating.style ? floating.startDrag(event) : onDockDragStart?.(event, floating.startDetachedDrag)}><span>{t('panel.preview')}</span><span className="panel-actions"><button className={followViewport ? 'active' : ''} title={t('preview.followViewport')} aria-label={t('preview.followViewport')} aria-pressed={followViewport} onClick={toggleFollowViewport}><PixelUtilityIcon kind="follow" /></button><button title={t('preview.zoomOut')} aria-label={t('preview.zoomOut')} onClick={() => adjustZoom(false)}><PixelUtilityIcon kind="minus" /></button><button title={t('preview.zoomIn')} aria-label={t('preview.zoomIn')} onClick={() => adjustZoom(true)}><PixelUtilityIcon kind="plus" /></button><button className={previewPlaying ? 'active' : ''} disabled={timelineHidden || timeline.frames.length <= 1} title={t(previewPlaying ? 'timeline.pause' : 'timeline.play')} aria-label={t(previewPlaying ? 'timeline.pause' : 'timeline.play')} onClick={() => setPreviewPlayingState(!previewPlaying)} onContextMenu={(event) => { event.preventDefault(); event.stopPropagation(); if (!timelineHidden) setPlaybackMenu({ x: event.clientX, y: event.clientY }) }}><PlaybackPixelIcon kind={previewPlaying ? 'pause' : 'play'} /></button><button title={t('preview.close')} aria-label={t('preview.close')} onClick={onClose}><PixelUtilityIcon kind="close" /></button></span></header>
     <div className={`preview-canvas-wrap ${panning ? 'space-panning' : ''}`} onWheel={(event) => { const bounds = canvasRef.current?.getBoundingClientRect(); if (!bounds) return; event.preventDefault(); adjustZoom(event.deltaY < 0, { x: event.clientX - bounds.left, y: event.clientY - bounds.top }) }} onPointerDown={startPan} onPointerMove={(event) => { const drag = panDrag.current; if (!drag) return; schedulePan({ x: drag.panX + event.clientX - drag.x, y: drag.panY + event.clientY - drag.y }) }} onPointerUp={finishPan} onPointerCancel={finishPan}><div className="preview-canvas-frame"><canvas ref={canvasRef} aria-label={t('preview.canvasAria')} /></div></div>
     {floating.style && <PanelResizeHandles onResize={floating.startResize} />}
     <FloatingDockPreview style={floating.dockPreview} />

@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createDocument, createLayer, ensureLayerCoversCanvas, getActiveLayer } from '@/core/document'
 import { animationCelAt, animationCelKey, connectAnimationCels, ensureAnimationDocument } from '@/core/animation'
 import { buildLayerPanelTree } from '@/core/layer-panel-layout'
-import { ONION_SKIN_PREFERENCE_KEY } from '@/core/file-preferences'
+import { ONION_SKIN_PREFERENCE_KEY, TIMELINE_HIDDEN_PREFERENCE_KEY } from '@/core/file-preferences'
 import { useWorkspace } from '@/store/workspace'
 import { finishAnimationCellOperation, revealLayerInPanel } from '@/components/layer-panel-reveal'
 import { LayersPanel } from './LayersPanel'
@@ -19,6 +19,22 @@ afterEach(() => {
 })
 
 describe('LayersPanel animation', () => {
+  it('removes frame and layer edit buttons while docked on either side', () => {
+    const document = createDocument('side dock actions', 2, 2, 'rgba')
+    useWorkspace.getState().addSession(document)
+    const session = useWorkspace.getState().sessions[0]
+    const { container, rerender } = render(<LayersPanel session={session} docked sideDocked />)
+
+    expect(container.querySelectorAll('.timeline-frame-edit-button')).toHaveLength(0)
+    expect(container.querySelectorAll('.layer-structure-edit-button')).toHaveLength(0)
+    expect(container.querySelectorAll('.layer-animation-edit button')).toHaveLength(1)
+    expect(container.querySelectorAll('.panel-actions button')).toHaveLength(1)
+
+    rerender(<LayersPanel session={session} docked />)
+    expect(container.querySelectorAll('.timeline-frame-edit-button')).toHaveLength(2)
+    expect(container.querySelectorAll('.layer-structure-edit-button')).toHaveLength(3)
+  })
+
   it('keeps timeline selections while interacting with a marked floating dialog', () => {
     const document = createDocument('preserved timeline selection', 2, 2, 'rgba')
     useWorkspace.getState().addSession(document)
@@ -840,10 +856,30 @@ describe('LayersPanel animation', () => {
     fireEvent.click(container.querySelector<HTMLButtonElement>('.panel-actions button:last-child')!)
     const modal = document.querySelector('.layer-settings-modal')
     expect(modal).not.toBeNull()
-    fireEvent.click(modal!.querySelector<HTMLInputElement>('input[type="checkbox"]')!)
+    fireEvent.click(screen.getByRole('checkbox', { name: '启用洋葱皮' }))
     fireEvent.submit(modal!)
 
     expect(JSON.parse(localStorage.getItem(ONION_SKIN_PREFERENCE_KEY) ?? '{}')).toMatchObject({ enabled: true, previousFrames: 1, nextFrames: 1 })
+  })
+
+  it('hides timeline editing and clears active animation interaction from layer settings', () => {
+    const spriteDocument = createDocument('hidden timeline', 1, 1, 'rgba')
+    useWorkspace.getState().addSession(spriteDocument)
+    useWorkspace.getState().duplicateAnimationFrame()
+    useWorkspace.getState().setAnimationPlaying(true)
+    const session = useWorkspace.getState().sessions[0]
+    const { container } = render(<LayersPanel session={session} docked />)
+
+    fireEvent.click(container.querySelector<HTMLButtonElement>('.panel-actions button:last-child')!)
+    fireEvent.click(screen.getByRole('checkbox', { name: '隐藏时间轴' }))
+
+    expect(container.querySelector('.layers-panel')).toHaveClass('timeline-hidden')
+    expect(container.querySelector('.layer-panel-title')).toHaveTextContent('图层')
+    expect(document.querySelector('.layer-settings-modal')).toHaveClass('timeline-disabled')
+    expect(document.querySelector('.layer-settings-onion')).toBeDisabled()
+    expect(localStorage.getItem(TIMELINE_HIDDEN_PREFERENCE_KEY)).toBe('true')
+    expect(useWorkspace.getState().sessions[0].animationPlaying).toBe(false)
+    expect(useWorkspace.getState().sessions[0].selectedAnimationFrameIds).toEqual([])
   })
 })
 
@@ -881,8 +917,17 @@ describe('LayersPanel properties', () => {
     fireEvent.click(marker!)
     expect(useWorkspace.getState().sessions[0].activeLayerMaskId).toBe(cel.mask?.id)
     expect(useWorkspace.getState().sessions[0].layerMaskIsolatedView).toBe(false)
-    fireEvent.pointerDown(marker!, { button: 0, altKey: true })
+    fireEvent.click(maskRow)
+    expect(container.querySelector('[data-animation-cel-selection]')).not.toBeInTheDocument()
+    fireEvent.pointerDown(maskRow, { button: 0, altKey: true })
+    fireEvent.click(maskRow, { altKey: true })
     expect(useWorkspace.getState().sessions[0].activeLayerMaskId).toBe(cel.mask?.id)
+    expect(useWorkspace.getState().sessions[0].layerMaskIsolatedView).toBe(true)
+    fireEvent.pointerDown(maskRow, { button: 0, altKey: true })
+    fireEvent.click(maskRow, { altKey: true })
+    expect(useWorkspace.getState().sessions[0].activeLayerMaskId).toBe(cel.mask?.id)
+    expect(useWorkspace.getState().sessions[0].layerMaskIsolatedView).toBe(false)
+    fireEvent.pointerDown(marker!, { button: 0, altKey: true })
     expect(useWorkspace.getState().sessions[0].layerMaskIsolatedView).toBe(true)
     expect(layerRow).not.toHaveClass('selected')
     expect(container.querySelector('[data-animation-cel-selection]')).toHaveStyle('--animation-row-index: 0')
@@ -897,6 +942,7 @@ describe('LayersPanel properties', () => {
 
     fireEvent.keyDown(window, { key: 'Alt' })
     expect(activeMaskCell).toHaveClass('mask-edit-ready')
+    expect(maskRow).toHaveClass('mask-edit-ready')
     expect(container.querySelector('.layers-panel')).not.toHaveClass('layer-alt-copy-ready')
     fireEvent.keyUp(window, { key: 'Alt' })
 

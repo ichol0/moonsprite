@@ -120,6 +120,7 @@ export function CanvasStage({ session }: { session: DocumentSession }) {
   const [balancedShiftLineEnabled, setBalancedShiftLineEnabled] = useState(() => loadEditorPreferences().balancedShiftLineEnabled)
   const [lineDirectionStep, setLineDirectionStep] = useState(() => loadEditorPreferences().lineDirectionStep)
   const [onionSkin, setOnionSkin] = useState<OnionSkinPreferences>(() => loadEditorPreferences().onionSkin)
+  const [timelineHidden, setTimelineHidden] = useState(() => loadEditorPreferences().timelineHidden)
   const [symmetryAxisPreferences, setSymmetryAxisPreferences] = useState<SymmetryAxisPreferences>(() => loadEditorPreferences().symmetryAxis)
   const [activeTheme, setActiveTheme] = useState(() => resolveTheme(loadEditorPreferences().theme))
   const [shortcuts, setShortcuts] = useState(loadShortcuts)
@@ -262,6 +263,7 @@ export function CanvasStage({ session }: { session: DocumentSession }) {
       setBalancedShiftLineEnabled(preferences.balancedShiftLineEnabled)
       setLineDirectionStep(preferences.lineDirectionStep)
       setOnionSkin(preferences.onionSkin)
+      setTimelineHidden(preferences.timelineHidden)
       setSymmetryAxisPreferences(preferences.symmetryAxis)
       setActiveTheme(resolveTheme(preferences.theme))
       if (preferences.symmetryAxis.locked) symmetryDragRef.current = null
@@ -801,7 +803,7 @@ export function CanvasStage({ session }: { session: DocumentSession }) {
     }
 
     if (toX > fromX && toY > fromY) {
-      if (!isolatedLayerMask && onionSkin.enabled && !currentSession.animationPlaying) {
+      if (!isolatedLayerMask && !timelineHidden && onionSkin.enabled && !currentSession.animationPlaying) {
         const timeline = currentSession.document.animation
         if (timeline && timeline.frames.length > 1) {
           const refs = onionSkinFrameRefs(timeline, onionSkin.previousFrames, onionSkin.nextFrames)
@@ -1881,7 +1883,7 @@ export function CanvasStage({ session }: { session: DocumentSession }) {
       selectionPreviewFrameRef.current = null
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [session, session.revision, session.view.showPixelGrid, session.view.showGrid, session.view.grid?.x, session.view.grid?.y, session.view.grid?.width, session.view.grid?.height, session.view.relativeLuminance, session.view.mirrored, session.view.mirroredVertical, session.view.showSelectionOutline, session.selection, session.outlinePreview, session.brushSize, session.brushShape, session.shapeKind, session.shapeRatio, session.fillMode, fillKind, gradientDither, session.symmetryAxes.horizontal, session.symmetryAxes.vertical, session.symmetryAxes.diagonalUp, session.symmetryAxes.diagonalDown, symmetryCenter.x, symmetryCenter.y, drawingBrushPreviewEnabled, brushPreviewMode, checkerboard, gridColors, shiftLinePreviewEnabled, lassoPreviewClosed, selectionCrosshair, balancedShiftLineEnabled, lineDirectionStep, lineConnectionShortcut, rotationIndicatorPosition, onionSkin, symmetryAxisPreferences])
+  }, [session, session.revision, session.activeLayerMaskId, session.layerMaskIsolatedView, session.view.showPixelGrid, session.view.showGrid, session.view.grid?.x, session.view.grid?.y, session.view.grid?.width, session.view.grid?.height, session.view.relativeLuminance, session.view.mirrored, session.view.mirroredVertical, session.view.showSelectionOutline, session.selection, session.outlinePreview, session.brushSize, session.brushShape, session.shapeKind, session.shapeRatio, session.fillMode, fillKind, gradientDither, session.symmetryAxes.horizontal, session.symmetryAxes.vertical, session.symmetryAxes.diagonalUp, session.symmetryAxes.diagonalDown, symmetryCenter.x, symmetryCenter.y, drawingBrushPreviewEnabled, brushPreviewMode, checkerboard, gridColors, shiftLinePreviewEnabled, lassoPreviewClosed, selectionCrosshair, balancedShiftLineEnabled, lineDirectionStep, lineConnectionShortcut, rotationIndicatorPosition, onionSkin, timelineHidden, symmetryAxisPreferences])
 
   const unrotatedStagePoint = (clientX: number, clientY: number): Point => {
     const bounds = stageBounds()
