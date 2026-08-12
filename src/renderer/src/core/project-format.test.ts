@@ -129,6 +129,38 @@ describe('project manifest migration boundary', () => {
     expect(methods.get(`layers/${document.layers[0].id}.rgba`)).toBe(8)
   })
 
+  it('keeps stored timelapse PNGs as zero-copy archive views', async () => {
+    const document = createDocument('zero-copy timelapse', 2, 2, 'rgba')
+    document.timelapse!.snapshots = [{ id: 'snapshot-stored', capturedAt: 1, elapsedMs: 0, width: 2, height: 2, data: new Uint8Array([137, 80, 78, 71]) }]
+
+    const archive = encodeProject(document)
+    const restored = decodeProject(archive)
+    const snapshot = restored.timelapse!.snapshots[0]
+
+    expect(snapshot.data.buffer).toBe(archive.buffer)
+    expect(Array.from(snapshot.data)).toEqual([137, 80, 78, 71])
+
+    registerProjectSaveBaseline(restored, 'D:/gallery/zero-copy-timelapse.moonsprite', archive)
+    writeLayerColor(restored, getActiveLayer(restored), 0, { r: 255, g: 0, b: 0, a: 255 })
+    const incremental = await encodeProjectSaveAsync(restored)
+    const patch = unzipSync(incremental.data)
+    const plan = JSON.parse(strFromU8(patch['.moonsprite-save-plan.json'])) as { entries: Array<{ path: string }> }
+    expect(patch['timelapse/snapshot-stored.png']).toBeUndefined()
+    expect(plan.entries.map((entry) => entry.path)).toContain('timelapse/snapshot-stored.png')
+  })
+
+  it('still decodes legacy deflated timelapse PNG entries', () => {
+    const document = createDocument('deflated timelapse', 2, 2, 'rgba')
+    document.timelapse!.snapshots = [{ id: 'snapshot-deflated', capturedAt: 1, elapsedMs: 0, width: 2, height: 2, data: new Uint8Array([137, 80, 78, 71]) }]
+    const files = unzipSync(encodeProject(document))
+    const archive = zipSync(files, { level: 6 })
+
+    const restored = decodeProject(archive)
+
+    expect(Array.from(restored.timelapse!.snapshots[0].data)).toEqual([137, 80, 78, 71])
+    expect(restored.timelapse!.snapshots[0].data.buffer).not.toBe(archive.buffer)
+  })
+
   it('round-trips independent cel pixels and frame durations', () => {
     const document = createDocument('animated', 2, 2, 'rgba')
     getActiveLayer(document).pixels[3] = 255

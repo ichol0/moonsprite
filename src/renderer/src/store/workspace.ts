@@ -69,6 +69,11 @@ interface WorkspaceState {
   setActive(id: string): void
   setTool(tool: ToolId): void
   setBrushSize(size: number): void
+  setAirbrushParticleRadius(radius: number): void
+  setAirbrushParticleShape(shape: BrushShape): void
+  setAirbrushScatterRadius(radius: number): void
+  setAirbrushDensity(density: number): void
+  setAirbrushIntervalMs(intervalMs: number): void
   setBrushShape(shape: BrushShape): void
   setBrushTexture(texture: BrushTexture): void
   setBrushTextureScale(scale: number): void
@@ -977,6 +982,11 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     }, false)
   },
   setBrushSize(size) { get().mutateActive((session) => { if (session.brushImage?.intrinsicSize) return; session.brushSize = Math.max(1, Math.min(128, Math.round(size))); rememberBrushProfile(session); persistToolSettings(session) }, false) },
+  setAirbrushParticleRadius(radius) { get().mutateActive((session) => { session.airbrushParticleRadius = Math.max(1, Math.min(16, Math.round(radius))); persistToolSettings(session) }, false) },
+  setAirbrushParticleShape(shape) { get().mutateActive((session) => { session.airbrushParticleShape = shape; persistToolSettings(session) }, false) },
+  setAirbrushScatterRadius(radius) { get().mutateActive((session) => { session.airbrushScatterRadius = Math.max(1, Math.min(64, Math.round(radius))); persistToolSettings(session) }, false) },
+  setAirbrushDensity(density) { get().mutateActive((session) => { session.airbrushDensity = Math.max(1, Math.min(128, Math.round(density))); persistToolSettings(session) }, false) },
+  setAirbrushIntervalMs(intervalMs) { get().mutateActive((session) => { session.airbrushIntervalMs = Math.max(16, Math.min(1000, Math.round(intervalMs))); persistToolSettings(session) }, false) },
   setBrushShape(shape) { get().mutateActive((session) => { session.brushShape = shape; rememberBrushProfile(session); persistToolSettings(session) }, false) },
   setBrushTexture(texture) { get().mutateActive((session) => { session.brushTexture = texture; rememberBrushProfile(session); persistToolSettings(session) }, false) },
   setBrushTextureScale(scale) { get().mutateActive((session) => { session.brushTextureScale = Math.max(1, Math.min(16, Math.round(scale))); rememberBrushProfile(session); persistToolSettings(session) }, false) },

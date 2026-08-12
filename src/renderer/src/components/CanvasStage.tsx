@@ -33,6 +33,7 @@ import { finishAnimationCellOperation, revealLayerInPanel } from '@/components/l
 import { publishCanvasColorSample, publishCanvasColorSamplingCompleted } from '@/components/color-sampling-events'
 import { eyedropperMagnifierPixelScale } from '@/core/eyedropper-magnifier'
 import { resolveBrushDynamics, smoothBrushSizeEnvelope } from '@/core/pressure'
+import { airbrushParticleSize, generateAirbrushParticles } from '@/core/airbrush'
 import { animationCelKey, animationCelOffsetsForKeys, parseAnimationCelKey, setAnimationCelOffsets, setAnimationCelOffsetsForKeys } from '@/core/animation'
 import rotationBackground1 from '@/assets/rotation-indicator/background-1.png'
 import rotationBackground2 from '@/assets/rotation-indicator/background-2.png'
@@ -142,6 +143,8 @@ export function CanvasStage({ session }: { session: DocumentSession }) {
   const selectionBoundaryCacheRef = useRef<SelectionBoundaryCache | null>(null)
   const selectionOverlayVisibleRef = useRef(false)
   const selectionPreviewFrameRef = useRef<number | null>(null)
+  const airbrushFrameRef = useRef<number | null>(null)
+  const sprayAirbrushRef = useRef<(drag: DragState) => void>(() => {})
   const adjustmentPreviewEditRef = useRef(false)
   const canvasResizePreviewRef = useRef(session.canvasResizePreview)
   const pendingCanvasResizeRef = useRef<DocumentSession['canvasResizePreview']>(null)
@@ -172,6 +175,23 @@ export function CanvasStage({ session }: { session: DocumentSession }) {
   const brushPatternOrigin = (point: Point): Point => {
     const anchor = brushStampAnchor(session.brushSize, activeBrushImage)
     return { x: point.x - anchor.x, y: point.y - anchor.y }
+  }
+  sprayAirbrushRef.current = (drag: DragState): void => {
+    if (!drag.edit) return
+    const paintLayer = activePaintLayer(session)
+    const color = drag.color ?? session.primaryColor
+    const particleSize = airbrushParticleSize(session.airbrushParticleRadius)
+    const particles = generateAirbrushParticles(drag.last, {
+      particleRadius: session.airbrushParticleRadius,
+      scatterRadius: session.airbrushScatterRadius,
+      density: session.airbrushDensity
+    })
+    for (const particle of particles) {
+      paintBrush(session.document, paintLayer, drag.edit, particle.x, particle.y, particleSize, color, session.airbrushParticleShape, session.selection, 'solid', 1, null, session.brushImageSettings, 0, 'paint', particle, session.symmetryAxes, symmetryCenter)
+    }
+    const radius = session.airbrushScatterRadius + session.airbrushParticleRadius
+    invalidateCompositeRect({ x: drag.last.x - radius, y: drag.last.y - radius, width: radius * 2 + 1, height: radius * 2 + 1 })
+    scheduleDraw()
   }
   const stageBounds = (): DOMRect => stageRef.current?.getBoundingClientRect() ?? canvasRef.current?.getBoundingClientRect() ?? new DOMRect()
   const stageSize = (): { width: number; height: number } => {
@@ -334,6 +354,29 @@ export function CanvasStage({ session }: { session: DocumentSession }) {
       const bottom = Math.max(segment.start.y, segment.end.y) + afterY
       invalidateCompositeRect({ x: left, y: top, width: right - left + 1, height: bottom - top + 1 })
     }
+  }
+
+  const stopAirbrushTimer = (): void => {
+    if (airbrushFrameRef.current !== null) window.cancelAnimationFrame(airbrushFrameRef.current)
+    airbrushFrameRef.current = null
+  }
+
+  const scheduleAirbrushTimer = (): void => {
+    if (airbrushFrameRef.current !== null) return
+    const tick = (now: number): void => {
+      airbrushFrameRef.current = null
+      const drag = inputRef.current.drag
+      if (drag?.kind !== 'airbrush' || !drag.edit) return
+      const interval = Math.max(16, session.airbrushIntervalMs)
+      let batches = 0
+      while (now >= (drag.nextAirbrushAt ?? now) && batches < 4) {
+        sprayAirbrushRef.current(drag)
+        drag.nextAirbrushAt = (drag.nextAirbrushAt ?? now) + interval
+        batches += 1
+      }
+      airbrushFrameRef.current = window.requestAnimationFrame(tick)
+    }
+    airbrushFrameRef.current = window.requestAnimationFrame(tick)
   }
 
   const flushSelectionPreview = (drag: DragState, render = false): void => {
@@ -534,6 +577,7 @@ export function CanvasStage({ session }: { session: DocumentSession }) {
   }
 
   const cancelActiveCanvasInteraction = (): void => {
+    stopAirbrushTimer()
     hideMoveLayerContentPreview()
     gradientPreviewCoverageCacheRef.current = null
     const drag = inputRef.current.resetInteraction()
@@ -1544,6 +1588,43 @@ export function CanvasStage({ session }: { session: DocumentSession }) {
       context.restore()
     }
 
+    if (canRenderToolPreview && !inputRef.current.spaceHeld && inputRef.current.pointer.visible && !inputRef.current.sampling && session.tool === 'airbrush') {
+      const point = inputRef.current.pointer.point
+      const spraySize = session.airbrushScatterRadius * 2 + 1
+      const sprayAnchor = brushStampAnchor(spraySize, null)
+      const sprayMask = brushMaskOffsets(spraySize, 'round')
+      const sprayPoints = new Map<string, { x: number; y: number }>()
+      for (const offset of sprayMask) {
+        const target = { x: point.x - sprayAnchor.x + offset.x, y: point.y - sprayAnchor.y + offset.y }
+        sprayPoints.set(`${target.x}:${target.y}`, target)
+      }
+      const sampled = sampleCompositeForPreview(point.x, point.y)
+      context.save()
+      context.strokeStyle = colorLuminance(sampled) > 145 ? activeTheme.variables['--theme-selection-outline-dark'] : activeTheme.variables['--theme-selection-outline-light']
+      context.lineWidth = Math.max(1, Math.min(2, view.zoom / 4))
+      context.beginPath()
+      for (const sprayPoint of sprayPoints.values()) {
+        const pixelRect = previewPixelRect(sprayPoint.x, sprayPoint.y)
+        const left = !sprayPoints.has(`${sprayPoint.x - 1}:${sprayPoint.y}`)
+        const right = !sprayPoints.has(`${sprayPoint.x + 1}:${sprayPoint.y}`)
+        const top = !sprayPoints.has(`${sprayPoint.x}:${sprayPoint.y - 1}`)
+        const bottom = !sprayPoints.has(`${sprayPoint.x}:${sprayPoint.y + 1}`)
+        if (left) { context.moveTo(pixelRect.x, pixelRect.y); context.lineTo(pixelRect.x, pixelRect.y + pixelRect.height) }
+        if (right) { context.moveTo(pixelRect.x + pixelRect.width, pixelRect.y); context.lineTo(pixelRect.x + pixelRect.width, pixelRect.y + pixelRect.height) }
+        if (top) { context.moveTo(pixelRect.x, pixelRect.y); context.lineTo(pixelRect.x + pixelRect.width, pixelRect.y) }
+        if (bottom) { context.moveTo(pixelRect.x, pixelRect.y + pixelRect.height); context.lineTo(pixelRect.x + pixelRect.width, pixelRect.y + pixelRect.height) }
+      }
+      const particleSize = airbrushParticleSize(session.airbrushParticleRadius)
+      const particleAnchor = brushStampAnchor(particleSize, null)
+      for (const offset of brushMaskOffsets(particleSize, session.airbrushParticleShape)) {
+        const x = point.x - particleAnchor.x + offset.x
+        const y = point.y - particleAnchor.y + offset.y
+        drawPreviewPixel(x, y, previewColorAt(x, y))
+      }
+      context.stroke()
+      context.restore()
+    }
+
     if (view.showGrid && toX > fromX && toY > fromY) {
       const grid = view.grid ?? DEFAULT_GRID_SETTINGS
       drawGrid(grid.x, grid.y, grid.width, grid.height, gridColors.gridColor)
@@ -1722,7 +1803,7 @@ export function CanvasStage({ session }: { session: DocumentSession }) {
       }
       if (inputRef.current.spaceHeld) return
       if (lineConnectionActive(event) && (session.tool === 'pencil' || session.tool === 'eraser') && lineAnchor && inputRef.current.pointer.visible) updateShiftPreview(true)
-      const modifierSizing = modifierActive(event, 'brushSizeAdjust') && (session.tool === 'pencil' || session.tool === 'eraser')
+      const modifierSizing = modifierActive(event, 'brushSizeAdjust') && (session.tool === 'pencil' || session.tool === 'airbrush' || session.tool === 'eraser')
       if (modifierSizing) {
         inputRef.current.sampling = false
         scheduleDraw()
@@ -1849,6 +1930,7 @@ export function CanvasStage({ session }: { session: DocumentSession }) {
     }
     return () => {
       observer.disconnect()
+      stopAirbrushTimer()
       if (rafRef.current) window.clearTimeout(rafRef.current)
       if (drawRequestRef.current) window.cancelAnimationFrame(drawRequestRef.current)
       if (selectionPreviewFrameRef.current) window.cancelAnimationFrame(selectionPreviewFrameRef.current)
@@ -2319,7 +2401,7 @@ export function CanvasStage({ session }: { session: DocumentSession }) {
     if (insideDocument && point && contrastColor.a < 255) contrastColor = blendOver(transparencyColorAt(point.x, point.y, checkerboard), contrastColor)
     const altActive = inputRef.current.altHeld || altKey
     const ctrlActive = inputRef.current.ctrlHeld || ctrlKey
-    const modifierSizing = ctrlKey && altActive && (session.tool === 'pencil' || session.tool === 'eraser')
+    const modifierSizing = ctrlKey && altActive && (session.tool === 'pencil' || session.tool === 'airbrush' || session.tool === 'eraser')
     const rawSelectionHit = session.tool === 'selection' ? selectionHitAt(clientX, clientY) : 'outside'
     const selectionModifierActive = shiftKey
     const selectionHit = selectionModifierActive ? 'outside' : session.selectionMode === 'replace' || session.selectionMode === 'add' || rawSelectionHit !== 'inside' ? rawSelectionHit : 'outside'
@@ -2489,9 +2571,9 @@ export function CanvasStage({ session }: { session: DocumentSession }) {
       && (session.selectedGroupIds.length > 0 || session.selectedLayerIds.length > 1)
     if (focusesRasterLayer) state.selectLayer(session.document.activeLayerId)
     const hasRasterFocus = hasSelectedRasterLayer || focusesRasterLayer
-    if (modifierActive(event.nativeEvent, 'brushSizeAdjust') && (session.tool === 'pencil' || session.tool === 'eraser') && !activeBrushImage?.intrinsicSize && event.button === 0) {
+    if (modifierActive(event.nativeEvent, 'brushSizeAdjust') && (session.tool === 'pencil' || session.tool === 'airbrush' || session.tool === 'eraser') && (session.tool === 'airbrush' || !activeBrushImage?.intrinsicSize) && event.button === 0) {
       inputRef.current.sampling = false
-      inputRef.current.drag = { kind: 'brush-size', start: point, last: point, startClient: { x: event.clientX, y: event.clientY }, startBrushSize: session.brushSize }
+      inputRef.current.drag = { kind: 'brush-size', start: point, last: point, startClient: { x: event.clientX, y: event.clientY }, startBrushSize: session.tool === 'airbrush' ? session.airbrushScatterRadius : session.brushSize }
       event.currentTarget.style.cursor = canvasCursors.ewResize
       return
     }
@@ -2787,6 +2869,17 @@ export function CanvasStage({ session }: { session: DocumentSession }) {
       return
     }
     if (session.tool === 'shape') { if (!canEditLayer) return; inputRef.current.drag = { kind: 'shape', start: point, last: point, startClient: { x: event.clientX, y: event.clientY }, constrain: inputRef.current.shiftHeld }; draw(); return }
+    if (session.tool === 'airbrush') {
+      if (!hasRasterFocus || !canEditLayer || (event.button !== 0 && event.button !== 2)) return
+      const drag: DragState = {
+        kind: 'airbrush', start: point, last: point, edit: beginPixelEdit(editableLayer.id),
+        color: activeColor(event.button), startedAt: Date.now(), nextAirbrushAt: performance.now() + session.airbrushIntervalMs
+      }
+      inputRef.current.drag = drag
+      sprayAirbrushRef.current(drag)
+      scheduleAirbrushTimer()
+      return
+    }
     if (session.tool !== 'pencil' && session.tool !== 'eraser') return
     if (!hasRasterFocus) return
     if (!canEditLayer) return
@@ -2869,12 +2962,14 @@ export function CanvasStage({ session }: { session: DocumentSession }) {
     inputRef.current.shiftLinePreview = Boolean(lineConnectionActive(event.nativeEvent) && !canvasResizePreviewRef.current && !inputRef.current.spaceHeld && (session.tool === 'pencil' || session.tool === 'eraser') && lineAnchor)
     const point = localPoint(event)
     if (point) inputRef.current.updatePointer({ point, clientX: event.clientX, clientY: event.clientY, ctrlKey: event.ctrlKey, altKey: event.altKey })
-    const modifierSizing = modifierActive(event.nativeEvent, 'brushSizeAdjust') && (session.tool === 'pencil' || session.tool === 'eraser')
+    const modifierSizing = modifierActive(event.nativeEvent, 'brushSizeAdjust') && (session.tool === 'pencil' || session.tool === 'airbrush' || session.tool === 'eraser')
     if (modifierSizing && !inputRef.current.drag) {
-      if (!inputRef.current.modifierBrushSize) inputRef.current.modifierBrushSize = { x: event.clientX, y: event.clientY, size: session.brushSize }
+      if (!inputRef.current.modifierBrushSize) inputRef.current.modifierBrushSize = { x: event.clientX, y: event.clientY, size: session.tool === 'airbrush' ? session.airbrushScatterRadius : session.brushSize }
       else {
         const delta = event.clientX - inputRef.current.modifierBrushSize.x
-        useWorkspace.getState().setBrushSize(inputRef.current.modifierBrushSize.size + Math.round(delta / 4))
+        const nextSize = inputRef.current.modifierBrushSize.size + Math.round(delta / 4)
+        if (session.tool === 'airbrush') useWorkspace.getState().setAirbrushScatterRadius(nextSize)
+        else useWorkspace.getState().setBrushSize(nextSize)
       }
       event.currentTarget.style.cursor = canvasCursors.ewResize
       return
@@ -2888,7 +2983,9 @@ export function CanvasStage({ session }: { session: DocumentSession }) {
     if (drag.kind === 'brush-size' && drag.startClient) {
       drag.last = point
       const delta = event.clientX - drag.startClient.x
-      state.setBrushSize((drag.startBrushSize ?? session.brushSize) + Math.round(delta / 4))
+      const nextSize = (drag.startBrushSize ?? (session.tool === 'airbrush' ? session.airbrushScatterRadius : session.brushSize)) + Math.round(delta / 4)
+      if (session.tool === 'airbrush') state.setAirbrushScatterRadius(nextSize)
+      else state.setBrushSize(nextSize)
       event.currentTarget.style.cursor = canvasCursors.ewResize
       return
     }
@@ -3105,6 +3202,10 @@ export function CanvasStage({ session }: { session: DocumentSession }) {
       }
       scheduleDraw(); return
     }
+    if (drag.kind === 'airbrush') {
+      scheduleDraw()
+      return
+    }
     if (drag.kind === 'shape') {
       const modifiers = currentSelectionMarqueeModifierState()
       drag.constrain = modifiers.proportional
@@ -3196,6 +3297,7 @@ export function CanvasStage({ session }: { session: DocumentSession }) {
   }
 
   const handlePointerUp = (event: React.PointerEvent<HTMLCanvasElement>): void => {
+    stopAirbrushTimer()
     if (symmetryDragRef.current) {
       symmetryDragRef.current = null
       if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId)
@@ -3283,6 +3385,9 @@ export function CanvasStage({ session }: { session: DocumentSession }) {
       state.commitPixelEdit(drag.edit, session.tool === 'eraser' ? t('canvas.history.eraser') : t('canvas.history.draw'), { stroke: true, durationMs: Math.max(1, Date.now() - (drag.startedAt ?? Date.now())) })
       if (session.tool === 'eraser') state.setLastEraserPoint(drag.last)
       else state.setLastPencilPoint(drag.last)
+    }
+    if (drag.kind === 'airbrush' && drag.edit) {
+      state.commitPixelEdit(drag.edit, t('canvas.history.airbrush'), { stroke: true, durationMs: Math.max(1, Date.now() - (drag.startedAt ?? Date.now())) })
     }
     if (drag.kind === 'move-layer' && !drag.duplicatedLayer && drag.animationCellOffsets && drag.animationCellKeys?.length) {
       const before = drag.animationCellOffsets
@@ -3420,10 +3525,11 @@ export function CanvasStage({ session }: { session: DocumentSession }) {
   const onWheel = (event: React.WheelEvent<HTMLCanvasElement>): void => {
     const canvas = canvasRef.current
     if (!canvas) return
-    if (!canvasResizePreviewRef.current && modifierActive(event.nativeEvent, 'brushSizeWheelAdjust') && (session.tool === 'pencil' || session.tool === 'eraser') && !activeBrushImage?.intrinsicSize) {
+    if (!canvasResizePreviewRef.current && modifierActive(event.nativeEvent, 'brushSizeWheelAdjust') && (session.tool === 'pencil' || session.tool === 'airbrush' || session.tool === 'eraser') && (session.tool === 'airbrush' || !activeBrushImage?.intrinsicSize)) {
       event.preventDefault()
       event.stopPropagation()
-      useWorkspace.getState().setBrushSize(session.brushSize + (event.deltaY < 0 ? 1 : -1))
+      if (session.tool === 'airbrush') useWorkspace.getState().setAirbrushScatterRadius(session.airbrushScatterRadius + (event.deltaY < 0 ? 1 : -1))
+      else useWorkspace.getState().setBrushSize(session.brushSize + (event.deltaY < 0 ? 1 : -1))
       return
     }
     if (inputRef.current.drag?.kind === 'pan' || !wheelZoomEnabled) return

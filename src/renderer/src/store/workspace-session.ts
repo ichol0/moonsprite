@@ -142,6 +142,11 @@ export function persistToolSettings(session: DocumentSession): void {
     wandTolerance: session.wandTolerance,
     wandContiguous: session.wandContiguous,
     perfectPixels: session.perfectPixels,
+    airbrushParticleRadius: session.airbrushParticleRadius,
+    airbrushParticleShape: session.airbrushParticleShape,
+    airbrushScatterRadius: session.airbrushScatterRadius,
+    airbrushDensity: session.airbrushDensity,
+    airbrushIntervalMs: session.airbrushIntervalMs,
     symmetryAxes: { ...session.symmetryAxes }
   }
   try {
@@ -207,6 +212,11 @@ export const sessionFromDocument = (document: SpriteDocument): DocumentSession =
     wandTolerance: settings.wandTolerance,
     wandContiguous: settings.wandContiguous,
     perfectPixels: settings.perfectPixels,
+    airbrushParticleRadius: settings.airbrushParticleRadius,
+    airbrushParticleShape: settings.airbrushParticleShape,
+    airbrushScatterRadius: settings.airbrushScatterRadius,
+    airbrushDensity: settings.airbrushDensity,
+    airbrushIntervalMs: settings.airbrushIntervalMs,
     symmetryAxes: { ...settings.symmetryAxes },
     symmetryCenter: defaultSymmetryCenter(document.width, document.height),
     lastPencilPoint: null,

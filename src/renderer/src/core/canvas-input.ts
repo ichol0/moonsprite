@@ -162,7 +162,7 @@ export const selectionResizeHit = (
 }
 
 export interface CanvasDragState {
-  kind: 'draw' | 'shape' | 'gradient' | 'marquee' | 'lasso' | 'polygon-lasso' | 'magic-preview' | 'sample-color' | 'move-content' | 'move-selection' | 'transform-content' | 'rotate-content' | 'shear-content' | 'move-layer' | 'brush-size' | 'canvas-resize' | 'canvas-move' | 'zoom-drag' | 'rotate-view' | 'pan'
+  kind: 'draw' | 'airbrush' | 'shape' | 'gradient' | 'marquee' | 'lasso' | 'polygon-lasso' | 'magic-preview' | 'sample-color' | 'move-content' | 'move-selection' | 'transform-content' | 'rotate-content' | 'shear-content' | 'move-layer' | 'brush-size' | 'canvas-resize' | 'canvas-move' | 'zoom-drag' | 'rotate-view' | 'pan'
   start: CanvasPoint
   last: CanvasPoint
   edit?: PixelEdit
@@ -232,6 +232,7 @@ export interface CanvasDragState {
   temporarySampling?: boolean
   moved?: boolean
   startedAt?: number
+  nextAirbrushAt?: number
   resumeDrag?: CanvasDragState
   /** Raw pointer endpoint retained while a gradient is direction-constrained. */
   rawLast?: CanvasPoint
@@ -244,7 +245,7 @@ export const revertCancelledCanvasDragPixelChanges = (document: SpriteDocument, 
     restoreSelectionTranslationPreview(document, drag.translationPreview)
     return changed
   }
-  const edit = drag.kind === 'draw' ? drag.edit : drag.previewEdit
+  const edit = drag.kind === 'draw' || drag.kind === 'airbrush' ? drag.edit : drag.previewEdit
   if (!edit) return false
   const changed = edit.before.size > 0 || Boolean(edit.runs?.length)
   revertPixelEdit(document, edit)

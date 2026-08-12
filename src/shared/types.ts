@@ -1,6 +1,6 @@
 export type ColorMode = 'rgba' | 'indexed'
 export type ImageResizeInterpolation = 'nearest' | 'smooth'
-export type ToolId = 'pencil' | 'eraser' | 'fill' | 'eyedropper' | 'selection' | 'shape' | 'move' | 'hand' | 'zoom' | 'rotate'
+export type ToolId = 'pencil' | 'airbrush' | 'eraser' | 'fill' | 'eyedropper' | 'selection' | 'shape' | 'move' | 'hand' | 'zoom' | 'rotate'
 export type BrushShape = 'round' | 'square' | 'line'
 export type BrushTexture = 'solid' | 'cracks' | 'wood' | 'grain'
 export type BrushPaintMode = 'paint' | 'pattern-source' | 'pattern-target'

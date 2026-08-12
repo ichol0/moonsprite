@@ -48,9 +48,12 @@ describe('editor tool flyout definitions', () => {
     expect(ALL_EDITOR_TOOL_ICONS).toContain(SHAPE_KIND_DEFINITIONS.find((item) => item.id === 'ellipse-outline')?.icon)
     expect(ALL_EDITOR_TOOL_ICONS).toContain(FILL_KIND_ICONS.gradient)
     const pencilIcon = TOOL_DEFINITIONS.find((item) => item.id === 'pencil')?.icon
+    const airbrushIcon = TOOL_DEFINITIONS.find((item) => item.id === 'airbrush')?.icon
     expect(pencilIcon).toBeTruthy()
+    expect(airbrushIcon).toBeTruthy()
     expect(normalEditorToolIconFor(pencilIcon!)).toBeTruthy()
     expect(normalEditorToolIconFor(pencilIcon!)).not.toBe(pencilIcon)
+    expect(normalEditorToolIconFor(airbrushIcon!)).toBeTruthy()
   })
 
   it('shows temporary add and subtract modes without replacing the persisted mode', () => {

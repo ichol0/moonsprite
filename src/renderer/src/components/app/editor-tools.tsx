@@ -5,6 +5,7 @@ import { DEFAULT_APP_LOCALE, type AppLocale } from '@/core/localization'
 import { editorToolCopyByLocale, fillToolCopyByLocale, selectionModeLabelsByLocale, selectionToolCopyByLocale, shapeToolCopyByLocale } from '@/locales/editor-tools'
 import toolSelectionIcon from '@/assets/tool-icons/tool-selection.svg'
 import toolPencilIcon from '@/assets/tool-icons/tool-pencil.svg'
+import toolAirbrushIcon from '@/assets/tool-icons/tool-airbrush.svg'
 import toolEraserIcon from '@/assets/tool-icons/tool-eraser.svg'
 import toolFillIcon from '@/assets/tool-icons/tool-fill.svg'
 import toolEyedropperIcon from '@/assets/tool-icons/tool-eyedropper.svg'
@@ -29,6 +30,7 @@ import shapeEllipseIcon from '@/assets/tool-icons/shape-ellipse.svg'
 import toolGradientIcon from '@/assets/tool-icons/tool-gradient-6-6.svg'
 import toolGradientNormalIcon from '@/assets/tool-icons/tool-gradient-normal.svg'
 import toolPencilNormalIcon from '@/assets/tool-icons/tool-pencil-normal.svg'
+import toolAirbrushNormalIcon from '@/assets/tool-icons/tool-airbrush-normal.svg'
 import toolEraserNormalIcon from '@/assets/tool-icons/tool-eraser-normal.svg'
 import selectionRectangleNormalIcon from '@/assets/tool-icons/selection-rectangle-normal.svg'
 import selectionEllipseNormalIcon from '@/assets/tool-icons/selection-ellipse-normal.svg'
@@ -48,6 +50,7 @@ import toolRotateNormalIcon from '@/assets/tool-icons/tool-rotate-normal.svg'
 
 const NORMAL_EDITOR_TOOL_ICON_BY_SOURCE = new Map<string, string>([
   [toolPencilIcon, toolPencilNormalIcon],
+  [toolAirbrushIcon, toolAirbrushNormalIcon],
   [toolEraserIcon, toolEraserNormalIcon],
   [selectionRectangleIcon, selectionRectangleNormalIcon],
   [selectionEllipseIcon, selectionEllipseNormalIcon],
@@ -69,7 +72,7 @@ const NORMAL_EDITOR_TOOL_ICON_BY_SOURCE = new Map<string, string>([
 export const normalEditorToolIconFor = (source: string): string | undefined => NORMAL_EDITOR_TOOL_ICON_BY_SOURCE.get(source)
 
 const TOOL_BASE: Array<{ id: ToolId; icon: string; shortcutId: ShortcutId }> = [
-  { id: 'pencil', icon: toolPencilIcon, shortcutId: 'tool.pencil' }, { id: 'eraser', icon: toolEraserIcon, shortcutId: 'tool.eraser' }, { id: 'selection', icon: toolSelectionIcon, shortcutId: 'tool.selection' }, { id: 'move', icon: toolMoveIcon, shortcutId: 'tool.move' }, { id: 'shape', icon: toolShapeIcon, shortcutId: 'tool.shape' }, { id: 'fill', icon: toolFillIcon, shortcutId: 'tool.fill' }, { id: 'eyedropper', icon: toolEyedropperIcon, shortcutId: 'tool.eyedropper' }, { id: 'hand', icon: toolHandIcon, shortcutId: 'tool.hand' }, { id: 'zoom', icon: toolZoomIcon, shortcutId: 'tool.zoom' }, { id: 'rotate', icon: toolRotateIcon, shortcutId: 'tool.rotate' }
+  { id: 'pencil', icon: toolPencilIcon, shortcutId: 'tool.pencil' }, { id: 'airbrush', icon: toolAirbrushIcon, shortcutId: 'tool.airbrush' }, { id: 'eraser', icon: toolEraserIcon, shortcutId: 'tool.eraser' }, { id: 'selection', icon: toolSelectionIcon, shortcutId: 'tool.selection' }, { id: 'move', icon: toolMoveIcon, shortcutId: 'tool.move' }, { id: 'shape', icon: toolShapeIcon, shortcutId: 'tool.shape' }, { id: 'fill', icon: toolFillIcon, shortcutId: 'tool.fill' }, { id: 'eyedropper', icon: toolEyedropperIcon, shortcutId: 'tool.eyedropper' }, { id: 'hand', icon: toolHandIcon, shortcutId: 'tool.hand' }, { id: 'zoom', icon: toolZoomIcon, shortcutId: 'tool.zoom' }, { id: 'rotate', icon: toolRotateIcon, shortcutId: 'tool.rotate' }
 ]
 
 export const toolDefinitions = (locale: AppLocale) => TOOL_BASE.map((item) => ({ ...item, ...editorToolCopyByLocale[locale][item.id] }))

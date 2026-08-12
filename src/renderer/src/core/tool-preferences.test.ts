@@ -45,6 +45,7 @@ describe('tool preferences persistence boundary', () => {
     expect(settings.brushDynamics).toEqual(DEFAULT_BRUSH_DYNAMICS_SETTINGS)
     expect(settings.brushDynamics.effects.gradient).toMatchObject({ sensor: null, outputMin: 0, outputMax: 100 })
     expect(settings.brushProfiles?.pencil?.brushPressure).toEqual(DEFAULT_BRUSH_PRESSURE_SETTINGS)
+    expect(settings).toMatchObject({ airbrushParticleRadius: 1, airbrushParticleShape: 'round', airbrushScatterRadius: 12, airbrushDensity: 8, airbrushIntervalMs: 50 })
   })
 
   it('migrates legacy pressure settings when no version 2 dynamics exist', () => {
@@ -140,6 +141,14 @@ describe('tool preferences persistence boundary', () => {
     const storage = createStorage()
     saveToolSettings({ ...defaultToolSettings, fillKind: 'gradient', gradientDither: 'bayer-4', fillTolerance: 37, gradientTolerance: 82, gradientContiguous: false }, storage)
     expect(loadToolSettings(storage)).toMatchObject({ fillKind: 'gradient', gradientDither: 'bayer-4', fillTolerance: 37, gradientTolerance: 82, gradientContiguous: false })
+  })
+
+  it('normalizes and persists airbrush settings', () => {
+    const storage = createStorage()
+    saveToolSettings({ ...defaultToolSettings, airbrushParticleRadius: 9, airbrushParticleShape: 'square', airbrushScatterRadius: 48, airbrushDensity: 36, airbrushIntervalMs: 24 }, storage)
+    expect(loadToolSettings(storage)).toMatchObject({ airbrushParticleRadius: 9, airbrushParticleShape: 'square', airbrushScatterRadius: 48, airbrushDensity: 36, airbrushIntervalMs: 24 })
+    storage.setItem(TOOL_SETTINGS_KEY, JSON.stringify({ airbrushParticleRadius: 99, airbrushScatterRadius: 99, airbrushDensity: 0, airbrushIntervalMs: 1 }))
+    expect(loadToolSettings(storage)).toMatchObject({ airbrushParticleRadius: 16, airbrushScatterRadius: 64, airbrushDensity: 1, airbrushIntervalMs: 16 })
   })
 
   it('persists independent symmetry axes and defaults legacy data to disabled', () => {

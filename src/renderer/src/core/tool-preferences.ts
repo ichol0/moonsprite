@@ -53,6 +53,11 @@ export interface PersistedToolSettings extends PersistedBrushProfile {
   wandContiguous: boolean
   perfectPixels: boolean
   symmetryAxes: SymmetryAxes
+  airbrushParticleRadius: number
+  airbrushParticleShape: BrushShape
+  airbrushScatterRadius: number
+  airbrushDensity: number
+  airbrushIntervalMs: number
 }
 
 const createDefaultProceduralBrushSettings = (): Record<ProceduralBrushId, ProceduralBrushSettings> => Object.fromEntries(
@@ -89,7 +94,12 @@ export const defaultToolSettings: PersistedToolSettings = {
   wandTolerance: 0,
   wandContiguous: true,
   perfectPixels: false,
-  symmetryAxes: { ...DEFAULT_SYMMETRY_AXES }
+  symmetryAxes: { ...DEFAULT_SYMMETRY_AXES },
+  airbrushParticleRadius: 1,
+  airbrushParticleShape: 'round',
+  airbrushScatterRadius: 12,
+  airbrushDensity: 8,
+  airbrushIntervalMs: 50
 }
 
 export const cloneProceduralSettings = (settings: Record<ProceduralBrushId, ProceduralBrushSettings>): Record<ProceduralBrushId, ProceduralBrushSettings> => Object.fromEntries(
@@ -175,6 +185,11 @@ export function loadToolSettings(storage?: Storage): PersistedToolSettings {
       wandTolerance: Number.isFinite(stored.wandTolerance) ? Math.max(0, Math.min(255, Math.round(stored.wandTolerance!))) : defaultToolSettings.wandTolerance,
       wandContiguous: typeof stored.wandContiguous === 'boolean' ? stored.wandContiguous : defaultToolSettings.wandContiguous,
       perfectPixels: typeof stored.perfectPixels === 'boolean' ? stored.perfectPixels : defaultToolSettings.perfectPixels,
+      airbrushParticleRadius: Number.isFinite(stored.airbrushParticleRadius) ? Math.max(1, Math.min(16, Math.round(stored.airbrushParticleRadius!))) : defaultToolSettings.airbrushParticleRadius,
+      airbrushParticleShape: stored.airbrushParticleShape === 'square' || stored.airbrushParticleShape === 'line' || stored.airbrushParticleShape === 'round' ? stored.airbrushParticleShape : defaultToolSettings.airbrushParticleShape,
+      airbrushScatterRadius: Number.isFinite(stored.airbrushScatterRadius) ? Math.max(1, Math.min(64, Math.round(stored.airbrushScatterRadius!))) : defaultToolSettings.airbrushScatterRadius,
+      airbrushDensity: Number.isFinite(stored.airbrushDensity) ? Math.max(1, Math.min(128, Math.round(stored.airbrushDensity!))) : defaultToolSettings.airbrushDensity,
+      airbrushIntervalMs: Number.isFinite(stored.airbrushIntervalMs) ? Math.max(16, Math.min(1000, Math.round(stored.airbrushIntervalMs!))) : defaultToolSettings.airbrushIntervalMs,
       symmetryAxes: {
         horizontal: storedSymmetryAxes?.horizontal === true,
         vertical: storedSymmetryAxes?.vertical === true,

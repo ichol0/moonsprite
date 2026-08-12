@@ -1,4 +1,4 @@
-import { strFromU8, strToU8, unzipSync, zipSync, type Zippable } from 'fflate'
+import { inflateSync, strFromU8, strToU8, unzipSync, zipSync, type Zippable } from 'fflate'
 import { BLEND_MODES, type AnimationFrame, type BlendMode, type ColorMode, type LayerGroup, type LayerMask, type PaletteEntry, type ProjectBrush, type RasterLayer, type RgbaColor, type SpriteDocument, type TimelapseSettings } from '@shared/types'
 import { compositeDocument, createCompositePointSampler, createId, createNormalCompositePointSampler, getLayerStorageOrigin, getRasterContentRevision, setLayerStorageOrigin } from './document'
 import { createDefaultAnimationTimeline, ensureAnimationDocument, normalizeAnimationTimeline, refreshActiveAnimationFrame, syncActiveAnimationLayers } from './animation'
@@ -709,9 +709,9 @@ const directActiveCelDataFiles = (manifest: ProjectManifest): Map<string, string
   return dataFiles
 }
 
-const requiredProjectDataFiles = (manifest: ProjectManifest, activeCelFiles: ReadonlyMap<string, string>): Set<string> => {
+const requiredProjectDataFiles = (manifest: ProjectManifest, activeCelFiles: ReadonlyMap<string, string>, storedTimelapseFiles: ReadonlyMap<string, Uint8Array> = new Map()): Set<string> => {
   const source = manifest.document
-  const required = new Set<string>(['manifest.json'])
+  const required = new Set<string>()
   for (const layer of source.layers) required.add(activeCelFiles.get(layer.id) ?? layer.dataFile)
   for (const brush of source.customBrushes ?? []) {
     required.add(brush.dataFile)
@@ -722,8 +722,85 @@ const requiredProjectDataFiles = (manifest: ProjectManifest, activeCelFiles: Rea
     if (cel.mask?.dataFile) required.add(cel.mask.dataFile)
   }
   for (const entry of source.animation.groupMasks ?? []) required.add(entry.mask.dataFile)
-  for (const snapshot of source.timelapse?.snapshots ?? []) required.add(snapshot.dataFile)
+  for (const snapshot of source.timelapse?.snapshots ?? []) if (!storedTimelapseFiles.has(snapshot.dataFile)) required.add(snapshot.dataFile)
   return required
+}
+
+interface ProjectZipEntry {
+  compression: number
+  flags: number
+  compressedSize: number
+  uncompressedSize: number
+  localOffset: number
+}
+
+const projectZipDirectory = (data: Uint8Array): Map<string, ProjectZipEntry> | null => {
+  const view = new DataView(data.buffer, data.byteOffset, data.byteLength)
+  let end = data.byteLength - 22
+  const minimumOffset = Math.max(0, data.byteLength - 65_557)
+  while (end >= minimumOffset && view.getUint32(end, true) !== 0x06054b50) end -= 1
+  if (end < minimumOffset) return null
+  const entryCount = view.getUint16(end + 10, true)
+  let offset = view.getUint32(end + 16, true)
+  if (entryCount === 0xffff || offset === 0xffffffff || offset >= data.byteLength) return null
+  const decoder = new TextDecoder()
+  const entries = new Map<string, ProjectZipEntry>()
+  for (let index = 0; index < entryCount; index += 1) {
+    if (offset + 46 > data.byteLength || view.getUint32(offset, true) !== 0x02014b50) return null
+    const flags = view.getUint16(offset + 8, true)
+    const compression = view.getUint16(offset + 10, true)
+    const compressedSize = view.getUint32(offset + 20, true)
+    const uncompressedSize = view.getUint32(offset + 24, true)
+    const nameLength = view.getUint16(offset + 28, true)
+    const extraLength = view.getUint16(offset + 30, true)
+    const commentLength = view.getUint16(offset + 32, true)
+    const localOffset = view.getUint32(offset + 42, true)
+    const nameStart = offset + 46
+    const nameEnd = nameStart + nameLength
+    if (nameEnd > data.byteLength || compressedSize === 0xffffffff || uncompressedSize === 0xffffffff || localOffset === 0xffffffff) return null
+    const name = decoder.decode(data.subarray(nameStart, nameEnd))
+    entries.set(name, { compression, flags, compressedSize, uncompressedSize, localOffset })
+    offset = nameEnd + extraLength + commentLength
+  }
+  return entries
+}
+
+const projectZipEntryData = (data: Uint8Array, entry: ProjectZipEntry): Uint8Array | null => {
+  if ((entry.flags & 1) !== 0) return null
+  const view = new DataView(data.buffer, data.byteOffset, data.byteLength)
+  if (entry.localOffset + 30 > data.byteLength || view.getUint32(entry.localOffset, true) !== 0x04034b50) return null
+  const localNameLength = view.getUint16(entry.localOffset + 26, true)
+  const localExtraLength = view.getUint16(entry.localOffset + 28, true)
+  const dataStart = entry.localOffset + 30 + localNameLength + localExtraLength
+  const dataEnd = dataStart + entry.compressedSize
+  if (dataEnd > data.byteLength) return null
+  const compressed = data.subarray(dataStart, dataEnd)
+  if (entry.compression === 0 && entry.compressedSize === entry.uncompressedSize) return compressed
+  if (entry.compression !== 8) return null
+  const output = inflateSync(compressed)
+  return output.byteLength === entry.uncompressedSize ? output : null
+}
+
+const projectZipFiles = (data: Uint8Array, directory: ReadonlyMap<string, ProjectZipEntry>, names: ReadonlySet<string>): Record<string, Uint8Array> | null => {
+  const files: Record<string, Uint8Array> = {}
+  for (const name of names) {
+    const entry = directory.get(name)
+    if (!entry) continue
+    const bytes = projectZipEntryData(data, entry)
+    if (!bytes) return null
+    files[name] = bytes
+  }
+  return files
+}
+
+const storedTimelapseEntryViews = (data: Uint8Array, directory: ReadonlyMap<string, ProjectZipEntry>): Map<string, Uint8Array> => {
+  const entries = new Map<string, Uint8Array>()
+  for (const [name, entry] of directory) {
+    if (!/^timelapse\/.*\.png$/i.test(name) || entry.compression !== 0 || entry.compressedSize !== entry.uncompressedSize) continue
+    const bytes = projectZipEntryData(data, entry)
+    if (bytes) entries.set(name, bytes)
+  }
+  return entries
 }
 
 export function readProjectGalleryMetadata(input: Uint8Array, options: ProjectGalleryReadOptions = {}): ProjectGalleryMetadata {
@@ -763,19 +840,25 @@ export function readProjectGalleryMetadata(input: Uint8Array, options: ProjectGa
 export function decodeProject(input: Uint8Array, onProgress?: (value: number) => void): SpriteDocument {
   const reportProgress = (value: number): void => onProgress?.(Math.max(0, Math.min(1, value)))
   reportProgress(0)
+  const directory = projectZipDirectory(input)
   let manifestFiles: Record<string, Uint8Array>
   try {
-    manifestFiles = unzipSync(input, { filter: (file) => file.name === 'manifest.json' })
+    manifestFiles = directory
+      ? projectZipFiles(input, directory, new Set(['manifest.json'])) ?? unzipSync(input, { filter: (file) => file.name === 'manifest.json' })
+      : unzipSync(input, { filter: (file) => file.name === 'manifest.json' })
   } catch {
     throw new Error(tr('core.project.unzip'))
   }
   reportProgress(0.12)
   const manifest = readManifest(manifestFiles)
   const activeCelFiles = directActiveCelDataFiles(manifest)
-  const requiredFiles = requiredProjectDataFiles(manifest, activeCelFiles)
+  const storedTimelapseFiles = directory ? storedTimelapseEntryViews(input, directory) : new Map<string, Uint8Array>()
+  const requiredFiles = requiredProjectDataFiles(manifest, activeCelFiles, storedTimelapseFiles)
   let files: Record<string, Uint8Array>
   try {
-    files = unzipSync(input, { filter: (file) => requiredFiles.has(file.name) })
+    files = directory
+      ? projectZipFiles(input, directory, requiredFiles) ?? unzipSync(input, { filter: (file) => requiredFiles.has(file.name) })
+      : unzipSync(input, { filter: (file) => requiredFiles.has(file.name) })
   } catch {
     throw new Error(tr('core.project.unzip'))
   }
@@ -909,10 +992,10 @@ export function decodeProject(input: Uint8Array, onProgress?: (value: number) =>
       if (!snapshot || typeof snapshot.id !== 'string' || typeof snapshot.dataFile !== 'string') return []
       const width = Number(snapshot.width)
       const height = Number(snapshot.height)
-      const data = files[snapshot.dataFile]
+      const data = storedTimelapseFiles.get(snapshot.dataFile) ?? files[snapshot.dataFile]
       if (!Number.isSafeInteger(width) || !Number.isSafeInteger(height) || width < 1 || height < 1 || !data?.byteLength) return []
       reportItem()
-      return [{ id: snapshot.id, capturedAt: Math.max(0, Math.trunc(Number(snapshot.capturedAt) || 0)), elapsedMs: Math.max(0, Math.trunc(Number(snapshot.elapsedMs) || 0)), width, height, data: data.slice() }]
+      return [{ id: snapshot.id, capturedAt: Math.max(0, Math.trunc(Number(snapshot.capturedAt) || 0)), elapsedMs: Math.max(0, Math.trunc(Number(snapshot.elapsedMs) || 0)), width, height, data }]
     })
   const timelapse = normalizeTimelapseSettings(manifestTimelapse, timelapseSnapshots)
   const animation = normalizeAnimationTimeline(source.animation)

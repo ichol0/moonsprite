@@ -18,6 +18,7 @@ export const DEFAULT_SHORTCUTS = {
   openTimelapse: '',
   openProjectInfo: '',
   'tool.pencil': 'B',
+  'tool.airbrush': 'A',
   'tool.eraser': 'E',
   'tool.selection': 'M',
   'tool.selection.ellipse': 'Shift+M',
@@ -148,7 +149,7 @@ export const SHORTCUT_GROUPS = {
   animation: ['toggleAnimationPlayback', 'previousAnimationFrame', 'nextAnimationFrame', 'addAnimationFrame', 'addBlankAnimationFrame', 'deleteAnimationFrame', 'copyAnimationCel'],
   view: ['relativeLuminance', 'toggleGrid', 'toggleCustomGrid', 'openGridSettings', 'mirrorView', 'mirrorViewVertical', 'rotateViewClockwise90', 'rotateViewCounterClockwise90', 'resetView'],
   interface: ['toggleColorPanel', 'togglePalettePanel', 'toggleLayersPanel', 'togglePreviewPanel', 'toggleTimeline', 'toolRailLeft', 'toolRailRight', 'saveWorkspaceLayout', 'openWorkspaceManager', 'advancedMode', 'openShortcutSettings', 'openPreferences'],
-  tools: ['tool.pencil', 'tool.eraser', 'tool.fill', 'tool.fill.gradient', 'tool.eyedropper', 'tool.selection', 'tool.selection.ellipse', 'lasso', 'polygonLasso', 'magic', 'tool.move', 'tool.shape', 'tool.shape.rectangleOutline', 'tool.shape.rectangle', 'tool.shape.ellipseOutline', 'tool.shape.ellipse', 'tool.hand', 'tool.zoom', 'tool.rotate', 'brushSizeDecrease', 'brushSizeIncrease'],
+  tools: ['tool.pencil', 'tool.airbrush', 'tool.eraser', 'tool.fill', 'tool.fill.gradient', 'tool.eyedropper', 'tool.selection', 'tool.selection.ellipse', 'lasso', 'polygonLasso', 'magic', 'tool.move', 'tool.shape', 'tool.shape.rectangleOutline', 'tool.shape.rectangle', 'tool.shape.ellipseOutline', 'tool.shape.ellipse', 'tool.hand', 'tool.zoom', 'tool.rotate', 'brushSizeDecrease', 'brushSizeIncrease'],
   modifiers: ['temporaryEyedropper', 'brushSizeAdjust', 'brushSizeWheelAdjust', 'lineConnectionMode', 'constrainLineDirections', 'copySelectionContent', 'addToSelection', 'proportionalSelectionTransform', 'integerSelectionScale', 'snapSelectionRotation', 'copyLayerOnDrag', 'constrainAxis', 'temporaryPan', 'snapViewRotation', 'resetViewRotation'],
   help: ['openComponentLibrary', 'openLatestRelease', 'openRoadmap', 'openAbout']
 } as const satisfies Record<string, ReadonlyArray<ShortcutId>>

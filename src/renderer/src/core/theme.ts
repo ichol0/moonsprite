@@ -65,8 +65,8 @@ const DARK_SEEDS: ThemeSeedColors = {
   accent: '#2979ff', danger: '#ef5350', success: '#66bb6a', warning: '#ffab26'
 }
 const LIGHT_SEEDS: ThemeSeedColors = {
-  workspace: '#d8dee7', surface: '#f7f8fa', raisedSurface: '#ffffff', deepSurface: '#e9edf2', canvasSurround: '#c7ced8',
-  border: '#b7c0cc', borderStrong: '#7b8797', controlBackground: '#ffffff', textPrimary: '#17202b', textSecondary: '#334155', textMuted: '#667386',
+  workspace: '#bec7d2', surface: '#edf1f5', raisedSurface: '#ffffff', deepSurface: '#d8dfe7', canvasSurround: '#aeb8c4',
+  border: '#98a5b4', borderStrong: '#5f6d7f', controlBackground: '#f8fafc', textPrimary: '#17202b', textSecondary: '#334155', textMuted: '#667386',
   accent: '#1d63d8', danger: '#b8323a', success: '#247a4d', warning: '#9a5a00'
 }
 const PINK_SEEDS: ThemeSeedColors = {
@@ -75,8 +75,13 @@ const PINK_SEEDS: ThemeSeedColors = {
   accent: '#b73575', danger: '#b92f55', success: '#34765f', warning: '#8f5a18'
 }
 const GRAY_SEEDS: ThemeSeedColors = {
-  workspace: '#303339', surface: '#3b3f46', raisedSurface: '#474c54', deepSurface: '#292c32', canvasSurround: '#5b6068',
-  border: '#555b65', borderStrong: '#737a85', controlBackground: '#282b31', textPrimary: '#f1f3f5', textSecondary: '#d5d9de', textMuted: '#adb3bb',
+  workspace: '#383b40', surface: '#474b52', raisedSurface: '#585d66', deepSurface: '#2e3136', canvasSurround: '#626872',
+  border: '#606771', borderStrong: '#858f9d', controlBackground: '#292c31', textPrimary: '#f2f4f7', textSecondary: '#d7dce3', textMuted: '#b1b8c2',
+  accent: '#2979ff', danger: '#ef5350', success: '#66bb6a', warning: '#ffab26'
+}
+const DARK_GRAY_SEEDS: ThemeSeedColors = {
+  workspace: '#1f2125', surface: '#2b2e34', raisedSurface: '#393d45', deepSurface: '#17191c', canvasSurround: '#4c5159',
+  border: '#444a53', borderStrong: '#6b7480', controlBackground: '#16181b', textPrimary: '#f1f3f6', textSecondary: '#cdd2d9', textMuted: '#9ca3ad',
   accent: '#2979ff', danger: '#ef5350', success: '#66bb6a', warning: '#ffab26'
 }
 const AMBER_SEEDS: ThemeSeedColors = {
@@ -128,6 +133,7 @@ const DARK_VISUALS: ThemeVisualDefaults = { checkerLight: { r: 215, g: 215, b: 2
 const LIGHT_VISUALS: ThemeVisualDefaults = { checkerLight: { r: 245, g: 246, b: 248, a: 255 }, checkerDark: { r: 210, g: 214, b: 220, a: 255 }, pixelGrid: { r: 119, g: 128, b: 142, a: 150 }, customGrid: { r: 30, g: 80, b: 210, a: 255 }, onionPrevious: { r: 205, g: 55, b: 53, a: 255 }, onionNext: { r: 31, g: 97, b: 210, a: 255 }, symmetryAxis: { r: 31, g: 97, b: 210, a: 242 } }
 const PINK_VISUALS: ThemeVisualDefaults = { checkerLight: { r: 255, g: 248, b: 252, a: 255 }, checkerDark: { r: 231, g: 211, b: 222, a: 255 }, pixelGrid: { r: 166, g: 112, b: 141, a: 145 }, customGrid: { r: 183, g: 53, b: 117, a: 255 }, onionPrevious: { r: 192, g: 45, b: 82, a: 255 }, onionNext: { r: 83, g: 121, b: 190, a: 255 }, symmetryAxis: { r: 183, g: 53, b: 117, a: 242 } }
 const GRAY_VISUALS: ThemeVisualDefaults = { checkerLight: { r: 215, g: 217, b: 220, a: 255 }, checkerDark: { r: 157, g: 160, b: 165, a: 255 }, pixelGrid: { r: 193, g: 198, b: 207, a: 145 }, customGrid: { r: 76, g: 142, b: 232, a: 255 }, onionPrevious: { r: 239, g: 83, b: 80, a: 255 }, onionNext: { r: 41, g: 121, b: 255, a: 255 }, symmetryAxis: { r: 41, g: 121, b: 255, a: 242 } }
+const DARK_GRAY_VISUALS: ThemeVisualDefaults = { checkerLight: { r: 214, g: 214, b: 214, a: 255 }, checkerDark: { r: 151, g: 151, b: 151, a: 255 }, pixelGrid: { r: 184, g: 184, b: 184, a: 145 }, customGrid: { r: 76, g: 142, b: 232, a: 255 }, onionPrevious: { r: 239, g: 83, b: 80, a: 255 }, onionNext: { r: 41, g: 121, b: 255, a: 255 }, symmetryAxis: { r: 41, g: 121, b: 255, a: 242 } }
 const AMBER_VISUALS: ThemeVisualDefaults = { checkerLight: { r: 218, g: 210, b: 200, a: 255 }, checkerDark: { r: 143, g: 132, b: 119, a: 255 }, pixelGrid: { r: 183, g: 158, b: 126, a: 145 }, customGrid: { r: 224, g: 162, b: 59, a: 255 }, onionPrevious: { r: 223, g: 98, b: 88, a: 255 }, onionNext: { r: 224, g: 162, b: 59, a: 255 }, symmetryAxis: { r: 224, g: 162, b: 59, a: 242 } }
 const MINT_VISUALS: ThemeVisualDefaults = { checkerLight: { r: 211, g: 225, b: 222, a: 255 }, checkerDark: { r: 117, g: 145, b: 141, a: 255 }, pixelGrid: { r: 151, g: 197, b: 187, a: 145 }, customGrid: { r: 56, g: 169, b: 144, a: 255 }, onionPrevious: { r: 220, g: 98, b: 93, a: 255 }, onionNext: { r: 56, g: 169, b: 144, a: 255 }, symmetryAxis: { r: 56, g: 169, b: 144, a: 242 } }
 const PLUM_VISUALS: ThemeVisualDefaults = { checkerLight: { r: 224, g: 214, b: 229, a: 255 }, checkerDark: { r: 137, g: 116, b: 151, a: 255 }, pixelGrid: { r: 190, g: 163, b: 205, a: 145 }, customGrid: { r: 168, g: 90, b: 214, a: 255 }, onionPrevious: { r: 223, g: 98, b: 110, a: 255 }, onionNext: { r: 168, g: 90, b: 214, a: 255 }, symmetryAxis: { r: 168, g: 90, b: 214, a: 242 } }
@@ -170,8 +176,9 @@ const PIXEL_THEME_DERIVED: Record<string, PixelThemeDerivedColors> = {
 
 export const BUILT_IN_THEMES: readonly ThemeDefinition[] = [
   { kind: 'moonsprite-theme', schemaVersion: 2, id: 'dark', name: 'MoonSprite Dark', seeds: DARK_SEEDS, visualDefaults: DARK_VISUALS },
-  { kind: 'moonsprite-theme', schemaVersion: 2, id: 'light', name: 'MoonSprite Light', seeds: LIGHT_SEEDS, visualDefaults: LIGHT_VISUALS },
+  { kind: 'moonsprite-theme', schemaVersion: 2, id: 'dark-gray', name: 'MoonSprite Dark Gray', seeds: DARK_GRAY_SEEDS, visualDefaults: DARK_GRAY_VISUALS },
   { kind: 'moonsprite-theme', schemaVersion: 2, id: 'gray', name: 'MoonSprite Gray', seeds: GRAY_SEEDS, visualDefaults: GRAY_VISUALS },
+  { kind: 'moonsprite-theme', schemaVersion: 2, id: 'light', name: 'MoonSprite Light', seeds: LIGHT_SEEDS, visualDefaults: LIGHT_VISUALS },
   { kind: 'moonsprite-theme', schemaVersion: 2, id: 'pink', name: 'MoonSprite Pink', seeds: PINK_SEEDS, visualDefaults: PINK_VISUALS },
   { kind: 'moonsprite-theme', schemaVersion: 2, id: 'classic', name: 'Pixel Classic', seeds: CLASSIC_SEEDS, visualDefaults: CLASSIC_VISUALS },
   { kind: 'moonsprite-theme', schemaVersion: 2, id: 'slate', name: 'Pixel Moss', seeds: SLATE_SEEDS, visualDefaults: SLATE_VISUALS },
@@ -211,36 +218,38 @@ export function resolveTheme(preferences: ThemePreferences): ResolvedTheme {
   const visualDefaults = copyVisuals({ ...definition.visualDefaults, ...preferences.visualOverrides })
   const s = definition.seeds
   const dark = definition.id === 'dark'
+  const light = definition.id === 'light'
   const gray = definition.id === 'gray'
+  const darkGray = definition.id === 'dark-gray'
   const classic = definition.id === 'classic' || definition.id === 'slate' || definition.id === 'copper' || definition.id === 'pink'
   const pixelTheme = PIXEL_THEME_DERIVED[definition.id as keyof typeof PIXEL_THEME_DERIVED]
   const pixel = Boolean(pixelTheme)
   const onAccent = '#ffffff'
   const onDanger = '#ffffff'
-  const surfaceMuted = dark ? '#11141a' : gray ? '#363a40' : classic ? pixelTheme?.surfaceMuted ?? s.deepSurface : pixel ? s.deepSurface : '#eef1f5'
-  const surfaceHover = dark ? '#20242d' : gray ? '#4f555e' : pixelTheme?.surfaceHover ?? '#e3e8ef'
-  const surfaceActive = dark ? '#212c40' : gray ? '#555b66' : pixelTheme?.surfaceActive ?? '#d7e5fb'
-  const surfaceDisabled = dark ? '#111319' : gray ? '#2f3238' : classic ? pixelTheme?.surfaceDisabled ?? s.deepSurface : pixel ? s.deepSurface : '#e2e6eb'
-  const borderMuted = dark ? '#454d5c' : gray ? '#646b75' : pixel ? s.borderStrong : '#9aa6b5'
-  const borderHover = dark ? '#596476' : gray ? '#737b86' : pixel ? s.borderStrong : '#6f7d90'
-  const textFaint = dark ? '#7f8998' : gray ? '#9ba2ac' : pixelTheme?.textFaint ?? '#8995a5'
-  const textSoft = dark ? '#d4dae4' : gray ? '#e0e3e7' : pixel ? s.textSecondary : '#253246'
-  const textSecondaryStrong = dark ? '#c6ccd6' : gray ? '#cbd0d6' : pixel ? s.textSecondary : '#405069'
-  const textMutedStrong = dark ? '#8f99a8' : gray ? '#b0b6be' : pixel ? s.textMuted : '#667386'
-  const textSoftAlt = dark ? '#aeb8c7' : gray ? '#b9bec6' : pixel ? s.textMuted : '#52627a'
-  const textBright = dark ? '#edf2fb' : gray ? '#f5f6f7' : pixel ? s.textPrimary : '#17202b'
-  const textDisabled = dark ? '#616874' : gray ? '#858b95' : pixelTheme?.textDisabled ?? '#9aa5b4'
-  const iconMuted = dark ? '#727b89' : gray ? '#9aa1aa' : pixel ? s.textMuted : '#7e8998'
-  const accentHover = dark ? '#478bff' : gray ? '#478bff' : pixelTheme?.accentHover ?? '#3d7bea'
-  const accentSelected = dark ? '#256de6' : gray ? '#256de6' : pixelTheme?.accentSelected ?? '#1658c6'
-  const accentSoft = dark ? '#182a46' : gray ? '#334967' : pixelTheme?.accentSoft ?? '#dbe8ff'
-  const dangerHover = dark ? '#f16b68' : gray ? '#f16b68' : classic ? '#bd4554' : pixel ? '#ef766e' : '#c94b53'
-  const dangerSoft = dark ? '#422024' : gray ? '#593237' : classic ? pixelTheme?.dangerSoft ?? '#f8dfe1' : pixel ? '#542a2d' : '#f8dfe1'
-  const successSoft = dark ? '#233b28' : gray ? '#314b37' : classic ? pixelTheme?.successSoft ?? '#dcefe3' : pixel ? '#294a32' : '#dcefe3'
-  const warningSoft = dark ? '#45361d' : gray ? '#544526' : classic ? pixelTheme?.warningSoft ?? '#f8ebd1' : pixel ? '#4c391c' : '#f8ebd1'
+  const surfaceMuted = dark ? '#11141a' : light ? '#e2e8ee' : gray ? '#3f444b' : darkGray ? '#24272c' : classic ? pixelTheme?.surfaceMuted ?? s.deepSurface : pixel ? s.deepSurface : '#eef1f5'
+  const surfaceHover = dark ? '#20242d' : light ? '#dde4eb' : gray ? '#525965' : darkGray ? '#353a43' : pixelTheme?.surfaceHover ?? '#e3e8ef'
+  const surfaceActive = dark ? '#212c40' : gray ? '#465a78' : darkGray ? '#34445e' : pixelTheme?.surfaceActive ?? '#d7e5fb'
+  const surfaceDisabled = dark ? '#111319' : light ? '#d2dae3' : gray ? '#32363c' : darkGray ? '#202328' : classic ? pixelTheme?.surfaceDisabled ?? s.deepSurface : pixel ? s.deepSurface : '#e2e6eb'
+  const borderMuted = dark ? '#454d5c' : light ? '#7d8b9d' : gray ? '#747e8c' : darkGray ? '#555e6a' : pixel ? s.borderStrong : '#9aa6b5'
+  const borderHover = dark ? '#596476' : gray ? '#8e9aae' : darkGray ? '#768395' : pixel ? s.borderStrong : '#6f7d90'
+  const textFaint = dark ? '#7f8998' : gray ? '#9ca6b3' : darkGray ? '#818a96' : pixelTheme?.textFaint ?? '#8995a5'
+  const textSoft = dark ? '#d4dae4' : gray ? '#dfe4eb' : darkGray ? '#d9dee5' : pixel ? s.textSecondary : '#253246'
+  const textSecondaryStrong = dark ? '#c6ccd6' : gray ? '#cdd4de' : darkGray ? '#c4cad3' : pixel ? s.textSecondary : '#405069'
+  const textMutedStrong = dark ? '#8f99a8' : gray ? '#b4bdc8' : darkGray ? '#a1aab6' : pixel ? s.textMuted : '#667386'
+  const textSoftAlt = dark ? '#aeb8c7' : gray ? '#bcc5d0' : darkGray ? '#aeb7c3' : pixel ? s.textMuted : '#52627a'
+  const textBright = dark ? '#edf2fb' : gray || darkGray ? '#f5f5f5' : pixel ? s.textPrimary : '#17202b'
+  const textDisabled = dark ? '#616874' : gray ? '#858e9a' : darkGray ? '#666e79' : pixelTheme?.textDisabled ?? '#9aa5b4'
+  const iconMuted = dark ? '#727b89' : gray ? '#9aa4b1' : darkGray ? '#7d8793' : pixel ? s.textMuted : '#7e8998'
+  const accentHover = dark ? '#478bff' : gray || darkGray ? '#478bff' : pixelTheme?.accentHover ?? '#3d7bea'
+  const accentSelected = dark ? '#256de6' : gray || darkGray ? '#256de6' : pixelTheme?.accentSelected ?? '#1658c6'
+  const accentSoft = dark ? '#182a46' : gray ? '#354d72' : darkGray ? '#243650' : pixelTheme?.accentSoft ?? '#dbe8ff'
+  const dangerHover = dark ? '#f16b68' : gray || darkGray ? '#f16b68' : classic ? '#bd4554' : pixel ? '#ef766e' : '#c94b53'
+  const dangerSoft = dark ? '#422024' : gray ? '#573a40' : darkGray ? '#45272d' : classic ? pixelTheme?.dangerSoft ?? '#f8dfe1' : pixel ? '#542a2d' : '#f8dfe1'
+  const successSoft = dark ? '#233b28' : gray ? '#344b3d' : darkGray ? '#263b30' : classic ? pixelTheme?.successSoft ?? '#dcefe3' : pixel ? '#294a32' : '#dcefe3'
+  const warningSoft = dark ? '#45361d' : gray ? '#54472e' : darkGray ? '#433625' : classic ? pixelTheme?.warningSoft ?? '#f8ebd1' : pixel ? '#4c391c' : '#f8ebd1'
   const developmentNoticeText = highestContrastColor(warningSoft, [s.warning, s.textPrimary, '#ffffff', '#101216'])
-  const canvasGridBorder = dark ? '#566170' : gray ? '#7d848e' : pixel ? s.borderStrong : '#7b8797'
-  const divider = dark ? '#252b36' : gray ? '#51565f' : pixel ? s.border : '#d0d7e1'
+  const canvasGridBorder = dark ? '#566170' : gray ? '#838e9d' : darkGray ? '#697481' : pixel ? s.borderStrong : '#7b8797'
+  const divider = dark ? '#252b36' : light ? '#b7c2ce' : gray ? '#525861' : darkGray ? '#34383e' : pixel ? s.border : '#d0d7e1'
   const magnifierLine = darkestThemeSeed(s)
   const variables: Record<string, string> = {
     '--theme-workspace-background': s.workspace, '--theme-app-background': s.workspace, '--theme-surface': s.surface, '--theme-raised-surface': s.raisedSurface, '--theme-control-background': s.controlBackground, '--theme-deep-surface': s.deepSurface, '--theme-magnifier-line': magnifierLine,
@@ -248,7 +257,7 @@ export function resolveTheme(preferences: ThemePreferences): ResolvedTheme {
     '--theme-border': s.border, '--theme-border-subtle': s.border, '--theme-border-strong': s.borderStrong, '--theme-border-muted': borderMuted, '--theme-border-hover': borderHover, '--theme-canvas-grid-border': canvasGridBorder, '--theme-divider': divider,
     '--theme-text-primary': s.textPrimary, '--theme-text-secondary': s.textSecondary, '--theme-text-muted': s.textMuted, '--theme-text-faint': textFaint, '--theme-text-soft': textSoft, '--theme-text-secondary-strong': textSecondaryStrong, '--theme-text-muted-strong': textMutedStrong, '--theme-text-soft-alt': textSoftAlt, '--theme-text-bright': textBright, '--theme-text-disabled': textDisabled, '--theme-icon-muted': iconMuted,
     '--theme-accent': s.accent, '--theme-accent-hover': accentHover, '--theme-accent-selected': accentSelected, '--theme-accent-soft': accentSoft, '--theme-on-accent': onAccent, '--theme-danger': s.danger, '--theme-danger-hover': dangerHover, '--theme-danger-soft': dangerSoft, '--theme-on-danger': onDanger, '--theme-success': s.success, '--theme-success-soft': successSoft, '--theme-warning': s.warning, '--theme-warning-soft': warningSoft, '--theme-development-notice-text': developmentNoticeText, '--theme-development-notice-background': warningSoft, '--theme-development-notice-border': s.warning,
-    '--theme-overlay': dark || (pixel && !classic) ? '#00000073' : '#18202b52', '--theme-shadow': dark || (pixel && !classic) ? '#0000006b' : '#18202b38', '--theme-shadow-strong': dark || (pixel && !classic) ? '#0000009e' : '#18202b52', '--theme-scrollbar-track': classic ? pixelTheme?.scrollbarTrack ?? s.deepSurface : dark || pixel ? s.deepSurface : '#e2e6eb', '--theme-scrollbar-thumb': classic ? pixelTheme?.scrollbarThumb ?? s.borderStrong : dark || pixel ? s.borderStrong : '#9aa6b5', '--theme-selection-contrast': '#ffffff', '--theme-selection-outline-dark': '#090a0d', '--theme-selection-outline-light': '#f1f4f8',
+    '--theme-overlay': dark || darkGray || (pixel && !classic) ? '#00000073' : '#18202b52', '--theme-shadow': dark || darkGray || (pixel && !classic) ? '#0000006b' : '#18202b38', '--theme-shadow-strong': dark || darkGray || (pixel && !classic) ? '#0000009e' : '#18202b52', '--theme-scrollbar-track': classic ? pixelTheme?.scrollbarTrack ?? s.deepSurface : dark || darkGray || pixel ? s.deepSurface : light ? '#cdd6df' : gray ? '#30343a' : '#e2e6eb', '--theme-scrollbar-thumb': classic ? pixelTheme?.scrollbarThumb ?? s.borderStrong : dark || darkGray || pixel ? s.borderStrong : light ? '#788799' : gray ? '#7c8796' : '#9aa6b5', '--theme-selection-contrast': '#ffffff', '--theme-selection-outline-dark': '#090a0d', '--theme-selection-outline-light': '#f1f4f8',
     '--theme-checker-light': rgbaHex(visualDefaults.checkerLight), '--theme-checker-dark': rgbaHex(visualDefaults.checkerDark), '--theme-pixel-grid': rgbaHex(visualDefaults.pixelGrid), '--theme-custom-grid': rgbaHex(visualDefaults.customGrid), '--theme-onion-previous': rgbaHex(visualDefaults.onionPrevious), '--theme-onion-next': rgbaHex(visualDefaults.onionNext), '--theme-symmetry-axis': rgbaHex(visualDefaults.symmetryAxis), '--theme-selection': s.accent
   }
   return { definition, visualDefaults, mode: inferThemeMode(s), variables: Object.fromEntries(Object.entries(variables).map(([key, value]) => [key, value.startsWith('#') ? cssColor(value) : value])) }

@@ -84,8 +84,8 @@ export const transparencyColorAt = (pixelX: number, pixelY: number, checkerboard
     ? checkerboard.lightColor
     : checkerboard.darkColor
 
-const colorCursorTools = new Set<ToolId>(['pencil', 'eraser', 'fill', 'selection'])
-export const previewCursorTools = new Set<ToolId>(['pencil', 'eraser', 'fill', 'shape'])
+const colorCursorTools = new Set<ToolId>(['pencil', 'airbrush', 'eraser', 'fill', 'selection'])
+export const previewCursorTools = new Set<ToolId>(['pencil', 'airbrush', 'eraser', 'fill', 'shape'])
 
 export const canvasToolCursor = (tool: ToolId, color: RgbaColor, available = true): string => {
   if (tool === 'rotate') return canvasCursors.rotate

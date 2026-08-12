@@ -151,6 +151,11 @@ export interface DocumentSession {
   perfectPixels: boolean
   symmetryAxes: SymmetryAxes
   symmetryCenter: SymmetryCenter
+  airbrushParticleRadius: number
+  airbrushParticleShape: BrushShape
+  airbrushScatterRadius: number
+  airbrushDensity: number
+  airbrushIntervalMs: number
   lastPencilPoint: { x: number; y: number } | null
   lastEraserPoint: { x: number; y: number } | null
   canvasResizePreview: CanvasResizePreview | null

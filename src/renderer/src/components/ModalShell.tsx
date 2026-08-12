@@ -17,6 +17,7 @@ interface ModalShellProps extends Omit<HTMLAttributes<HTMLElement>, 'onSubmit'> 
   maxWidth?: number
   onSubmit?: FormEventHandler<HTMLFormElement>
   placement?: ModalPlacement
+  resizable?: boolean
   resizePortalClassName?: string
   storageKey: string
 }
@@ -52,6 +53,7 @@ export function ModalShell({
   maxWidth = 820,
   onPointerDown,
   placement = 'center',
+  resizable = true,
   resizePortalClassName,
   storageKey,
   ...props
@@ -97,5 +99,7 @@ export function ModalShell({
       if (header && event.currentTarget.contains(header) && header.closest('.modal') === event.currentTarget) floating.startDrag(event)
       onPointerDown?.(event)
     }
-  }, children, createElement(PortalResizeHandles, { targetRef: floating.ref, position: floating.style, onResize: floating.startResize, className: resizePortalClassName }))
+  }, children, resizable
+    ? createElement(PortalResizeHandles, { targetRef: floating.ref, position: floating.style, onResize: floating.startResize, className: resizePortalClassName })
+    : null)
 }

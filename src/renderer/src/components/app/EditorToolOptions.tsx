@@ -1,7 +1,7 @@
 import { memo, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { createPortal } from 'react-dom'
 import { ArrowLeftRight } from 'lucide-react'
-import type { BrushPaintMode, GradientDither, ImageBrush, ImageBrushSettings, ProceduralBrushId, ProceduralBrushSettings, RgbaColor, SelectionMode } from '@shared/types'
+import type { BrushPaintMode, BrushShape, GradientDither, ImageBrush, ImageBrushSettings, ProceduralBrushId, ProceduralBrushSettings, RgbaColor, SelectionMode } from '@shared/types'
 import { NumberInput } from '@/components/NumberInput'
 import { ColorValueControl } from '@/components/ColorValueControl'
 import { CheckboxField } from '@/components/CheckboxField'
@@ -578,10 +578,9 @@ export const EditorToolOptions = memo(function EditorToolOptions({ onOpenColorRe
   }, [pressureFlyoutOpen])
 
   useEffect(() => {
-    if (session?.tool !== 'pencil' && session?.tool !== 'eraser' && !(session?.tool === 'fill' && (session.fillKind ?? 'bucket') === 'bucket')) {
-      setBrushFlyoutOpen(false)
-      setBrushSizeFlyoutOpen(false)
-    }
+    const supportsBrushLibrary = session?.tool === 'pencil' || session?.tool === 'eraser' || (session?.tool === 'fill' && (session.fillKind ?? 'bucket') === 'bucket')
+    if (!supportsBrushLibrary) setBrushFlyoutOpen(false)
+    if (!supportsBrushLibrary && session?.tool !== 'airbrush') setBrushSizeFlyoutOpen(false)
     if (session?.tool !== 'pencil' && session?.tool !== 'eraser') setPressureFlyoutOpen(false)
   }, [renderKey, session?.tool, session?.fillKind])
 
@@ -645,7 +644,7 @@ export const EditorToolOptions = memo(function EditorToolOptions({ onOpenColorRe
   const fillKind = session.fillKind ?? 'bucket'
   const gradientDither = session.gradientDither ?? 'none'
   const isBrushTool = session.tool === 'pencil' || session.tool === 'eraser' || (session.tool === 'fill' && fillKind === 'bucket')
-  const supportsSymmetry = session.tool === 'pencil' || session.tool === 'eraser' || session.tool === 'selection' || session.tool === 'shape' || (session.tool === 'fill' && fillKind === 'bucket')
+  const supportsSymmetry = session.tool === 'pencil' || session.tool === 'airbrush' || session.tool === 'eraser' || session.tool === 'selection' || session.tool === 'shape' || (session.tool === 'fill' && fillKind === 'bucket')
   const selectionModeItems = selectionModes(locale)
   const brushPaintModeGroups = [{
     label: t('toolOptions.brushMode'),
@@ -672,6 +671,17 @@ export const EditorToolOptions = memo(function EditorToolOptions({ onOpenColorRe
         <Tooltip content={t('toolOptions.replaceColorHint')}><button type="button" className="tool-text-button eyedropper-replace-trigger" onClick={onOpenColorReplacement}><PixelUtilityIcon kind="refresh" />{t('toolOptions.replaceColor')}</button></Tooltip>
       </div>
     </>}
+    {session.tool === 'airbrush' && <div className="airbrush-options">
+      <div className="brush-size-control airbrush-radius-control" onPointerDown={() => setBrushSizeFlyoutOpen(true)}><NumberInput aria-label={t('toolOptions.airbrushScatterRadius')} density="compact" min={1} max={64} suffix="px" value={session.airbrushScatterRadius} onValueChange={workspace.setAirbrushScatterRadius} onFocus={() => setBrushSizeFlyoutOpen(true)} />{brushSizeFlyoutOpen && <div className="brush-size-popover" role="dialog" aria-label={t('toolOptions.airbrushScatterRadius')}><input aria-label={t('toolOptions.airbrushScatterRadius')} type="range" min="1" max="64" value={session.airbrushScatterRadius} onChange={(event) => workspace.setAirbrushScatterRadius(Number(event.target.value))} /><strong>{session.airbrushScatterRadius}px</strong></div>}</div>
+      <FormField className="airbrush-number-field" layout="inline" label={t('toolOptions.airbrushParticleRadius')} tooltip={t('toolOptions.airbrushParticleRadiusHint')}><NumberInput aria-label={t('toolOptions.airbrushParticleRadius')} density="compact" min={1} max={16} suffix="px" value={session.airbrushParticleRadius} onValueChange={workspace.setAirbrushParticleRadius} /></FormField>
+      <SegmentedControl<BrushShape> className="airbrush-particle-shape" label={t('toolOptions.airbrushParticleShape')} value={session.airbrushParticleShape} onChange={workspace.setAirbrushParticleShape} options={[
+        { value: 'round', label: <PixelShapeIcon kind="round" />, description: t('toolOptions.roundBrush') },
+        { value: 'square', label: <PixelShapeIcon kind="square" />, description: t('toolOptions.squareBrush') },
+        { value: 'line', label: <PixelShapeIcon kind="line" />, description: t('toolOptions.lineBrush') }
+      ]} />
+      <FormField className="airbrush-number-field" layout="inline" label={t('toolOptions.airbrushDensity')} tooltip={t('toolOptions.airbrushDensityHint')}><NumberInput aria-label={t('toolOptions.airbrushDensity')} density="compact" min={1} max={128} value={session.airbrushDensity} onValueChange={workspace.setAirbrushDensity} /></FormField>
+      <FormField className="airbrush-number-field" layout="inline" label={t('toolOptions.airbrushInterval')} tooltip={t('toolOptions.airbrushIntervalHint')}><NumberInput aria-label={t('toolOptions.airbrushInterval')} density="compact" min={16} max={1000} suffix="ms" value={session.airbrushIntervalMs} onValueChange={workspace.setAirbrushIntervalMs} /></FormField>
+    </div>}
     {isBrushTool && <>
       {session.brushImage && <button type="button" className="brush-return-button" title={t('toolOptions.returnToBasicBrush')} onClick={() => { workspace.setBrushImage(null); setBrushFlyoutOpen(false) }}>{t('common.back')}</button>}
       <div className="brush-source">

@@ -15,6 +15,7 @@ describe('canvas visual rules', () => {
   it('chooses a visible cursor from the sampled canvas color', () => {
     expect(canvasToolCursor('pencil', { r: 0, g: 0, b: 0, a: 255 })).toBe(canvasCursors.pencilWhite)
     expect(canvasToolCursor('pencil', { r: 255, g: 255, b: 255, a: 255 })).toBe(canvasCursors.pencilBlack)
+    expect(canvasToolCursor('airbrush', { r: 0, g: 0, b: 0, a: 255 })).toBe(canvasCursors.pencilWhite)
     expect(canvasToolCursor('rotate', { r: 0, g: 0, b: 0, a: 255 }, false)).toBe(canvasCursors.rotate)
   })
 
