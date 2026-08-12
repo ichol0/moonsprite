@@ -1188,6 +1188,8 @@ export default function App() {
       if (runCommand('tool.shape.rectangle', () => { workspace.setTool('shape'); workspace.setShapeKind('rectangle') })) return
       if (runCommand('tool.shape.ellipseOutline', () => { workspace.setTool('shape'); workspace.setShapeKind('ellipse-outline') })) return
       if (runCommand('tool.shape.ellipse', () => { workspace.setTool('shape'); workspace.setShapeKind('ellipse') })) return
+      if (runCommand('tool.curve', () => { workspace.setTool('line'); workspace.setLineKind('curve') })) return
+      if (runCommand('tool.line', () => { workspace.setTool('line'); workspace.setLineKind('line') })) return
       if (event.key === 'Enter' && session?.selection && shouldHandleGlobalSelectionEnter(outlineOpen, true)) {
         event.preventDefault()
         if (session.pendingPaste) workspace.commitFloatingPaste()

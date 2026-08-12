@@ -76,6 +76,31 @@ describe('CanvasCompositeCache', () => {
     expect(secondContext.drawImage.mock.calls[0][0]).toBe(MockOffscreenCanvas.instances[0])
   })
 
+  it('shares the first exact surface between independent canvas caches', () => {
+    const document = createDocument('shared initial surface', 2, 1, 'rgba')
+    const draw = (cache: CanvasCompositeCache) => {
+      const context = {
+        save: vi.fn(), restore: vi.fn(), beginPath: vi.fn(), rect: vi.fn(), clip: vi.fn(),
+        translate: vi.fn(), scale: vi.fn(), drawImage: vi.fn(), imageSmoothingEnabled: true
+      }
+      cache.draw({
+        context: context as never,
+        document,
+        view: { zoom: 1, panX: 0, panY: 0, rotation: 0, mirrored: false, mirroredVertical: false, showGrid: false, relativeLuminance: false },
+        originX: 0, originY: 0, canvasWidth: 2, canvasHeight: 1,
+        fromX: 0, fromY: 0, toX: 2, toY: 1, revision: 0, contentRevision: 0
+      })
+      return context
+    }
+
+    const firstContext = draw(new CanvasCompositeCache())
+    const firstSurface = firstContext.drawImage.mock.calls[0][0]
+    const secondContext = draw(new CanvasCompositeCache())
+
+    expect(MockOffscreenCanvas.instances).toHaveLength(1)
+    expect(secondContext.drawImage.mock.calls[0][0]).toBe(firstSurface)
+  })
+
   it('prepares initial composites only within the exact surface budget', () => {
     expect(canPrepareInitialDocumentComposite(4596, 1767)).toBe(true)
     expect(canPrepareInitialDocumentComposite(9000, 1767)).toBe(false)

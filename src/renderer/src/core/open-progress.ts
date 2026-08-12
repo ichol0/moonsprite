@@ -1,4 +1,4 @@
-export type OpenProgressPhase = 'hidden' | 'running' | 'complete'
+export type OpenProgressPhase = 'hidden' | 'running'
 
 export interface OpenProgressSnapshot {
   phase: OpenProgressPhase
@@ -18,7 +18,7 @@ export function createOpenProgressController(
 ): OpenProgressController {
   const listeners = new Set<Listener>()
   let activeOperations = 0
-  let completionGeneration = 0
+  let displayGeneration = 0
   let snapshot: OpenProgressSnapshot = { phase: 'hidden' }
 
   const publish = (phase: OpenProgressPhase): void => {
@@ -31,32 +31,25 @@ export function createOpenProgressController(
     begin() {
       activeOperations += 1
       if (activeOperations === 1) {
-        const generation = ++completionGeneration
+        const generation = ++displayGeneration
         if (snapshot.phase === 'hidden') {
           scheduleFrame(() => {
-            if (activeOperations > 0 && completionGeneration === generation) publish('running')
+            if (activeOperations > 0 && displayGeneration === generation) publish('running')
           })
         } else publish('running')
       }
       let finished = false
-      return (succeeded = true) => {
+      return (_succeeded = true) => {
         if (finished) return
         finished = true
         activeOperations = Math.max(0, activeOperations - 1)
-        if (activeOperations > 0 || snapshot.phase === 'hidden') return
-        if (!succeeded) {
-          publish('hidden')
-          return
-        }
-        publish('complete')
-        const generation = ++completionGeneration
-        scheduleFrame(() => scheduleFrame(() => {
-          if (activeOperations === 0 && completionGeneration === generation) publish('hidden')
-        }))
+        if (activeOperations > 0) return
+        displayGeneration += 1
+        publish('hidden')
       }
     },
     dismiss() {
-      completionGeneration += 1
+      displayGeneration += 1
       publish('hidden')
     },
     getSnapshot() {

@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { createOpenProgressController } from './open-progress'
 
 describe('open progress controller', () => {
-  it('starts decoding before publishing and waits for the editor paint before hiding', () => {
+  it('starts decoding before publishing and hides immediately when opening finishes', () => {
     const frames: FrameRequestCallback[] = []
     const controller = createOpenProgressController((callback) => {
       frames.push(callback)
@@ -20,14 +20,8 @@ describe('open progress controller', () => {
     expect(listener).toHaveBeenCalledTimes(1)
 
     finish()
-    expect(controller.getSnapshot().phase).toBe('complete')
-    expect(listener).toHaveBeenCalledTimes(2)
-
-    frames.shift()?.(0)
-    expect(controller.getSnapshot().phase).toBe('complete')
-    frames.shift()?.(0)
     expect(controller.getSnapshot().phase).toBe('hidden')
-    expect(listener).toHaveBeenCalledTimes(3)
+    expect(listener).toHaveBeenCalledTimes(2)
   })
 
   it('keeps one overlay visible while concurrent files are opening', () => {
@@ -47,7 +41,7 @@ describe('open progress controller', () => {
     expect(listener).toHaveBeenCalledTimes(1)
 
     finishSecond()
-    expect(controller.getSnapshot().phase).toBe('complete')
+    expect(controller.getSnapshot().phase).toBe('hidden')
     expect(listener).toHaveBeenCalledTimes(2)
   })
 

@@ -50,7 +50,7 @@ describe('document file rules', () => {
     expect(shouldDecodeDocumentInWorker(large, 'large.moonsprite')).toBe(true)
   })
 
-  it('reuses one decode worker and lets large projects enter before the background exact composite', async () => {
+  it('reuses one decode worker without decoding an opened project a second time', async () => {
     vi.stubGlobal('requestIdleCallback', vi.fn())
     const documents = [createDocument('first', 2, 2, 'rgba'), createDocument('second', 2, 2, 'rgba')]
     const workers: Array<{ onmessage: ((event: MessageEvent) => void) | null }> = []
@@ -75,5 +75,6 @@ describe('document file rules', () => {
     expect(initialDocumentComposite(first)).toBeNull()
     await expect(decodeDocumentFileAsync(new Uint8Array([2]), 'second.moonsprite')).resolves.toMatchObject({ name: 'second' })
     expect(workers).toHaveLength(1)
+    expect(documents).toHaveLength(0)
   })
 })

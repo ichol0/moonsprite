@@ -1,4 +1,4 @@
-import type { BrushPaintMode, BrushShape, BrushTexture, FillKind, FillMode, GradientDither, ImageBrushSettings, ProceduralBrushId, ProceduralBrushSettings, SelectionKind, SelectionMode, ShapeKind, ShapeRatio, ToolId } from '@shared/types'
+import type { BrushPaintMode, BrushShape, BrushTexture, FillKind, FillMode, GradientDither, ImageBrushSettings, LineKind, ProceduralBrushId, ProceduralBrushSettings, SelectionKind, SelectionMode, ShapeKind, ShapeRatio, ToolId } from '@shared/types'
 import { normalizeProceduralBrushSettings, PROCEDURAL_BRUSH_IDS } from './brushes'
 import { readStoredJson, writeStoredJson } from './storage'
 import { DEFAULT_SYMMETRY_AXES, type SymmetryAxes } from './symmetry'
@@ -39,6 +39,8 @@ export interface PersistedToolSettings extends PersistedBrushProfile {
   proceduralAntialiasPreferenceVersion: number
   brushProfiles?: Partial<Record<BrushTool, PersistedBrushProfile>>
   shapeKind: ShapeKind
+  lineKind: LineKind
+  curveAnchorCount: number
   shapeRatio: ShapeRatio | number | null
   fillMode: FillMode
   fillKind: FillKind
@@ -81,6 +83,8 @@ export const defaultToolSettings: PersistedToolSettings = {
   brushPressure: { ...DEFAULT_BRUSH_PRESSURE_SETTINGS },
   brushProfiles: undefined,
   shapeKind: 'rectangle',
+  lineKind: 'line',
+  curveAnchorCount: 2,
   shapeRatio: null,
   fillMode: 'contiguous',
   fillKind: 'bucket',
@@ -171,7 +175,9 @@ export function loadToolSettings(storage?: Storage): PersistedToolSettings {
       brushPaintModePreferenceVersion: 1,
       proceduralAntialiasPreferenceVersion: 1,
       brushProfiles,
-      shapeKind: stored.shapeKind === 'ellipse' || stored.shapeKind === 'rectangle' || stored.shapeKind === 'ellipse-outline' || stored.shapeKind === 'rectangle-outline' ? stored.shapeKind : defaultToolSettings.shapeKind,
+      shapeKind: stored.shapeKind === 'ellipse' || stored.shapeKind === 'rectangle' || stored.shapeKind === 'ellipse-outline' || stored.shapeKind === 'rectangle-outline' || stored.shapeKind === 'freeform' || stored.shapeKind === 'polygon' ? stored.shapeKind : defaultToolSettings.shapeKind,
+      lineKind: stored.lineKind === 'curve' ? 'curve' : 'line',
+      curveAnchorCount: Number.isFinite(stored.curveAnchorCount) ? Math.max(1, Math.min(8, Math.round(stored.curveAnchorCount!))) : defaultToolSettings.curveAnchorCount,
       shapeRatio: normalizeShapeRatio(stored.shapeRatio),
       fillMode: stored.fillMode === 'global' || stored.fillMode === 'contiguous' ? stored.fillMode : defaultToolSettings.fillMode,
       fillKind: stored.fillKind === 'gradient' || stored.fillKind === 'bucket' ? stored.fillKind : defaultToolSettings.fillKind,

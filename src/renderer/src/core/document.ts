@@ -159,7 +159,7 @@ export function createDocument(name: string, width: number, height: number, colo
     ? { format: 'rgba' as const, width, height, offsetX: 0, offsetY: 0, pixels: layer.pixels }
     : { format: 'indexed' as const, width, height, offsetX: 0, offsetY: 0, pixels: layer.pixels }
   return {
-    schemaVersion: 4,
+    schemaVersion: 5,
     id: createId('doc'),
     name,
     width,

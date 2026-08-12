@@ -1,10 +1,10 @@
 import type { SpriteDocument } from '@shared/types'
 import { decodeAseprite } from './aseprite'
 import { decodePng, exportDocumentImage, type SaveImageKind } from './png'
-import { decodeProject, encodeProjectAsync, registerProjectSaveBaseline } from './project-format'
+import { decodeProject, encodeProjectAsync, readProjectExpandedRasterBytes, registerProjectSaveBaseline } from './project-format'
 import { browserRasterImageExtensions, decodeBrowserRasterImage } from './raster-image'
 import { currentAppLocale } from './localization'
-import { canPrepareInitialDocumentComposite, registerInitialDocumentComposite, registerPendingInitialDocumentComposite } from './initial-document-composite'
+import { registerInitialDocumentComposite } from './initial-document-composite'
 
 export type SaveImageDialogFormat = 'png' | 'jpeg' | 'webp' | 'ase' | 'aseprite'
 
@@ -139,6 +139,8 @@ export const shouldDecodeDocumentInWorker = (data: Uint8Array, filePath: string)
   const suffix = fileExtension(filePath)
   if (suffix === 'moonsprite') {
     if (data.byteLength > DIRECT_PROJECT_MAX_ARCHIVE_BYTES) return true
+    const expandedRasterBytes = readProjectExpandedRasterBytes(data)
+    if (expandedRasterBytes === null || expandedRasterBytes > DIRECT_PROJECT_MAX_UNCOMPRESSED_BYTES) return true
     const stats = zipArchiveStats(data)
     return !stats || stats.entries > DIRECT_PROJECT_MAX_ENTRIES || stats.uncompressedBytes > DIRECT_PROJECT_MAX_UNCOMPRESSED_BYTES
   }
@@ -211,29 +213,12 @@ const decodeDocumentFileInWorker = (data: Uint8Array, filePath: string, onProgre
   }
 })
 
-const scheduleBackgroundInitialComposite = (document: SpriteDocument, source: Uint8Array, filePath: string): void => {
-  if (!canPrepareInitialDocumentComposite(document.width, document.height)) return
-  const run = (): Promise<void> => decodeDocumentFileInWorker(source, filePath, undefined, true, document).then(() => undefined)
-  const pending = new Promise<void>((resolve) => {
-    const start = (): void => { void run().then(resolve, resolve) }
-    const afterEditorPaint = (): void => {
-      window.requestAnimationFrame(() => window.requestAnimationFrame(() => {
-        if (typeof window.requestIdleCallback === 'function') window.requestIdleCallback(start)
-        else window.setTimeout(start, 250)
-      }))
-    }
-    afterEditorPaint()
-  })
-  registerPendingInitialDocumentComposite(document, pending)
-}
-
 export async function decodeDocumentFileAsync(data: Uint8Array, filePath: string, onProgress?: (value: number) => void): Promise<SpriteDocument> {
   const suffix = fileExtension(filePath)
   if ((suffix === 'moonsprite' || suffix === 'ase' || suffix === 'aseprite') && typeof Worker !== 'undefined' && shouldDecodeDocumentInWorker(data, filePath)) {
     const source = suffix === 'moonsprite' ? data.slice() : null
     const document = await decodeDocumentFileInWorker(data, filePath, onProgress, false)
     if (source) registerProjectSaveBaseline(document, filePath, source)
-    if (source && canPrepareInitialDocumentComposite(document.width, document.height)) scheduleBackgroundInitialComposite(document, source, filePath)
     return document
   }
   if (!browserRasterImageExtensions.includes(suffix as (typeof browserRasterImageExtensions)[number])) {

@@ -2,7 +2,7 @@ import type { BrushPaintMode, BrushShape, BrushTexture, GradientDither, ImageBru
 import { compositeRegion, ensureLayerCoversCanvas, expandLayerToRect, findOrAddPaletteColor, getActiveLayer, getLayer, getLayerStorageOrigin, getPaletteEntry, isLayerEffectivelyLocked, layerIndexAt, layerIndexAtStoragePoint, markLayerContentChanged, readLayerColor, readLayerColorAt, readLayerPacked, readLayerPackedAt, writeLayerPacked, writeLayerPackedRun } from './document'
 import { beginPixelEdit, preparePixelEdit, recordPixel, recordPixelKnownCurrent, type PixelEdit } from './history'
 import { blendOver, isInBounds, packColor, pixelIndex, unpackColor } from './raster'
-import { flipSelectionMask, packedColorMatchesTolerance, rasterLinePoints, rotatedEllipseSelection, rotatedRectSelection, selectionContains, transformedSelectionBounds, transformedSelectionDestinationPoint, transformedSelectionSourcePoint, type SelectionFlipAxis, type SelectionShearTransform } from './selection'
+import { flipSelectionMask, lassoSelection, packedColorMatchesTolerance, rasterLinePoints, rotatedEllipseSelection, rotatedRectSelection, selectionContains, transformedSelectionBounds, transformedSelectionDestinationPoint, transformedSelectionSourcePoint, type SelectionFlipAxis, type SelectionShearTransform } from './selection'
 import { proceduralBrushCoverageAt } from './brushes'
 import { balancedStairLinePoints } from './pixel-line'
 import { hasSymmetry, symmetryPoints, type SymmetryAxes, type SymmetryCenter } from './symmetry'
@@ -673,6 +673,89 @@ export function paintShape(
   }
 }
 
+const uniquePixelPoints = (points: Iterable<{ x: number; y: number }>): BrushMaskPoint[] => {
+  const result: BrushMaskPoint[] = []
+  const seen = new Set<string>()
+  for (const point of points) {
+    const x = Math.round(point.x)
+    const y = Math.round(point.y)
+    const key = `${x}:${y}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    result.push({ x, y, coverage: 255 })
+  }
+  return result
+}
+
+export function filledShapePathPixelPoints(document: SpriteDocument, path: readonly { x: number; y: number }[]): BrushMaskPoint[] {
+  const filled = lassoSelection(document, path.map((point) => ({ x: Math.round(point.x), y: Math.round(point.y) })))
+  if (!filled) return []
+  const points: BrushMaskPoint[] = []
+  for (let y = filled.y; y < filled.y + filled.height; y += 1) {
+    for (let x = filled.x; x < filled.x + filled.width; x += 1) {
+      if (selectionContains(filled, x, y)) points.push({ x, y, coverage: 255 })
+    }
+  }
+  return points
+}
+
+export function lineShapePixelPoints(start: { x: number; y: number }, end: { x: number; y: number }, balanced = false): BrushMaskPoint[] {
+  return uniquePixelPoints((balanced ? balancedStairLinePoints : rasterLinePoints)(start, end))
+}
+
+export function bezierCurvePixelPoints(
+  start: { x: number; y: number },
+  controls: readonly { x: number; y: number }[],
+  end: { x: number; y: number }
+): BrushMaskPoint[] {
+  const curvePoints = [start, ...controls, end]
+  const baselineLength = Math.hypot(end.x - start.x, end.y - start.y)
+  const steps = Math.min(4096, Math.max(16, Math.ceil(baselineLength * 2), curvePoints.length * 12))
+  const points: Array<{ x: number; y: number }> = []
+  let previous = { x: Math.round(start.x), y: Math.round(start.y) }
+  points.push(previous)
+  for (let step = 1; step <= steps; step += 1) {
+    const amount = step / steps
+    const working = curvePoints.map((point) => ({ x: point.x, y: point.y }))
+    for (let level = working.length - 1; level > 0; level -= 1) {
+      for (let index = 0; index < level; index += 1) {
+        working[index] = {
+          x: working[index].x + (working[index + 1].x - working[index].x) * amount,
+          y: working[index].y + (working[index + 1].y - working[index].y) * amount
+        }
+      }
+    }
+    const current = { x: Math.round(working[0].x), y: Math.round(working[0].y) }
+    points.push(...rasterLinePoints(previous, current))
+    previous = current
+  }
+  return uniquePixelPoints(points)
+}
+
+export function paintShapePixelPoints(
+  document: SpriteDocument,
+  layer: RasterLayer,
+  edit: PixelEdit,
+  points: readonly { x: number; y: number }[],
+  color: RgbaColor,
+  selection?: SelectionMask | null,
+  symmetryAxes?: SymmetryAxes,
+  symmetryCenter?: SymmetryCenter
+): void {
+  const destinations = uniquePixelPoints(points.flatMap((point) => symmetryPoints(point, document.width, document.height, symmetryAxes, symmetryCenter)))
+  if (destinations.length === 0) return
+  const left = Math.min(...destinations.map((point) => point.x))
+  const top = Math.min(...destinations.map((point) => point.y))
+  const right = Math.max(...destinations.map((point) => point.x)) + 1
+  const bottom = Math.max(...destinations.map((point) => point.y)) + 1
+  if (!ensureLayerCoversEditRect(document, layer, edit, { x: left, y: top, width: right - left, height: bottom - top })) return
+  for (const { x, y } of destinations) {
+    if (selection && !insideSelection(selection, x, y)) continue
+    const index = layerIndexAt(layer, x, y)
+    if (index !== null) recordPixel(document, layer, edit, index, paintLayerValue(document, layer, edit, index, color))
+  }
+}
+
 const defaultOutlineDirections: OutlineDirections = { nw: true, n: true, ne: true, w: true, e: true, sw: true, s: true, se: true }
 const outlineDirection = (dx: number, dy: number): OutlineDirection | null => {
   if (dx === 0 && dy === 0) return null
@@ -800,12 +883,14 @@ const shapeContainsOffset = (width: number, height: number, ellipse: boolean, of
 }
 
 export function shapeContainsPixel(bounds: SelectionRect, kind: ShapeKind, x: number, y: number): boolean {
+  if (kind === 'freeform' || kind === 'polygon') return false
   const width = Math.max(1, bounds.width)
   const height = Math.max(1, bounds.height)
   return shapeContainsOffset(width, height, kind === 'ellipse' || kind === 'ellipse-outline', x - bounds.x, y - bounds.y)
 }
 
 export function shapePixelPoints(bounds: SelectionRect, kind: ShapeKind): BrushMaskPoint[] {
+  if (kind === 'freeform' || kind === 'polygon') return []
   const width = Math.max(1, bounds.width)
   const height = Math.max(1, bounds.height)
   const ellipse = kind === 'ellipse' || kind === 'ellipse-outline'
@@ -831,6 +916,7 @@ export function rotatedShapePixelPoints(
   canvasHeight: number,
   angle = 0
 ): BrushMaskPoint[] {
+  if (kind === 'freeform' || kind === 'polygon') return []
   const normalizedAngle = ((angle % 360) + 360) % 360
   if (normalizedAngle < 1e-9 || Math.abs(normalizedAngle - 360) < 1e-9) return shapePixelPoints(bounds, kind)
   const ellipse = kind === 'ellipse' || kind === 'ellipse-outline'

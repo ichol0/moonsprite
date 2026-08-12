@@ -307,7 +307,8 @@ button[aria-label]:has(> .pixel-utility-icon:only-child) { display: inline-grid;
 .tool-flyout .pixel-asset-icon { width: var(--tool-rail-icon-size); height: var(--tool-rail-icon-size); }
 .tool-flyout { position: absolute; z-index: 70; left: var(--tool-rail-flyout-offset); top: 0; display: grid; gap: var(--ui-space-2); padding: var(--ui-space-2); background: var(--theme-surface); border: 1px solid var(--theme-border-muted); }
 .tool-rail.side-right .tool-flyout { right: var(--tool-rail-flyout-offset); left: auto; }
-.shape-flyout { grid-template-columns: repeat(4, var(--tool-rail-button-size)); }
+.shape-flyout { grid-template-columns: repeat(6, var(--tool-rail-button-size)); }
+.line-flyout { grid-template-columns: repeat(2, var(--tool-rail-button-size)); }
 .selection-flyout { grid-template-columns: repeat(5, var(--tool-rail-button-size)); }
 .fill-flyout { grid-template-columns: repeat(2, var(--tool-rail-button-size)); }
 .tool-flyout-tooltip { display: block; width: var(--tool-rail-button-size); height: var(--tool-rail-button-size); }
@@ -505,6 +506,8 @@ button[aria-label]:has(> .pixel-utility-icon:only-child) { display: inline-grid;
 .tolerance-control .number-input-editor > input { padding: var(--ui-space-1) var(--ui-space-3) !important; font: var(--ui-font-regular)/var(--ui-line-regular) ui-monospace, Consolas, monospace; }
 .tool-options .line-direction-step-control { display: inline-grid; flex: 0 0 auto; grid-template-columns: max-content 70px; width: max-content; align-items: center; gap: var(--ui-space-3); color: var(--theme-text-soft); font-size: var(--ui-font-regular); }
 .tool-options .line-direction-step-control .ui-field-control, .tool-options .line-direction-step-control .number-input { width: 70px; min-width: 70px; max-width: 70px; }
+.tool-options .curve-anchor-count-control { display: inline-grid; flex: 0 0 auto; grid-template-columns: max-content 70px; width: max-content; align-items: center; gap: var(--ui-space-3); color: var(--theme-text-soft); font-size: var(--ui-font-regular); }
+.tool-options .curve-anchor-count-control .ui-field-control, .tool-options .curve-anchor-count-control .number-input { width: 70px; min-width: 70px; max-width: 70px; }
 .line-direction-step-control .number-input-editor > input { padding: var(--ui-space-1) var(--ui-space-3) !important; font: var(--ui-font-regular)/var(--ui-line-regular) ui-monospace, Consolas, monospace; }
 .tolerance-popover { grid-template-columns: 160px 42px; gap: var(--ui-space-4); }
 .tolerance-popover input[type="range"] { width: 160px; }

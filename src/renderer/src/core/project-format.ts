@@ -26,6 +26,7 @@ interface ManifestLayer {
   offsetX?: number
   offsetY?: number
   dataFile: string
+  dataEncoding?: RasterDataEncoding
 }
 
 interface ManifestMask {
@@ -61,6 +62,7 @@ interface ManifestCel {
   offsetX?: number
   offsetY?: number
   dataFile?: string
+  dataEncoding?: RasterDataEncoding
   mask?: ManifestMask
 }
 
@@ -91,12 +93,20 @@ interface ManifestTimelapse extends Omit<TimelapseSettings, 'snapshots'> {
   snapshots: ManifestTimelapseSnapshot[]
 }
 
-export const PROJECT_SCHEMA_VERSION = 4
+type RasterDataEncoding = 'raw' | 'sparse-tiles-v1'
+
+export const PROJECT_SCHEMA_VERSION = 5
+const LEGACY_PROJECT_SCHEMA_VERSION = 4
+const SPARSE_TILE_SIZE = 64
+const SPARSE_TILE_MAGIC = 0x3154534d
+const SPARSE_TILE_HEADER_BYTES = 24
+const SPARSE_TILE_ENTRY_BYTES = 16
 
 interface ProjectManifest {
   schemaVersion: typeof PROJECT_SCHEMA_VERSION
   app: 'MoonSprite'
   document: Omit<SpriteDocument, 'layers' | 'groups' | 'palette' | 'customBrushes' | 'animation' | 'timelapse' | 'filePath' | 'sourceFilePath' | 'dirty'> & { schemaVersion: typeof PROJECT_SCHEMA_VERSION; layers: ManifestLayer[]; groups: LayerGroup[]; palette: PaletteEntry[]; customBrushes: ManifestProjectBrush[]; animation: ManifestAnimation; timelapse?: ManifestTimelapse }
+  sourceSchemaVersion?: number
 }
 
 export interface ProjectGalleryMetadata {
@@ -113,6 +123,145 @@ export interface ProjectGalleryReadOptions {
 
 const toU8 = (array: Uint8ClampedArray | Uint32Array): Uint8Array =>
   new Uint8Array(array.buffer, array.byteOffset, array.byteLength)
+
+interface EncodedRasterData {
+  data: Uint8Array
+  encoding: RasterDataEncoding
+}
+
+interface DecodedRasterData {
+  pixels: Uint8ClampedArray | Uint32Array
+  width: number
+  height: number
+  storageOffsetX: number
+  storageOffsetY: number
+}
+
+const tileContainsContent = (pixels: Uint8ClampedArray | Uint32Array, format: ColorMode, width: number, startX: number, startY: number, tileWidth: number, tileHeight: number): boolean => {
+  for (let y = 0; y < tileHeight; y += 1) {
+    let index = (startY + y) * width + startX
+    const end = index + tileWidth
+    if (format === 'rgba' && pixels instanceof Uint8ClampedArray) {
+      for (; index < end; index += 1) {
+        const offset = index * 4
+        if (pixels[offset] !== 0 || pixels[offset + 1] !== 0 || pixels[offset + 2] !== 0 || pixels[offset + 3] !== 0) return true
+      }
+    } else if (format === 'indexed' && pixels instanceof Uint32Array) {
+      for (; index < end; index += 1) if (pixels[index] !== 0) return true
+    }
+  }
+  return false
+}
+
+const encodeSparseRasterData = (pixels: Uint8ClampedArray | Uint32Array, format: ColorMode, width: number, height: number): EncodedRasterData => {
+  const raw = toU8(pixels)
+  const tiles: Array<{ x: number; y: number; width: number; height: number; data: Uint8Array }> = []
+  let payloadBytes = 0
+  for (let y = 0; y < height; y += SPARSE_TILE_SIZE) for (let x = 0; x < width; x += SPARSE_TILE_SIZE) {
+    const tileWidth = Math.min(SPARSE_TILE_SIZE, width - x)
+    const tileHeight = Math.min(SPARSE_TILE_SIZE, height - y)
+    if (!tileContainsContent(pixels, format, width, x, y, tileWidth, tileHeight)) continue
+    const bytes = new Uint8Array(tileWidth * tileHeight * 4)
+    for (let row = 0; row < tileHeight; row += 1) {
+      const sourceOffset = ((y + row) * width + x) * 4
+      bytes.set(raw.subarray(sourceOffset, sourceOffset + tileWidth * 4), row * tileWidth * 4)
+    }
+    tiles.push({ x, y, width: tileWidth, height: tileHeight, data: bytes })
+    payloadBytes += bytes.byteLength
+  }
+  const encodedBytes = SPARSE_TILE_HEADER_BYTES + tiles.length * SPARSE_TILE_ENTRY_BYTES + payloadBytes
+  if (encodedBytes >= raw.byteLength) return { data: raw, encoding: 'raw' }
+  const data = new Uint8Array(encodedBytes)
+  const view = new DataView(data.buffer)
+  view.setUint32(0, SPARSE_TILE_MAGIC, true)
+  view.setUint16(4, SPARSE_TILE_SIZE, true)
+  view.setUint8(6, format === 'rgba' ? 1 : 2)
+  view.setUint32(8, width, true)
+  view.setUint32(12, height, true)
+  view.setUint32(16, tiles.length, true)
+  view.setUint32(20, payloadBytes, true)
+  let entryOffset = SPARSE_TILE_HEADER_BYTES
+  let dataOffset = SPARSE_TILE_HEADER_BYTES + tiles.length * SPARSE_TILE_ENTRY_BYTES
+  for (const tile of tiles) {
+    view.setUint32(entryOffset, tile.x, true)
+    view.setUint32(entryOffset + 4, tile.y, true)
+    view.setUint16(entryOffset + 8, tile.width, true)
+    view.setUint16(entryOffset + 10, tile.height, true)
+    view.setUint32(entryOffset + 12, dataOffset, true)
+    data.set(tile.data, dataOffset)
+    entryOffset += SPARSE_TILE_ENTRY_BYTES
+    dataOffset += tile.data.byteLength
+  }
+  return { data, encoding: 'sparse-tiles-v1' }
+}
+
+const decodeSparseRasterData = (data: Uint8Array, format: ColorMode, width: number, height: number): DecodedRasterData | null => {
+  if (data.byteLength < SPARSE_TILE_HEADER_BYTES) return null
+  const view = new DataView(data.buffer, data.byteOffset, data.byteLength)
+  if (view.getUint32(0, true) !== SPARSE_TILE_MAGIC || view.getUint16(4, true) !== SPARSE_TILE_SIZE) return null
+  if (view.getUint8(6) !== (format === 'rgba' ? 1 : 2) || view.getUint32(8, true) !== width || view.getUint32(12, true) !== height) return null
+  const tileCount = view.getUint32(16, true)
+  const payloadBytes = view.getUint32(20, true)
+  const entriesEnd = SPARSE_TILE_HEADER_BYTES + tileCount * SPARSE_TILE_ENTRY_BYTES
+  const outputByteLength = width * height * 4
+  const tileColumns = Math.ceil(width / SPARSE_TILE_SIZE)
+  const tileRows = Math.ceil(height / SPARSE_TILE_SIZE)
+  if (!Number.isSafeInteger(entriesEnd) || entriesEnd > data.byteLength || payloadBytes !== data.byteLength - entriesEnd) return null
+  if (!Number.isSafeInteger(outputByteLength) || outputByteLength < 0 || tileCount > tileColumns * tileRows) return null
+  const occupied = new Set<number>()
+  const tiles: Array<{ x: number; y: number; width: number; height: number; dataOffset: number }> = []
+  let minX = width
+  let minY = height
+  let maxX = 0
+  let maxY = 0
+  let expectedDataOffset = entriesEnd
+  for (let index = 0; index < tileCount; index += 1) {
+    const entryOffset = SPARSE_TILE_HEADER_BYTES + index * SPARSE_TILE_ENTRY_BYTES
+    const x = view.getUint32(entryOffset, true)
+    const y = view.getUint32(entryOffset + 4, true)
+    const tileWidth = view.getUint16(entryOffset + 8, true)
+    const tileHeight = view.getUint16(entryOffset + 10, true)
+    const dataOffset = view.getUint32(entryOffset + 12, true)
+    if (!tileWidth || !tileHeight || x >= width || y >= height || x % SPARSE_TILE_SIZE !== 0 || y % SPARSE_TILE_SIZE !== 0 || dataOffset !== expectedDataOffset) return null
+    if (tileWidth !== Math.min(SPARSE_TILE_SIZE, width - x) || tileHeight !== Math.min(SPARSE_TILE_SIZE, height - y)) return null
+    const slot = (y / SPARSE_TILE_SIZE) * tileColumns + x / SPARSE_TILE_SIZE
+    if (occupied.has(slot)) return null
+    occupied.add(slot)
+    const tileBytes = tileWidth * tileHeight * 4
+    if (dataOffset + tileBytes > data.byteLength) return null
+    tiles.push({ x, y, width: tileWidth, height: tileHeight, dataOffset })
+    minX = Math.min(minX, x)
+    minY = Math.min(minY, y)
+    maxX = Math.max(maxX, x + tileWidth)
+    maxY = Math.max(maxY, y + tileHeight)
+    expectedDataOffset += tileBytes
+  }
+  if (expectedDataOffset !== data.byteLength) return null
+  const decodedWidth = tiles.length > 0 ? maxX - minX : 1
+  const decodedHeight = tiles.length > 0 ? maxY - minY : 1
+  const decodedByteLength = decodedWidth * decodedHeight * 4
+  if (!Number.isSafeInteger(decodedByteLength) || decodedByteLength < 0 || decodedByteLength > outputByteLength) return null
+  let outputBytes: Uint8Array
+  try {
+    outputBytes = new Uint8Array(decodedByteLength)
+  } catch {
+    return null
+  }
+  for (const tile of tiles) {
+    for (let row = 0; row < tile.height; row += 1) {
+      const sourceOffset = tile.dataOffset + row * tile.width * 4
+      const targetOffset = ((tile.y - minY + row) * decodedWidth + tile.x - minX) * 4
+      outputBytes.set(data.subarray(sourceOffset, sourceOffset + tile.width * 4), targetOffset)
+    }
+  }
+  return {
+    pixels: format === 'rgba' ? new Uint8ClampedArray(outputBytes.buffer) : new Uint32Array(outputBytes.buffer),
+    width: decodedWidth,
+    height: decodedHeight,
+    storageOffsetX: tiles.length > 0 ? minX : 0,
+    storageOffsetY: tiles.length > 0 ? minY : 0
+  }
+}
 
 const PROJECT_PREVIEW_MAX_DIMENSION = 512
 const LARGE_PROJECT_STORAGE_PIXELS = 32 * 1024 * 1024
@@ -290,7 +439,7 @@ const normalizeManifestAnimation = (value: unknown): ManifestAnimation => {
     cels: normalized.cels.map((cel) => {
       const raw = rawCels.find((candidate) => candidate && typeof candidate === 'object' && (candidate as { id?: unknown }).id === cel.id) as Partial<ManifestCel> | undefined
       const { mask: _runtimeMask, surface: _runtimeSurface, ...normalizedCel } = cel
-      return { ...normalizedCel, ...(Number.isFinite(raw?.opacity) ? { opacity: Math.max(0, Math.min(1, Number(raw!.opacity))) } : {}), ...(raw?.format === 'rgba' || raw?.format === 'indexed' ? { format: raw.format } : {}), ...(Number.isSafeInteger(raw?.width) ? { width: raw!.width } : {}), ...(Number.isSafeInteger(raw?.height) ? { height: raw!.height } : {}), ...(Number.isFinite(raw?.offsetX) ? { offsetX: Math.trunc(raw!.offsetX!) } : {}), ...(Number.isFinite(raw?.offsetY) ? { offsetY: Math.trunc(raw!.offsetY!) } : {}), ...(typeof raw?.dataFile === 'string' ? { dataFile: raw.dataFile } : {}), ...(raw?.mask ? { mask: raw.mask } : {}) }
+      return { ...normalizedCel, ...(Number.isFinite(raw?.opacity) ? { opacity: Math.max(0, Math.min(1, Number(raw!.opacity))) } : {}), ...(raw?.format === 'rgba' || raw?.format === 'indexed' ? { format: raw.format } : {}), ...(Number.isSafeInteger(raw?.width) ? { width: raw!.width } : {}), ...(Number.isSafeInteger(raw?.height) ? { height: raw!.height } : {}), ...(Number.isFinite(raw?.offsetX) ? { offsetX: Math.trunc(raw!.offsetX!) } : {}), ...(Number.isFinite(raw?.offsetY) ? { offsetY: Math.trunc(raw!.offsetY!) } : {}), ...(typeof raw?.dataFile === 'string' ? { dataFile: raw.dataFile } : {}), ...(raw?.dataEncoding === 'raw' || raw?.dataEncoding === 'sparse-tiles-v1' ? { dataEncoding: raw.dataEncoding } : {}), ...(raw?.mask ? { mask: raw.mask } : {}) }
     }),
     groupMasks: value && typeof value === 'object' && Array.isArray((value as { groupMasks?: unknown }).groupMasks)
       ? (value as { groupMasks: unknown[] }).groupMasks.flatMap((item) => {
@@ -317,6 +466,7 @@ interface ProjectArchiveResource {
   path: string
   resource: object
   revision: number | null
+  raster?: { width: number; height: number; offsetX: number; offsetY: number; dataEncoding: RasterDataEncoding }
 }
 
 interface ProjectArchiveBuild {
@@ -331,7 +481,8 @@ export interface ProjectArchiveReuseEntry {
 
 interface ProjectSaveBaseline {
   sourcePath: string
-  resources: WeakMap<object, { path: string; crc32: number; revision: number | null }>
+  schemaVersion: number
+  resources: WeakMap<object, { path: string; crc32: number; revision: number | null; raster?: ProjectArchiveResource['raster'] }>
 }
 
 interface ProjectSaveBaselineCandidate {
@@ -347,18 +498,30 @@ export interface EncodedProjectSave {
 
 const projectSaveBaselines = new WeakMap<SpriteDocument, ProjectSaveBaseline>()
 
-const createProjectArchiveFiles = (document: SpriteDocument, options: ProjectEncodeOptions = {}): ProjectArchiveBuild => {
+const createProjectArchiveFiles = (document: SpriteDocument, options: ProjectEncodeOptions = {}, baseline?: ProjectSaveBaseline): ProjectArchiveBuild => {
   syncActiveAnimationLayers(document)
   const files: Record<string, Uint8Array> = {}
   const resources: ProjectArchiveResource[] = []
-  const dataFileByPixels = new Map<object, string>()
-  const encodePixels = (preferredFile: string, pixels: Uint8ClampedArray | Uint32Array): string => {
+  const dataFileByPixels = new Map<object, { dataFile: string; dataEncoding: RasterDataEncoding; width: number; height: number; offsetX: number; offsetY: number }>()
+  const encodePixels = (preferredFile: string, pixels: Uint8ClampedArray | Uint32Array, format: ColorMode, width: number, height: number, offsetX: number, offsetY: number): { dataFile: string; dataEncoding: RasterDataEncoding; width: number; height: number; offsetX: number; offsetY: number } => {
     const existing = dataFileByPixels.get(pixels)
     if (existing) return existing
-    files[preferredFile] = toU8(pixels)
-    resources.push({ path: preferredFile, resource: pixels, revision: getRasterContentRevision(pixels) })
-    dataFileByPixels.set(pixels, preferredFile)
-    return preferredFile
+    const revision = getRasterContentRevision(pixels)
+    const previous = baseline?.resources.get(pixels)
+    if (baseline?.schemaVersion === PROJECT_SCHEMA_VERSION && previous?.raster && previous.revision === revision) {
+      const result = { dataFile: previous.path, ...previous.raster }
+      resources.push({ path: previous.path, resource: pixels, revision, raster: previous.raster })
+      dataFileByPixels.set(pixels, result)
+      return result
+    }
+    const encoded = encodeSparseRasterData(pixels, format, width, height)
+    const dataFile = encoded.encoding === 'sparse-tiles-v1' ? `${preferredFile}.tiles` : preferredFile
+    files[dataFile] = encoded.data
+    const raster = { width, height, offsetX, offsetY, dataEncoding: encoded.encoding }
+    resources.push({ path: dataFile, resource: pixels, revision, raster })
+    const result = { dataFile, ...raster }
+    dataFileByPixels.set(pixels, result)
+    return result
   }
   const encodeMask = (mask: LayerMask): ManifestMask => {
     const dataFile = `masks/${mask.id}.rgba`
@@ -367,7 +530,7 @@ const createProjectArchiveFiles = (document: SpriteDocument, options: ProjectEnc
     return { id: mask.id, ...(mask.linkedMaskId ? { linkedMaskId: mask.linkedMaskId } : {}), width: mask.width, height: mask.height, offsetX: mask.offsetX, offsetY: mask.offsetY, dataFile }
   }
   const layers: ManifestLayer[] = document.layers.map((layer) => {
-    const dataFile = encodePixels(`layers/${layer.id}.${layer.format === 'rgba' ? 'rgba' : 'idx32'}`, layer.pixels)
+    const encoded = encodePixels(`layers/${layer.id}.${layer.format === 'rgba' ? 'rgba' : 'idx32'}`, layer.pixels, layer.format, layer.width, layer.height, layer.offsetX, layer.offsetY)
     return {
       id: layer.id,
       name: layer.name,
@@ -379,11 +542,12 @@ const createProjectArchiveFiles = (document: SpriteDocument, options: ProjectEnc
       blendMode: layer.blendMode,
       ...(layer.clippingMask === true ? { clippingMask: true } : {}),
       groupId: layer.groupId ?? null,
-      width: layer.width,
-      height: layer.height,
-      offsetX: layer.offsetX,
-      offsetY: layer.offsetY,
-      dataFile
+      width: encoded.width,
+      height: encoded.height,
+      offsetX: encoded.offsetX,
+      offsetY: encoded.offsetY,
+      dataFile: encoded.dataFile,
+      dataEncoding: encoded.dataEncoding
     }
   })
   const groups: LayerGroup[] = document.groups.map((group) => ({ ...group }))
@@ -402,20 +566,21 @@ const createProjectArchiveFiles = (document: SpriteDocument, options: ProjectEnc
     groupMasks: (timeline.groupMasks ?? []).map((entry) => ({ groupId: entry.groupId, frameId: entry.frameId, mask: encodeMask(entry.mask) })),
     cels: timeline.cels.flatMap((cel) => {
       if (!cel.surface) return []
-      const dataFile = cel.linkedCelId ? undefined : encodePixels(`cels/${cel.id}.${cel.surface.format === 'rgba' ? 'rgba' : 'idx32'}`, cel.surface.pixels)
+      const encoded = cel.linkedCelId ? undefined : encodePixels(`cels/${cel.id}.${cel.surface.format === 'rgba' ? 'rgba' : 'idx32'}`, cel.surface.pixels, cel.surface.format, cel.surface.width, cel.surface.height, cel.surface.offsetX, cel.surface.offsetY)
       return [{
         id: cel.id,
         layerId: cel.layerId,
         frameId: cel.frameId,
         ...(cel.linkedCelId ? { linkedCelId: cel.linkedCelId } : {}),
         ...(Number.isFinite(cel.opacity) ? { opacity: cel.opacity } : {}),
-        ...(dataFile ? {
+        ...(encoded ? {
           format: cel.surface.format,
-          width: cel.surface.width,
-          height: cel.surface.height,
-          offsetX: cel.surface.offsetX,
-          offsetY: cel.surface.offsetY,
-          dataFile
+          width: encoded.width,
+          height: encoded.height,
+          offsetX: encoded.offsetX,
+          offsetY: encoded.offsetY,
+          dataFile: encoded.dataFile,
+          dataEncoding: encoded.dataEncoding
         } : {}),
         ...(cel.mask ? { mask: encodeMask(cel.mask) } : {})
       }]
@@ -550,64 +715,83 @@ const readZipEntryCrcs = (data: Uint8Array): Map<string, number> => {
   return entries
 }
 
-const projectResourceSourcePaths = (document: SpriteDocument, manifest: ProjectManifest): WeakMap<object, string> => {
-  const paths = new WeakMap<object, string>()
-  const conflicts = new WeakSet<object>()
-  const add = (resource: object, path: string | null | undefined): void => {
-    if (!path || conflicts.has(resource)) return
-    const previous = paths.get(resource)
-    if (previous && previous !== path) {
-      paths.delete(resource)
-      conflicts.add(resource)
+const projectResourcesFromManifest = (document: SpriteDocument, manifest: ProjectManifest): ProjectArchiveResource[] => {
+  const candidates = new Map<object, ProjectArchiveResource | null>()
+  const add = (resource: object, path: string | null | undefined, revision: number | null, raster?: ProjectArchiveResource['raster']): void => {
+    if (!path || candidates.get(resource) === null) return
+    const previous = candidates.get(resource)
+    if (previous && previous.path !== path) {
+      candidates.set(resource, null)
       return
     }
-    paths.set(resource, path)
+    candidates.set(resource, { path, resource, revision, ...(raster ? { raster } : {}) })
+  }
+  const rasterFromMetadata = (metadata: Pick<ManifestLayer | ManifestCel, 'width' | 'height' | 'offsetX' | 'offsetY' | 'dataEncoding'> | undefined, fallbackWidth?: number, fallbackHeight?: number): ProjectArchiveResource['raster'] | undefined => {
+    const width = Number.isSafeInteger(metadata?.width) && metadata!.width! > 0 ? metadata!.width! : fallbackWidth
+    const height = Number.isSafeInteger(metadata?.height) && metadata!.height! > 0 ? metadata!.height! : fallbackHeight
+    const dataEncoding = rasterDataEncoding(metadata?.dataEncoding)
+    if (!width || !height || !dataEncoding) return undefined
+    return {
+      width,
+      height,
+      offsetX: Number.isFinite(metadata?.offsetX) ? Math.trunc(metadata!.offsetX!) : 0,
+      offsetY: Number.isFinite(metadata?.offsetY) ? Math.trunc(metadata!.offsetY!) : 0,
+      dataEncoding
+    }
   }
   const layerMetadata = new Map(manifest.document.layers.map((layer) => [layer.id, layer]))
   const activeCelFiles = directActiveCelDataFiles(manifest)
   for (const layer of document.layers) {
     const metadata = layerMetadata.get(layer.id)
-    add(layer.pixels, activeCelFiles.get(layer.id) ?? metadata?.dataFile)
+    const activeCel = activeCelFiles.get(layer.id)
+    add(
+      layer.pixels,
+      activeCel?.dataFile ?? metadata?.dataFile,
+      getRasterContentRevision(layer.pixels),
+      activeCel ?? rasterFromMetadata(metadata, manifest.document.width, manifest.document.height)
+    )
   }
   const timeline = ensureAnimationDocument(document)
   const celMetadata = new Map(manifest.document.animation.cels.map((cel) => [cel.id, cel]))
   for (const cel of timeline.cels) {
     const metadata = celMetadata.get(cel.id)
-    if (cel.surface && metadata?.dataFile) add(cel.surface.pixels, metadata.dataFile)
-    if (cel.mask) add(cel.mask.pixels, metadata?.mask?.dataFile)
+    if (cel.surface && metadata?.dataFile) add(cel.surface.pixels, metadata.dataFile, getRasterContentRevision(cel.surface.pixels), rasterFromMetadata(metadata))
+    if (cel.mask) add(cel.mask.pixels, metadata?.mask?.dataFile, getRasterContentRevision(cel.mask.pixels))
   }
   const groupMaskMetadata = new Map((manifest.document.animation.groupMasks ?? []).map((entry) => [`${entry.groupId}\u0000${entry.frameId}`, entry]))
-  for (const entry of timeline.groupMasks ?? []) add(entry.mask.pixels, groupMaskMetadata.get(`${entry.groupId}\u0000${entry.frameId}`)?.mask.dataFile)
+  for (const entry of timeline.groupMasks ?? []) add(entry.mask.pixels, groupMaskMetadata.get(`${entry.groupId}\u0000${entry.frameId}`)?.mask.dataFile, getRasterContentRevision(entry.mask.pixels))
   const snapshotMetadata = new Map((manifest.document.timelapse?.snapshots ?? []).map((snapshot) => [snapshot.id, snapshot]))
-  for (const snapshot of document.timelapse?.snapshots ?? []) add(snapshot.data, snapshotMetadata.get(snapshot.id)?.dataFile)
-  return paths
+  for (const snapshot of document.timelapse?.snapshots ?? []) add(snapshot.data, snapshotMetadata.get(snapshot.id)?.dataFile, null)
+  return Array.from(candidates.values()).filter((candidate): candidate is ProjectArchiveResource => candidate !== null)
 }
 
 export function registerProjectSaveBaseline(document: SpriteDocument, sourcePath: string, archive: Uint8Array): boolean {
   let crcs: Map<string, number>
   let manifest: ProjectManifest
+  let sourceSchemaVersion: number
   try {
     crcs = readZipEntryCrcs(archive)
-    manifest = readManifest(unzipSync(archive, { filter: (file) => file.name === 'manifest.json' }))
+    const manifestFiles = unzipSync(archive, { filter: (file) => file.name === 'manifest.json' })
+    const rawManifest = JSON.parse(strFromU8(manifestFiles['manifest.json'])) as { schemaVersion?: unknown }
+    sourceSchemaVersion = Number(rawManifest.schemaVersion)
+    manifest = readManifest(manifestFiles)
   } catch {
     projectSaveBaselines.delete(document)
     return false
   }
-  const sourcePaths = projectResourceSourcePaths(document, manifest)
-  const resources = new WeakMap<object, { path: string; crc32: number; revision: number | null }>()
-  for (const resource of createProjectArchiveFiles(document, { includePreview: false }).resources) {
-    if (sourcePaths.get(resource.resource) !== resource.path) continue
+  const resources = new WeakMap<object, { path: string; crc32: number; revision: number | null; raster?: ProjectArchiveResource['raster'] }>()
+  for (const resource of projectResourcesFromManifest(document, manifest)) {
     const crc32 = crcs.get(resource.path)
-    if (crc32 !== undefined) resources.set(resource.resource, { path: resource.path, crc32, revision: resource.revision })
+    if (crc32 !== undefined) resources.set(resource.resource, { path: resource.path, crc32, revision: resource.revision, ...(resource.raster ? { raster: resource.raster } : {}) })
   }
-  projectSaveBaselines.set(document, { sourcePath, resources })
+  projectSaveBaselines.set(document, { sourcePath, schemaVersion: sourceSchemaVersion, resources })
   return true
 }
 
 export async function encodeProjectSaveAsync(document: SpriteDocument, options: ProjectEncodeOptions = {}): Promise<EncodedProjectSave> {
   options.onProgress?.(0)
-  const { files, resources } = createProjectArchiveFiles(document, options)
   const baseline = projectSaveBaselines.get(document)
+  const { files, resources } = createProjectArchiveFiles(document, options, baseline)
   const reusableEntries: ProjectArchiveReuseEntry[] = []
   const reusableCrcs = new Map<string, number>()
   const patchFiles = { ...files }
@@ -637,9 +821,9 @@ export async function encodeProjectSaveAsync(document: SpriteDocument, options: 
 }
 
 export function acceptProjectSaveBaseline(document: SpriteDocument, filePath: string, encoded: EncodedProjectSave): void {
-  const resources = new WeakMap<object, { path: string; crc32: number; revision: number | null }>()
-  for (const resource of encoded.baseline.resources) resources.set(resource.resource, { path: resource.path, crc32: resource.crc32, revision: resource.revision })
-  projectSaveBaselines.set(document, { sourcePath: filePath, resources })
+  const resources = new WeakMap<object, { path: string; crc32: number; revision: number | null; raster?: ProjectArchiveResource['raster'] }>()
+  for (const resource of encoded.baseline.resources) resources.set(resource.resource, { path: resource.path, crc32: resource.crc32, revision: resource.revision, ...(resource.raster ? { raster: resource.raster } : {}) })
+  projectSaveBaselines.set(document, { sourcePath: filePath, schemaVersion: PROJECT_SCHEMA_VERSION, resources })
 }
 
 export function clearProjectSaveBaseline(document: SpriteDocument): void {
@@ -650,28 +834,36 @@ export function migrateProjectManifest(input: unknown): ProjectManifest {
   if (!input || typeof input !== 'object') throw new Error(tr('core.project.invalidManifestFormat'))
   const candidate = input as { app?: unknown; schemaVersion?: unknown; document?: Record<string, unknown> }
   if (candidate.app !== 'MoonSprite' || !candidate.document) throw new Error(tr('core.project.unsupportedVersion'))
-  if (candidate.schemaVersion === PROJECT_SCHEMA_VERSION && candidate.document.schemaVersion === PROJECT_SCHEMA_VERSION) {
-    return {
-      ...(candidate as ProjectManifest),
+  const version = Number(candidate.schemaVersion)
+  if (![1, 2, 3, LEGACY_PROJECT_SCHEMA_VERSION, PROJECT_SCHEMA_VERSION].includes(version) || candidate.document.schemaVersion !== candidate.schemaVersion) throw new Error(tr('core.project.unsupportedVersion'))
+  if (version === PROJECT_SCHEMA_VERSION) {
+    const layers = Array.isArray(candidate.document.layers) ? candidate.document.layers : []
+    const animation = candidate.document.animation && typeof candidate.document.animation === 'object' ? candidate.document.animation as { cels?: unknown } : null
+    const cels = Array.isArray(animation?.cels) ? animation.cels : []
+    const hasUnknownEncoding = [...layers, ...cels].some((entry) => {
+      if (!entry || typeof entry !== 'object') return false
+      const encoding = (entry as { dataEncoding?: unknown }).dataEncoding
+      return encoding !== undefined && encoding !== 'raw' && encoding !== 'sparse-tiles-v1'
+    })
+    if (hasUnknownEncoding) throw new Error(tr('core.project.unsupportedVersion'))
+  }
+  const animation = normalizeManifestAnimation(version === 1 ? createDefaultAnimationTimeline() : candidate.document.animation)
+  const legacy = version <= LEGACY_PROJECT_SCHEMA_VERSION
+  const layers = Array.isArray(candidate.document.layers)
+    ? candidate.document.layers.map((layer) => legacy && layer && typeof layer === 'object' ? { ...layer, dataEncoding: 'raw' as const } : layer)
+    : candidate.document.layers
+  const cels = animation.cels.map((cel) => legacy && cel.dataFile ? { ...cel, dataEncoding: 'raw' as const } : cel)
+  return {
+    ...(candidate as Omit<ProjectManifest, 'schemaVersion' | 'document'>),
+    schemaVersion: PROJECT_SCHEMA_VERSION,
+    sourceSchemaVersion: version,
+    document: {
+      ...(candidate.document as ProjectManifest['document']),
       schemaVersion: PROJECT_SCHEMA_VERSION,
-      document: { ...(candidate.document as ProjectManifest['document']), schemaVersion: PROJECT_SCHEMA_VERSION, animation: normalizeManifestAnimation(candidate.document.animation) }
+      ...(layers ? { layers: layers as ManifestLayer[] } : {}),
+      animation: { ...animation, cels }
     }
   }
-  if ([2, 3].includes(Number(candidate.schemaVersion)) && candidate.document.schemaVersion === candidate.schemaVersion) {
-    return {
-      ...(candidate as Omit<ProjectManifest, 'schemaVersion' | 'document'>),
-      schemaVersion: PROJECT_SCHEMA_VERSION,
-      document: { ...(candidate.document as ProjectManifest['document']), schemaVersion: PROJECT_SCHEMA_VERSION, animation: normalizeManifestAnimation(candidate.document.animation) }
-    }
-  }
-  if (candidate.schemaVersion === 1 && candidate.document.schemaVersion === 1) {
-    return {
-      ...(candidate as Omit<ProjectManifest, 'schemaVersion' | 'document'>),
-      schemaVersion: PROJECT_SCHEMA_VERSION,
-      document: { ...(candidate.document as ProjectManifest['document']), schemaVersion: PROJECT_SCHEMA_VERSION, animation: normalizeManifestAnimation(createDefaultAnimationTimeline()) }
-    }
-  }
-  throw new Error(tr('core.project.unsupportedVersion'))
 }
 
 function readManifest(files: Record<string, Uint8Array>): ProjectManifest {
@@ -689,14 +881,60 @@ function readManifest(files: Record<string, Uint8Array>): ProjectManifest {
   return manifest
 }
 
-const directActiveCelDataFiles = (manifest: ProjectManifest): Map<string, string> => {
+export function readProjectExpandedRasterBytes(input: Uint8Array): number | null {
+  try {
+    const directory = projectZipDirectory(input)
+    const files = directory
+      ? projectZipFiles(input, directory, new Set(['manifest.json'])) ?? unzipSync(input, { filter: (file) => file.name === 'manifest.json' })
+      : unzipSync(input, { filter: (file) => file.name === 'manifest.json' })
+    const source = readManifest(files).document
+    const resources = new Map<string, number>()
+    const add = (dataFile: unknown, width: unknown, height: unknown, bytesPerPixel = 4): void => {
+      if (typeof dataFile !== 'string' || !dataFile || resources.has(dataFile)) return
+      const resourceWidth = Number(width)
+      const resourceHeight = Number(height)
+      const bytes = resourceWidth * resourceHeight * bytesPerPixel
+      if (!Number.isSafeInteger(resourceWidth) || !Number.isSafeInteger(resourceHeight) || resourceWidth < 1 || resourceHeight < 1 || !Number.isSafeInteger(bytes)) throw new Error('invalid raster size')
+      resources.set(dataFile, bytes)
+    }
+    for (const layer of source.layers ?? []) add(layer.dataFile, layer.width ?? source.width, layer.height ?? source.height)
+    for (const cel of source.animation.cels ?? []) {
+      if (cel.dataFile) add(cel.dataFile, cel.width, cel.height)
+      if (cel.mask) add(cel.mask.dataFile, cel.mask.width, cel.mask.height)
+    }
+    for (const entry of source.animation.groupMasks ?? []) add(entry.mask.dataFile, entry.mask.width, entry.mask.height)
+    let total = 0
+    for (const bytes of resources.values()) {
+      total += bytes
+      if (!Number.isSafeInteger(total)) return null
+    }
+    return total
+  } catch {
+    return null
+  }
+}
+
+interface RasterDataSource {
+  dataFile: string
+  dataEncoding: RasterDataEncoding
+  width: number
+  height: number
+  offsetX: number
+  offsetY: number
+}
+
+const rasterDataEncoding = (value: unknown): RasterDataEncoding | null => value === undefined || value === 'raw'
+  ? 'raw'
+  : value === 'sparse-tiles-v1' ? value : null
+
+const directActiveCelDataFiles = (manifest: ProjectManifest): Map<string, RasterDataSource> => {
   const source = manifest.document
   if (source.animation.frames.length !== 1) return new Map()
   const activeFrameId = source.animation.activeFrameId
   const activeCels = new Map(source.animation.cels
     .filter((cel) => cel.frameId === activeFrameId && typeof cel.dataFile === 'string' && cel.dataFile)
     .map((cel) => [cel.layerId, cel]))
-  const dataFiles = new Map<string, string>()
+  const dataFiles = new Map<string, RasterDataSource>()
   for (const layer of source.layers) {
     const cel = activeCels.get(layer.id)
     if (!cel || cel.format !== source.colorMode) continue
@@ -704,15 +942,17 @@ const directActiveCelDataFiles = (manifest: ProjectManifest): Map<string, string
     const layerHeight = Number.isSafeInteger(layer.height) && layer.height! > 0 ? layer.height! : source.height
     if (cel.width !== layerWidth || cel.height !== layerHeight) continue
     if (Math.trunc(cel.offsetX ?? 0) !== Math.trunc(layer.offsetX ?? 0) || Math.trunc(cel.offsetY ?? 0) !== Math.trunc(layer.offsetY ?? 0)) continue
-    dataFiles.set(layer.id, cel.dataFile!)
+    const dataEncoding = rasterDataEncoding(cel.dataEncoding)
+    if (!dataEncoding) continue
+    dataFiles.set(layer.id, { dataFile: cel.dataFile!, dataEncoding, width: cel.width!, height: cel.height!, offsetX: Math.trunc(cel.offsetX ?? 0), offsetY: Math.trunc(cel.offsetY ?? 0) })
   }
   return dataFiles
 }
 
-const requiredProjectDataFiles = (manifest: ProjectManifest, activeCelFiles: ReadonlyMap<string, string>, storedTimelapseFiles: ReadonlyMap<string, Uint8Array> = new Map()): Set<string> => {
+const requiredProjectDataFiles = (manifest: ProjectManifest, activeCelFiles: ReadonlyMap<string, RasterDataSource>, storedTimelapseFiles: ReadonlyMap<string, Uint8Array> = new Map()): Set<string> => {
   const source = manifest.document
   const required = new Set<string>()
-  for (const layer of source.layers) required.add(activeCelFiles.get(layer.id) ?? layer.dataFile)
+  for (const layer of source.layers) required.add(activeCelFiles.get(layer.id)?.dataFile ?? layer.dataFile)
   for (const brush of source.customBrushes ?? []) {
     required.add(brush.dataFile)
     if (brush.colorsFile) required.add(brush.colorsFile)
@@ -871,23 +1111,37 @@ export function decodeProject(input: Uint8Array, onProgress?: (value: number) =>
   if (mode !== 'rgba' && mode !== 'indexed') throw new Error(tr('core.project.unknownColorMode'))
   const rgbaPixelsByFile = new Map<string, Uint8ClampedArray>()
   const indexedPixelsByFile = new Map<string, Uint32Array>()
-  const decodePixels = (dataFile: string, format: ColorMode, expectedBytes: number): Uint8ClampedArray | Uint32Array => {
+  const decodedRasterByKey = new Map<string, DecodedRasterData>()
+  const decodePixels = (dataFile: string, dataEncoding: unknown, format: ColorMode, width: number, height: number): DecodedRasterData => {
+    const expectedBytes = width * height * 4
     const bytes = files[dataFile]
-    if (!bytes || bytes.byteLength !== expectedBytes) throw new Error(tr('core.project.layerCorrupt', { name: dataFile }))
-    if (format === 'rgba') {
-      const cached = rgbaPixelsByFile.get(dataFile)
-      if (cached) return cached
-      const pixels = new Uint8ClampedArray(bytes.buffer, bytes.byteOffset, bytes.byteLength)
-      rgbaPixelsByFile.set(dataFile, pixels)
-      return pixels
+    const encoding = rasterDataEncoding(dataEncoding)
+    if (!bytes || !encoding || !Number.isSafeInteger(expectedBytes) || expectedBytes < 0) throw new Error(tr('core.project.layerCorrupt', { name: dataFile }))
+    const cacheKey = `${dataFile}\u0000${encoding}\u0000${format}\u0000${width}\u0000${height}`
+    const cachedRaster = decodedRasterByKey.get(cacheKey)
+    if (cachedRaster) return cachedRaster
+    if (encoding === 'sparse-tiles-v1') {
+      const decoded = decodeSparseRasterData(bytes, format, width, height)
+      if (!decoded) throw new Error(tr('core.project.layerCorrupt', { name: dataFile }))
+      decodedRasterByKey.set(cacheKey, decoded)
+      return decoded
     }
-    const cached = indexedPixelsByFile.get(dataFile)
-    if (cached) return cached
-    const pixels = bytes.byteOffset % 4 === 0
-      ? new Uint32Array(bytes.buffer, bytes.byteOffset, bytes.byteLength / 4)
-      : new Uint32Array(bytes.slice().buffer)
-    indexedPixelsByFile.set(dataFile, pixels)
-    return pixels
+    if (format === 'rgba') {
+      const cached = rgbaPixelsByFile.get(cacheKey)
+      if (cached) return { pixels: cached, width, height, storageOffsetX: 0, storageOffsetY: 0 }
+      const pixels = bytes.byteLength === expectedBytes ? new Uint8ClampedArray(bytes.buffer, bytes.byteOffset, bytes.byteLength) : null
+      if (!pixels) throw new Error(tr('core.project.layerCorrupt', { name: dataFile }))
+      rgbaPixelsByFile.set(cacheKey, pixels)
+      return { pixels, width, height, storageOffsetX: 0, storageOffsetY: 0 }
+    }
+    const cached = indexedPixelsByFile.get(cacheKey)
+    if (cached) return { pixels: cached, width, height, storageOffsetX: 0, storageOffsetY: 0 }
+    const pixels = bytes.byteLength === expectedBytes
+      ? bytes.byteOffset % 4 === 0 ? new Uint32Array(bytes.buffer, bytes.byteOffset, bytes.byteLength / 4) : new Uint32Array(bytes.slice().buffer)
+      : null
+    if (!pixels) throw new Error(tr('core.project.layerCorrupt', { name: dataFile }))
+    indexedPixelsByFile.set(cacheKey, pixels)
+    return { pixels, width, height, storageOffsetX: 0, storageOffsetY: 0 }
   }
   const decodedMaskIds = new Set<string>()
   const decodeMask = (metadata: ManifestMask | undefined, ownerId: string, ownerKind: LayerMask['ownerKind'] = 'cel'): LayerMask | undefined => {
@@ -938,8 +1192,8 @@ export function decodeProject(input: Uint8Array, onProgress?: (value: number) =>
   const layers: RasterLayer[] = source.layers.map((metadata) => {
     const width = Number.isSafeInteger(metadata.width) && metadata.width! > 0 ? metadata.width! : source.width
     const height = Number.isSafeInteger(metadata.height) && metadata.height! > 0 ? metadata.height! : source.height
-    const expectedBytes = width * height * 4
-    const pixels = decodePixels(activeCelFiles.get(metadata.id) ?? metadata.dataFile, mode, expectedBytes)
+    const activeCelSource = activeCelFiles.get(metadata.id)
+    const decoded = decodePixels(activeCelSource?.dataFile ?? metadata.dataFile, activeCelSource?.dataEncoding ?? metadata.dataEncoding, mode, width, height)
     const common = {
       id: metadata.id,
       name: metadata.name,
@@ -951,14 +1205,15 @@ export function decodeProject(input: Uint8Array, onProgress?: (value: number) =>
       ...(metadata.clippingMask === true ? { clippingMask: true } : {}),
       groupId: typeof metadata.groupId === 'string' ? metadata.groupId : null,
       ...(normalizeDisplayColor(metadata.displayColor) ? { displayColor: normalizeDisplayColor(metadata.displayColor)! } : {}),
-      width,
-      height,
-      offsetX: Number.isFinite(metadata.offsetX) ? Math.trunc(metadata.offsetX!) : 0,
-      offsetY: Number.isFinite(metadata.offsetY) ? Math.trunc(metadata.offsetY!) : 0
+      width: decoded.width,
+      height: decoded.height,
+      offsetX: (Number.isFinite(metadata.offsetX) ? Math.trunc(metadata.offsetX!) : 0) + decoded.storageOffsetX,
+      offsetY: (Number.isFinite(metadata.offsetY) ? Math.trunc(metadata.offsetY!) : 0) + decoded.storageOffsetY
     }
     const layer = mode === 'rgba'
-      ? { ...common, format: 'rgba' as const, pixels: pixels as Uint8ClampedArray }
-      : { ...common, format: 'indexed' as const, pixels: pixels as Uint32Array }
+      ? { ...common, format: 'rgba' as const, pixels: decoded.pixels as Uint8ClampedArray }
+      : { ...common, format: 'indexed' as const, pixels: decoded.pixels as Uint32Array }
+    if (decoded.storageOffsetX !== 0 || decoded.storageOffsetY !== 0) setLayerStorageOrigin(layer, { x: decoded.storageOffsetX, y: decoded.storageOffsetY })
     reportItem()
     return layer
   })
@@ -1012,11 +1267,10 @@ export function decodeProject(input: Uint8Array, onProgress?: (value: number) =>
     const width = Number(metadata.width)
     const height = Number(metadata.height)
     if (!Number.isSafeInteger(width) || !Number.isSafeInteger(height) || width < 1 || height < 1) return []
-    const expectedBytes = width * height * 4
-    const pixels = decodePixels(metadata.dataFile, metadata.format, expectedBytes)
+    const decoded = decodePixels(metadata.dataFile, metadata.dataEncoding, metadata.format, width, height)
     const surface = metadata.format === 'rgba'
-      ? { format: 'rgba' as const, width, height, offsetX: Math.trunc(metadata.offsetX ?? 0), offsetY: Math.trunc(metadata.offsetY ?? 0), pixels: pixels as Uint8ClampedArray }
-      : { format: 'indexed' as const, width, height, offsetX: Math.trunc(metadata.offsetX ?? 0), offsetY: Math.trunc(metadata.offsetY ?? 0), pixels: pixels as Uint32Array }
+      ? { format: 'rgba' as const, width: decoded.width, height: decoded.height, offsetX: Math.trunc(metadata.offsetX ?? 0) + decoded.storageOffsetX, offsetY: Math.trunc(metadata.offsetY ?? 0) + decoded.storageOffsetY, storageOriginX: decoded.storageOffsetX, storageOriginY: decoded.storageOffsetY, pixels: decoded.pixels as Uint8ClampedArray }
+      : { format: 'indexed' as const, width: decoded.width, height: decoded.height, offsetX: Math.trunc(metadata.offsetX ?? 0) + decoded.storageOffsetX, offsetY: Math.trunc(metadata.offsetY ?? 0) + decoded.storageOffsetY, storageOriginX: decoded.storageOffsetX, storageOriginY: decoded.storageOffsetY, pixels: decoded.pixels as Uint32Array }
     reportItem()
     return [{ ...cel, surface, mask }]
   })
@@ -1080,8 +1334,9 @@ export function decodeProject(input: Uint8Array, onProgress?: (value: number) =>
   document.layerPanelState = normalizeProjectLayerPanelState(document, source.layerPanelState)
   rgbaPixelsByFile.clear()
   indexedPixelsByFile.clear()
+  decodedRasterByKey.clear()
   for (const name of requiredFiles) if (name !== 'manifest.json') delete files[name]
-  compactProjectRasterStorage(document)
+  if (manifest.sourceSchemaVersion !== PROJECT_SCHEMA_VERSION) compactProjectRasterStorage(document)
   ensureAnimationDocument(document)
   refreshActiveAnimationFrame(document)
   reportProgress(1)

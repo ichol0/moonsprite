@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { compositeRegion, createDocument, createLayer, createSparseLayer, DocumentCompositeCache, getActiveLayer, readLayerColor, readLayerColorAt, resizeDocumentAt, writeLayerColor } from './document'
 import { beginPixelEdit, commitPixelEdit, HistoryStack } from './history'
-import { appendPerfectPixelSegment, applySelectionTransform, applySelectionTranslationPreview, brushMaskOffsets, brushStampAnchor, brushStampDimensions, captureSelectionTransform, clearSelection, fillSelectionOrCanvas, flipLayer, flipSelection, floodFill, floodFillSymmetric, moveSelection, outlinePixelIndices, outlineSelection, paintBrush, paintLine, paintShape, replaceLayerColor, rotatedShapePixelPoints, selectionTranslationPreviewEdit, shapeContainsPixel, shapePixelPoints } from './tools'
+import { appendPerfectPixelSegment, applySelectionTransform, applySelectionTranslationPreview, bezierCurvePixelPoints, brushMaskOffsets, brushStampAnchor, brushStampDimensions, captureSelectionTransform, clearSelection, filledShapePathPixelPoints, fillSelectionOrCanvas, flipLayer, flipSelection, floodFill, floodFillSymmetric, lineShapePixelPoints, moveSelection, outlinePixelIndices, outlineSelection, paintBrush, paintLine, paintShape, paintShapePixelPoints, replaceLayerColor, rotatedShapePixelPoints, selectionTranslationPreviewEdit, shapeContainsPixel, shapePixelPoints } from './tools'
 import { combineSelection, ellipseSelection, lassoSelection, magicWandSelection, rasterLinePoints, rotatedSelectionBounds, selectionBoundarySegments, selectionContains, transformedSelectionBounds, transformedSelectionSourcePoint, transformSelectionMask } from './selection'
 import { resizeDocument } from './document'
 import { createProceduralBrush, createProceduralBrushes, createSelectionBrush, proceduralBrushCoverageAt } from './brushes'
@@ -916,6 +916,66 @@ describe('pixel tools', () => {
     paintShape(document, layer, ellipseEdit, { x: 1, y: 1, width: 5, height: 5 }, 'ellipse-outline', blue)
     expect(readLayerColorAt(document, layer, 3, 1).a).toBe(255)
     expect(readLayerColorAt(document, layer, 3, 3).a).toBe(0)
+  })
+
+  it('fills freeform and polygon paths with the same pixels used by their previews', () => {
+    const document = createDocument('path shapes', 12, 12, 'rgba')
+    const layer = getActiveLayer(document)
+    const path = [{ x: 2, y: 2 }, { x: 9, y: 2 }, { x: 7, y: 9 }, { x: 3, y: 8 }]
+    const preview = filledShapePathPixelPoints(document, path)
+    const edit = beginPixelEdit(layer.id)
+    paintShapePixelPoints(document, layer, edit, preview, blue)
+
+    expect(preview.length).toBeGreaterThan(20)
+    expect([...edit.before.keys()].sort((left, right) => left - right)).toEqual(
+      preview.map(({ x, y }) => y * document.width + x).sort((left, right) => left - right)
+    )
+  })
+
+  it('keeps line and cubic curve paths continuous and includes both endpoints', () => {
+    const line = lineShapePixelPoints({ x: 1, y: 1 }, { x: 9, y: 6 }, true)
+    const curve = bezierCurvePixelPoints({ x: 1, y: 8 }, [{ x: 3, y: 0 }, { x: 8, y: 0 }], { x: 10, y: 8 })
+    expect(line[0]).toMatchObject({ x: 1, y: 1 })
+    expect(line.at(-1)).toMatchObject({ x: 9, y: 6 })
+    expect(curve[0]).toMatchObject({ x: 1, y: 8 })
+    expect(curve.at(-1)).toMatchObject({ x: 10, y: 8 })
+    for (const points of [line, curve]) {
+      for (let index = 1; index < points.length; index += 1) {
+        expect(Math.max(Math.abs(points[index].x - points[index - 1].x), Math.abs(points[index].y - points[index - 1].y))).toBeLessThanOrEqual(1)
+      }
+    }
+  })
+
+  it('lets both cubic curve control anchors influence the rasterized path', () => {
+    const base = bezierCurvePixelPoints({ x: 1, y: 8 }, [{ x: 3, y: 8 }, { x: 8, y: 8 }], { x: 10, y: 8 })
+    const firstBent = bezierCurvePixelPoints({ x: 1, y: 8 }, [{ x: 3, y: 1 }, { x: 8, y: 8 }], { x: 10, y: 8 })
+    const secondBent = bezierCurvePixelPoints({ x: 1, y: 8 }, [{ x: 3, y: 8 }, { x: 8, y: 1 }], { x: 10, y: 8 })
+    expect(firstBent).not.toEqual(base)
+    expect(secondBent).not.toEqual(base)
+    expect(firstBent).not.toEqual(secondBent)
+  })
+
+  it('supports a configurable number of curve anchors with stable endpoints', () => {
+    for (const controls of [
+      [{ x: 5, y: 1 }],
+      [{ x: 3, y: 1 }, { x: 7, y: 1 }],
+      [{ x: 2, y: 6 }, { x: 4, y: 1 }, { x: 7, y: 1 }, { x: 9, y: 6 }]
+    ]) {
+      const curve = bezierCurvePixelPoints({ x: 1, y: 8 }, controls, { x: 10, y: 8 })
+      expect(curve[0]).toMatchObject({ x: 1, y: 8 })
+      expect(curve.at(-1)).toMatchObject({ x: 10, y: 8 })
+    }
+  })
+
+  it('clips path shapes to the active selection while keeping one pixel edit', () => {
+    const document = createDocument('selected path shape', 8, 8, 'rgba')
+    const layer = getActiveLayer(document)
+    const edit = beginPixelEdit(layer.id)
+    const points = filledShapePathPixelPoints(document, [{ x: 1, y: 1 }, { x: 6, y: 1 }, { x: 6, y: 6 }, { x: 1, y: 6 }])
+    paintShapePixelPoints(document, layer, edit, points, blue, { x: 3, y: 3, width: 2, height: 2 })
+    expect(edit.before.size).toBe(4)
+    expect(readLayerColorAt(document, layer, 3, 3)).toEqual(blue)
+    expect(readLayerColorAt(document, layer, 2, 2).a).toBe(0)
   })
 
   it('keeps unrotated shape pixels compatible with the existing rasterizer', () => {

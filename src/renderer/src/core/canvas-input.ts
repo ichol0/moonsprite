@@ -162,7 +162,7 @@ export const selectionResizeHit = (
 }
 
 export interface CanvasDragState {
-  kind: 'draw' | 'airbrush' | 'shape' | 'gradient' | 'marquee' | 'lasso' | 'polygon-lasso' | 'magic-preview' | 'sample-color' | 'move-content' | 'move-selection' | 'transform-content' | 'rotate-content' | 'shear-content' | 'move-layer' | 'brush-size' | 'canvas-resize' | 'canvas-move' | 'zoom-drag' | 'rotate-view' | 'pan'
+  kind: 'draw' | 'airbrush' | 'shape' | 'freeform-shape' | 'polygon-shape' | 'line-shape' | 'curve-shape' | 'gradient' | 'marquee' | 'lasso' | 'polygon-lasso' | 'magic-preview' | 'sample-color' | 'move-content' | 'move-selection' | 'transform-content' | 'rotate-content' | 'shear-content' | 'move-layer' | 'brush-size' | 'canvas-resize' | 'canvas-move' | 'zoom-drag' | 'rotate-view' | 'pan'
   start: CanvasPoint
   last: CanvasPoint
   edit?: PixelEdit
@@ -184,6 +184,11 @@ export interface CanvasDragState {
   patternOrigin?: CanvasPoint
   constrain?: boolean
   path?: CanvasStrokePoint[]
+  curvePhase?: 'endpoint' | 'anchors'
+  curveEnd?: CanvasPoint
+  curveControls?: CanvasPoint[]
+  curveAnchorIndex?: number
+  curveAnchorCount?: number
   canvasEdge?: 'n' | 'e' | 's' | 'w' | 'ne' | 'nw' | 'se' | 'sw'
   canvasPreview?: { width: number; height: number; offsetX: number; offsetY: number }
   floatingPaste?: boolean
@@ -447,6 +452,7 @@ export const shouldStartCanvasPan = (tool: string, shiftKey: boolean, selectionT
   shiftKey
   && !selectionTool
   && tool !== 'shape'
+  && tool !== 'line'
   && tool !== 'pencil'
   && tool !== 'eraser'
   && tool !== 'zoom'

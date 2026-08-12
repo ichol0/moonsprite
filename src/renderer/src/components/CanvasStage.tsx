@@ -5,7 +5,7 @@ import { beginPixelEdit, revertPixelEdit } from '@/core/history'
 import { applyRelativeLuminance, blendOver, relativeLuminanceColor, TRANSPARENT } from '@/core/raster'
 import { applyGradient, constrainGradientEndpoint, createGradientColorSampler, gradientRegionSelection } from '@/core/gradient'
 import { DEFAULT_GRID_SETTINGS, gridCellBoundsAt, gridLinePositions, shouldRenderPixelGrid } from '@/core/grid'
-import { appendPerfectPixelSegment, applySelectionTransform, applySelectionTranslationPreview, brushMaskOffsets, brushStampAnchor, brushStampDimensions, captureSelectionTransform, floodFillSymmetric, outlinePixelIndices, paintBrush, paintLine, paintShape, restoreSelectionTranslationPreview, rotatedShapePixelPoints, sampleCompositeColor, shapeContainsPixel, type BrushGradientSample } from '@/core/tools'
+import { appendPerfectPixelSegment, applySelectionTransform, applySelectionTranslationPreview, bezierCurvePixelPoints, brushMaskOffsets, brushStampAnchor, brushStampDimensions, captureSelectionTransform, filledShapePathPixelPoints, floodFillSymmetric, lineShapePixelPoints, outlinePixelIndices, paintBrush, paintLine, paintShape, paintShapePixelPoints, restoreSelectionTranslationPreview, rotatedShapePixelPoints, sampleCompositeColor, shapeContainsPixel, type BrushGradientSample } from '@/core/tools'
 import { useWorkspace, type DocumentSession } from '@/store/workspace'
 import { activeLayerMask, activePaintLayer } from '@/store/workspace-session'
 import { DEFAULT_GRID_COLOR, loadEditorPreferences, type BrushPreviewMode, type CheckerboardPreferences, type EyedropperMagnifierStyle, type GridColorPreferences, type OnionSkinPreferences, type RotationIndicatorPosition, type SymmetryAxisPreferences, type WheelZoomMode, type ZoomToolDragMode } from '@/core/file-preferences'
@@ -1082,6 +1082,24 @@ export function CanvasStage({ session }: { session: DocumentSession }) {
         }
       }
     }
+    if (canRenderToolPreview && drag && (drag.kind === 'freeform-shape' || drag.kind === 'polygon-shape' || drag.kind === 'line-shape' || drag.kind === 'curve-shape')) {
+      const color = drag.color ?? session.primaryColor
+      let points: readonly Point[] = []
+      if (drag.kind === 'freeform-shape') points = filledShapePathPixelPoints(document, drag.path ?? [])
+      else if (drag.kind === 'polygon-shape') {
+        const path = drag.path ?? []
+        const previewPath = path.length > 0 ? [...path, drag.last] : path
+        points = previewPath.length >= 3 ? filledShapePathPixelPoints(document, polygonLassoClosedPathPoints(previewPath, balancedShiftLineEnabled)) : polygonLassoPreviewPoints(path, drag.last, false, balancedShiftLineEnabled)
+      } else if (drag.kind === 'line-shape') points = lineShapePixelPoints(drag.start, drag.last, balancedShiftLineEnabled)
+      else {
+        const end = drag.curveEnd ?? drag.last
+        const controls = drag.curveControls ?? curveDefaultControls(drag.start, end, drag.curveAnchorCount ?? session.curveAnchorCount)
+        points = bezierCurvePixelPoints(drag.start, controls, end)
+      }
+      for (const sourcePoint of points) {
+        for (const point of symmetryPoints(sourcePoint, document.width, document.height, session.symmetryAxes, symmetryCenter)) drawPreviewPixel(point.x, point.y, previewColorAt(point.x, point.y, false, 255, color))
+      }
+    }
     if (canRenderToolPreview && drag?.kind === 'gradient') {
       const moved = drag.start.x !== drag.last.x || drag.start.y !== drag.last.y
       if (moved) {
@@ -1530,7 +1548,7 @@ export function CanvasStage({ session }: { session: DocumentSession }) {
       }
     }
 
-    if (canRenderToolPreview && !inputRef.current.spaceHeld && inputRef.current.pointer.visible && !inputRef.current.sampling && session.tool === 'shape' && drag?.kind !== 'shape') {
+    if (canRenderToolPreview && !inputRef.current.spaceHeld && inputRef.current.pointer.visible && !inputRef.current.sampling && (session.tool === 'shape' || session.tool === 'line') && !drag) {
       const point = inputRef.current.pointer.point
       const layer = activePaintLayer(currentSession)
       if (point.x >= 0 && point.y >= 0 && point.x < document.width && point.y < document.height && !isLayerEffectivelyLocked(document, layer) && (!session.selection || selectionContains(session.selection, point.x, point.y))) {
@@ -1962,9 +1980,10 @@ export function CanvasStage({ session }: { session: DocumentSession }) {
   }
 
   const quickSelectCell = (event: React.MouseEvent<HTMLCanvasElement>): void => {
-    if (inputRef.current.drag?.kind === 'polygon-lasso') {
+    if (inputRef.current.drag?.kind === 'polygon-lasso' || inputRef.current.drag?.kind === 'polygon-shape') {
       event.preventDefault()
-      commitPolygonLasso()
+      if (inputRef.current.drag.kind === 'polygon-shape') commitPolygonShape()
+      else commitPolygonLasso()
       return
     }
     if (session.tool !== 'selection' || session.selectionKind !== 'rectangle') return
@@ -2503,6 +2522,44 @@ export function CanvasStage({ session }: { session: DocumentSession }) {
     scheduleDraw()
   }
 
+  const commitShapePoints = (drag: DragState, points: readonly Point[], label: string): void => {
+    const layer = activePaintLayer(session)
+    if (isLayerEffectivelyLocked(session.document, layer)) return
+    const edit = beginPixelEdit(layer.id)
+    paintShapePixelPoints(session.document, layer, edit, points, drag.color ?? session.primaryColor, session.selection, session.symmetryAxes, symmetryCenter)
+    useWorkspace.getState().commitPixelEdit(edit, label)
+  }
+
+  const commitPolygonShape = (): void => {
+    const drag = inputRef.current.drag
+    if (drag?.kind !== 'polygon-shape') return
+    inputRef.current.finish()
+    const path = polygonLassoClosedPathPoints(drag.path ?? [], balancedShiftLineEnabled)
+    commitShapePoints(drag, filledShapePathPixelPoints(session.document, path), t('canvas.history.drawPolygon'))
+    scheduleDraw()
+  }
+
+  const curveDefaultControls = (start: Point, end: Point, count: number): Point[] => Array.from({ length: count }, (_, index) => {
+    const amount = (index + 1) / (count + 1)
+    return {
+      x: Math.round(start.x + (end.x - start.x) * amount),
+      y: Math.round(start.y + (end.y - start.y) * amount)
+    }
+  })
+
+  const curveShapePixelPoints = (drag: DragState): readonly Point[] => {
+    const end = drag.curveEnd ?? drag.last
+    return bezierCurvePixelPoints(drag.start, drag.curveControls ?? curveDefaultControls(drag.start, end, drag.curveAnchorCount ?? session.curveAnchorCount), end)
+  }
+
+  const commitCurveShape = (): void => {
+    const drag = inputRef.current.drag
+    if (drag?.kind !== 'curve-shape' || !drag.curveEnd) return
+    inputRef.current.finish()
+    commitShapePoints(drag, curveShapePixelPoints(drag), t('canvas.history.drawCurve'))
+    scheduleDraw()
+  }
+
   const handlePointerDown = (event: React.PointerEvent<HTMLCanvasElement>): void => {
     event.currentTarget.tabIndex = -1
     event.currentTarget.focus({ preventScroll: true })
@@ -2545,6 +2602,22 @@ export function CanvasStage({ session }: { session: DocumentSession }) {
       activePolygon.path = appendPolygonLassoVertex(path, point)
       activePolygon.last = point
       scheduleDraw()
+      return
+    }
+    if (session.tool === 'shape' && activePolygon?.kind === 'polygon-shape' && (event.button === 0 || event.button === 2)) {
+      const path = activePolygon.path ?? []
+      if (shouldClosePolygonLasso(path, point, event.detail)) {
+        commitPolygonShape()
+        return
+      }
+      activePolygon.path = appendPolygonLassoVertex(path, point)
+      activePolygon.last = point
+      scheduleDraw()
+      return
+    }
+    if (session.tool === 'line' && session.lineKind === 'curve' && activePolygon?.kind === 'curve-shape' && activePolygon.curvePhase === 'anchors' && (event.button === 0 || event.button === 2)) {
+      // Confirmation is handled on pointer-up. Pointer-down must not change the
+      // active anchor or the visible curve.
       return
     }
     const resizeEdge = canvasResizeHit(event)
@@ -2868,7 +2941,23 @@ export function CanvasStage({ session }: { session: DocumentSession }) {
       inputRef.current.drag = { kind: 'marquee', start: point, last: point, startClient: { x: event.clientX, y: event.clientY }, selectionStart: cloneSelection(session.selection), selectionMode: mode, constrain: false }
       return
     }
-    if (session.tool === 'shape') { if (!canEditLayer) return; inputRef.current.drag = { kind: 'shape', start: point, last: point, startClient: { x: event.clientX, y: event.clientY }, constrain: inputRef.current.shiftHeld }; draw(); return }
+    if (session.tool === 'shape') {
+      if (!canEditLayer || (event.button !== 0 && event.button !== 2)) return
+      const color = activeColor(event.button)
+      if (session.shapeKind === 'freeform') inputRef.current.drag = { kind: 'freeform-shape', start: point, last: point, color, path: [point] }
+      else if (session.shapeKind === 'polygon') inputRef.current.drag = { kind: 'polygon-shape', start: point, last: point, color, path: [point] }
+      else inputRef.current.drag = { kind: 'shape', start: point, last: point, startClient: { x: event.clientX, y: event.clientY }, constrain: inputRef.current.shiftHeld }
+      draw()
+      return
+    }
+    if (session.tool === 'line' && (event.button === 0 || event.button === 2)) {
+      if (!canEditLayer) return
+      inputRef.current.drag = session.lineKind === 'curve'
+        ? { kind: 'curve-shape', start: point, last: point, color: activeColor(event.button), curvePhase: 'endpoint', curveAnchorCount: session.curveAnchorCount }
+        : { kind: 'line-shape', start: point, last: point, color: activeColor(event.button) }
+      draw()
+      return
+    }
     if (session.tool === 'airbrush') {
       if (!hasRasterFocus || !canEditLayer || (event.button !== 0 && event.button !== 2)) return
       const drag: DragState = {
@@ -2942,7 +3031,7 @@ export function CanvasStage({ session }: { session: DocumentSession }) {
       return
     }
     const autoPanDrag = inputRef.current.drag
-    if (autoPanDrag && ['marquee', 'lasso', 'polygon-lasso', 'move-selection', 'move-content', 'transform-content', 'rotate-content', 'shear-content'].includes(autoPanDrag.kind)) {
+    if (autoPanDrag && ['marquee', 'lasso', 'polygon-lasso', 'freeform-shape', 'polygon-shape', 'line-shape', 'curve-shape', 'move-selection', 'move-content', 'transform-content', 'rotate-content', 'shear-content'].includes(autoPanDrag.kind)) {
       const bounds = stageBounds()
       const edge = 28
       const edgeSpeed = (position: number, start: number, end: number): number => position < start + edge
@@ -3212,6 +3301,32 @@ export function CanvasStage({ session }: { session: DocumentSession }) {
       updateShapePreview(drag, point, modifiers)
       return
     }
+    if (drag.kind === 'freeform-shape') {
+      const path = drag.path ?? []
+      const last = path.at(-1)
+      if (!last || last.x !== point.x || last.y !== point.y) drag.path = [...path, point]
+      drag.last = point
+      scheduleDraw()
+      return
+    }
+    if (drag.kind === 'polygon-shape') { drag.last = point; scheduleDraw(); return }
+    if (drag.kind === 'line-shape') {
+      drag.last = event.shiftKey ? constrainLineEndpoint(drag.start, point, lineDirectionStep) : point
+      scheduleDraw()
+      return
+    }
+    if (drag.kind === 'curve-shape') {
+      if (drag.curvePhase === 'endpoint') drag.last = point
+      else {
+        const anchorIndex = drag.curveAnchorIndex ?? 0
+        const controls = drag.curveControls ?? []
+        for (let index = anchorIndex; index < controls.length; index += 1) controls[index] = point
+        drag.curveControls = controls
+      }
+      drag.last = point
+      scheduleDraw()
+      return
+    }
     if (drag.kind === 'marquee') {
       drag.moved = drag.moved || selectionGestureMoved(drag.startClient, { x: event.clientX, y: event.clientY })
       if (!drag.moved) { scheduleDraw(); return }
@@ -3305,7 +3420,7 @@ export function CanvasStage({ session }: { session: DocumentSession }) {
       draw()
       return
     }
-    if (inputRef.current.drag?.kind === 'polygon-lasso') {
+    if (inputRef.current.drag?.kind === 'polygon-lasso' || inputRef.current.drag?.kind === 'polygon-shape') {
       if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId)
       endSelectionAdjustmentEdit()
       scheduleDraw()
@@ -3472,6 +3587,27 @@ export function CanvasStage({ session }: { session: DocumentSession }) {
         state.commitPixelEdit(edit, ellipse ? t('canvas.history.drawEllipse') : t('canvas.history.drawRectangle'))
       }
     }
+    if (drag.kind === 'freeform-shape') commitShapePoints(drag, filledShapePathPixelPoints(session.document, drag.path ?? []), t('canvas.history.drawFreeform'))
+    if (drag.kind === 'line-shape') commitShapePoints(drag, lineShapePixelPoints(drag.start, drag.last, balancedShiftLineEnabled), t('canvas.history.drawLine'))
+    if (drag.kind === 'curve-shape') {
+      if (drag.curvePhase === 'endpoint') {
+        drag.curveEnd = drag.last
+        drag.curveControls = Array.from({ length: drag.curveAnchorCount ?? session.curveAnchorCount }, () => ({ ...drag.curveEnd! }))
+        drag.curveAnchorIndex = 0
+        drag.curvePhase = 'anchors'
+        inputRef.current.drag = drag
+        scheduleDraw()
+        return
+      }
+      const nextAnchorIndex = (drag.curveAnchorIndex ?? 0) + 1
+      if (nextAnchorIndex < (drag.curveControls?.length ?? 0)) {
+        drag.curveAnchorIndex = nextAnchorIndex
+        inputRef.current.drag = drag
+        scheduleDraw()
+        return
+      }
+      commitShapePoints(drag, curveShapePixelPoints(drag), t('canvas.history.drawCurve'))
+    }
     if (drag.kind === 'marquee') {
       const moved = drag.moved || selectionGestureMoved(drag.startClient, { x: event.clientX, y: event.clientY })
       const after = finalizeMarqueeSelection(drag.selectionStart ?? null, drag.previewSelection ?? session.selection, moved, drag.selectionMode ?? session.selectionMode)
@@ -3510,8 +3646,13 @@ export function CanvasStage({ session }: { session: DocumentSession }) {
 
   useEffect(() => {
     const keyDown = (event: KeyboardEvent): void => {
-      if (inputRef.current.drag?.kind !== 'polygon-lasso') return
-      if (event.key === 'Enter') commitPolygonLasso()
+      const drag = inputRef.current.drag
+      if (drag?.kind !== 'polygon-lasso' && drag?.kind !== 'polygon-shape' && drag?.kind !== 'curve-shape') return
+      if (event.key === 'Enter') {
+        if (drag.kind === 'polygon-shape') commitPolygonShape()
+        else if (drag.kind === 'curve-shape') commitCurveShape()
+        else commitPolygonLasso()
+      }
       else if (event.key === 'Escape') { inputRef.current.finish(); scheduleDraw() }
       else return
       event.preventDefault()

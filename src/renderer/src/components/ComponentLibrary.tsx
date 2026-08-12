@@ -22,7 +22,7 @@ import { SettingsSectionHeader } from './SettingsSectionHeader'
 import { SettingsNavigation } from './SettingsNavigation'
 import { LivePreviewToggle } from './LivePreviewToggle'
 import { BrushDynamicsSettingsPanel } from './app/EditorToolOptions'
-import { FILL_KIND_ICONS, SELECTION_KIND_ICONS, fillKindDefinitions, normalEditorToolIconFor, selectionKindDefinitions, shapeKindDefinitions, toolDefinitions } from './app/editor-tools'
+import { FILL_KIND_ICONS, SELECTION_KIND_ICONS, fillKindDefinitions, lineKindDefinitions, normalEditorToolIconFor, selectionKindDefinitions, shapeKindDefinitions, toolDefinitions } from './app/editor-tools'
 import { CURSOR_ICON_LIBRARY } from '@/platform/cursor-theme'
 import { translate, type AppLocale, type TranslationKey, type TranslationParams } from '@/core/localization'
 import type { BrushDynamicsEffect, BrushDynamicsMapping, BrushDynamicsSettings } from '@/core/pressure'
@@ -86,11 +86,12 @@ const cursorLibraryItems = (locale: AppLocale) => CURSOR_ICON_LIBRARY.flatMap((i
 })
 
 const toolLibraryItems = (locale: AppLocale) => {
-  const primaryTools = toolDefinitions(locale).filter((item) => item.id !== 'selection' && item.id !== 'shape' && item.id !== 'fill')
+  const primaryTools = toolDefinitions(locale).filter((item) => item.id !== 'selection' && item.id !== 'shape' && item.id !== 'line' && item.id !== 'fill')
   const items = [
     ...primaryTools.map((item) => ({ id: `tool.${item.id}`, name: item.label, largeSource: item.icon })),
     ...selectionKindDefinitions(locale).map((item) => ({ id: `tool.selection.${item.id}`, name: item.label, largeSource: SELECTION_KIND_ICONS[item.id] })),
     ...shapeKindDefinitions(locale).map((item) => ({ id: `tool.shape.${item.id}`, name: item.label, largeSource: item.icon })),
+    ...lineKindDefinitions(locale).map((item) => ({ id: `tool.line.${item.id}`, name: item.label, largeSource: item.icon })),
     ...fillKindDefinitions(locale).map((item) => ({ id: `tool.fill.${item.id}`, name: item.label, largeSource: FILL_KIND_ICONS[item.id] }))
   ]
   return items.flatMap((item) => {

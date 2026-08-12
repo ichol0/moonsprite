@@ -1,7 +1,7 @@
 import type { LayerMask, SelectionRect, SpriteDocument, ViewState } from '@shared/types'
 import { compositeRegion, DocumentCompositeCache, renderLayerMaskRegion } from '@/core/document'
 import { applyRelativeLuminance } from '@/core/raster'
-import { initialDocumentCompositePending, initialDocumentCompositeSurface } from '@/core/initial-document-composite'
+import { initialDocumentCompositePending, initialDocumentCompositeSurface, registerInitialDocumentCompositeSurface } from '@/core/initial-document-composite'
 import type { RasterContext2D } from './canvas-selection-renderer'
 
 interface CompositeSurface {
@@ -168,6 +168,7 @@ export class CanvasCompositeCache {
           : compositeRegion(document, 0, 0, document.width, document.height, this.compositeCache, contentRevision)
         if (!isolatedLayerMask && view.relativeLuminance) applyRelativeLuminance(pixels)
         canvas.getContext('2d')?.putImageData(imageData(pixels, document.width, document.height), 0, 0)
+        if (!isolatedLayerMask && !view.relativeLuminance && contentRevision === 0) registerInitialDocumentCompositeSurface(document, canvas)
       }
       surface = { canvas, revision: contentRevision }
       this.remember(this.surfaces, key, surface)

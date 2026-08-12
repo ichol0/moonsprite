@@ -33,6 +33,12 @@ export const registerInitialDocumentComposite = (document: SpriteDocument, pixel
   notifyInitialCompositeListeners(document)
 }
 
+export const registerInitialDocumentCompositeSurface = (document: SpriteDocument, canvas: OffscreenCanvas): void => {
+  if (!canPrepareInitialDocumentComposite(document.width, document.height) || canvas.width !== document.width || canvas.height !== document.height) return
+  initialComposites.set(document, { width: document.width, height: document.height, canvas })
+  notifyInitialCompositeListeners(document)
+}
+
 export const registerPendingInitialDocumentComposite = (document: SpriteDocument, pending: Promise<void>): void => {
   pendingInitialComposites.set(document, pending)
   void pending.finally(() => {

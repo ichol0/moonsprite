@@ -26,6 +26,31 @@ const zipCompressionMethods = (data: Uint8Array): Map<string, number> => {
   return methods
 }
 
+interface TestRasterManifestEntry {
+  dataFile: string
+  dataEncoding?: string
+  width?: number
+  height?: number
+  offsetX?: number
+  offsetY?: number
+}
+
+interface TestProjectManifest {
+  schemaVersion: number
+  document: {
+    schemaVersion: number
+    layers: TestRasterManifestEntry[]
+    animation: { cels: TestRasterManifestEntry[] }
+  }
+}
+
+const readTestManifest = (files: Record<string, Uint8Array>): TestProjectManifest => JSON.parse(strFromU8(files['manifest.json'])) as TestProjectManifest
+
+const activeRasterEntry = (files: Record<string, Uint8Array>): TestRasterManifestEntry => {
+  const manifest = readTestManifest(files)
+  return manifest.document.animation.cels.find((cel) => cel.dataFile) ?? manifest.document.layers[0]
+}
+
 describe('project manifest migration boundary', () => {
   afterEach(() => vi.unstubAllGlobals())
 
@@ -43,9 +68,104 @@ describe('project manifest migration boundary', () => {
     expect(migrated).toMatchObject({ schemaVersion: PROJECT_SCHEMA_VERSION, document: { schemaVersion: PROJECT_SCHEMA_VERSION, groups: [] } })
   })
 
+  it('migrates v4 raster resources as raw data', () => {
+    const migrated = migrateProjectManifest({
+      app: 'MoonSprite',
+      schemaVersion: 4,
+      document: {
+        schemaVersion: 4,
+        layers: [{ id: 'layer-1', dataFile: 'layers/layer-1.rgba' }],
+        animation: { frames: [{ id: 'frame-1', duration: 100 }], activeFrameId: 'frame-1', loop: true, cels: [{ id: 'cel-1', layerId: 'layer-1', frameId: 'frame-1', dataFile: 'cels/cel-1.rgba' }] }
+      }
+    })
+
+    expect(migrated.document.layers[0].dataEncoding).toBe('raw')
+    expect(migrated.document.animation.cels[0].dataEncoding).toBe('raw')
+  })
+
   it('rejects unknown versions without guessing their fields', () => {
-    expect(() => migrateProjectManifest({ app: 'MoonSprite', schemaVersion: 5, document: { schemaVersion: 5 } })).toThrow()
+    expect(() => migrateProjectManifest({ app: 'MoonSprite', schemaVersion: 6, document: { schemaVersion: 6 } })).toThrow()
     expect(() => migrateProjectManifest({ app: 'Other', schemaVersion: 1, document: { schemaVersion: 1 } })).toThrow()
+  })
+
+  it('rejects unknown v5 raster encodings instead of guessing raw data', () => {
+    expect(() => migrateProjectManifest({
+      app: 'MoonSprite',
+      schemaVersion: 5,
+      document: { schemaVersion: 5, layers: [{ dataFile: 'layers/unknown', dataEncoding: 'future-tiles' }] }
+    })).toThrow()
+    expect(() => migrateProjectManifest({
+      app: 'MoonSprite',
+      schemaVersion: 5,
+      document: { schemaVersion: 5, animation: { cels: [{ dataFile: 'cels/unknown', dataEncoding: 'future-tiles' }] } }
+    })).toThrow()
+  })
+
+  it('round-trips sparse RGBA bytes exactly, including transparent RGB values', () => {
+    const document = createDocument('sparse rgba', 128, 128, 'rgba')
+    const pixels = getActiveLayer(document).pixels as Uint8ClampedArray
+    pixels.set([17, 34, 51, 0], 4)
+    pixels.set([255, 0, 128, 255], ((80 * 128) + 96) * 4)
+
+    const files = unzipSync(encodeProject(document))
+    const entry = activeRasterEntry(files)
+    const restored = decodeProject(zipSync(files))
+
+    expect(entry.dataEncoding).toBe('sparse-tiles-v1')
+    expect(entry.dataFile).toMatch(/\.tiles$/)
+    expect(getActiveLayer(restored).pixels).toEqual(pixels)
+  })
+
+  it('round-trips sparse indexed pixels and empty surfaces', () => {
+    const indexed = createDocument('sparse indexed', 128, 128, 'indexed')
+    const indexedPixels = getActiveLayer(indexed).pixels as Uint32Array
+    indexedPixels[65 * 128 + 66] = 0x12345678
+    const indexedFiles = unzipSync(encodeProject(indexed))
+    const emptyFiles = unzipSync(encodeProject(createDocument('empty sparse', 128, 128, 'rgba')))
+
+    const restoredIndexed = decodeProject(zipSync(indexedFiles))
+    const restoredIndexedLayer = getActiveLayer(restoredIndexed)
+    expect(activeRasterEntry(indexedFiles).dataEncoding).toBe('sparse-tiles-v1')
+    expect(restoredIndexedLayer).toMatchObject({ width: 64, height: 64, offsetX: 64, offsetY: 64 })
+    expect(getLayerStorageOrigin(restoredIndexedLayer)).toEqual({ x: 64, y: 64 })
+    expect((restoredIndexedLayer.pixels as Uint32Array)[1 * 64 + 2]).toBe(0x12345678)
+    expect(activeRasterEntry(emptyFiles).dataEncoding).toBe('sparse-tiles-v1')
+    expect(emptyFiles[activeRasterEntry(emptyFiles).dataFile].byteLength).toBe(24)
+    const restoredEmptyLayer = getActiveLayer(decodeProject(zipSync(emptyFiles)))
+    expect(restoredEmptyLayer).toMatchObject({ width: 1, height: 1, offsetX: 0, offsetY: 0 })
+    expect(Array.from(restoredEmptyLayer.pixels).every((value) => value === 0)).toBe(true)
+  })
+
+  it('keeps dense small raster resources in raw form', () => {
+    const document = createDocument('dense raw', 2, 2, 'rgba')
+    ;(getActiveLayer(document).pixels as Uint8ClampedArray).fill(255)
+    const files = unzipSync(encodeProject(document))
+    const entry = activeRasterEntry(files)
+
+    expect(entry.dataEncoding).toBe('raw')
+    expect(entry.dataFile).not.toMatch(/\.tiles$/)
+    expect(files[entry.dataFile]).toHaveLength(16)
+  })
+
+  it('rejects malformed sparse raster containers', () => {
+    const document = createDocument('corrupt sparse', 128, 128, 'rgba')
+    const pixels = getActiveLayer(document).pixels as Uint8ClampedArray
+    pixels[3] = 255
+    pixels[(70 * 128 + 70) * 4 + 3] = 255
+    const original = unzipSync(encodeProject(document))
+    const dataFile = activeRasterEntry(original).dataFile
+    const corruptions: Array<(bytes: Uint8Array) => Uint8Array> = [
+      (bytes) => { new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength).setUint32(0, 0, true); return bytes },
+      (bytes) => { new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength).setUint32(8, 127, true); return bytes },
+      (bytes) => { const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength); view.setUint32(40, 0, true); view.setUint32(44, 0, true); return bytes },
+      (bytes) => { new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength).setUint32(24, 128, true); return bytes },
+      (bytes) => bytes.subarray(0, bytes.byteLength - 1)
+    ]
+
+    for (const corrupt of corruptions) {
+      const files = { ...original, [dataFile]: corrupt(original[dataFile].slice()) }
+      expect(() => decodeProject(zipSync(files))).toThrow()
+    }
   })
 
   it('round-trips project-owned outline settings', () => {
@@ -236,13 +356,95 @@ describe('project manifest migration boundary', () => {
     writeLayerColor(document, getActiveLayer(document), 0, { r: 255, g: 0, b: 0, a: 255 })
     const encoded = await encodeProjectSaveAsync(document)
     const patch = unzipSync(encoded.data)
+    const changedDataFile = readTestManifest(patch).document.animation.cels.find((cel) => cel.dataFile && cel.dataFile !== secondDataFile)!.dataFile
     const plan = JSON.parse(strFromU8(patch['.moonsprite-save-plan.json'])) as { entries: Array<{ path: string }> }
 
-    expect(patch[firstDataFile]).toBeDefined()
+    expect(changedDataFile).not.toBe(firstDataFile)
+    expect(patch[changedDataFile]).toBeDefined()
+    expect(patch[firstDataFile]).toBeUndefined()
     expect(patch[secondDataFile]).toBeUndefined()
     expect(patch['timelapse/snapshot-1.png']).toBeUndefined()
     expect(plan.entries.map((entry) => entry.path)).toEqual(expect.arrayContaining([secondDataFile, 'timelapse/snapshot-1.png']))
     expect(encoded.sourcePath).toBe('D:/gallery/incremental.moonsprite')
+  })
+
+  it('reuses unchanged sparse raster blocks after opening a v5 project', async () => {
+    const document = createDocument('incremental sparse save', 128, 128, 'rgba')
+    writeLayerColor(document, getActiveLayer(document), 0, { r: 255, g: 0, b: 0, a: 255 })
+    const archive = encodeProject(document)
+    const restored = decodeProject(archive)
+    const sourceEntry = activeRasterEntry(unzipSync(archive))
+    const dataFile = sourceEntry.dataFile
+
+    registerProjectSaveBaseline(restored, 'D:/gallery/incremental-sparse.moonsprite', archive)
+    const encoded = await encodeProjectSaveAsync(restored)
+    const patch = unzipSync(encoded.data)
+    const plan = JSON.parse(strFromU8(patch['.moonsprite-save-plan.json'])) as { entries: Array<{ path: string }> }
+
+    expect(dataFile).toMatch(/\.tiles$/)
+    expect(patch[dataFile]).toBeUndefined()
+    expect(plan.entries.map((entry) => entry.path)).toContain(dataFile)
+    expect(activeRasterEntry(patch)).toMatchObject(sourceEntry)
+  })
+
+  it('writes compact raster geometry only after a restored v5 surface changes', async () => {
+    const document = createDocument('changed compact sparse save', 128, 128, 'rgba')
+    writeLayerColor(document, getActiveLayer(document), 65 * 128 + 66, { r: 255, g: 0, b: 0, a: 255 })
+    const archive = encodeProject(document)
+    const restored = decodeProject(archive)
+    const layer = getActiveLayer(restored)
+
+    registerProjectSaveBaseline(restored, 'D:/gallery/changed-compact-sparse.moonsprite', archive)
+    writeLayerColor(restored, layer, 1 * layer.width + 3, { r: 0, g: 0, b: 255, a: 255 })
+    const encoded = await encodeProjectSaveAsync(restored)
+    const patch = unzipSync(encoded.data)
+    const savedEntry = activeRasterEntry(patch)
+    const reopened = decodeProject(encoded.data)
+
+    expect(savedEntry).toMatchObject({ width: 64, height: 64, offsetX: 64, offsetY: 64 })
+    expect(['raw', 'sparse-tiles-v1']).toContain(savedEntry.dataEncoding)
+    expect(patch[savedEntry.dataFile]).toBeDefined()
+    expect(readLayerColorAt(reopened, getActiveLayer(reopened), 66, 65)).toEqual({ r: 255, g: 0, b: 0, a: 255 })
+    expect(readLayerColorAt(reopened, getActiveLayer(reopened), 67, 65)).toEqual({ r: 0, g: 0, b: 255, a: 255 })
+  })
+
+  it('rewrites legacy v4 raw resources as v5 sparse resources on first save', async () => {
+    const document = createDocument('legacy v4 migration', 128, 128, 'rgba')
+    writeLayerColor(document, getActiveLayer(document), 0, { r: 255, g: 0, b: 0, a: 255 })
+    const files = unzipSync(encodeProject(document))
+    const manifest = readTestManifest(files)
+    const rasterEntries = [...manifest.document.layers, ...manifest.document.animation.cels.filter((cel) => cel.dataFile)]
+    const rawPixels = new Uint8Array(128 * 128 * 4)
+    rawPixels.set([255, 0, 0, 255], 0)
+    const migratedFiles = new Map<string, string>()
+    for (const entry of rasterEntries) {
+      const sparseFile = entry.dataFile
+      let rawFile = migratedFiles.get(sparseFile)
+      if (!rawFile) {
+        rawFile = sparseFile.replace(/\.tiles$/, '')
+        migratedFiles.set(sparseFile, rawFile)
+        delete files[sparseFile]
+        files[rawFile] = rawPixels.slice()
+      }
+      entry.dataFile = rawFile
+      delete entry.dataEncoding
+    }
+    manifest.schemaVersion = 4
+    manifest.document.schemaVersion = 4
+    files['manifest.json'] = new TextEncoder().encode(JSON.stringify(manifest))
+    const legacyArchive = zipSync(files)
+    const restored = decodeProject(legacyArchive)
+
+    registerProjectSaveBaseline(restored, 'D:/gallery/legacy-v4.moonsprite', legacyArchive)
+    const encoded = await encodeProjectSaveAsync(restored)
+    const patch = unzipSync(encoded.data)
+    const savedManifest = readTestManifest(patch)
+    const savedFile = activeRasterEntry(patch).dataFile
+
+    expect(savedManifest.schemaVersion).toBe(5)
+    expect(savedManifest.document.schemaVersion).toBe(5)
+    expect(savedFile).toMatch(/\.tiles$/)
+    expect(patch[savedFile]).toBeDefined()
   })
 
   it('does not reuse a cel restored after an incremental save captured a floating preview', async () => {

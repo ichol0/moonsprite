@@ -10,6 +10,7 @@ import type {
   ImageBrush,
   LayerMask,
   ImageBrushSettings,
+  LineKind,
   OutlineDirections,
   OutlineKernel,
   OutlinePosition,
@@ -135,6 +136,8 @@ export interface DocumentSession {
   brushDynamics: BrushDynamicsSettings
   brushPressure: BrushPressureSettings
   shapeKind: ShapeKind
+  lineKind: LineKind
+  curveAnchorCount: number
   shapeRatio: ShapeRatio | null
   fillMode: FillMode
   fillKind: FillKind

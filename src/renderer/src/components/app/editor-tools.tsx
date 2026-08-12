@@ -1,8 +1,8 @@
-import type { FillKind, SelectionKind, SelectionMode, ShapeKind, ToolId } from '@shared/types'
+import type { FillKind, LineKind, SelectionKind, SelectionMode, ShapeKind, ToolId } from '@shared/types'
 import type { CSSProperties } from 'react'
 import type { ShortcutId } from '@/core/shortcuts'
 import { DEFAULT_APP_LOCALE, type AppLocale } from '@/core/localization'
-import { editorToolCopyByLocale, fillToolCopyByLocale, selectionModeLabelsByLocale, selectionToolCopyByLocale, shapeToolCopyByLocale } from '@/locales/editor-tools'
+import { editorToolCopyByLocale, fillToolCopyByLocale, lineToolCopyByLocale, selectionModeLabelsByLocale, selectionToolCopyByLocale, shapeToolCopyByLocale } from '@/locales/editor-tools'
 import toolSelectionIcon from '@/assets/tool-icons/tool-selection.svg'
 import toolPencilIcon from '@/assets/tool-icons/tool-pencil.svg'
 import toolAirbrushIcon from '@/assets/tool-icons/tool-airbrush.svg'
@@ -27,6 +27,10 @@ import shapeRectangleFillIcon from '@/assets/tool-icons/shape-rectangle-fill.svg
 import shapeRectangleIcon from '@/assets/tool-icons/shape-rectangle.svg'
 import shapeEllipseFillIcon from '@/assets/tool-icons/shape-ellipse-fill.svg'
 import shapeEllipseIcon from '@/assets/tool-icons/shape-ellipse.svg'
+import shapeFreeformIcon from '@/assets/tool-icons/shape-freeform.svg'
+import shapePolygonIcon from '@/assets/tool-icons/shape-polygon.svg'
+import shapeLineIcon from '@/assets/tool-icons/shape-line.svg'
+import shapeCurveIcon from '@/assets/tool-icons/shape-curve.svg'
 import toolGradientIcon from '@/assets/tool-icons/tool-gradient-6-6.svg'
 import toolGradientNormalIcon from '@/assets/tool-icons/tool-gradient-normal.svg'
 import toolPencilNormalIcon from '@/assets/tool-icons/tool-pencil-normal.svg'
@@ -42,6 +46,10 @@ import shapeRectangleNormalIcon from '@/assets/tool-icons/shape-rectangle-normal
 import shapeRectangleFillNormalIcon from '@/assets/tool-icons/shape-rectangle-fill-normal.svg'
 import shapeEllipseNormalIcon from '@/assets/tool-icons/shape-ellipse-normal.svg'
 import shapeEllipseFillNormalIcon from '@/assets/tool-icons/shape-ellipse-fill-normal.svg'
+import shapeFreeformNormalIcon from '@/assets/tool-icons/shape-freeform-normal.svg'
+import shapePolygonNormalIcon from '@/assets/tool-icons/shape-polygon-normal.svg'
+import shapeLineNormalIcon from '@/assets/tool-icons/shape-line-normal.svg'
+import shapeCurveNormalIcon from '@/assets/tool-icons/shape-curve-normal.svg'
 import toolFillNormalIcon from '@/assets/tool-icons/tool-fill-normal.svg'
 import toolEyedropperNormalIcon from '@/assets/tool-icons/tool-eyedropper-normal.svg'
 import toolHandNormalIcon from '@/assets/tool-icons/tool-hand-normal.svg'
@@ -62,6 +70,10 @@ const NORMAL_EDITOR_TOOL_ICON_BY_SOURCE = new Map<string, string>([
   [shapeRectangleFillIcon, shapeRectangleFillNormalIcon],
   [shapeEllipseIcon, shapeEllipseNormalIcon],
   [shapeEllipseFillIcon, shapeEllipseFillNormalIcon],
+  [shapeFreeformIcon, shapeFreeformNormalIcon],
+  [shapePolygonIcon, shapePolygonNormalIcon],
+  [shapeLineIcon, shapeLineNormalIcon],
+  [shapeCurveIcon, shapeCurveNormalIcon],
   [toolFillIcon, toolFillNormalIcon],
   [toolEyedropperIcon, toolEyedropperNormalIcon],
   [toolHandIcon, toolHandNormalIcon],
@@ -72,7 +84,7 @@ const NORMAL_EDITOR_TOOL_ICON_BY_SOURCE = new Map<string, string>([
 export const normalEditorToolIconFor = (source: string): string | undefined => NORMAL_EDITOR_TOOL_ICON_BY_SOURCE.get(source)
 
 const TOOL_BASE: Array<{ id: ToolId; icon: string; shortcutId: ShortcutId }> = [
-  { id: 'pencil', icon: toolPencilIcon, shortcutId: 'tool.pencil' }, { id: 'airbrush', icon: toolAirbrushIcon, shortcutId: 'tool.airbrush' }, { id: 'eraser', icon: toolEraserIcon, shortcutId: 'tool.eraser' }, { id: 'selection', icon: toolSelectionIcon, shortcutId: 'tool.selection' }, { id: 'move', icon: toolMoveIcon, shortcutId: 'tool.move' }, { id: 'shape', icon: toolShapeIcon, shortcutId: 'tool.shape' }, { id: 'fill', icon: toolFillIcon, shortcutId: 'tool.fill' }, { id: 'eyedropper', icon: toolEyedropperIcon, shortcutId: 'tool.eyedropper' }, { id: 'hand', icon: toolHandIcon, shortcutId: 'tool.hand' }, { id: 'zoom', icon: toolZoomIcon, shortcutId: 'tool.zoom' }, { id: 'rotate', icon: toolRotateIcon, shortcutId: 'tool.rotate' }
+  { id: 'pencil', icon: toolPencilIcon, shortcutId: 'tool.pencil' }, { id: 'airbrush', icon: toolAirbrushIcon, shortcutId: 'tool.airbrush' }, { id: 'eraser', icon: toolEraserIcon, shortcutId: 'tool.eraser' }, { id: 'selection', icon: toolSelectionIcon, shortcutId: 'tool.selection' }, { id: 'move', icon: toolMoveIcon, shortcutId: 'tool.move' }, { id: 'shape', icon: toolShapeIcon, shortcutId: 'tool.shape' }, { id: 'line', icon: shapeLineIcon, shortcutId: 'tool.line' }, { id: 'fill', icon: toolFillIcon, shortcutId: 'tool.fill' }, { id: 'eyedropper', icon: toolEyedropperIcon, shortcutId: 'tool.eyedropper' }, { id: 'hand', icon: toolHandIcon, shortcutId: 'tool.hand' }, { id: 'zoom', icon: toolZoomIcon, shortcutId: 'tool.zoom' }, { id: 'rotate', icon: toolRotateIcon, shortcutId: 'tool.rotate' }
 ]
 
 export const toolDefinitions = (locale: AppLocale) => TOOL_BASE.map((item) => ({ ...item, ...editorToolCopyByLocale[locale][item.id] }))
@@ -100,9 +112,16 @@ const SHAPE_KIND_BASE: Array<{
   shortcutId: ShortcutId
   icon: string
 }> = [
-  { id: 'rectangle-outline', shortcutId: 'tool.shape', icon: shapeRectangleIcon }, { id: 'rectangle', shortcutId: 'tool.shape', icon: shapeRectangleFillIcon }, { id: 'ellipse-outline', shortcutId: 'tool.shape', icon: shapeEllipseIcon }, { id: 'ellipse', shortcutId: 'tool.shape', icon: shapeEllipseFillIcon }
+  { id: 'rectangle-outline', shortcutId: 'tool.shape', icon: shapeRectangleIcon }, { id: 'rectangle', shortcutId: 'tool.shape', icon: shapeRectangleFillIcon }, { id: 'ellipse-outline', shortcutId: 'tool.shape', icon: shapeEllipseIcon }, { id: 'ellipse', shortcutId: 'tool.shape', icon: shapeEllipseFillIcon },
+  { id: 'freeform', shortcutId: 'tool.shape', icon: shapeFreeformIcon }, { id: 'polygon', shortcutId: 'tool.shape', icon: shapePolygonIcon }
 ]
 export const shapeKindDefinitions = (locale: AppLocale) => SHAPE_KIND_BASE.map((item) => ({ ...item, ...shapeToolCopyByLocale[locale][item.id] }))
+
+const LINE_KIND_BASE: Array<{ id: LineKind; shortcutId: ShortcutId; icon: string }> = [
+  { id: 'line', shortcutId: 'tool.line', icon: shapeLineIcon },
+  { id: 'curve', shortcutId: 'tool.curve', icon: shapeCurveIcon }
+]
+export const lineKindDefinitions = (locale: AppLocale) => LINE_KIND_BASE.map((item) => ({ ...item, ...lineToolCopyByLocale[locale][item.id] }))
 
 const FILL_KIND_BASE: Array<{ id: FillKind; shortcutId: ShortcutId; icon: string }> = [
   { id: 'bucket', shortcutId: 'tool.fill', icon: toolFillIcon },
@@ -126,7 +145,8 @@ export const activeToolPresentation = (
   selectionKind: SelectionKind,
   shapeKind: ShapeKind,
   locale: AppLocale = DEFAULT_APP_LOCALE,
-  fillKind: FillKind = 'bucket'
+  fillKind: FillKind = 'bucket',
+  lineKind: LineKind = 'line'
 ): ActiveToolPresentation => {
   if (toolId === 'selection') {
     const definition = selectionKindDefinitions(locale).find((item) => item.id === selectionKind)!
@@ -134,6 +154,10 @@ export const activeToolPresentation = (
   }
   if (toolId === 'shape') {
     const definition = shapeKindDefinitions(locale).find((item) => item.id === shapeKind)!
+    return { ...definition, id: toolId }
+  }
+  if (toolId === 'line') {
+    const definition = lineKindDefinitions(locale).find((item) => item.id === lineKind)!
     return { ...definition, id: toolId }
   }
   if (toolId === 'fill') {
@@ -157,6 +181,7 @@ export const ALL_EDITOR_TOOL_ICONS = [...new Set([
   ...Object.values(SELECTION_KIND_ICONS),
   ...SELECTION_MODE_BASE.map((item) => item.icon),
   ...SHAPE_KIND_BASE.map((item) => item.icon),
+  ...LINE_KIND_BASE.map((item) => item.icon),
   ...FILL_KIND_BASE.map((item) => item.icon),
   ...NORMAL_EDITOR_TOOL_ICON_BY_SOURCE.values()
 ])]

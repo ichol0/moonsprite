@@ -22,6 +22,25 @@ describe('tool preferences persistence boundary', () => {
     expect(loadToolSettings(storage).brushPaintMode).toBe(defaultToolSettings.brushPaintMode)
   })
 
+  it('persists every shape child tool and rejects unknown shape kinds', () => {
+    for (const shapeKind of ['freeform', 'polygon'] as const) {
+      const storage = createStorage()
+      saveToolSettings({ ...defaultToolSettings, shapeKind }, storage)
+      expect(loadToolSettings(storage).shapeKind).toBe(shapeKind)
+    }
+    const storage = createStorage()
+    storage.setItem(TOOL_SETTINGS_KEY, JSON.stringify({ shapeKind: 'unknown-shape' }))
+    expect(loadToolSettings(storage).shapeKind).toBe(defaultToolSettings.shapeKind)
+  })
+
+  it('normalizes and persists the curve anchor count', () => {
+    const storage = createStorage()
+    saveToolSettings({ ...defaultToolSettings, lineKind: 'curve', curveAnchorCount: 6 }, storage)
+    expect(loadToolSettings(storage)).toMatchObject({ lineKind: 'curve', curveAnchorCount: 6 })
+    storage.setItem(TOOL_SETTINGS_KEY, JSON.stringify({ curveAnchorCount: 99 }))
+    expect(loadToolSettings(storage).curveAnchorCount).toBe(8)
+  })
+
   it('normalizes old and out-of-range brush values', () => {
     const storage = createStorage()
     storage.setItem(TOOL_SETTINGS_KEY, JSON.stringify({

@@ -36,6 +36,7 @@ export const appCoordinatorRenderKey = (state: AppCoordinatorState): string => {
     session?.tool ?? '',
     session?.selectionKind ?? '',
     session?.shapeKind ?? '',
+    session?.lineKind ?? 'line',
     session?.fillKind ?? 'bucket',
     session?.view.showPixelGrid ? 1 : 0,
     session?.view.showGrid ? 1 : 0,
@@ -49,7 +50,7 @@ export const appCoordinatorRenderKey = (state: AppCoordinatorState): string => {
 }
 
 export const toolRailRenderKey = (session: DocumentSession | null): string => session
-  ? `${session.document.id}:${session.tool}:${session.selectionKind}:${session.shapeKind}:${session.fillKind ?? 'bucket'}`
+  ? `${session.document.id}:${session.tool}:${session.selectionKind}:${session.shapeKind}:${session.lineKind}:${session.fillKind ?? 'bucket'}`
   : ''
 
 export const appMenuRenderKey = (session: DocumentSession | null): string => session
@@ -110,6 +111,8 @@ export const toolOptionsRenderKey = (session: DocumentSession | null): string =>
     session.brushPressure.minOpacityPercent,
     session.brushPressure.curve,
     session.shapeKind,
+    session.lineKind,
+    session.curveAnchorCount,
     session.shapeRatio?.width ?? '',
     session.shapeRatio?.height ?? '',
     session.fillMode,

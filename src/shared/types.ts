@@ -1,6 +1,6 @@
 export type ColorMode = 'rgba' | 'indexed'
 export type ImageResizeInterpolation = 'nearest' | 'smooth'
-export type ToolId = 'pencil' | 'airbrush' | 'eraser' | 'fill' | 'eyedropper' | 'selection' | 'shape' | 'move' | 'hand' | 'zoom' | 'rotate'
+export type ToolId = 'pencil' | 'airbrush' | 'eraser' | 'fill' | 'eyedropper' | 'selection' | 'shape' | 'line' | 'move' | 'hand' | 'zoom' | 'rotate'
 export type BrushShape = 'round' | 'square' | 'line'
 export type BrushTexture = 'solid' | 'cracks' | 'wood' | 'grain'
 export type BrushPaintMode = 'paint' | 'pattern-source' | 'pattern-target'
@@ -69,7 +69,8 @@ export interface BrushListing {
   directoryPath: string
   brushes: StoredBrush[]
 }
-export type ShapeKind = 'rectangle' | 'ellipse' | 'rectangle-outline' | 'ellipse-outline'
+export type ShapeKind = 'rectangle' | 'ellipse' | 'rectangle-outline' | 'ellipse-outline' | 'freeform' | 'polygon'
+export type LineKind = 'line' | 'curve'
 export interface ShapeRatio { width: number; height: number }
 export type FillMode = 'contiguous' | 'global'
 export type FillKind = 'bucket' | 'gradient'
@@ -294,7 +295,7 @@ export interface ProjectLayerPanelState {
 }
 
 export interface SpriteDocument {
-  schemaVersion: 1 | 2 | 3 | 4
+  schemaVersion: 1 | 2 | 3 | 4 | 5
   id: string
   name: string
   width: number

@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { AnimationCel, BlendMode, BrushPaintMode, BrushShape, BrushTexture, CanvasAnchor, ColorMode, FillKind, FillMode, GradientDither, ImageBrush, ImageBrushSettings, ImageResizeInterpolation, LayerGroup, LayerMask, OutlineDirections, OutlineKernel, OutlinePosition, PaletteSlotLayout, ProceduralBrushId, ProceduralBrushSettings, RasterLayer, RecoveryRecord, RgbaColor, SelectionKind, SelectionMask, SelectionMode, SelectionRect, ShapeKind, ShapeRatio, SpriteDocument, TimelapseSettings, TimelapseVideoFormat, ToolId, ViewState } from '@shared/types'
+import type { AnimationCel, BlendMode, BrushPaintMode, BrushShape, BrushTexture, CanvasAnchor, ColorMode, FillKind, FillMode, GradientDither, ImageBrush, ImageBrushSettings, ImageResizeInterpolation, LayerGroup, LayerMask, LineKind, OutlineDirections, OutlineKernel, OutlinePosition, PaletteSlotLayout, ProceduralBrushId, ProceduralBrushSettings, RasterLayer, RecoveryRecord, RgbaColor, SelectionKind, SelectionMask, SelectionMode, SelectionRect, ShapeKind, ShapeRatio, SpriteDocument, TimelapseSettings, TimelapseVideoFormat, ToolId, ViewState } from '@shared/types'
 import { checkResourceLimit } from '@/core/resource-policy'
 import { beginPixelEdit, commitPixelEdit, HistoryStack, recordPixel, revertPixelEdit, type HistoryEntry, type PixelEdit } from '@/core/history'
 import { animationMaskAt, animationMaskSlotAt, convertDocumentColorMode, createDocument, createId, createLayer, createSparseLayer, createLayerMask as createAttachedLayerMask, duplicateLayer, findLayerMask, findOrAddPaletteColor, getDescendantGroupIds, getGroup, getGroupLockingAncestor, getLayerIdsInGroup, getLayer, getActiveLayer, getLayerLockingGroup, isGroupEffectivelyLocked, isLayerEffectivelyLocked, isLayerEffectivelyVisible, isLayerMask, layerContentBounds, readLayerColor, readLayerColorAt, resolveAnimationMask, resizeDocumentAt, resizeDocumentImage, writeLayerColor } from '@/core/document'
@@ -90,6 +90,8 @@ interface WorkspaceState {
   setProceduralAntialias(enabled: boolean): void
   setProceduralAntialiasStrength(strength: number): void
   setShapeKind(kind: ShapeKind): void
+  setLineKind(kind: LineKind): void
+  setCurveAnchorCount(count: number): void
   setShapeRatio(ratio: ShapeRatio | null): void
   setFillMode(mode: FillMode): void
   setFillKind(kind: FillKind): void
@@ -1088,6 +1090,8 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
   setProceduralAntialias(enabled) { get().mutateActive((session) => { session.proceduralAntialias = enabled; rememberBrushProfile(session); persistToolSettings(session) }, false) },
   setProceduralAntialiasStrength(strength) { get().mutateActive((session) => { session.proceduralAntialiasStrength = Math.max(1, Math.min(100, Math.round(strength))); rememberBrushProfile(session); persistToolSettings(session) }, false) },
   setShapeKind(kind) { get().mutateActive((session) => { session.shapeKind = kind; persistToolSettings(session) }, false) },
+  setLineKind(kind) { get().mutateActive((session) => { session.lineKind = kind; persistToolSettings(session) }, false) },
+  setCurveAnchorCount(count) { get().mutateActive((session) => { session.curveAnchorCount = Math.max(1, Math.min(8, Math.round(count) || 1)); persistToolSettings(session) }, false) },
   setShapeRatio(ratio) {
     get().mutateActive((session) => {
       session.shapeRatio = ratio === null ? null : {
@@ -4369,20 +4373,18 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
 
   async openPath(filePath, options) {
     const finishOpenProgress = openProgress.begin()
-    let opened = false
     try {
       const parsed = await openDocumentFile(window.moonSprite, filePath)
       if (options?.duplicate) parsed.id = createId('doc')
       options?.onBeforeSession?.()
       get().addSession(parsed)
       recordRecentProject(filePath, parsed.name)
-      opened = true
+      finishOpenProgress()
       return true
     } catch (error) {
+      finishOpenProgress(false)
       set({ message: error instanceof Error ? `${fileNameFromPath(filePath)}: ${error.message}` : tr('workspace.open.error') })
       return false
-    } finally {
-      finishOpenProgress(opened)
     }
   },
 
