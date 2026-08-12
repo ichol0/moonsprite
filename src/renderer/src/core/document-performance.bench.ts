@@ -1,6 +1,6 @@
 import type { LayerGroup } from '@shared/types'
 import { bench, describe } from 'vitest'
-import { compositeRegion, createDocument, createLayer } from './document'
+import { compositeRegion, createDocument, createLayer, DocumentCompositeCache } from './document'
 
 const CANVAS_SIZE = 800
 const LAYER_COUNT = 24
@@ -41,5 +41,14 @@ describe('complex document compositing', () => {
 
   bench('composite 64x64 dirty region with 24 grouped layers', () => {
     compositeRegion(document, 368, 368, 64, 64)
+  }, { iterations: 10, warmupIterations: 2 })
+})
+
+const largeDocument = createDocument('large dirty region benchmark', 4000, 2000, 'rgba')
+const largeCache = new DocumentCompositeCache()
+
+describe('large document dirty-region compositing', () => {
+  bench('composite 64x64 without scanning the full 4000x2000 layer', () => {
+    compositeRegion(largeDocument, 1968, 968, 64, 64, largeCache, 1)
   }, { iterations: 10, warmupIterations: 2 })
 })

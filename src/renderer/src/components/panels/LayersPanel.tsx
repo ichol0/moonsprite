@@ -4,9 +4,14 @@ import { Clock3, FilePlus2, Layers2 } from 'lucide-react'
 import type { AnimationCel, AnimationCelSurface, BlendMode, LayerGroup, LayerMask, PaletteEntry, RasterLayer, RgbaColor } from '@shared/types'
 import { FloatingDockPreview, PanelResizeHandles, useFloatingPanel } from '@/components/floating-panel'
 import { ColorValueControl } from '@/components/ColorValueControl'
+import { DialogHeader } from '@/components/DialogHeader'
+import { FormField } from '@/components/FormField'
 import { ModalShell } from '@/components/ModalShell'
 import { NumberInput } from '@/components/NumberInput'
+import { PreferenceToggle } from '@/components/PreferenceToggle'
+import { RangeField } from '@/components/RangeField'
 import { TextAreaInput } from '@/components/TextAreaInput'
+import { TextInput } from '@/components/TextInput'
 import { ThemedSelect, type ThemedSelectGroup } from '@/components/ThemedSelect'
 import { Tooltip } from '@/components/Tooltip'
 import type { DockDragProps } from '@/components/workspace-panel-types'
@@ -16,13 +21,13 @@ import { buildLayerPanelTree, getLayerPanelAncestorGroupIds, layerPanelRevealScr
 import { DEFAULT_ONION_SKIN_PREFERENCES, loadEditorPreferences, saveEditorPreferences, type OnionSkinPreferences } from '@/core/file-preferences'
 import { animationCelHasContent, animationCelKey, animationGroupMaskAt, createAnimationCelLookup, ensureAnimationDocument, parseAnimationCelKey } from '@/core/animation'
 import { renderAnimationCelThumbnailPixels, renderLayerMaskThumbnailPixels } from '@/core/animation-thumbnail'
-import { DEFAULT_SHORTCUTS, loadShortcuts, type ShortcutId } from '@/core/shortcuts'
+import { DEFAULT_SHORTCUTS, loadShortcuts, modifierShortcutHeld, type ShortcutId } from '@/core/shortcuts'
 import { useWorkspace, type DocumentSession } from '@/store/workspace'
 import { useI18n } from '@/components/I18nProvider'
 import { AnimationPlaybackMenu } from '@/components/AnimationPlaybackMenu'
 import { PlaybackPixelIcon } from '@/components/PlaybackPixelIcon'
 import { PixelUtilityIcon, type PixelUtilityIconKind } from '@/components/PixelUtilityIcon'
-import { PixelCheckbox } from '@/components/PixelCheckbox'
+import { CheckboxField } from '@/components/CheckboxField'
 import { ANIMATION_CELL_OPERATION_FINISHED_EVENT, LAYER_PANEL_REVEAL_EVENT, type AnimationCellOperationFinishedDetail, type LayerPanelRevealDetail } from '@/components/layer-panel-reveal'
 
 interface LayerFormTarget { id: string; kind: 'layer' | 'group' }
@@ -272,6 +277,8 @@ export function LayersPanel({ session, docked = false, sideDocked = false, onDoc
   const pendingPropertyPreviewRef = useRef<LayerFormState | null>(null)
   const propertyPreviewTimerRef = useRef<number | null>(null)
   const dragRef = useRef<LayerDragState | null>(null)
+  const layerDragFrameRef = useRef<number | null>(null)
+  const pendingLayerDragRef = useRef<{ clientX: number; clientY: number; altKey: boolean } | null>(null)
   const layerToggleGestureRef = useRef<LayerPanelToggleGesture | null>(null)
   const layerListRef = useRef<HTMLDivElement>(null)
   const revealSequenceRef = useRef(0)
@@ -892,6 +899,9 @@ export function LayersPanel({ session, docked = false, sideDocked = false, onDoc
     setAnimationGestureSelection(null)
   }
   const clearTransientLayerDrag = (): void => {
+    if (layerDragFrameRef.current !== null) window.cancelAnimationFrame(layerDragFrameRef.current)
+    layerDragFrameRef.current = null
+    pendingLayerDragRef.current = null
     dragRef.current = null
     setDraggingIds([])
     setDraggingGroupId(null)
@@ -1054,7 +1064,9 @@ export function LayersPanel({ session, docked = false, sideDocked = false, onDoc
       const target = event.target instanceof Element ? event.target : null
       if (target?.closest('[data-animation-frame-id], [data-animation-cel-key], [data-animation-mask-cel-key], [data-preserve-animation-selection], .animation-context-menu, .frame-properties-modal, .cel-properties-modal')) return
       const active = useWorkspace.getState().sessions.find((item) => item.document.id === session.document.id)
-      if (active?.tool === 'move' && target?.closest('.stage-canvas, .stage-surface')) return
+      const canvasTarget = target?.closest('.stage-canvas, .stage-surface')
+      const temporaryEyedropper = modifierShortcutHeld(event, shortcuts.temporaryEyedropper ?? DEFAULT_SHORTCUTS.temporaryEyedropper)
+      if (canvasTarget && (active?.tool === 'move' || active?.tool === 'eyedropper' || temporaryEyedropper)) return
       if (active && (active.selectedAnimationFrameIds.length > 0 || active.selectedAnimationCellKeys.length > 0 || active.selectedAnimationMaskCellKeys.length > 0)) {
         setAnimationGestureSelection(null)
         store.clearAnimationSelection()
@@ -1062,7 +1074,7 @@ export function LayersPanel({ session, docked = false, sideDocked = false, onDoc
     }
     window.addEventListener('pointerdown', clearOutsideSelection, true)
     return () => window.removeEventListener('pointerdown', clearOutsideSelection, true)
-  }, [session.document.id, store])
+  }, [session.document.id, shortcuts, store])
   useEffect(() => {
     const closeMenus = (): void => { setContextMenu(null); setAnimationMenu(null); setAnimationFrameDropTarget(null) }
     const keyDown = (event: KeyboardEvent): void => {
@@ -1326,6 +1338,7 @@ export function LayersPanel({ session, docked = false, sideDocked = false, onDoc
   const applyPropertyPreview = (next: LayerFormState): void => {
     store.mutateActive((active) => {
       const changes = next.targets.length > 1 ? new Set(next.batchChanges) : new Set<BatchProperty>(['name', 'opacity', 'blendMode', 'cumulativeBlend', 'displayColor', 'description'])
+      let contentChanged = false
       for (const formTarget of next.targets) {
         const target = formTarget.kind === 'group'
           ? active.document.groups.find((group) => group.id === formTarget.id)
@@ -1336,9 +1349,19 @@ export function LayersPanel({ session, docked = false, sideDocked = false, onDoc
           ? isGroupEffectivelyLocked(active.document, target as LayerGroup)
           : isLayerEffectivelyLocked(active.document, target as RasterLayer)
         if (!visualLocked) {
-          if (changes.has('opacity')) target.opacity = Math.max(0, Math.min(1, next.opacity / 100))
-          if (changes.has('blendMode')) target.blendMode = next.blendMode
-          if (formTarget.kind === 'group' && changes.has('cumulativeBlend')) (target as LayerGroup).cumulativeBlend = next.cumulativeBlend
+          if (changes.has('opacity')) {
+            const opacity = Math.max(0, Math.min(1, next.opacity / 100))
+            contentChanged ||= target.opacity !== opacity
+            target.opacity = opacity
+          }
+          if (changes.has('blendMode')) {
+            contentChanged ||= target.blendMode !== next.blendMode
+            target.blendMode = next.blendMode
+          }
+          if (formTarget.kind === 'group' && changes.has('cumulativeBlend')) {
+            contentChanged ||= (target as LayerGroup).cumulativeBlend === true !== next.cumulativeBlend
+            ;(target as LayerGroup).cumulativeBlend = next.cumulativeBlend
+          }
         }
         if (next.targets.length === 1) target.locked = next.locked
         if (changes.has('displayColor')) {
@@ -1349,10 +1372,14 @@ export function LayersPanel({ session, docked = false, sideDocked = false, onDoc
       }
       active.document.dirty = true
       active.document.updatedAt = new Date().toISOString()
-      active.revision += 1
-      active.contentRevision += 1
       active.layersPanelRevision += 1
       active.recoverySuppressed = false
+      if (contentChanged) {
+        const fromRevision = active.contentRevision
+        active.revision += 1
+        active.contentRevision += 1
+        active.contentInvalidation = { kind: 'full', fromRevision, revision: active.contentRevision }
+      }
     }, false)
   }
   const flushPropertyPreview = (): LayerFormState | null => {
@@ -1403,9 +1430,6 @@ export function LayersPanel({ session, docked = false, sideDocked = false, onDoc
           target.description = snapshot.description
         }
         active.document.dirty = formWasDirtyRef.current
-        active.revision += 1
-        active.contentRevision += 1
-        active.layersPanelRevision += 1
       }, false)
       const committedName = closingForm.name.trim()
       const committedDescription = closingForm.description.trim()
@@ -1462,9 +1486,6 @@ export function LayersPanel({ session, docked = false, sideDocked = false, onDoc
           target.description = original.description
         }
         active.document.dirty = formWasDirtyRef.current
-        active.revision += 1
-        active.contentRevision += 1
-        active.layersPanelRevision += 1
       }, false)
       if (changed) {
         if (committed.kind === 'group') store.setGroupProperties(committed.id, committed.name, committed.opacity / 100, committed.blendMode, committed.locked, committed.displayColor, committed.description, committed.cumulativeBlend)
@@ -1629,7 +1650,15 @@ export function LayersPanel({ session, docked = false, sideDocked = false, onDoc
       setDropTarget({ ...target, offset: rowBounds ? (target.edge === 'top' ? rowBounds.top : rowBounds.bottom) - listBounds.top + list.scrollTop : 0 })
     } else setDropTarget(target)
   }
+  const flushPendingLayerDrag = (): void => {
+    const pending = pendingLayerDragRef.current
+    pendingLayerDragRef.current = null
+    if (pending) moveLayerDrag(pending.clientX, pending.clientY, pending.altKey)
+  }
   const finishLayerDrag = (clientX: number, clientY: number): void => {
+    if (layerDragFrameRef.current !== null) window.cancelAnimationFrame(layerDragFrameRef.current)
+    layerDragFrameRef.current = null
+    flushPendingLayerDrag()
     const drag = dragRef.current
     let target = drag ? resolveDropTarget(clientX, clientY, drag.ids, drag.groupIds, drag.copy) : dropTargetRef.current
     if (drag && target && dropTargetBlockedByGroups(target, drag.groupIds)) target = null
@@ -1665,12 +1694,27 @@ export function LayersPanel({ session, docked = false, sideDocked = false, onDoc
     setDragGhost(null)
   }
   useEffect(() => {
-    const move = (event: PointerEvent): void => { moveLayerDrag(event.clientX, event.clientY, event.altKey); moveAnimationPointerDrag(event) }
+    const move = (event: PointerEvent): void => {
+      if (dragRef.current) {
+        if (!dragRef.current.moved) moveLayerDrag(event.clientX, event.clientY, event.altKey)
+        else {
+          pendingLayerDragRef.current = { clientX: event.clientX, clientY: event.clientY, altKey: event.altKey }
+          if (layerDragFrameRef.current === null) layerDragFrameRef.current = window.requestAnimationFrame(() => {
+            layerDragFrameRef.current = null
+            flushPendingLayerDrag()
+          })
+        }
+      }
+      moveAnimationPointerDrag(event)
+    }
     const finish = (event: PointerEvent): void => { finishLayerPanelToggle(); finishLayerDrag(event.clientX, event.clientY); finishAnimationPointerDrag() }
     window.addEventListener('pointermove', move)
     window.addEventListener('pointerup', finish)
     window.addEventListener('pointercancel', finish)
     return () => {
+      if (layerDragFrameRef.current !== null) window.cancelAnimationFrame(layerDragFrameRef.current)
+      layerDragFrameRef.current = null
+      pendingLayerDragRef.current = null
       window.removeEventListener('pointermove', move)
       window.removeEventListener('pointerup', finish)
       window.removeEventListener('pointercancel', finish)
@@ -1940,25 +1984,25 @@ export function LayersPanel({ session, docked = false, sideDocked = false, onDoc
     </div>, document.body)}
     {frameProperties && <div className="modal-backdrop" role="presentation" onPointerDown={(event) => { if (event.target === event.currentTarget) setFrameProperties(null) }}>
       <ModalShell as="form" storageKey="animation-frame-properties" defaultWidth={340} defaultHeight={224} minWidth={300} minHeight={210} maxWidth={440} maxHeight={300} className="layer-modal frame-properties-modal" onSubmit={(event) => { event.preventDefault(); saveFrameProperties() }}>
-        <header><div><span className="eyebrow">FRAME PROPERTIES</span><h2>{t('timeline.framePropertiesNumbered', { number: timeline.frames.findIndex((frame) => frame.id === frameProperties.frameId) + 1 })}</h2></div><button type="button" className="icon-button" aria-label={t('common.close')} onClick={() => setFrameProperties(null)}><PixelUtilityIcon kind="close" /></button></header>
-        <div className="modal-body"><label>{t('timeline.duration')}<NumberInput autoFocus onFocus={(event) => event.currentTarget.select()} aria-label={t('timeline.duration')} value={frameProperties.duration} min={1} max={60_000} step={10} suffix="ms" onValueChange={(duration) => setFrameProperties({ ...frameProperties, duration })} /></label></div>
+        <DialogHeader eyebrow="FRAME PROPERTIES" title={t('timeline.framePropertiesNumbered', { number: timeline.frames.findIndex((frame) => frame.id === frameProperties.frameId) + 1 })} closeLabel={t('common.close')} onClose={() => setFrameProperties(null)} />
+        <div className="modal-body"><FormField label={t('timeline.duration')}><NumberInput autoFocus onFocus={(event) => event.currentTarget.select()} aria-label={t('timeline.duration')} value={frameProperties.duration} min={1} max={60_000} step={10} suffix="ms" onValueChange={(duration) => setFrameProperties({ ...frameProperties, duration })} /></FormField></div>
         <footer><button type="button" className="quiet-button" onClick={() => setFrameProperties(null)}>{t('common.cancel')}</button><button type="submit" className="primary-button">{t('common.save')}</button></footer>
       </ModalShell>
     </div>}
     {celProperties && <div className="modal-backdrop" role="presentation" onPointerDown={(event) => { if (event.target === event.currentTarget) setCelProperties(null) }}>
       <ModalShell as="form" storageKey="animation-cel-properties" defaultWidth={340} defaultHeight={224} minWidth={300} minHeight={210} maxWidth={440} maxHeight={300} className="layer-modal frame-properties-modal" onSubmit={(event) => { event.preventDefault(); saveCelProperties() }}>
-        <header><div><span className="eyebrow">CEL PROPERTIES</span><h2>{t('timeline.celPropertiesNumbered', { number: timeline.frames.findIndex((frame) => frame.id === celProperties.frameId) + 1 })}</h2></div><button type="button" className="icon-button" aria-label={t('common.close')} onClick={() => setCelProperties(null)}><PixelUtilityIcon kind="close" /></button></header>
-        <div className="modal-body"><label>{t('layers.opacity')}<div className="layer-opacity-control"><input aria-label={t('layers.opacity')} type="range" min="0" max="100" step="1" value={celProperties.opacity} onChange={(event) => setCelProperties({ ...celProperties, opacity: Number(event.target.value) })} /><NumberInput autoFocus aria-label={t('layers.opacityValue')} value={celProperties.opacity} min={0} max={100} onValueChange={(opacity) => setCelProperties({ ...celProperties, opacity })} /><span>%</span></div></label></div>
+        <DialogHeader eyebrow="CEL PROPERTIES" title={t('timeline.celPropertiesNumbered', { number: timeline.frames.findIndex((frame) => frame.id === celProperties.frameId) + 1 })} closeLabel={t('common.close')} onClose={() => setCelProperties(null)} />
+        <div className="modal-body"><RangeField autoFocus className="layer-opacity-control" label={t('layers.opacity')} min={0} max={100} suffix="%" value={celProperties.opacity} onChange={(opacity) => setCelProperties({ ...celProperties, opacity })} /></div>
         <footer><button type="button" className="quiet-button" onClick={() => setCelProperties(null)}>{t('common.cancel')}</button><button type="submit" className="primary-button">{t('common.save')}</button></footer>
       </ModalShell>
     </div>}
     {layerSettingsOpen && <div className="modal-backdrop" role="presentation" onPointerDown={(event) => { if (event.target === event.currentTarget) setLayerSettingsOpen(false) }}>
       <ModalShell as="form" storageKey="layer-settings-layout-v12" defaultWidth={360} defaultHeight={570} minWidth={340} minHeight={510} maxWidth={420} maxHeight={740} className={`layer-modal layer-settings-modal ${layerSettings.timelineHidden ? 'timeline-disabled' : ''}`} onSubmit={(event) => { event.preventDefault(); saveLayerSettings() }}>
-        <header><div><h2>{t('layers.settings')}</h2></div><button type="button" className="icon-button" aria-label={t('common.close')} onClick={() => setLayerSettingsOpen(false)}><PixelUtilityIcon kind="close" /></button></header>
+        <DialogHeader title={t('layers.settings')} closeLabel={t('common.close')} onClose={() => setLayerSettingsOpen(false)} />
         <div className="modal-body" onPointerDown={(event) => { if (!(event.target as Element).closest('.layer-setting-percent')) setLayerSettingsSlider(null) }}>
           <section className="layer-settings-density"><strong>{t('layers.thumbnailSize')}</strong><div><input aria-label={t('layers.thumbnailSize')} type="range" min={0} max={layerDensityOrder.length - 1} step={1} value={layerDensityOrder.indexOf(layerSettings.density)} onChange={(event) => applyLayerSettings({ ...layerSettings, density: layerDensityOrder[Number(event.target.value)] })} /><output>{t(layerDensityLabelKeys[layerSettings.density])}</output></div></section>
-          <label className="preference-toggle outline-preview-toggle layer-timeline-toggle"><Tooltip content={t('layers.hideTimelineDescription')}><span>{t('layers.hideTimeline')}</span></Tooltip><input type="checkbox" aria-label={t('layers.hideTimeline')} checked={layerSettings.timelineHidden} onChange={(event) => applyLayerSettings({ ...layerSettings, timelineHidden: event.target.checked })} /><span className="toggle-track" aria-hidden="true"><i /></span></label>
-          <fieldset className="layer-settings-onion" disabled={layerSettings.timelineHidden} aria-disabled={layerSettings.timelineHidden}><legend>{t('layers.onionSkin')}</legend><label className="preference-toggle outline-preview-toggle layer-onion-toggle"><span>{t('layers.onionSkinEnabled')}</span><input type="checkbox" checked={layerSettings.onionSkin.enabled} onChange={(event) => applyLayerSettings({ ...layerSettings, onionSkin: { ...layerSettings.onionSkin, enabled: event.target.checked } })} /><span className="toggle-track" aria-hidden="true"><i /></span></label><div className="layer-settings-pair"><label>{t('layers.previousFrames')}<NumberInput min={0} max={8} value={layerSettings.onionSkin.previousFrames} onValueChange={(value) => applyLayerSettings({ ...layerSettings, onionSkin: { ...layerSettings.onionSkin, previousFrames: value } })} /></label><label>{t('layers.nextFrames')}<NumberInput min={0} max={8} value={layerSettings.onionSkin.nextFrames} onValueChange={(value) => applyLayerSettings({ ...layerSettings, onionSkin: { ...layerSettings.onionSkin, nextFrames: value } })} /></label><label>{t('layers.previousOpacity')}<div className="brush-size-control layer-setting-percent" onPointerDown={() => setLayerSettingsSlider('previousOpacity')}><NumberInput min={0} max={100} suffix="%" value={layerSettings.onionSkin.previousOpacity} onValueChange={(value) => applyLayerSettings({ ...layerSettings, onionSkin: { ...layerSettings.onionSkin, previousOpacity: value } })} onFocus={() => setLayerSettingsSlider('previousOpacity')} />{layerSettingsSlider === 'previousOpacity' && <div className="brush-size-popover" role="dialog"><input aria-label={t('layers.previousOpacity')} type="range" min={0} max={100} value={layerSettings.onionSkin.previousOpacity} onChange={(event) => applyLayerSettings({ ...layerSettings, onionSkin: { ...layerSettings.onionSkin, previousOpacity: Number(event.target.value) } })} onBlur={() => setLayerSettingsSlider(null)} /><strong>{layerSettings.onionSkin.previousOpacity}%</strong></div>}</div></label><label>{t('layers.nextOpacity')}<div className="brush-size-control layer-setting-percent" onPointerDown={() => setLayerSettingsSlider('nextOpacity')}><NumberInput min={0} max={100} suffix="%" value={layerSettings.onionSkin.nextOpacity} onValueChange={(value) => applyLayerSettings({ ...layerSettings, onionSkin: { ...layerSettings.onionSkin, nextOpacity: value } })} onFocus={() => setLayerSettingsSlider('nextOpacity')} />{layerSettingsSlider === 'nextOpacity' && <div className="brush-size-popover" role="dialog"><input aria-label={t('layers.nextOpacity')} type="range" min={0} max={100} value={layerSettings.onionSkin.nextOpacity} onChange={(event) => applyLayerSettings({ ...layerSettings, onionSkin: { ...layerSettings.onionSkin, nextOpacity: Number(event.target.value) } })} onBlur={() => setLayerSettingsSlider(null)} /><strong>{layerSettings.onionSkin.nextOpacity}%</strong></div>}</div></label><label>{t('layers.previousColor')}<ColorValueControl color={layerSettings.onionSkin.previousColor} onChange={(color) => applyLayerSettings({ ...layerSettings, onionSkin: { ...layerSettings.onionSkin, previousColor: color } })} label={t('layers.previousColor')} /></label><label>{t('layers.nextColor')}<ColorValueControl color={layerSettings.onionSkin.nextColor} onChange={(color) => applyLayerSettings({ ...layerSettings, onionSkin: { ...layerSettings.onionSkin, nextColor: color } })} label={t('layers.nextColor')} /></label></div></fieldset>
+          <PreferenceToggle className="layer-timeline-toggle" label={t('layers.hideTimeline')} tooltip={t('layers.hideTimelineDescription')} aria-label={t('layers.hideTimeline')} checked={layerSettings.timelineHidden} onChange={(timelineHidden) => applyLayerSettings({ ...layerSettings, timelineHidden })} />
+          <fieldset className="layer-settings-onion" disabled={layerSettings.timelineHidden} aria-disabled={layerSettings.timelineHidden}><legend>{t('layers.onionSkin')}</legend><PreferenceToggle className="layer-onion-toggle" label={t('layers.onionSkinEnabled')} checked={layerSettings.onionSkin.enabled} onChange={(enabled) => applyLayerSettings({ ...layerSettings, onionSkin: { ...layerSettings.onionSkin, enabled } })} /><div className="layer-settings-pair"><FormField label={t('layers.previousFrames')}><NumberInput min={0} max={8} value={layerSettings.onionSkin.previousFrames} onValueChange={(value) => applyLayerSettings({ ...layerSettings, onionSkin: { ...layerSettings.onionSkin, previousFrames: value } })} /></FormField><FormField label={t('layers.nextFrames')}><NumberInput min={0} max={8} value={layerSettings.onionSkin.nextFrames} onValueChange={(value) => applyLayerSettings({ ...layerSettings, onionSkin: { ...layerSettings.onionSkin, nextFrames: value } })} /></FormField><FormField label={t('layers.previousOpacity')}><div className="brush-size-control layer-setting-percent" onPointerDown={() => setLayerSettingsSlider('previousOpacity')}><NumberInput min={0} max={100} suffix="%" value={layerSettings.onionSkin.previousOpacity} onValueChange={(value) => applyLayerSettings({ ...layerSettings, onionSkin: { ...layerSettings.onionSkin, previousOpacity: value } })} onFocus={() => setLayerSettingsSlider('previousOpacity')} />{layerSettingsSlider === 'previousOpacity' && <div className="brush-size-popover" role="dialog"><input aria-label={t('layers.previousOpacity')} type="range" min={0} max={100} value={layerSettings.onionSkin.previousOpacity} onChange={(event) => applyLayerSettings({ ...layerSettings, onionSkin: { ...layerSettings.onionSkin, previousOpacity: Number(event.target.value) } })} onBlur={() => setLayerSettingsSlider(null)} /><strong>{layerSettings.onionSkin.previousOpacity}%</strong></div>}</div></FormField><FormField label={t('layers.nextOpacity')}><div className="brush-size-control layer-setting-percent" onPointerDown={() => setLayerSettingsSlider('nextOpacity')}><NumberInput min={0} max={100} suffix="%" value={layerSettings.onionSkin.nextOpacity} onValueChange={(value) => applyLayerSettings({ ...layerSettings, onionSkin: { ...layerSettings.onionSkin, nextOpacity: value } })} onFocus={() => setLayerSettingsSlider('nextOpacity')} />{layerSettingsSlider === 'nextOpacity' && <div className="brush-size-popover" role="dialog"><input aria-label={t('layers.nextOpacity')} type="range" min={0} max={100} value={layerSettings.onionSkin.nextOpacity} onChange={(event) => applyLayerSettings({ ...layerSettings, onionSkin: { ...layerSettings.onionSkin, nextOpacity: Number(event.target.value) } })} onBlur={() => setLayerSettingsSlider(null)} /><strong>{layerSettings.onionSkin.nextOpacity}%</strong></div>}</div></FormField><FormField label={t('layers.previousColor')}><ColorValueControl color={layerSettings.onionSkin.previousColor} density="regular" onChange={(color) => applyLayerSettings({ ...layerSettings, onionSkin: { ...layerSettings.onionSkin, previousColor: color } })} label={t('layers.previousColor')} fillWithColor /></FormField><FormField label={t('layers.nextColor')}><ColorValueControl color={layerSettings.onionSkin.nextColor} density="regular" onChange={(color) => applyLayerSettings({ ...layerSettings, onionSkin: { ...layerSettings.onionSkin, nextColor: color } })} label={t('layers.nextColor')} fillWithColor /></FormField></div></fieldset>
         </div>
         <footer><button type="button" className="quiet-button" onClick={resetLayerSettings}><PixelUtilityIcon kind="restore" />{t('common.reset')}</button><span className="modal-footer-spacer" /><button type="button" className="quiet-button" onClick={() => setLayerSettingsOpen(false)}>{t('common.cancel')}</button><button type="submit" className="primary-button">{t('common.save')}</button></footer>
       </ModalShell>
@@ -1970,14 +2014,14 @@ export function LayersPanel({ session, docked = false, sideDocked = false, onDoc
         event.stopPropagation()
         closeProperties()
       }}>
-        <header><div><span className="eyebrow">{form.targets.length > 1 ? 'MULTIPLE PROPERTIES' : form.kind === 'group' ? 'GROUP PROPERTIES' : 'LAYER PROPERTIES'}</span><h2>{t(form.targets.length > 1 ? 'layers.multipleProperties' : form.kind === 'group' ? 'layers.groupProperties' : 'layers.layerProperties')}</h2></div><button type="button" className="icon-button" aria-label={t('common.close')} onClick={closeProperties}><PixelUtilityIcon kind="close" /></button></header>
+        <DialogHeader eyebrow={form.targets.length > 1 ? 'MULTIPLE PROPERTIES' : form.kind === 'group' ? 'GROUP PROPERTIES' : 'LAYER PROPERTIES'} title={t(form.targets.length > 1 ? 'layers.multipleProperties' : form.kind === 'group' ? 'layers.groupProperties' : 'layers.layerProperties')} closeLabel={t('common.close')} onClose={closeProperties} />
         <div className="modal-body">
-          <label>{t('layers.name')}<input autoFocus onFocus={(event) => event.currentTarget.select()} value={form.name} onChange={(event) => previewProperties({ ...form, name: event.target.value }, 'name')} /></label>
-          <label>{t('layers.blendMode')}<ThemedSelect label={t('layers.blendMode')} value={form.blendMode} groups={blendOptionGroups} disabled={singleFormTargetLocked} onChange={(blendMode) => previewProperties({ ...form, blendMode }, 'blendMode')} /></label>
-          <label>{t('layers.opacity')}<div className="layer-opacity-control"><input aria-label={t('layers.opacity')} type="range" min="0" max="100" step="1" disabled={singleFormTargetLocked} value={form.opacity} onChange={(event) => previewProperties({ ...form, opacity: Number(event.target.value) }, 'opacity')} /><NumberInput aria-label={t('layers.opacityValue')} min={0} max={100} disabled={singleFormTargetLocked} value={form.opacity} onValueChange={(opacity) => previewProperties({ ...form, opacity }, 'opacity')} /><span>%</span></div></label>
-          {form.targets.every((target) => target.kind === 'group') && <label className="tool-checkbox layer-cumulative-blend"><PixelCheckbox checked={form.cumulativeBlend} disabled={singleFormTargetLocked} onChange={(event) => previewProperties({ ...form, cumulativeBlend: event.target.checked }, 'cumulativeBlend')} /><span><strong>{t('layers.cumulativeBlend')}</strong><small>{t('layers.cumulativeBlendDescription')}</small></span></label>}
-          <label className="layer-display-color-field">{t('layers.displayColor')}<div className="layer-display-color-options"><button type="button" className={`layer-color-preset no-color ${form.displayColor === null ? 'selected' : ''}`} aria-label={t('layers.noDisplayColor')} aria-pressed={form.displayColor === null} onClick={() => previewProperties({ ...form, displayColor: null }, 'displayColor')}><span /></button>{layerDisplayColorPresets.map((color) => <button key={`${color.r}-${color.g}-${color.b}`} type="button" className={`layer-color-preset ${sameColor(form.displayColor, color) ? 'selected' : ''}`} aria-label={t('layers.displayColorRgb', { r: color.r, g: color.g, b: color.b })} aria-pressed={sameColor(form.displayColor, color)} style={{ '--layer-preset-color': `rgb(${color.r} ${color.g} ${color.b})` } as React.CSSProperties} onClick={() => previewProperties({ ...form, displayColor: { ...color } }, 'displayColor')}><span /></button>)}<ColorValueControl color={form.displayColor ?? defaultLayerDisplayColor} onChange={(displayColor) => previewProperties({ ...form, displayColor }, 'displayColor')} label={t('layers.colorControl')} roleLabel={t('layers.custom')} className="layer-custom-color-trigger" /></div></label>
-          <label>{t('layers.description')}<TextAreaInput rows={4} value={form.description} placeholder={t('layers.descriptionPlaceholder')} onChange={(event) => previewProperties({ ...form, description: event.target.value }, 'description')} /></label>
+          <FormField label={t('layers.name')}><TextInput autoFocus onFocus={(event) => event.currentTarget.select()} value={form.name} onChange={(event) => previewProperties({ ...form, name: event.target.value }, 'name')} /></FormField>
+          <FormField label={t('layers.blendMode')}><ThemedSelect label={t('layers.blendMode')} value={form.blendMode} groups={blendOptionGroups} disabled={singleFormTargetLocked} onChange={(blendMode) => previewProperties({ ...form, blendMode }, 'blendMode')} /></FormField>
+          <RangeField className="layer-opacity-control" disabled={singleFormTargetLocked} label={t('layers.opacity')} min={0} max={100} suffix="%" value={form.opacity} onChange={(opacity) => previewProperties({ ...form, opacity }, 'opacity')} />
+          {form.targets.every((target) => target.kind === 'group') && <CheckboxField className="tool-checkbox layer-cumulative-blend" checked={form.cumulativeBlend} disabled={singleFormTargetLocked} label={<><strong>{t('layers.cumulativeBlend')}</strong><small>{t('layers.cumulativeBlendDescription')}</small></>} onChange={(cumulativeBlend) => previewProperties({ ...form, cumulativeBlend }, 'cumulativeBlend')} />}
+          <FormField className="layer-display-color-field" label={t('layers.displayColor')}><div className="layer-display-color-options"><button type="button" className={`layer-color-preset no-color ${form.displayColor === null ? 'selected' : ''}`} aria-label={t('layers.noDisplayColor')} aria-pressed={form.displayColor === null} onClick={() => previewProperties({ ...form, displayColor: null }, 'displayColor')}><span /></button>{layerDisplayColorPresets.map((color) => <button key={`${color.r}-${color.g}-${color.b}`} type="button" className={`layer-color-preset ${sameColor(form.displayColor, color) ? 'selected' : ''}`} aria-label={t('layers.displayColorRgb', { r: color.r, g: color.g, b: color.b })} aria-pressed={sameColor(form.displayColor, color)} style={{ '--layer-preset-color': `rgb(${color.r} ${color.g} ${color.b})` } as React.CSSProperties} onClick={() => previewProperties({ ...form, displayColor: { ...color } }, 'displayColor')}><span /></button>)}<ColorValueControl color={form.displayColor ?? defaultLayerDisplayColor} density="compact" onChange={(displayColor) => previewProperties({ ...form, displayColor }, 'displayColor')} label={t('layers.colorControl')} roleLabel={t('layers.custom')} className="layer-custom-color-trigger" fillWithColor /></div></FormField>
+          <FormField label={t('layers.description')}><TextAreaInput rows={4} value={form.description} placeholder={t('layers.descriptionPlaceholder')} onChange={(event) => previewProperties({ ...form, description: event.target.value }, 'description')} /></FormField>
         </div>
       </ModalShell>
     </div>}

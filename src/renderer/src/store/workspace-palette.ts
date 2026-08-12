@@ -3,6 +3,7 @@ import { findOrAddPaletteColor } from '@/core/document'
 import { colorEquals } from '@/core/raster'
 import { loadEditorPreferences } from '@/core/file-preferences'
 import { translate, type TranslationKey, type TranslationParams } from '@/core/localization'
+import { comparePaletteColors, paletteGradient, type PaletteSortDirection, type PaletteSortMode } from '@/core/palette'
 import { normalizePaletteColumns, normalizePaletteSlots, paletteOrderFromSlots } from '@/core/palette-layout'
 import { remapSelectionBrushColors } from './workspace-session'
 import type { DocumentSession } from './workspace-types'
@@ -169,5 +170,122 @@ export function reorderPaletteColors(session: DocumentSession, ids: number[], ta
     bytes: (before.length + after.length) * 4,
     undo: () => applyPaletteSlots(session, before, beforeLayout.columns),
     redo: () => applyPaletteSlots(session, after, afterColumns)
+  })
+}
+
+export function sortPaletteColors(session: DocumentSession, mode: PaletteSortMode, direction: PaletteSortDirection): void {
+  const beforeLayout = currentPaletteLayout(session)
+  const before = beforeLayout.slots
+  const entriesById = new Map(session.document.palette.map((entry) => [entry.id, entry]))
+  const indexedTransparentId = session.document.colorMode === 'indexed' && session.document.paletteOrder.includes(0) ? 0 : null
+  const sorted = session.document.paletteOrder
+    .filter((id) => id !== indexedTransparentId && entriesById.has(id))
+    .map((id, index) => ({ id, index, color: entriesById.get(id)!.color }))
+    .sort((left, right) => comparePaletteColors(left.color, right.color, mode, direction) || left.index - right.index)
+    .map((entry) => entry.id)
+  const ordered = indexedTransparentId === null ? sorted : [indexedTransparentId, ...sorted]
+  const after = [...ordered, ...new Array<number | null>(Math.max(0, before.length - ordered.length)).fill(null)]
+  if (after.length === before.length && after.every((id, index) => id === before[index])) return
+  applyPaletteSlots(session, after, beforeLayout.columns)
+  session.history.push({
+    label: tr('palette.history.sorted'),
+    bytes: (before.length + after.length) * 4,
+    undo: () => applyPaletteSlots(session, before, beforeLayout.columns),
+    redo: () => applyPaletteSlots(session, after, beforeLayout.columns)
+  })
+}
+
+const paletteOperationIds = (session: DocumentSession): number[] => {
+  const selected = new Set(session.selectedPaletteIds)
+  const selectedInOrder = session.document.paletteOrder.filter((id) => selected.has(id))
+  return selectedInOrder.length >= 2 ? selectedInOrder : [...session.document.paletteOrder]
+    .filter((id) => session.document.colorMode !== 'indexed' || id !== 0)
+}
+
+const applyPaletteColors = (session: DocumentSession, ids: readonly number[], colors: readonly RgbaColor[], label: TranslationKey): void => {
+  const entriesById = new Map(session.document.palette.map((entry) => [entry.id, entry]))
+  const changes = ids.flatMap((id, index) => {
+    const entry = entriesById.get(id)
+    const color = colors[index]
+    return entry && color && !colorEquals(entry.color, color) ? [{ entry, before: { ...entry.color }, after: { ...color } }] : []
+  })
+  if (changes.length === 0) return
+  const apply = (key: 'before' | 'after'): void => {
+    for (const change of changes) change.entry.color = { ...change[key] }
+  }
+  apply('after')
+  session.history.push({
+    label: tr(label),
+    bytes: changes.length * 40,
+    undo: () => apply('before'),
+    redo: () => apply('after')
+  })
+}
+
+export function reversePaletteColors(session: DocumentSession): void {
+  const ids = paletteOperationIds(session)
+  const colorsById = new Map(session.document.palette.map((entry) => [entry.id, entry.color]))
+  const reversed = ids.map((id) => colorsById.get(id)!).reverse()
+  applyPaletteColors(session, ids, reversed, 'palette.history.reversed')
+}
+
+export function gradientPaletteColors(session: DocumentSession, byHue: boolean): void {
+  const selected = new Set(session.selectedPaletteIds)
+  const ids = session.document.paletteOrder.filter((id) => selected.has(id))
+  if (ids.length < 2) return
+  const entriesById = new Map(session.document.palette.map((entry) => [entry.id, entry]))
+  const start = entriesById.get(ids[0])?.color
+  const end = entriesById.get(ids.at(-1)!)?.color
+  if (!start || !end) return
+  applyPaletteColors(session, ids, paletteGradient(start, end, ids.length, byHue), byHue ? 'palette.history.hueGradient' : 'palette.history.gradient')
+}
+
+export function gradientPaletteSlots(session: DocumentSession, slotIndices: number[], sourceSlots: Array<number | null>, columns: number, byHue: boolean): void {
+  const indices = [...new Set(slotIndices.filter((index) => Number.isSafeInteger(index) && index >= 0))].sort((left, right) => left - right)
+  if (indices.length < 2) return
+  const document = session.document
+  const beforePalette = document.palette.map((entry) => ({ ...entry, color: { ...entry.color } }))
+  const beforeOrder = [...document.paletteOrder]
+  const beforeLayout = currentPaletteLayout(session)
+  const beforeNextColorId = document.nextColorId
+  const afterColumns = normalizePaletteColumns(columns)
+  const afterSlots = normalizePaletteSlots(document.palette.map((entry) => entry.id), document.paletteOrder, sourceSlots, afterColumns)
+  const requiredLength = Math.max(...indices) + 1
+  while (afterSlots.length < requiredLength) afterSlots.push(...new Array<number | null>(afterColumns).fill(null))
+  const entriesById = new Map(document.palette.map((entry) => [entry.id, entry]))
+  const firstColor = entriesById.get(afterSlots[indices[0]] ?? -1)?.color ?? session.primaryColor
+  const lastColor = entriesById.get(afterSlots[indices.at(-1)!] ?? -1)?.color ?? session.secondaryColor
+  const colors = paletteGradient(firstColor, lastColor, indices.length, byHue)
+  for (let offset = 0; offset < indices.length; offset += 1) {
+    const slot = indices[offset]
+    const existing = entriesById.get(afterSlots[slot] ?? -1)
+    if (existing) {
+      existing.color = { ...colors[offset] }
+      continue
+    }
+    const id = document.nextColorId++
+    const entry = { id, name: tr('core.document.colorName', { id }), color: { ...colors[offset] } }
+    document.palette.push(entry)
+    entriesById.set(id, entry)
+    afterSlots[slot] = id
+  }
+  document.paletteSlots = afterSlots
+  document.paletteColumns = afterColumns
+  document.paletteOrder = paletteOrderFromSlots(afterSlots)
+  const afterPalette = document.palette.map((entry) => ({ ...entry, color: { ...entry.color } }))
+  const afterOrder = [...document.paletteOrder]
+  const afterNextColorId = document.nextColorId
+  const apply = (palette: typeof afterPalette, order: number[], slots: Array<number | null>, targetColumns: number, nextColorId: number): void => {
+    document.palette = palette.map((entry) => ({ ...entry, color: { ...entry.color } }))
+    document.paletteOrder = [...order]
+    document.paletteSlots = [...slots]
+    document.paletteColumns = targetColumns
+    document.nextColorId = nextColorId
+  }
+  session.history.push({
+    label: tr(byHue ? 'palette.history.hueGradient' : 'palette.history.gradient'),
+    bytes: (beforePalette.length + afterPalette.length) * 40 + (beforeLayout.slots.length + afterSlots.length) * 4,
+    undo: () => apply(beforePalette, beforeOrder, beforeLayout.slots, beforeLayout.columns, beforeNextColorId),
+    redo: () => apply(afterPalette, afterOrder, afterSlots, afterColumns, afterNextColorId)
   })
 }

@@ -1,6 +1,6 @@
 import type { GradientDither, RasterLayer, RgbaColor, SelectionMask, SpriteDocument } from '@shared/types'
 import { beginPixelEdit, preparePixelEdit, recordPixel, type PixelEdit } from './history'
-import { ensureLayerCoversCanvas, findOrAddPaletteColor, getLayerStorageOrigin, isLayerEffectivelyLocked, layerIndexAt, markLayerContentChanged, readLayerColor, readLayerPacked, writeLayerPacked } from './document'
+import { expandLayerToRect, findOrAddPaletteColor, getLayerStorageOrigin, isLayerEffectivelyLocked, layerIndexAt, markLayerContentChanged, readLayerColor, readLayerPacked, writeLayerPacked } from './document'
 import { blendOver, packColor } from './raster'
 import { magicWandSelection, selectionContains } from './selection'
 
@@ -228,12 +228,13 @@ export const applyGradient = (
   dither: GradientDither = 'none',
   paintRegion?: SelectionMask | null
 ): PixelEdit | null => {
-  if (paintRegion === null || isLayerEffectivelyLocked(document, layer) || !ensureLayerCoversCanvas(document, layer)) return null
+  if (paintRegion === null || isLayerEffectivelyLocked(document, layer)) return null
   const left = Math.ceil(Math.max(0, selection?.x ?? 0, paintRegion?.x ?? 0))
   const top = Math.ceil(Math.max(0, selection?.y ?? 0, paintRegion?.y ?? 0))
   const right = Math.min(document.width, selection ? selection.x + selection.width : document.width, paintRegion ? paintRegion.x + paintRegion.width : document.width)
   const bottom = Math.min(document.height, selection ? selection.y + selection.height : document.height, paintRegion ? paintRegion.y + paintRegion.height : document.height)
   if (right <= left || bottom <= top) return null
+  if (!expandLayerToRect(layer, left, top, right, bottom)) return null
   const sampleColor = createGradientColorSampler(startColor, endColor, start, end, dither)
   const edit = beginPixelEdit(layer.id)
   if ((right - left) * (bottom - top) >= DENSE_GRADIENT_MIN_PIXELS) {

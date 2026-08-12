@@ -18,6 +18,7 @@ import { ensureAnimationDocument, refreshActiveAnimationFrame } from '@/core/ani
 import { normalizeProjectDisplaySettings, normalizeProjectStatistics, normalizeTimelapseSettings } from '@/core/project-metadata'
 import { findLayerMask, getActiveLayer } from '@/core/document'
 import { cloneBrushDynamicsSettings, normalizeBrushDynamicsSettings } from '@/core/pressure'
+import { applyProjectLayerPanelState, loadLocalLayerPanelState, normalizeProjectLayerPanelState } from '@/core/layer-panel-state'
 
 const defaultColor: RgbaColor = { r: 41, g: 121, b: 255, a: 255 }
 const defaultSecondary: RgbaColor = { r: 241, g: 244, b: 248, a: 255 }
@@ -153,11 +154,16 @@ export function persistToolSettings(session: DocumentSession): void {
 }
 
 export const sessionFromDocument = (document: SpriteDocument): DocumentSession => {
+  if (!document.layers.some((layer) => layer.id === document.activeLayerId)) {
+    const fallbackLayerId = document.layers.at(-1)?.id
+    if (fallbackLayerId) document.activeLayerId = fallbackLayerId
+  }
   ensureAnimationDocument(document)
   refreshActiveAnimationFrame(document)
   document.displaySettings = normalizeProjectDisplaySettings(document.displaySettings)
   document.statistics = normalizeProjectStatistics(document.statistics)
   document.timelapse = normalizeTimelapseSettings(document.timelapse, document.timelapse?.snapshots ?? [])
+  const layerPanelState = loadLocalLayerPanelState(document) ?? normalizeProjectLayerPanelState(document, document.layerPanelState)
   const settings = loadToolSettings()
   const fallbackProfile = normalizePersistedBrushProfile(settings, defaultToolSettings)
   const persistedProfiles = settings.brushProfiles ?? Object.fromEntries((['pencil', 'eraser', 'fill'] as BrushTool[]).map((tool) => [tool, fallbackProfile])) as Record<BrushTool, PersistedBrushProfile>
@@ -257,6 +263,7 @@ export const sessionFromDocument = (document: SpriteDocument): DocumentSession =
   } as DocumentSession
   applyBrushProfile(session, brushProfiles.pencil)
   session.brushProfiles = brushProfiles
+  applyProjectLayerPanelState(session, layerPanelState)
   return session
 }
 
@@ -273,6 +280,13 @@ export function touch(session: DocumentSession, dirty = true, invalidation: Cont
       : { kind: 'full', fromRevision, revision: session.contentRevision }
     session.recoverySuppressed = false
   }
+}
+
+export function touchMetadata(session: DocumentSession): void {
+  session.document.dirty = true
+  session.document.updatedAt = new Date().toISOString()
+  session.layersPanelRevision += 1
+  session.recoverySuppressed = false
 }
 
 export const cloneSelectionMask = (selection: SelectionMask | null): SelectionMask | null =>

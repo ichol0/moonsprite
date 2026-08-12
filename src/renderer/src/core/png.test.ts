@@ -12,6 +12,10 @@ describe('PNG format', () => {
     expect(decoded.height).toBe(1)
     expect(readLayerColor(decoded, getActiveLayer(decoded), 0)).toEqual({ r: 41, g: 121, b: 255, a: 255 })
     expect(readLayerColor(decoded, getActiveLayer(decoded), 1).a).toBe(0)
+    expect(decoded.palette.map((entry) => entry.color)).toEqual([
+      { r: 0, g: 0, b: 0, a: 0 },
+      { r: 41, g: 121, b: 255, a: 255 }
+    ])
   })
 
   it('falls back to RGBA when the flattened image exceeds 256 colors', () => {

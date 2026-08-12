@@ -19,6 +19,8 @@ declare global {
       activeView(): ViewState | null
       resetScenario(view: ViewState): void
       prepareTool(tool: ToolId, fillKind?: FillKind | null, shapeKind?: ShapeKind | null): void
+      setTimelapseRecording(enabled: boolean): void
+      timelapseSnapshotCount(): number
       undoRedo(count: number): Promise<number>
       playAnimation(): Promise<number>
     }

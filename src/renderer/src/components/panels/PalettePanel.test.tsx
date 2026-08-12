@@ -26,8 +26,11 @@ describe('PalettePanel editing lock', () => {
 
     const menu = document.querySelector('.palette-actions-popover')
     expect(menu).toHaveClass('context-menu')
-    expect(menu?.querySelector('.menu-submenu-trigger')).not.toBeInTheDocument()
-    expect(menu?.querySelectorAll('[role="menuitemradio"]')).toHaveLength(5)
+    expect(menu?.querySelector('.menu-submenu-trigger')).toHaveTextContent('排序与渐变')
+    expect(menu?.querySelectorAll('[role="menuitemradio"]')).toHaveLength(7)
+    expect(menu?.querySelectorAll('.palette-sort-popover [role="menuitem"]')).toHaveLength(11)
+    expect(menu?.querySelectorAll('.palette-sort-popover [role="menuitem"]:disabled')).toHaveLength(2)
+    expect(menu).toHaveTextContent('反向颜色渐变色调渐变色调排序饱和度排序明度排序亮度排序Red 排序Green 排序Blue 排序Alpha 排序升序降序')
     expect(menu).toHaveTextContent('较小尺寸小尺寸中尺寸大尺寸较大尺寸')
   })
 
@@ -45,6 +48,31 @@ describe('PalettePanel editing lock', () => {
 
     expect(container.querySelectorAll('.palette-swatch-wrap')).toHaveLength(swatchCount)
     expect(container.querySelector('.palette-inline-editor')).not.toBeInTheDocument()
+  })
+
+  it('keeps an unlocked palette color selected while editing it from the color panel', () => {
+    localStorage.setItem('moonsprite.palette-edit-locked', 'false')
+    const project = createDocument('palette color editing focus', 2, 2, 'rgba')
+    useWorkspace.getState().addSession(project)
+    const session = useWorkspace.getState().sessions[0]
+    const entry = project.palette.find((candidate) => candidate.id === 1)!
+    const { container } = render(<PalettePanel session={session} docked />)
+    const swatch = container.querySelector<HTMLButtonElement>('[data-palette-id="1"]')!
+    const colorPanel = document.createElement('section')
+    colorPanel.className = 'color-panel'
+    const colorControl = document.createElement('button')
+    colorPanel.append(colorControl)
+    document.body.append(colorPanel)
+
+    fireEvent.pointerDown(swatch, { button: 0, pointerId: 31 })
+    fireEvent.pointerUp(swatch, { button: 0, pointerId: 31 })
+    fireEvent.blur(swatch, { relatedTarget: colorControl })
+    fireEvent.pointerDown(colorControl)
+    expect(session.paletteSelectionId).toBe(1)
+
+    useWorkspace.getState().setPrimaryColor({ r: 12, g: 34, b: 56, a: 255 })
+    expect(entry.color).toEqual({ r: 12, g: 34, b: 56, a: 255 })
+    colorPanel.remove()
   })
 
   it('renders an adaptive clickable row including empty destinations', () => {
@@ -83,6 +111,44 @@ describe('PalettePanel editing lock', () => {
 
     fireEvent.blur(updatedColors[1], { relatedTarget: document.body })
     expect(session.selectedPaletteIds).toEqual([])
+  })
+
+  it('keeps a palette box selection while using panel buttons and clears it after clicking outside', () => {
+    const project = createDocument('palette retained selection', 2, 2, 'rgba')
+    useWorkspace.getState().addSession(project)
+    useWorkspace.getState().selectPaletteColors([1, 2], 2)
+    const session = useWorkspace.getState().sessions[0]
+    const { container } = render(<PalettePanel session={session} docked />)
+    const swatch = container.querySelector<HTMLButtonElement>('[data-palette-id="2"]')!
+    const actions = container.querySelector<HTMLButtonElement>('.palette-actions-control > button')!
+
+    fireEvent.blur(swatch, { relatedTarget: actions })
+    fireEvent.click(actions)
+    expect(session.selectedPaletteIds).toEqual([1, 2])
+
+    fireEvent.pointerDown(document.body)
+    expect(session.selectedPaletteIds).toEqual([])
+  })
+
+  it('fills empty slots between selected endpoint colors when applying a gradient from the menu', () => {
+    const project = createDocument('palette endpoint gradient', 2, 2, 'rgba')
+    project.palette.find((entry) => entry.id === 1)!.color = { r: 0, g: 120, b: 255, a: 255 }
+    project.palette.find((entry) => entry.id === 2)!.color = { r: 255, g: 255, b: 255, a: 255 }
+    project.paletteColumns = 8
+    project.paletteSlots = [1, null, null, null, 2, null, null, null]
+    project.paletteOrder = [1, 2]
+    useWorkspace.getState().addSession(project)
+    useWorkspace.getState().selectPaletteColors([1, 2], 2)
+    const session = useWorkspace.getState().sessions[0]
+    const { container } = render(<PalettePanel session={session} docked />)
+
+    fireEvent.click(container.querySelector<HTMLButtonElement>('.palette-actions-control > button')!)
+    const gradientButton = document.querySelector<HTMLElement>('[data-sort-mode="gradient"]')?.closest<HTMLButtonElement>('button')
+    expect(gradientButton).not.toBeDisabled()
+    fireEvent.click(gradientButton!)
+
+    expect(project.paletteSlots?.slice(0, 5).every((id) => id !== null)).toBe(true)
+    expect(project.paletteOrder).toHaveLength(5)
   })
 
   it('starts moving only from the selected selection outline', () => {

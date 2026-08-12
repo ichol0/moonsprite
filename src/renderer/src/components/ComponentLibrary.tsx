@@ -4,14 +4,22 @@ import type { RgbaColor } from '@shared/types'
 import { ColorPicker, type ColorPickerConfig } from './ColorPicker'
 import { ColorValueControl } from './ColorValueControl'
 import { DeleteIconButton } from './DeleteIconButton'
+import { DialogHeader } from './DialogHeader'
+import { FormField } from './FormField'
 import { ModalShell } from './ModalShell'
 import { NumberInput } from './NumberInput'
+import { TextInput } from './TextInput'
 import { TextAreaInput } from './TextAreaInput'
 import { ThemedSelect, type ThemedSelectGroup } from './ThemedSelect'
 import { Tooltip } from './Tooltip'
 import { useI18n } from './I18nProvider'
 import { PixelCloseIcon as X, PixelDownIcon as ChevronDown, PixelRightIcon as ChevronRight, PixelUtilityIcon, type PixelUtilityIconKind } from './PixelUtilityIcon'
-import { PixelCheckbox } from './PixelCheckbox'
+import { CheckboxField } from './CheckboxField'
+import { PreferenceToggle } from './PreferenceToggle'
+import { RangeField } from './RangeField'
+import { SegmentedControl } from './SegmentedControl'
+import { SettingsSectionHeader } from './SettingsSectionHeader'
+import { SettingsNavigation } from './SettingsNavigation'
 import { LivePreviewToggle } from './LivePreviewToggle'
 import { BrushDynamicsSettingsPanel } from './app/EditorToolOptions'
 import { FILL_KIND_ICONS, SELECTION_KIND_ICONS, fillKindDefinitions, normalEditorToolIconFor, selectionKindDefinitions, shapeKindDefinitions, toolDefinitions } from './app/editor-tools'
@@ -106,24 +114,29 @@ export const COMPONENT_LIBRARY_ENTRIES: ComponentLibraryEntry[] = [
   { id: 'pointer-icons', name: '指针图标', category: 'editor', description: '画布、选区、缩放、旋转和调整操作使用的像素指针。', source: 'platform/cursor-theme.ts', tags: ['图标', '工具'] },
   { id: 'delete-icon-button', name: '删除图标按钮', category: 'controls', description: '用于删除预设或列表项目的统一危险图标按钮，提供紧凑、常规和禁用状态。', source: 'DeleteIconButton', tags: ['删除', '危险', '图标'] },
   { id: 'context-menu', name: '上下文菜单', category: 'controls', description: '通过右键或更多操作打开的紧凑菜单，支持图标、禁用和危险操作状态。', source: '.context-menu / .context-menu-item', tags: ['右键', '菜单', '操作'] },
-  { id: 'segmented', name: '分段选择', category: 'controls', description: '用于工具模式、视图模式和互斥选项。', source: '.segmented-control', tags: ['模式', '选中'] },
+  { id: 'segmented', name: '分段选择', category: 'controls', description: '用于工具模式、视图模式和互斥选项。', source: 'SegmentedControl', tags: ['模式', '选中'] },
   { id: 'number-input', name: '数值输入', category: 'forms', description: '统一的数字输入、步进按钮和边界限制。', source: 'NumberInput', tags: ['数字', '步进'] },
+  { id: 'text-input', name: '文本输入', category: 'forms', description: '用于名称、搜索和短文本内容的统一单行输入。', source: 'TextInput', tags: ['文本', '输入'] },
   { id: 'text-area-input', name: '多行文本输入', category: 'forms', description: '用于描述和备注的固定尺寸多行输入，不允许用户拖动改变大小。', source: 'TextAreaInput', tags: ['文本', '描述', '输入'] },
   { id: 'themed-select', name: '主题下拉', category: 'forms', description: '带分组、选中标记和键盘导航的下拉菜单。', source: 'ThemedSelect', tags: ['下拉', '分组'] },
-  { id: 'range', name: '滑块', category: 'forms', description: '适用于尺寸、不透明度、强度等连续数值。', source: '.brush-size-popover input[type=range]', tags: ['数值', '实时'] },
-  { id: 'checkbox', name: '复选框', category: 'forms', description: '用于可以同时启用的独立选项。', source: 'PixelCheckbox', tags: ['设置', '复选'] },
-  { id: 'switch', name: '开关', category: 'forms', description: '用于明确的开启与关闭状态。', source: '.preference-toggle / .outline-preview-toggle', tags: ['设置', '开关'] },
+  { id: 'form-field', name: '表单字段', category: 'forms', description: '统一标签、控件、说明和悬浮描述的字段布局。', source: 'FormField', tags: ['设置', '输入', '描述'] },
+  { id: 'settings-navigation', name: '设置导航', category: 'forms', description: '首选项、快捷键等设置窗口共用的分区导航。', source: 'SettingsNavigation', tags: ['设置', '布局', '选中'] },
+  { id: 'settings-section-header', name: '设置分组标题', category: 'forms', description: '统一设置分组标题和右侧操作按钮的对齐与间距。', source: 'SettingsSectionHeader', tags: ['设置', '操作', '布局'] },
+  { id: 'range', name: '滑块', category: 'forms', description: '适用于尺寸、不透明度、强度等连续数值。', source: 'RangeField', tags: ['数值', '实时'] },
+  { id: 'checkbox', name: '复选框', category: 'forms', description: '用于可以同时启用的独立选项。', source: 'CheckboxField / PixelCheckbox', tags: ['设置', '复选'] },
+  { id: 'switch', name: '开关', category: 'forms', description: '用于明确的开启与关闭状态。', source: 'PreferenceToggle', tags: ['设置', '开关'] },
   { id: 'live-preview-toggle', name: '实时预览开关', category: 'forms', description: '调整类弹窗用于开启或关闭实时预览的统一开关。', source: 'LivePreviewToggle', tags: ['实时', '开关', '弹窗'] },
   { id: 'scrollbar', name: '滚动区域', category: 'forms', description: '下拉菜单和长列表使用的统一滚动条。', source: '.component-scrollbar', tags: ['滚动', '列表'] },
-  { id: 'panel-header', name: '栏目标题', category: 'panels', description: '停靠栏目标题、拖动入口和右侧操作。', source: '.panel-header', tags: ['栏目', '停靠'] },
+  { id: 'panel-header', name: '栏目标题', category: 'panels', description: '停靠栏目标题、拖动入口和右侧操作。', source: '.panel > header', tags: ['栏目', '停靠'] },
   { id: 'layer-row', name: '图层行', category: 'panels', description: '可见性、锁定、组图标、名称、混合模式和拖动状态。', source: 'LayersPanel', tags: ['图层', '拖动'] },
   { id: 'swatches', name: '颜色格', category: 'panels', description: '调色板中的居中描边、选中外框和多选状态。', source: '.swatch-grid / .swatch', tags: ['颜色', '多选'] },
   { id: 'modal-shell', name: '弹窗框架', category: 'dialogs', description: '统一标题、内容、底部操作、拖动、八向缩放和尺寸位置记忆。', source: 'ModalShell / .modal-backdrop', tags: ['弹窗', '布局', '缩放'] },
+  { id: 'dialog-header', name: '弹窗标题栏', category: 'dialogs', description: '统一弹窗眉题、标题、关闭操作和可选标题栏动作。', source: 'DialogHeader', tags: ['弹窗', '布局', '操作'] },
   { id: 'save-progress', name: '文件操作进度', category: 'dialogs', description: '用于导出和保存过程的进度、完成确认与顶层反馈。', source: '.save-progress-modal', tags: ['弹窗', '状态', '反馈'] },
   { id: 'status', name: '状态提示', category: 'dialogs', description: '用于操作反馈、模式提示和不可用状态。', source: '.statusbar / .advanced-mode-notice', tags: ['提示', '反馈'] },
   { id: 'tooltip', name: '悬浮提示', category: 'dialogs', description: '用于描述等较长内容的自定义悬浮提示，自动避开视口边缘。', source: 'Tooltip', tags: ['提示', '悬浮', '描述'] },
   { id: 'tool-options', name: '工具属性栏', category: 'editor', description: '工具名称、参数、模式和撤销重做操作。', source: '.tool-options', tags: ['工具', '属性'] },
-  { id: 'pressure-options', name: '笔刷动态工具属性', category: 'editor', description: '铅笔与橡皮的压力/速度映射、渐变效果、实时传感器条和禁用状态。', source: 'BrushDynamicsSettingsPanel / .pressure-popover', tags: ['工具', '设置', '传感器'] },
+  { id: 'pressure-options', name: '压感工具属性', category: 'editor', description: '铅笔与橡皮的压力/速度映射、渐变效果、实时传感器条和禁用状态。', source: 'BrushDynamicsSettingsPanel / .pressure-popover', tags: ['工具', '设置', '传感器'] },
   { id: 'color-picker', name: '颜色选择器', category: 'editor', description: '色盘、色相、透明度、前景色和背景色。', source: 'ColorPicker', tags: ['颜色', '实时'] },
   { id: 'color-value', name: '颜色值按钮', category: 'editor', description: '颜色预览、HEX 文本和 RGB/HSV/HSL/Gray 多模式编辑。', source: 'ColorValueControl', tags: ['颜色', 'HEX', '通道'] },
   { id: 'panel-dock', name: '停靠栏目', category: 'editor', description: '右侧、左侧和底部停靠区的容器行为。', source: 'InspectorPanels', tags: ['布局', '停靠'] }
@@ -151,7 +164,7 @@ function ButtonsPreview({ locale }: { locale: AppLocale }) {
 }
 
 function IconButtonPreview({ locale }: { locale: AppLocale }) {
-  return <div className="component-preview-row"><button className="icon-button" type="button" aria-label={componentText(locale, 'componentLibrary.preview.copy')}><PixelUtilityIcon kind="copy" /></button><button className="icon-button active" type="button" aria-label={componentText(locale, 'componentLibrary.preview.settings')}><PixelUtilityIcon kind="properties" /></button><button className="icon-button" type="button" aria-label={componentText(locale, 'componentLibrary.preview.delete')}><PixelUtilityIcon kind="delete" /></button></div>
+  return <div className="component-preview-row"><button className="icon-button" type="button" aria-label={componentText(locale, 'componentLibrary.preview.copy')}><PixelUtilityIcon kind="copy" /></button><button className="icon-button active" type="button" aria-label={componentText(locale, 'componentLibrary.preview.settings')}><PixelUtilityIcon kind="properties" /></button><button className="icon-button" type="button" aria-label={componentText(locale, 'componentLibrary.preview.delete')}><PixelUtilityIcon kind="delete" /></button><button className="icon-button" type="button" aria-label={componentText(locale, 'componentLibrary.preview.disabled')} disabled><PixelUtilityIcon kind="lock" /></button></div>
 }
 
 function DeleteIconButtonPreview({ locale }: { locale: AppLocale }) {
@@ -173,7 +186,7 @@ function ContextMenuPreview({ locale }: { locale: AppLocale }) {
 function SegmentedPreview({ locale }: { locale: AppLocale }) {
   const items = [componentText(locale, 'componentLibrary.preview.brush'), componentText(locale, 'componentLibrary.preview.eraser'), componentText(locale, 'componentLibrary.preview.move')]
   const [selected, setSelected] = useState(items[0])
-  return <div className="segmented-control component-segmented-preview" role="group" aria-label={componentText(locale, 'componentLibrary.preview.mode')}>{items.map((item) => <button key={item} type="button" className={selected === item ? 'selected' : ''} onClick={() => setSelected(item)}>{item}</button>)}</div>
+  return <SegmentedControl className="component-segmented-preview" label={componentText(locale, 'componentLibrary.preview.mode')} options={items.map((item, index) => ({ label: item, value: item, disabled: index === 2 }))} value={selected} onChange={setSelected} />
 }
 
 function NumberInputPreview({ locale }: { locale: AppLocale }) {
@@ -182,37 +195,53 @@ function NumberInputPreview({ locale }: { locale: AppLocale }) {
   const [sliderValue, setSliderValue] = useState(24)
   const [sliderOpen, setSliderOpen] = useState(false)
   return <div className="component-number-input-preview">
-    <label className="component-number-input-row"><span>{componentText(locale, 'componentLibrary.preview.size')}</span><NumberInput value={value} min={1} max={128} suffix="px" onValueChange={setValue} /></label>
+    <FormField className="component-number-input-row" layout="inline" label={componentText(locale, 'componentLibrary.preview.size')}><NumberInput value={value} min={1} max={128} suffix="px" onValueChange={setValue} /></FormField>
+    <FormField className="component-number-input-row" layout="inline" label={locale === 'zh-CN' ? '紧凑' : 'Compact'}><NumberInput density="compact" value={value} min={1} max={128} suffix="px" onValueChange={setValue} /></FormField>
     <div className="component-number-input-row component-number-input-no-label"><NumberInput aria-label={componentText(locale, 'componentLibrary.preview.untitledNumber')} value={untitledValue} min={1} max={128} suffix="px" onValueChange={setUntitledValue} /></div>
-    <label className="component-number-input-row"><span>{componentText(locale, 'componentLibrary.preview.hintNumber')}</span><NumberInput className="component-number-input-hint-input" aria-label={componentText(locale, 'componentLibrary.preview.hintNumber')} value="" min={1} max={128} placeholder={componentText(locale, 'componentLibrary.preview.enterNumber')} onValueChange={() => undefined} /></label>
-    <label className="component-number-input-row"><span>{componentText(locale, 'componentLibrary.preview.size')}</span><div className="brush-size-control component-number-input-slider" onPointerDown={() => setSliderOpen(true)}><NumberInput aria-label={componentText(locale, 'componentLibrary.preview.sliderNumber')} value={sliderValue} min={1} max={128} suffix="px" onValueChange={setSliderValue} onFocus={() => setSliderOpen(true)} />{sliderOpen && <div className="brush-size-popover" role="dialog" aria-label={componentText(locale, 'componentLibrary.preview.adjustNumber')}><input aria-label={componentText(locale, 'componentLibrary.preview.valueSlider')} type="range" min="1" max="128" value={sliderValue} onChange={(event) => setSliderValue(Number(event.target.value))} /><strong>{sliderValue}px</strong></div>}</div></label>
+    <FormField className="component-number-input-row" layout="inline" label={componentText(locale, 'componentLibrary.preview.hintNumber')}><NumberInput className="component-number-input-hint-input" aria-label={componentText(locale, 'componentLibrary.preview.hintNumber')} value="" min={1} max={128} placeholder={componentText(locale, 'componentLibrary.preview.enterNumber')} onValueChange={() => undefined} /></FormField>
+    <FormField className="component-number-input-row" layout="inline" label={componentText(locale, 'componentLibrary.preview.size')}><div className="brush-size-control component-number-input-slider" onPointerDown={() => setSliderOpen(true)}><NumberInput aria-label={componentText(locale, 'componentLibrary.preview.sliderNumber')} value={sliderValue} min={1} max={128} suffix="px" onValueChange={setSliderValue} onFocus={() => setSliderOpen(true)} />{sliderOpen && <div className="brush-size-popover" role="dialog" aria-label={componentText(locale, 'componentLibrary.preview.adjustNumber')}><input aria-label={componentText(locale, 'componentLibrary.preview.valueSlider')} type="range" min="1" max="128" value={sliderValue} onChange={(event) => setSliderValue(Number(event.target.value))} /><strong>{sliderValue}px</strong></div>}</div></FormField>
+    <FormField className="component-number-input-row" layout="inline" label={componentText(locale, 'componentLibrary.preview.disabled')}><NumberInput disabled value={32} min={1} max={128} suffix="px" onValueChange={() => undefined} /></FormField>
   </div>
 }
 
 function TextAreaInputPreview({ locale }: { locale: AppLocale }) {
   const [value, setValue] = useState(() => componentText(locale, 'componentLibrary.preview.descriptionValue'))
-  return <div className="component-preview-form"><label className="component-preview-label">{componentText(locale, 'componentLibrary.preview.description')}</label><TextAreaInput aria-label={componentText(locale, 'componentLibrary.preview.descriptionInput')} rows={4} value={value} placeholder={componentText(locale, 'componentLibrary.preview.enterDescription')} onChange={(event) => setValue(event.target.value)} /></div>
+  return <div className="component-preview-form"><FormField label={componentText(locale, 'componentLibrary.preview.description')}><TextAreaInput aria-label={componentText(locale, 'componentLibrary.preview.descriptionInput')} rows={4} value={value} placeholder={componentText(locale, 'componentLibrary.preview.enterDescription')} onChange={(event) => setValue(event.target.value)} /></FormField></div>
+}
+
+function TextInputPreview({ locale }: { locale: AppLocale }) {
+  const [value, setValue] = useState('MoonSprite')
+  return <div className="component-preview-form"><FormField label={locale === 'zh-CN' ? '名称' : 'Name'}><TextInput value={value} onChange={(event) => setValue(event.target.value)} /></FormField><FormField label={locale === 'zh-CN' ? '紧凑' : 'Compact'}><TextInput density="compact" value={value} onChange={(event) => setValue(event.target.value)} /></FormField><FormField label={componentText(locale, 'componentLibrary.preview.disabled')}><TextInput disabled value={value} readOnly /></FormField></div>
 }
 
 function SelectPreview({ locale }: { locale: AppLocale }) {
   const [value, setValue] = useState('normal')
   const groups: Array<ThemedSelectGroup<string>> = selectGroups.map((group) => ({ label: componentText(locale, group.labelKey), options: group.options.map((option) => ({ value: option.value, label: componentText(locale, option.labelKey) })) }))
-  return <div className="component-preview-form"><label className="component-preview-label">{componentText(locale, 'componentLibrary.preview.blendMode')}</label><ThemedSelect value={value} groups={groups} label={componentText(locale, 'componentLibrary.preview.blendMode')} onChange={setValue} /></div>
+  return <div className="component-preview-form"><FormField label={componentText(locale, 'componentLibrary.preview.blendMode')}><ThemedSelect value={value} groups={groups} label={componentText(locale, 'componentLibrary.preview.blendMode')} onChange={setValue} /></FormField><FormField label={locale === 'zh-CN' ? '紧凑' : 'Compact'}><ThemedSelect density="compact" value={value} groups={groups} label={componentText(locale, 'componentLibrary.preview.blendMode')} onChange={setValue} /></FormField><FormField label={componentText(locale, 'componentLibrary.preview.disabled')}><ThemedSelect disabled value={value} groups={groups} label={componentText(locale, 'componentLibrary.preview.blendMode')} onChange={setValue} /></FormField></div>
+}
+
+function FormFieldPreview({ locale }: { locale: AppLocale }) {
+  const [value, setValue] = useState(16)
+  return <div className="component-preview-form"><FormField label={componentText(locale, 'componentLibrary.preview.size')} hint={componentText(locale, 'componentLibrary.preview.hintNumber')}><NumberInput value={value} min={1} max={128} suffix="px" onValueChange={setValue} /></FormField></div>
+}
+
+function SettingsSectionHeaderPreview({ locale }: { locale: AppLocale }) {
+  return <SettingsSectionHeader title={locale === 'zh-CN' ? '颜色设置' : 'Color settings'} actions={<><button type="button" className="quiet-button"><PixelUtilityIcon kind="restore" />{locale === 'zh-CN' ? '恢复' : 'Restore'}</button><button type="button" className="quiet-button"><PixelUtilityIcon kind="plus" />{componentText(locale, 'componentLibrary.preview.new')}</button></>} />
 }
 
 function RangePreview({ locale }: { locale: AppLocale }) {
   const [value, setValue] = useState(64)
-  return <div className="component-preview-stack"><label className="component-preview-label">{componentText(locale, 'componentLibrary.preview.brushSize')} <strong>{value}px</strong></label><input className="component-library-range" type="range" min="1" max="128" value={value} onChange={(event) => setValue(Number(event.target.value))} /></div>
+  return <div className="component-preview-stack"><RangeField label={componentText(locale, 'componentLibrary.preview.brushSize')} min={1} max={128} suffix="px" value={value} onChange={setValue} /><RangeField density="compact" label={componentText(locale, 'componentLibrary.preview.brushSize')} min={1} max={128} suffix="px" value={value} onChange={setValue} /><RangeField disabled label={componentText(locale, 'componentLibrary.preview.disabled')} min={1} max={128} suffix="px" value={value} onChange={setValue} /></div>
 }
 
 function CheckboxPreview({ locale }: { locale: AppLocale }) {
   const [checked, setChecked] = useState(true)
-  return <label className="tool-checkbox component-preview-checkbox"><PixelCheckbox checked={checked} onChange={(event) => setChecked(event.target.checked)} />{componentText(locale, 'componentLibrary.preview.perfectPixels')}</label>
+  return <div className="component-preview-stack"><CheckboxField className="tool-checkbox component-preview-checkbox" checked={checked} label={componentText(locale, 'componentLibrary.preview.perfectPixels')} onChange={setChecked} /><CheckboxField className="tool-checkbox component-preview-checkbox" checked={false} disabled label={componentText(locale, 'componentLibrary.preview.disabled')} onChange={() => undefined} /></div>
 }
 
 function SwitchPreview({ locale }: { locale: AppLocale }) {
   const [checked, setChecked] = useState(true)
-  return <label className="preference-toggle outline-preview-toggle component-library-toggle"><span>{componentText(locale, 'componentLibrary.preview.autoSelect')}</span><input type="checkbox" checked={checked} onChange={(event) => setChecked(event.target.checked)} /><span className="toggle-track" aria-hidden="true"><i /></span></label>
+  return <div className="component-preview-stack modal-body component-toggle-context-preview"><PreferenceToggle className="component-library-toggle" label={componentText(locale, 'componentLibrary.preview.autoSelect')} tooltip={componentText(locale, 'componentLibrary.preview.autoSelect')} checked={checked} onChange={setChecked} /><PreferenceToggle className="component-library-toggle" label={componentText(locale, 'componentLibrary.preview.disabled')} checked={false} disabled onChange={() => undefined} /></div>
 }
 
 function LivePreviewTogglePreview() {
@@ -225,7 +254,7 @@ function ScrollbarPreview({ locale }: { locale: AppLocale }) {
 }
 
 function PanelHeaderPreview({ locale }: { locale: AppLocale }) {
-  return <div className="component-panel-preview"><header className="component-panel-header"><div><span className="eyebrow">PANEL</span><strong>{componentText(locale, 'componentLibrary.preview.panel')}</strong></div><div className="component-preview-row compact"><button className="icon-button" type="button" aria-label={componentText(locale, 'componentLibrary.preview.show')}><PixelUtilityIcon kind="eye" /></button><button className="icon-button" type="button" aria-label={componentText(locale, 'componentLibrary.preview.settings')}><PixelUtilityIcon kind="properties" /></button></div></header><div className="component-panel-content"><Layers2 size={18} /><span>{componentText(locale, 'componentLibrary.preview.draggablePanel')}</span></div></div>
+  return <div className="panel component-panel-preview"><header><strong>{componentText(locale, 'componentLibrary.preview.panel')}</strong><div className="panel-actions"><button className="icon-button" type="button" aria-label={componentText(locale, 'componentLibrary.preview.show')}><PixelUtilityIcon kind="eye" /></button><button className="icon-button" type="button" aria-label={componentText(locale, 'componentLibrary.preview.settings')}><PixelUtilityIcon kind="properties" /></button></div></header><div className="component-panel-content"><Layers2 size={18} /><span>{componentText(locale, 'componentLibrary.preview.draggablePanel')}</span></div></div>
 }
 
 function PixelUtilityIconPreview() {
@@ -271,7 +300,12 @@ function SwatchesPreview({ locale }: { locale: AppLocale }) {
 }
 
 function ModalShellPreview({ locale }: { locale: AppLocale }) {
-  return <div className="component-modal-preview"><div className="component-modal-window"><header><div><span className="eyebrow">PREVIEW</span><strong>{componentText(locale, 'componentLibrary.preview.title')}</strong></div><button className="icon-button" type="button" aria-label={componentText(locale, 'componentLibrary.preview.close')}><X size={15} /></button></header><div className="component-modal-body"><PixelUtilityIcon kind="info" /><span>{componentText(locale, 'componentLibrary.preview.modalContent')}</span></div><footer><button className="quiet-button" type="button">{componentText(locale, 'componentLibrary.preview.cancel')}</button><button className="primary-button" type="button">{componentText(locale, 'componentLibrary.preview.ok')}</button></footer></div></div>
+  return <div className="component-modal-preview"><div className="modal-preview-frame"><DialogHeader eyebrow="MOONSPRITE" title={componentText(locale, 'componentLibrary.preview.title')} closeLabel={componentText(locale, 'componentLibrary.preview.close')} onClose={() => undefined} /><div className="modal-body component-modal-body"><PixelUtilityIcon kind="info" /><span>{componentText(locale, 'componentLibrary.preview.modalContent')}</span></div><footer><button className="quiet-button" type="button">{componentText(locale, 'componentLibrary.preview.cancel')}</button><button className="primary-button" type="button">{componentText(locale, 'componentLibrary.preview.ok')}</button></footer></div></div>
+}
+
+function SettingsNavigationPreview({ locale }: { locale: AppLocale }) {
+  const [value, setValue] = useState<'general' | 'theme' | 'files'>('general')
+  return <div className="component-settings-navigation-preview"><SettingsNavigation label={componentText(locale, 'componentLibrary.preview.settings')} value={value} items={[{ value: 'general', label: componentText(locale, 'preferences.sections.general') }, { value: 'theme', label: componentText(locale, 'preferences.sections.theme') }, { value: 'files', label: componentText(locale, 'preferences.sections.files') }]} onChange={setValue} /></div>
 }
 
 function SaveProgressPreview({ locale }: { locale: AppLocale }) {
@@ -293,7 +327,7 @@ function TooltipPreview({ locale }: { locale: AppLocale }) {
 }
 
 function ToolOptionsPreview({ locale }: { locale: AppLocale }) {
-  return <div className="component-tool-options-preview"><strong>{componentText(locale, 'componentLibrary.preview.brush')}</strong><button className="quiet-button" type="button">{componentText(locale, 'componentLibrary.preview.back')}</button><label>{componentText(locale, 'componentLibrary.preview.size')} <NumberInput value={4} min={1} max={128} onValueChange={() => undefined} /></label><span className="component-preview-spacer" /><button className="tool-text-button" type="button">{componentText(locale, 'componentLibrary.preview.undo')}</button><button className="tool-text-button" type="button">{componentText(locale, 'componentLibrary.preview.redo')}</button></div>
+  return <div className="component-tool-options-preview"><strong>{componentText(locale, 'componentLibrary.preview.brush')}</strong><button className="quiet-button" type="button">{componentText(locale, 'componentLibrary.preview.back')}</button><FormField className="component-tool-options-field" layout="inline" label={componentText(locale, 'componentLibrary.preview.size')}><NumberInput density="compact" value={4} min={1} max={128} onValueChange={() => undefined} /></FormField><span className="component-preview-spacer" /><button className="tool-text-button" type="button">{componentText(locale, 'componentLibrary.preview.undo')}</button><button className="tool-text-button" type="button">{componentText(locale, 'componentLibrary.preview.redo')}</button></div>
 }
 
 function PressureOptionsPreview({ locale }: { locale: AppLocale }) {
@@ -328,19 +362,12 @@ function PressureOptionsPreview({ locale }: { locale: AppLocale }) {
   }
   return <div className="component-pressure-preview">
     <div className="component-pressure-preview-modes">
-      <div className="segmented-control" aria-label={componentText(locale, 'componentLibrary.preview.pressureState')}>
-        <button className={mode === 'off' ? 'selected' : ''} type="button" onClick={() => selectMode('off')}>{componentText(locale, 'componentLibrary.preview.pressureOff')}</button>
-        <button className={mode === 'on' ? 'selected' : ''} type="button" onClick={() => selectMode('on')}>{componentText(locale, 'componentLibrary.preview.pressureOn')}</button>
-        <button className={mode === 'intrinsic' ? 'selected' : ''} type="button" onClick={() => selectMode('intrinsic')}>{componentText(locale, 'componentLibrary.preview.pressureIntrinsic')}</button>
-      </div>
-      <div className="segmented-control" aria-label={componentText(locale, 'componentLibrary.preview.mode')}>
-        <button className={tool === 'pencil' ? 'selected' : ''} type="button" onClick={() => setTool('pencil')}>{componentText(locale, 'componentLibrary.preview.brush')}</button>
-        <button className={tool === 'eraser' ? 'selected' : ''} type="button" onClick={() => setTool('eraser')}>{componentText(locale, 'componentLibrary.preview.eraser')}</button>
-      </div>
+      <SegmentedControl label={componentText(locale, 'componentLibrary.preview.pressureState')} options={[{ value: 'off', label: componentText(locale, 'componentLibrary.preview.pressureOff') }, { value: 'on', label: componentText(locale, 'componentLibrary.preview.pressureOn') }, { value: 'intrinsic', label: componentText(locale, 'componentLibrary.preview.pressureIntrinsic') }]} value={mode} onChange={selectMode} />
+      <SegmentedControl label={componentText(locale, 'componentLibrary.preview.mode')} options={[{ value: 'pencil', label: componentText(locale, 'componentLibrary.preview.brush') }, { value: 'eraser', label: componentText(locale, 'componentLibrary.preview.eraser') }]} value={tool} onChange={setTool} />
     </div>
     <div className="component-pressure-toolbar">
       <strong>{componentText(locale, tool === 'pencil' ? 'componentLibrary.preview.brush' : 'componentLibrary.preview.eraser')}</strong>
-      <label className="tool-checkbox"><PixelCheckbox checked={perfectPixels} onChange={(event) => setPerfectPixels(event.target.checked)} />{componentText(locale, 'componentLibrary.preview.perfectPixels')}</label>
+      <CheckboxField className="tool-checkbox" checked={perfectPixels} label={componentText(locale, 'componentLibrary.preview.perfectPixels')} onChange={setPerfectPixels} />
       <button className={`pressure-trigger ${settings.effects.size.sensor || settings.effects.strength.sensor || settings.effects.gradient.sensor ? 'selected' : ''}`} type="button" aria-expanded={panelOpen} onClick={() => setPanelOpen((open) => !open)}>{componentText(locale, 'toolOptions.brushDynamics')}<ChevronDown size={14} /></button>
     </div>
     {panelOpen && <div className="component-pressure-panel"><BrushDynamicsSettingsPanel settings={settings} tool={tool} intrinsicSize={mode === 'intrinsic'} brushSize={16} documentId="component-library-brush-dynamics" primaryColor={{ r: 248, g: 91, b: 74, a: 255 }} secondaryColor={{ r: 38, g: 44, b: 58, a: 255 }} telemetryPreview={{ documentId: 'component-library-brush-dynamics', pressure: 46, speed: 1380, pointerType: 'pen', active: true }} onChange={updateMapping} onGradientDitherChange={(gradientDither) => setSettings((current) => ({ ...current, gradientDither }))} /></div>}
@@ -356,7 +383,7 @@ function ColorPickerPreview({ locale }: { locale: AppLocale }) {
 function ColorValuePreview({ locale }: { locale: AppLocale }) {
   const [color, setColor] = useState(initialColor)
   const [transparentColor, setTransparentColor] = useState<RgbaColor>({ r: 155, g: 155, b: 159, a: 0 })
-  return <div className="component-color-value-preview"><ColorValueControl color={color} onChange={setColor} label={componentText(locale, 'componentLibrary.preview.colorValue')} roleLabel={componentText(locale, 'componentLibrary.preview.foreground')} fillWithColor /><ColorValueControl color={transparentColor} onChange={setTransparentColor} label={componentText(locale, 'componentLibrary.preview.colorValue')} roleLabel={componentText(locale, 'componentLibrary.preview.background')} fillWithColor /></div>
+  return <div className="component-color-value-preview"><ColorValueControl color={color} density="compact" onChange={setColor} label={componentText(locale, 'componentLibrary.preview.colorValue')} roleLabel={componentText(locale, 'componentLibrary.preview.foreground')} fillWithColor /><ColorValueControl color={color} density="regular" onChange={setColor} label={componentText(locale, 'componentLibrary.preview.colorValue')} roleLabel={componentText(locale, 'componentLibrary.preview.foreground')} fillWithColor /><ColorValueControl color={transparentColor} density="emphasized" onChange={setTransparentColor} label={componentText(locale, 'componentLibrary.preview.colorValue')} roleLabel={componentText(locale, 'componentLibrary.preview.background')} fillWithColor /></div>
 }
 
 function DockPreview({ locale }: { locale: AppLocale }) {
@@ -373,8 +400,12 @@ const previewRenderers: Record<string, (props: { locale: AppLocale }) => ReactEl
   'context-menu': ContextMenuPreview,
   segmented: SegmentedPreview,
   'number-input': NumberInputPreview,
+  'text-input': TextInputPreview,
   'text-area-input': TextAreaInputPreview,
   'themed-select': SelectPreview,
+  'form-field': FormFieldPreview,
+  'settings-navigation': SettingsNavigationPreview,
+  'settings-section-header': SettingsSectionHeaderPreview,
   range: RangePreview,
   checkbox: CheckboxPreview,
   switch: SwitchPreview,
@@ -384,6 +415,7 @@ const previewRenderers: Record<string, (props: { locale: AppLocale }) => ReactEl
   'layer-row': LayerRowPreview,
   swatches: SwatchesPreview,
   'modal-shell': ModalShellPreview,
+  'dialog-header': ModalShellPreview,
   'save-progress': SaveProgressPreview,
   status: StatusPreview,
   tooltip: TooltipPreview,
@@ -411,10 +443,10 @@ export function ComponentLibrary({ onClose }: { onClose: () => void }) {
 
   return <div className="modal-backdrop component-library-backdrop" role="presentation" onPointerDown={(event) => { if (event.target === event.currentTarget) onClose() }}>
       <ModalShell storageKey="component-library" defaultWidth={920} defaultHeight={680} minWidth={700} minHeight={500} maxWidth={1200} maxHeight={900} fitContent={false} resizePortalClassName="component-library-resize-portal" className="component-library" role="dialog" aria-modal="true" aria-labelledby="component-library-title">
-      <header className="component-library-header"><div><span className="eyebrow">MOONSPRITE UI</span><h2 id="component-library-title">{componentText(locale, 'componentLibrary.title')}</h2><p>{componentText(locale, 'componentLibrary.subtitle')}</p></div><button className="icon-button" type="button" aria-label={componentText(locale, 'componentLibrary.close')} onClick={onClose}><X size={16} /></button></header>
+      <DialogHeader className="component-library-header" eyebrow="MOONSPRITE UI" title={componentText(locale, 'componentLibrary.title')} titleId="component-library-title" description={componentText(locale, 'componentLibrary.subtitle')} closeLabel={componentText(locale, 'componentLibrary.close')} onClose={onClose} />
       <div className="component-library-layout">
         <aside className="component-library-sidebar">
-          <label className="component-library-search"><Search size={14} /><input value={query} placeholder={componentText(locale, 'componentLibrary.search')} aria-label={componentText(locale, 'componentLibrary.search')} onChange={(event) => setQuery(event.target.value)} /></label>
+          <label className="component-library-search"><Search size={14} /><TextInput density="compact" value={query} placeholder={componentText(locale, 'componentLibrary.search')} aria-label={componentText(locale, 'componentLibrary.search')} onChange={(event) => setQuery(event.target.value)} /></label>
           <nav aria-label={componentText(locale, 'componentLibrary.categories')}>{(Object.keys(categoryLabels) as ComponentCategory[]).map((item) => <button key={item} type="button" className={category === item ? 'selected' : ''} onClick={() => setCategory(item)}><span>{componentText(locale, categoryLabels[item])}</span><small>{item === 'all' ? COMPONENT_LIBRARY_ENTRIES.length : COMPONENT_LIBRARY_ENTRIES.filter((entry) => entry.category === item).length}</small></button>)}</nav>
           <div className="component-library-entry-list">{filteredEntries.map((entry) => { const localized = localizedEntries.find((item) => item.id === entry.id) ?? entry; return <button key={entry.id} type="button" className={entry.id === selectedId ? 'selected' : ''} onClick={() => setSelectedId(entry.id)}><span><strong>{localized.name}</strong><small>{componentText(locale, categoryLabels[entry.category])}</small></span><ChevronRight size={14} /></button> })}{filteredEntries.length === 0 && <p className="component-library-empty">{componentText(locale, 'componentLibrary.noMatch')}</p>}</div>
         </aside>

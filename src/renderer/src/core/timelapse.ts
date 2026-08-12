@@ -1,5 +1,5 @@
 import type { SelectionRect, SpriteDocument, TimelapseQuality, TimelapseSettings, TimelapseSnapshot, TimelapseVideoFormat } from '@shared/types'
-import { compositeDocument, compositeRegion, createId, DocumentCompositeCache } from './document'
+import { compositeRegion, createCompositePointSampler, createId, createNormalCompositePointSampler, DocumentCompositeCache } from './document'
 import { encodePng } from './png'
 import { normalizeTimelapseSettings } from './project-metadata'
 import { translateCurrent as tr } from './localization'
@@ -21,6 +21,8 @@ export interface TimelapseCaptureInvalidation {
 }
 
 export interface TimelapseCaptureCache {
+  sourceWidth: number
+  sourceHeight: number
   width: number
   height: number
   frameId: string | null
@@ -33,6 +35,14 @@ export interface TimelapseCaptureOptions {
   cache?: TimelapseCaptureCache
   contentRevision?: number
   contentInvalidation?: TimelapseCaptureInvalidation | null
+  shouldCommit?: () => boolean
+}
+
+export interface PreparedTimelapseSnapshot {
+  capturedAt: number
+  width: number
+  height: number
+  pixels: Uint8ClampedArray
 }
 
 const qualityMaxDimension: Record<TimelapseQuality, number> = {
@@ -69,6 +79,8 @@ export const timelapseOutputDimensions = (settings: Pick<TimelapseSettings, 'qua
 }
 
 export const createTimelapseCaptureCache = (): TimelapseCaptureCache => ({
+  sourceWidth: 0,
+  sourceHeight: 0,
   width: 0,
   height: 0,
   frameId: null,
@@ -77,60 +89,118 @@ export const createTimelapseCaptureCache = (): TimelapseCaptureCache => ({
   composite: new DocumentCompositeCache()
 })
 
-const scalePixels = (
-  pixels: Uint8ClampedArray,
-  sourceWidth: number,
-  sourceHeight: number,
-  maximumDimension: number
-): { pixels: Uint8ClampedArray; width: number; height: number } => {
+const captureDimensions = (sourceWidth: number, sourceHeight: number, maximumDimension: number): { width: number; height: number } => {
   const ratio = Math.min(1, maximumDimension / Math.max(sourceWidth, sourceHeight))
   const width = Math.max(1, Math.round(sourceWidth * ratio))
   const height = Math.max(1, Math.round(sourceHeight * ratio))
-  if (width === sourceWidth && height === sourceHeight) return { pixels, width, height }
-  const output = new Uint8ClampedArray(width * height * 4)
-  for (let y = 0; y < height; y += 1) {
-    const sourceY = Math.min(sourceHeight - 1, Math.floor(y * sourceHeight / height))
-    for (let x = 0; x < width; x += 1) {
-      const sourceX = Math.min(sourceWidth - 1, Math.floor(x * sourceWidth / width))
-      const sourceOffset = (sourceY * sourceWidth + sourceX) * 4
-      const targetOffset = (y * width + x) * 4
-      output[targetOffset] = pixels[sourceOffset]
-      output[targetOffset + 1] = pixels[sourceOffset + 1]
-      output[targetOffset + 2] = pixels[sourceOffset + 2]
-      output[targetOffset + 3] = pixels[sourceOffset + 3]
-    }
-  }
-  return { pixels: output, width, height }
+  return { width, height }
 }
 
 const compactSnapshots = (snapshots: TimelapseSnapshot[]): TimelapseSnapshot[] => {
   if (snapshots.length <= MAX_TIMELAPSE_SNAPSHOTS) return snapshots
-  const compacted = [snapshots[0]]
-  for (let index = 2; index < snapshots.length; index += 2) {
-    const current = snapshots[index]
-    const skipped = snapshots[index - 1]
-    compacted.push({ ...current, elapsedMs: current.elapsedMs + skipped.elapsedMs })
-  }
-  return compacted
+  return snapshots.slice(snapshots.length - MAX_TIMELAPSE_SNAPSHOTS)
 }
 
-const compositeTimelapsePixels = (document: SpriteDocument, options: TimelapseCaptureOptions): Uint8ClampedArray => {
+const targetRangeForSourceRange = (start: number, end: number, sourceSize: number, targetSize: number): { start: number; end: number } => ({
+  start: Math.max(0, Math.min(targetSize, Math.ceil(start * targetSize / sourceSize))),
+  end: Math.max(0, Math.min(targetSize, Math.ceil(end * targetSize / sourceSize)))
+})
+
+const renderScaledRows = (
+  document: SpriteDocument,
+  output: Uint8ClampedArray,
+  outputWidth: number,
+  outputHeight: number,
+  fromY: number,
+  toY: number,
+  fromX: number,
+  toX: number,
+  composite: DocumentCompositeCache,
+  revision: number
+): void => {
+  if (toX <= fromX || toY <= fromY) return
+  const sourceLeft = Math.floor(fromX * document.width / outputWidth)
+  const sourceRight = Math.min(document.width, Math.floor((toX - 1) * document.width / outputWidth) + 1)
+  const sourceTop = Math.floor(fromY * document.height / outputHeight)
+  const sourceBottom = Math.min(document.height, Math.floor((toY - 1) * document.height / outputHeight) + 1)
+  const sourceWidth = sourceRight - sourceLeft
+  const source = compositeRegion(document, sourceLeft, sourceTop, sourceWidth, sourceBottom - sourceTop, composite, revision)
+  for (let targetY = fromY; targetY < toY; targetY += 1) {
+    const sourceY = Math.min(document.height - 1, Math.floor(targetY * document.height / outputHeight)) - sourceTop
+    for (let targetX = fromX; targetX < toX; targetX += 1) {
+      const sourceX = Math.min(document.width - 1, Math.floor(targetX * document.width / outputWidth)) - sourceLeft
+      const sourceOffset = (sourceY * sourceWidth + sourceX) * 4
+      const targetOffset = (targetY * outputWidth + targetX) * 4
+      output[targetOffset] = source[sourceOffset]
+      output[targetOffset + 1] = source[sourceOffset + 1]
+      output[targetOffset + 2] = source[sourceOffset + 2]
+      output[targetOffset + 3] = source[sourceOffset + 3]
+    }
+  }
+}
+
+const yieldToMainThread = (): Promise<void> => new Promise((resolve) => globalThis.setTimeout(resolve, 0))
+
+const renderScaledRowsAsync = async (
+  document: SpriteDocument,
+  output: Uint8ClampedArray,
+  outputWidth: number,
+  outputHeight: number,
+  fromY: number,
+  toY: number,
+  fromX: number,
+  toX: number,
+  composite: DocumentCompositeCache,
+  revision: number,
+  shouldContinue: () => boolean
+): Promise<boolean> => {
+  const sample = createNormalCompositePointSampler(document) ?? createCompositePointSampler(document)
+  for (let targetY = fromY; targetY < toY; targetY += 1) {
+    if (!shouldContinue()) return false
+    const sourceY = Math.min(document.height - 1, Math.floor(targetY * document.height / outputHeight))
+    for (let targetX = fromX; targetX < toX; targetX += 1) {
+      const sourceX = Math.min(document.width - 1, Math.floor(targetX * document.width / outputWidth))
+      const color = sample(sourceX, sourceY)
+      const targetOffset = (targetY * outputWidth + targetX) * 4
+      output[targetOffset] = color.r
+      output[targetOffset + 1] = color.g
+      output[targetOffset + 2] = color.b
+      output[targetOffset + 3] = color.a
+    }
+    if ((targetY - fromY + 1) % 4 === 0) await yieldToMainThread()
+  }
+  return shouldContinue()
+}
+
+const compositeTimelapsePixels = (document: SpriteDocument, maximumDimension: number, options: TimelapseCaptureOptions): { pixels: Uint8ClampedArray; width: number; height: number } => {
   const cache = options.cache
   const revision = options.contentRevision ?? Number.NaN
   const frameId = document.animation?.activeFrameId ?? null
-  if (!cache || !cache.pixels || cache.width !== document.width || cache.height !== document.height || cache.frameId !== frameId || !Number.isFinite(revision)) {
-    const pixels = compositeDocument(document)
+  const { width, height } = captureDimensions(document.width, document.height, maximumDimension)
+  if (!cache
+    || !cache.pixels
+    || cache.sourceWidth !== document.width
+    || cache.sourceHeight !== document.height
+    || cache.width !== width
+    || cache.height !== height
+    || cache.frameId !== frameId
+    || !Number.isFinite(revision)) {
+    const pixels = new Uint8ClampedArray(width * height * 4)
+    const composite = cache?.composite ?? new DocumentCompositeCache()
+    renderScaledRows(document, pixels, width, height, 0, height, 0, width, composite, revision)
     if (cache) {
-      cache.width = document.width
-      cache.height = document.height
+      cache.sourceWidth = document.width
+      cache.sourceHeight = document.height
+      cache.width = width
+      cache.height = height
       cache.frameId = frameId
       cache.revision = revision
       cache.pixels = pixels
     }
-    return pixels
+    return { pixels, width, height }
   }
   const cachedPixels = cache.pixels
-  if (cache.revision === revision) return cachedPixels
+  if (cache.revision === revision) return { pixels: cachedPixels, width, height }
 
   const invalidation = options.contentInvalidation
   const patchRect = invalidation?.kind === 'region'
@@ -139,65 +209,173 @@ const compositeTimelapsePixels = (document: SpriteDocument, options: TimelapseCa
     ? invalidation.rect
     : undefined
   if (!patchRect) {
-    cache.pixels = compositeRegion(document, 0, 0, document.width, document.height, cache.composite, revision)
+    renderScaledRows(document, cachedPixels, width, height, 0, height, 0, width, cache.composite, revision)
   } else {
     const left = Math.max(0, Math.floor(patchRect.x))
     const top = Math.max(0, Math.floor(patchRect.y))
     const right = Math.min(document.width, Math.ceil(patchRect.x + patchRect.width))
     const bottom = Math.min(document.height, Math.ceil(patchRect.y + patchRect.height))
     if (right > left && bottom > top) {
-      const patch = compositeRegion(document, left, top, right - left, bottom - top, cache.composite, revision)
-      for (let y = top; y < bottom; y += 1) {
-        const sourceOffset = (y - top) * (right - left) * 4
-        const targetOffset = (y * document.width + left) * 4
-      cachedPixels.set(patch.subarray(sourceOffset, sourceOffset + (right - left) * 4), targetOffset)
-      }
+      const targetX = targetRangeForSourceRange(left, right, document.width, width)
+      const targetY = targetRangeForSourceRange(top, bottom, document.height, height)
+      renderScaledRows(document, cachedPixels, width, height, targetY.start, targetY.end, targetX.start, targetX.end, cache.composite, revision)
     }
   }
   cache.revision = revision
-  return cachedPixels
+  return { pixels: cachedPixels, width, height }
 }
 
-export function captureTimelapseSnapshot(document: SpriteDocument, now = Date.now(), options: TimelapseCaptureOptions = {}): void {
-  const settings = normalizeTimelapseSettings(document.timelapse, document.timelapse?.snapshots ?? [])
-  document.timelapse = settings
-  if (!settings.enabled) return
-  const scaled = scalePixels(compositeTimelapsePixels(document, options), document.width, document.height, qualityMaxDimension[settings.quality])
+const compositeTimelapsePixelsAsync = async (document: SpriteDocument, maximumDimension: number, options: TimelapseCaptureOptions): Promise<{ pixels: Uint8ClampedArray; width: number; height: number } | null> => {
+  const cache = options.cache
+  const revision = options.contentRevision ?? Number.NaN
+  const frameId = document.animation?.activeFrameId ?? null
+  const { width, height } = captureDimensions(document.width, document.height, maximumDimension)
+  const shouldContinue = options.shouldCommit ?? (() => true)
+  if (!cache
+    || !cache.pixels
+    || cache.sourceWidth !== document.width
+    || cache.sourceHeight !== document.height
+    || cache.width !== width
+    || cache.height !== height
+    || cache.frameId !== frameId
+    || !Number.isFinite(revision)) {
+    const pixels = new Uint8ClampedArray(width * height * 4)
+    const composite = cache?.composite ?? new DocumentCompositeCache()
+    if (!await renderScaledRowsAsync(document, pixels, width, height, 0, height, 0, width, composite, revision, shouldContinue)) return null
+    if (cache) {
+      cache.sourceWidth = document.width
+      cache.sourceHeight = document.height
+      cache.width = width
+      cache.height = height
+      cache.frameId = frameId
+      cache.revision = revision
+      cache.pixels = pixels
+    }
+    return { pixels, width, height }
+  }
+  const cachedPixels = cache.pixels
+  if (cache.revision === revision) return { pixels: cachedPixels, width, height }
+
+  const invalidation = options.contentInvalidation
+  const patchRect = invalidation?.kind === 'region'
+    && invalidation.fromRevision === cache.revision
+    && invalidation.revision === revision
+    ? invalidation.rect
+    : undefined
+  let completed: boolean
+  if (!patchRect) completed = await renderScaledRowsAsync(document, cachedPixels, width, height, 0, height, 0, width, cache.composite, revision, shouldContinue)
+  else {
+    const left = Math.max(0, Math.floor(patchRect.x))
+    const top = Math.max(0, Math.floor(patchRect.y))
+    const right = Math.min(document.width, Math.ceil(patchRect.x + patchRect.width))
+    const bottom = Math.min(document.height, Math.ceil(patchRect.y + patchRect.height))
+    if (right > left && bottom > top) {
+      const targetX = targetRangeForSourceRange(left, right, document.width, width)
+      const targetY = targetRangeForSourceRange(top, bottom, document.height, height)
+      completed = await renderScaledRowsAsync(document, cachedPixels, width, height, targetY.start, targetY.end, targetX.start, targetX.end, cache.composite, revision, shouldContinue)
+    } else completed = shouldContinue()
+  }
+  if (!completed) {
+    cache.revision = Number.NaN
+    cache.pixels = null
+    return null
+  }
+  cache.revision = revision
+  return { pixels: cachedPixels, width, height }
+}
+
+const appendTimelapseSnapshot = (settings: TimelapseSettings, now: number, width: number, height: number, data: Uint8Array): void => {
   const previous = settings.snapshots.at(-1)
   const snapshot: TimelapseSnapshot = {
     id: createId('timelapse'),
     capturedAt: now,
-    elapsedMs: previous ? Math.max(1, now - previous.capturedAt) : 0,
-    width: scaled.width,
-    height: scaled.height,
-    data: encodePng(scaled.pixels, scaled.width, scaled.height, true).bytes
+    elapsedMs: previous ? 1 : 0,
+    width,
+    height,
+    data
   }
   settings.snapshots = compactSnapshots([...settings.snapshots, snapshot])
 }
 
-const wait = (duration: number): Promise<void> => new Promise((resolve) => window.setTimeout(resolve, duration))
+interface TimelapseEncodeWorkerResponse { id: number; data?: Uint8Array; error?: string }
+let timelapseEncodeSequence = 0
 
-export const timelapseFrameHoldMs = (snapshot: TimelapseSnapshot, settings: Pick<TimelapseSettings, 'fps' | 'speed'>): number => {
-  const minimumHold = 1000 / settings.fps
-  return Math.max(minimumHold, Math.min(1000, snapshot.elapsedMs / settings.speed || minimumHold))
+const encodeTimelapsePngAsync = (pixels: Uint8ClampedArray, width: number, height: number): Promise<Uint8Array> => {
+  if (typeof Worker === 'undefined') return Promise.resolve(encodePng(pixels, width, height, true).bytes)
+  return new Promise((resolve, reject) => {
+    const worker = new Worker(new URL('../workers/timelapse-encode.worker.ts', import.meta.url), { type: 'module', name: 'moonsprite-timelapse-encode' })
+    const id = ++timelapseEncodeSequence
+    const transferredPixels = pixels.slice()
+    const finish = (): void => worker.terminate()
+    worker.onmessage = (event: MessageEvent<TimelapseEncodeWorkerResponse>) => {
+      if (event.data.id !== id) return
+      finish()
+      if (event.data.data) resolve(event.data.data)
+      else reject(new Error(event.data.error || 'Timelapse encode failed'))
+    }
+    worker.onerror = (event) => {
+      finish()
+      reject(new Error(event.message || 'Timelapse encode worker failed'))
+    }
+    worker.postMessage({ id, pixels: transferredPixels, width, height }, [transferredPixels.buffer])
+  })
 }
 
-export const timelapseSourceDurationMs = (settings: Pick<TimelapseSettings, 'fps' | 'snapshots'>): number => settings.snapshots.reduce(
-  (total, snapshot) => total + (snapshot.elapsedMs > 0 ? snapshot.elapsedMs : 1000 / settings.fps),
-  0
-)
+const prepareTimelapseCapture = (document: SpriteDocument, options: TimelapseCaptureOptions): { settings: TimelapseSettings; pixels: Uint8ClampedArray; width: number; height: number } | null => {
+  const settings = normalizeTimelapseSettings(document.timelapse, document.timelapse?.snapshots ?? [])
+  document.timelapse = settings
+  if (!settings.enabled) return null
+  return { settings, ...compositeTimelapsePixels(document, qualityMaxDimension[settings.quality], options) }
+}
+
+export function prepareTimelapseSnapshot(document: SpriteDocument, now = Date.now(), options: TimelapseCaptureOptions = {}): PreparedTimelapseSnapshot | null {
+  const capture = prepareTimelapseCapture(document, options)
+  return capture ? { capturedAt: now, width: capture.width, height: capture.height, pixels: capture.pixels.slice() } : null
+}
+
+export async function commitPreparedTimelapseSnapshot(document: SpriteDocument, snapshot: PreparedTimelapseSnapshot, shouldCommit: () => boolean = () => true): Promise<void> {
+  const data = await encodeTimelapsePngAsync(snapshot.pixels, snapshot.width, snapshot.height)
+  if (!shouldCommit()) return
+  const settings = normalizeTimelapseSettings(document.timelapse, document.timelapse?.snapshots ?? [])
+  document.timelapse = settings
+  if (!settings.enabled) return
+  appendTimelapseSnapshot(settings, snapshot.capturedAt, snapshot.width, snapshot.height, data)
+}
+
+export function captureTimelapseSnapshot(document: SpriteDocument, now = Date.now(), options: TimelapseCaptureOptions = {}): void {
+  const capture = prepareTimelapseCapture(document, options)
+  if (!capture) return
+  appendTimelapseSnapshot(capture.settings, now, capture.width, capture.height, encodePng(capture.pixels, capture.width, capture.height, true).bytes)
+}
+
+export async function captureTimelapseSnapshotAsync(document: SpriteDocument, now = Date.now(), options: TimelapseCaptureOptions = {}): Promise<void> {
+  const settings = normalizeTimelapseSettings(document.timelapse, document.timelapse?.snapshots ?? [])
+  document.timelapse = settings
+  if (!settings.enabled) return
+  const capture = await compositeTimelapsePixelsAsync(document, qualityMaxDimension[settings.quality], options)
+  if (!capture || options.shouldCommit?.() === false) return
+  const data = await encodeTimelapsePngAsync(capture.pixels, capture.width, capture.height)
+  if (options.shouldCommit?.() === false) return
+  appendTimelapseSnapshot(settings, now, capture.width, capture.height, data)
+}
+
+const wait = (duration: number): Promise<void> => new Promise((resolve) => window.setTimeout(resolve, duration))
+
+export const timelapseFrameHoldMs = (_snapshot: TimelapseSnapshot, settings: Pick<TimelapseSettings, 'fps' | 'speed'>): number => 1000 / settings.fps / Math.max(1, settings.speed)
+
+export const timelapseSourceDurationMs = (settings: Pick<TimelapseSettings, 'fps' | 'snapshots'>): number => settings.snapshots.length * 1000 / settings.fps
 
 export const timelapseFrameDurations = (
   settings: Pick<TimelapseSettings, 'fps' | 'speed' | 'snapshots'>,
   options: TimelapseExportOptions
 ): number[] => {
   if (settings.snapshots.length === 0) return []
-  const weights = settings.snapshots.map((snapshot) => snapshot.elapsedMs > 0 ? snapshot.elapsedMs : 1000 / settings.fps)
-  const sourceDuration = weights.reduce((total, value) => total + value, 0)
+  const sourceDuration = timelapseSourceDurationMs(settings)
   const outputDuration = options.mode === 'duration'
     ? Math.max(0.1, Math.min(3600, options.durationSeconds)) * 1000
     : sourceDuration / Math.max(1, Math.min(64, settings.speed))
-  return weights.map((weight) => outputDuration * weight / sourceDuration)
+  const frameDuration = outputDuration / settings.snapshots.length
+  return settings.snapshots.map(() => frameDuration)
 }
 
 const VIDEO_MIME_TYPES: Record<TimelapseVideoFormat, readonly string[]> = {

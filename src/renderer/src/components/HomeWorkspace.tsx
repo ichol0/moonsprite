@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
 import { Plus, TriangleAlert } from 'lucide-react'
-import type { RecoveryRecord } from '@shared/types'
+import type { ProjectPreview, RecoveryRecord } from '@shared/types'
 import { APP_CHANNEL_LABEL } from '@/core/app-meta'
-import { readProjectGalleryMetadata } from '@/core/project-format'
 import { decodeDocumentFileAsync } from '@/core/document-files'
+import { readProjectGalleryMetadataAsync } from '@/core/project-gallery'
 import { exportDocumentImage } from '@/core/png'
 import { clearRecentProjects, getGalleryPins, getRecentProjects, recordRecentProject, removeGalleryPin, removeRecentProject, reorderRecentProjects, toggleGalleryPin, toggleRecentProjectPinned, type RecentProject } from '@/core/home-history'
 import { useWorkspace } from '@/store/workspace'
@@ -17,6 +17,7 @@ interface ProjectCard extends RecentProject {
   width?: number
   height?: number
   colorMode?: 'rgba' | 'indexed'
+  previewLoading?: boolean
   error?: string
 }
 
@@ -37,6 +38,7 @@ interface CachedProjectPreview {
 }
 const projectPreviewCache = new Map<string, CachedProjectPreview>()
 const maxCachedProjectPreviews = 48
+let projectPreviewFallbackQueue = Promise.resolve()
 const previewCacheKey = (record: RecentProject): string => `${record.filePath}\u0000${record.lastOpened}`
 const cacheProjectPreview = (key: string, preview: CachedProjectPreview): void => {
   projectPreviewCache.delete(key)
@@ -47,6 +49,11 @@ const createPreviewUrl = (bytes: Uint8Array): string => {
   const buffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer
   return URL.createObjectURL(new Blob([buffer], { type: 'image/png' }))
 }
+const runProjectPreviewFallback = <T,>(task: () => Promise<T>): Promise<T> => {
+  const result = projectPreviewFallbackQueue.then(task, task)
+  projectPreviewFallbackQueue = result.then(() => undefined, () => undefined)
+  return result
+}
 const loadHomeSection = (): HomeSection => {
   const stored = localStorage.getItem(homeSectionStorageKey)
   return stored === 'gallery' || stored === 'recovery' ? stored : 'recent'
@@ -55,6 +62,12 @@ const loadHomeSection = (): HomeSection => {
 const formatTime = (value: number, locale: AppLocale): string => {
   if (!Number.isFinite(value) || value <= 0 || Number.isNaN(new Date(value).getTime())) return translate(locale, 'home.unknownTime')
   return new Intl.DateTimeFormat(locale, { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }).format(new Date(value))
+}
+
+const formatProjectType = (filePath: string): string => {
+  const extension = filePath.match(/\.([^./\\]+)$/)?.[1]
+  if (!extension) return 'FILE'
+  return extension.toLowerCase() === 'moonsprite' ? 'MoonSprite' : extension.toUpperCase()
 }
 
 function parseRecoveryTimestamp(value: string): number {
@@ -89,7 +102,7 @@ function ProjectFileRow({ project, reorderable, dragging, removePending, onOpen,
   return <article className={`recent-file-row ${invalid ? 'invalid' : ''} ${project.pinned ? 'pinned' : ''} ${reorderable ? 'reorderable' : ''} ${onDelete ? 'deletable' : ''} ${onRemoveFromRecent ? 'removable' : ''} ${dragging ? 'dragging' : ''} ${removePending ? 'remove-pending' : ''}`} data-recent-path={project.filePath}>
     <button type="button" className="recent-file-open" onPointerDown={(event) => { if (event.button === 1) event.preventDefault() }} onClick={onOpen} onAuxClick={(event) => { if (event.button !== 1) return; event.preventDefault(); event.stopPropagation(); onOpenInBackground() }} title={invalid ? t('home.previewReadFailedTitle', { error: project.error ?? '' }) : t('home.openProject', { name: project.name })}>
       <span className="recent-file-preview">{project.previewUrl ? <img src={project.previewUrl} alt="" /> : invalid ? <TriangleAlert size={21} /> : <PixelUtilityIcon kind="image" />}</span>
-      <span className="recent-file-copy"><strong>{project.name}</strong><small>{invalid ? t('home.previewReadFailed') : project.width && project.height ? `${project.width} x ${project.height} · ${project.colorMode === 'indexed' ? t('home.indexedColor') : 'RGBA'}` : t('home.readingPreview')}</small><span>{project.filePath}</span></span>
+      <span className="recent-file-copy"><strong>{project.name}</strong><small>{invalid ? t('home.previewReadFailed') : project.width && project.height ? `${project.width} x ${project.height} · ${project.colorMode === 'indexed' ? t('home.indexedColor') : 'RGBA'}` : project.previewLoading ? t('home.readingPreview') : formatProjectType(project.filePath)}</small><span>{project.filePath}</span></span>
       <time>{formatTime(project.lastOpened, locale)}</time>
     </button>
     <button className="recent-file-pin" type="button" onClick={onPin} aria-label={t(project.pinned ? 'home.unpinProject' : 'home.pinProject', { name: project.name })} title={t(project.pinned ? 'home.unpin' : 'home.pin')}><PixelUtilityIcon kind="pin" /></button>
@@ -145,14 +158,26 @@ export function HomeWorkspace({ onNew, onOpen, onOpenProject, onRestoreRecovery 
         projectPreviewCache.set(cacheKey, cached)
         return { ...record, name: record.fileName, previewUrl: createPreviewUrl(cached.bytes), width: cached.width, height: cached.height, colorMode: cached.colorMode }
       }
-      const bytes = await window.moonSprite.readBinary(record.filePath)
       if (/\.moonsprite$/i.test(record.filePath)) {
-        const metadata = readProjectGalleryMetadata(bytes)
+        let metadata: ProjectPreview
+        try {
+          metadata = await window.moonSprite.readProjectPreview(record.filePath)
+        } catch {
+          metadata = await runProjectPreviewFallback(async () => {
+            const bytes = await window.moonSprite.readBinary(record.filePath)
+            const generated = await readProjectGalleryMetadataAsync(bytes)
+            await window.moonSprite.cacheProjectPreview(record.filePath, generated).catch(() => {
+              // A cache write failure must not hide an otherwise valid thumbnail.
+            })
+            return generated
+          })
+        }
         const previewBytes = metadata.preview.slice()
         cacheProjectPreview(cacheKey, { bytes: previewBytes, width: metadata.width, height: metadata.height, colorMode: metadata.colorMode })
         const previewUrl = createPreviewUrl(previewBytes)
         return { ...record, name: record.fileName, previewUrl, width: metadata.width, height: metadata.height, colorMode: metadata.colorMode }
       }
+      const bytes = await window.moonSprite.readBinary(record.filePath)
       const document = await decodeDocumentFileAsync(bytes, record.filePath)
       const preview = await exportDocumentImage(document, 100, 'png-auto')
       const previewBytes = preview.bytes.slice()
@@ -181,35 +206,17 @@ export function HomeWorkspace({ onNew, onOpen, onOpenProject, onRestoreRecovery 
           .sort((left, right) => Number(right.pinned) - Number(left.pinned) || right.lastOpened - left.lastOpened)
       } else records = getRecentProjects()
       if (generation !== loadGeneration.current) return
-      const initialCards = records.map((record): ProjectCard => ({ ...record, name: record.fileName }))
+      const initialCards = records.map((record): ProjectCard => ({ ...record, name: record.fileName, previewLoading: target === 'gallery' || /\.moonsprite$/i.test(record.filePath) }))
       projectsRef.current = initialCards
       setProjects(initialCards)
       setLoading(false)
+      if (target === 'recent') records = records.filter((record) => /\.moonsprite$/i.test(record.filePath))
       let nextIndex = 0
       const loadNext = async (): Promise<void> => {
         while (nextIndex < records.length) {
           const index = nextIndex
           nextIndex += 1
           const record = records[index]
-          if (target === 'recent') {
-            let exists = true
-            try {
-              exists = await window.moonSprite.fileExists(record.filePath)
-            } catch {
-              // Retain the record when existence cannot be determined.
-            }
-            if (generation !== loadGeneration.current) return
-            if (!exists) {
-              removeRecentProject(record.filePath)
-              setProjects((items) => {
-                const next = items.filter((item) => item.filePath !== record.filePath)
-                projectsRef.current = next
-                return next
-              })
-              setMessage(t('home.missingRecentRemovedMessage', { name: record.fileName }))
-              continue
-            }
-          }
           const card = await readCard(record)
           if (generation !== loadGeneration.current) {
             if (card.previewUrl) URL.revokeObjectURL(card.previewUrl)

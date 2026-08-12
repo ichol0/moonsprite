@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
-import type { RgbaColor } from '@shared/types'
+import type { RgbaColor, ToolId } from '@shared/types'
 import { ColorValueControl } from './ColorValueControl'
-import { CANVAS_COLOR_SAMPLED_EVENT, type CanvasColorSampledDetail } from './color-sampling-events'
+import { DialogHeader } from './DialogHeader'
+import { FormField } from './FormField'
+import { CANVAS_COLOR_SAMPLED_EVENT, CANVAS_COLOR_SAMPLING_COMPLETED_EVENT, type CanvasColorSampledDetail } from './color-sampling-events'
 import { LivePreviewToggle } from './LivePreviewToggle'
 import { ModalShell } from './ModalShell'
 import { PixelUtilityIcon } from './PixelUtilityIcon'
@@ -15,6 +17,7 @@ type DialogTarget = Exclude<ColorReplacementTarget, 'layer'>
 type SamplingTarget = 'source' | 'replacement'
 
 const copyColor = (color: RgbaColor): RgbaColor => ({ ...color })
+const WHITE: RgbaColor = { r: 255, g: 255, b: 255, a: 255 }
 const eyedropperLargeIcon = TOOL_DEFINITIONS.find((tool) => tool.id === 'eyedropper')?.icon ?? ''
 const eyedropperIcon = normalEditorToolIconFor(eyedropperLargeIcon) ?? eyedropperLargeIcon
 
@@ -24,12 +27,13 @@ export function ColorReplacementDialog({ onClose }: { onClose: () => void }) {
   const activeId = useWorkspace((state) => state.activeId)
   const session = sessions.find((item) => item.document.id === activeId) ?? null
   const documentId = useRef(session?.document.id ?? null)
-  const [sourceColor, setSourceColor] = useState<RgbaColor>(() => copyColor(session?.primaryColor ?? { r: 0, g: 0, b: 0, a: 255 }))
-  const [replacementColor, setReplacementColor] = useState<RgbaColor>(() => copyColor(session?.secondaryColor ?? { r: 255, g: 255, b: 255, a: 255 }))
+  const [sourceColor, setSourceColor] = useState<RgbaColor>(() => copyColor(WHITE))
+  const [replacementColor, setReplacementColor] = useState<RgbaColor>(() => copyColor(WHITE))
   const [target, setTarget] = useState<DialogTarget>('layers')
   const [previewEnabled, setPreviewEnabled] = useState(true)
   const [samplingTarget, setSamplingTarget] = useState<SamplingTarget | null>(null)
   const samplingTargetRef = useRef<SamplingTarget | null>(null)
+  const samplingReturnToolRef = useRef<ToolId | null>(null)
   const previewRef = useRef<ColorReplacementPreview | null>(null)
   const previewFrameRef = useRef<number | null>(null)
   const closedRef = useRef(false)
@@ -55,6 +59,19 @@ export function ColorReplacementDialog({ onClose }: { onClose: () => void }) {
           : session?.document.layers.length ?? 0
   const targetAvailable = targetAvailability[target]
   const replacementDisabled = !session || !targetAvailable || colorEquals(sourceColor, replacementColor)
+  const targetSelectionKey = target === 'layers'
+    ? session?.selectedLayerIds.join('\u0000') ?? ''
+    : target === 'frames'
+      ? session?.selectedAnimationFrameIds.join('\u0000') ?? ''
+      : target === 'cells'
+        ? session?.selectedAnimationCellKeys.join('\u0000') ?? ''
+        : target === 'selection'
+          ? session?.selection
+            ? `${session.selection.x}:${session.selection.y}:${session.selection.width}:${session.selection.height}`
+            : ''
+          : target === 'palette'
+            ? session?.document.paletteOrder.join('\u0000') ?? ''
+            : session?.document.id ?? ''
 
   const targetGroups = useMemo(() => [{
     label: t('colorReplacement.target'),
@@ -88,13 +105,26 @@ export function ColorReplacementDialog({ onClose }: { onClose: () => void }) {
     setReplacementColor(copyColor(color))
   }
   const beginSampling = (nextTarget: SamplingTarget): void => {
+    if (!samplingTargetRef.current) {
+      const workspace = useWorkspace.getState()
+      samplingReturnToolRef.current = workspace.sessions.find((item) => item.document.id === workspace.activeId)?.tool ?? null
+    }
     samplingTargetRef.current = nextTarget
     setSamplingTarget(nextTarget)
     useWorkspace.getState().setTool('eyedropper')
   }
+  const finishSampling = (): void => {
+    if (!samplingTargetRef.current) return
+    samplingTargetRef.current = null
+    setSamplingTarget(null)
+    const returnTool = samplingReturnToolRef.current
+    samplingReturnToolRef.current = null
+    if (returnTool && returnTool !== 'eyedropper') useWorkspace.getState().setTool(returnTool)
+  }
   const cancel = (): void => {
     if (closedRef.current) return
     closedRef.current = true
+    finishSampling()
     cancelScheduledPreview()
     restorePreview()
     onClose()
@@ -103,6 +133,7 @@ export function ColorReplacementDialog({ onClose }: { onClose: () => void }) {
     event.preventDefault()
     if (closedRef.current || replacementDisabled) return
     closedRef.current = true
+    finishSampling()
     cancelScheduledPreview()
     restorePreview()
     useWorkspace.getState().replaceColor(target, sourceColor, replacementColor)
@@ -120,8 +151,13 @@ export function ColorReplacementDialog({ onClose }: { onClose: () => void }) {
       if (samplingTargetRef.current === 'source') changeSourceColor(sample.color)
       else changeReplacementColor(sample.color)
     }
+    const completed = (): void => finishSampling()
     window.addEventListener(CANVAS_COLOR_SAMPLED_EVENT, sampled)
-    return () => window.removeEventListener(CANVAS_COLOR_SAMPLED_EVENT, sampled)
+    window.addEventListener(CANVAS_COLOR_SAMPLING_COMPLETED_EVENT, completed)
+    return () => {
+      window.removeEventListener(CANVAS_COLOR_SAMPLED_EVENT, sampled)
+      window.removeEventListener(CANVAS_COLOR_SAMPLING_COMPLETED_EVENT, completed)
+    }
   }, [])
 
   useEffect(() => {
@@ -145,7 +181,7 @@ export function ColorReplacementDialog({ onClose }: { onClose: () => void }) {
       if (target !== 'palette') workspace.setPrimaryColor(sourceColor)
     })
     return cancelScheduledPreview
-  }, [sourceColor, replacementColor, target, previewEnabled, replacementDisabled])
+  }, [sourceColor, replacementColor, target, targetSelectionKey, previewEnabled, replacementDisabled])
 
   useEffect(() => () => {
     cancelScheduledPreview()
@@ -156,19 +192,19 @@ export function ColorReplacementDialog({ onClose }: { onClose: () => void }) {
 
   return <div className="modal-backdrop" role="presentation">
     <ModalShell as="form" data-preserve-animation-selection storageKey="color-replacement-v1" placement="right" defaultWidth={430} defaultHeight={390} minWidth={390} minHeight={340} maxWidth={600} maxHeight={680} className="color-replacement-modal" onSubmit={apply} role="dialog" aria-modal="true" aria-label={t('colorReplacement.title')}>
-      <header><div><span className="eyebrow">COLOR</span><h2>{t('colorReplacement.title')}</h2></div><button type="button" className="icon-button" aria-label={t('common.close')} onClick={cancel}><PixelUtilityIcon kind="close" /></button></header>
+      <DialogHeader eyebrow="COLOR" title={t('colorReplacement.title')} closeLabel={t('common.close')} onClose={cancel} />
       <div className="modal-body color-replacement-body">
         <section className="color-replacement-section">
           <h3>{t('colorReplacement.colors')}</h3>
           <div className="color-replacement-colors">
-            <label><span>{t('colorReplacement.source')}</span><span className="color-replacement-color-input"><ColorValueControl color={sourceColor} onChange={changeSourceColor} label={t('colorReplacement.source')} roleLabel={t('colorReplacement.source')} storageKey="replace-color-source" fillWithColor inPalette={false} dismissOnFocusLoss preserveAnimationSelection /><button type="button" className={`icon-button color-replacement-eyedropper ${samplingTarget === 'source' ? 'selected' : ''}`} aria-label={t('colorReplacement.pickSource')} aria-pressed={samplingTarget === 'source'} onClick={() => beginSampling('source')}><PixelAssetIcon src={eyedropperIcon} /></button></span></label>
+            <FormField label={t('colorReplacement.source')}><span className="color-replacement-color-input"><ColorValueControl color={sourceColor} density="emphasized" onChange={changeSourceColor} label={t('colorReplacement.source')} roleLabel={t('colorReplacement.source')} storageKey="replace-color-source" fillWithColor inPalette={false} dismissOnFocusLoss preserveAnimationSelection /><button type="button" className={`icon-button color-replacement-eyedropper ${samplingTarget === 'source' ? 'selected' : ''}`} aria-label={t('colorReplacement.pickSource')} aria-pressed={samplingTarget === 'source'} onClick={() => beginSampling('source')}><PixelAssetIcon src={eyedropperIcon} /></button></span></FormField>
             <span className="color-replacement-direction" aria-hidden="true"><PixelUtilityIcon kind="right" scale={2} /></span>
-            <label><span>{t('colorReplacement.replacement')}</span><span className="color-replacement-color-input"><ColorValueControl color={replacementColor} onChange={changeReplacementColor} label={t('colorReplacement.replacement')} roleLabel={t('colorReplacement.replacement')} storageKey="replace-color-target" fillWithColor inPalette={false} dismissOnFocusLoss preserveAnimationSelection /><button type="button" className={`icon-button color-replacement-eyedropper ${samplingTarget === 'replacement' ? 'selected' : ''}`} aria-label={t('colorReplacement.pickReplacement')} aria-pressed={samplingTarget === 'replacement'} onClick={() => beginSampling('replacement')}><PixelAssetIcon src={eyedropperIcon} /></button></span></label>
+            <FormField label={t('colorReplacement.replacement')}><span className="color-replacement-color-input"><ColorValueControl color={replacementColor} density="emphasized" onChange={changeReplacementColor} label={t('colorReplacement.replacement')} roleLabel={t('colorReplacement.replacement')} storageKey="replace-color-target" fillWithColor inPalette={false} dismissOnFocusLoss preserveAnimationSelection /><button type="button" className={`icon-button color-replacement-eyedropper ${samplingTarget === 'replacement' ? 'selected' : ''}`} aria-label={t('colorReplacement.pickReplacement')} aria-pressed={samplingTarget === 'replacement'} onClick={() => beginSampling('replacement')}><PixelAssetIcon src={eyedropperIcon} /></button></span></FormField>
           </div>
         </section>
         <section className="color-replacement-section">
           <h3>{t('colorReplacement.range')}</h3>
-          <label className="color-replacement-target"><span>{t('colorReplacement.target')}</span><ThemedSelect value={target} groups={targetGroups} label={t('colorReplacement.target')} onChange={setTarget} popoverWidth={300} preserveAnimationSelection /></label>
+          <FormField className="color-replacement-target" label={t('colorReplacement.target')}><ThemedSelect value={target} groups={targetGroups} label={t('colorReplacement.target')} onChange={setTarget} popoverWidth={300} preserveAnimationSelection /></FormField>
           <small className={targetAvailable ? '' : 'is-unavailable'}>{targetAvailable ? t('colorReplacement.targetCount', { count: targetCount }) : t('colorReplacement.targetUnavailable')}</small>
         </section>
         <LivePreviewToggle className="color-replacement-preview" checked={previewEnabled} onChange={setPreviewEnabled} label={t('colorReplacement.preview')} />

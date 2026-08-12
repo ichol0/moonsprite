@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { RasterLayer, RgbaColor, SelectionMask, SelectionMode, SelectionRect } from '@shared/types'
-import { compositePixelWithLayerColor, compositeRegion, createCompositePointReplacementSampler, createCompositePointSampler, createNormalCompositePointReplacementSampler, getActiveLayer, isLayerEffectivelyLocked, isLayerEffectivelyVisible, layerContentBounds, layerIndexAt, layerMaskDisplayColor, readLayerColor, readLayerColorAt, readLayerMaskDisplayColorAt, renderLayerMaskRegion } from '@/core/document'
+import { compositePixelWithLayerColor, compositeRegion, createCompositePointReplacementSampler, createCompositePointSampler, createNormalCompositePointReplacementSampler, createNormalCompositePointSampler, getActiveLayer, isLayerEffectivelyLocked, isLayerEffectivelyVisible, layerContentBounds, layerIndexAt, layerMaskDisplayColor, readLayerColor, readLayerColorAt, readLayerMaskDisplayColorAt, renderLayerMaskRegion } from '@/core/document'
 import { beginPixelEdit, revertPixelEdit } from '@/core/history'
 import { applyRelativeLuminance, blendOver, relativeLuminanceColor, TRANSPARENT } from '@/core/raster'
 import { applyGradient, constrainGradientEndpoint, createGradientColorSampler, gradientRegionSelection } from '@/core/gradient'
@@ -20,16 +20,17 @@ import { canvasCursors, canvasStatusTextColor, canvasToolCursor, colorLuminance,
 import { defaultSymmetryCenter, hasSymmetry, moveSymmetryCenter, symmetryAxisSegment, symmetryPoints, symmetrySelection, transformSymmetrySelection, type SymmetryAxis } from '@/core/symmetry'
 import { beginAdjustmentPreviewEdit, endAdjustmentPreviewEdit, prepareAdjustmentPreviewEdit, renderAdjustmentPreviewEdit } from '@/core/adjustment-preview-lifecycle'
 import { CanvasCompositeCache } from '@/components/canvas-composite-cache'
+import { OnionSkinCompositeCache } from '@/components/onion-skin-composite-cache'
 import { resolveCanvasMoveAnimationCellKeys } from '@/components/canvas-move-selection'
 import { drawSelectionOutline, selectionScreenBox, selectionScreenPoint, type RasterContext2D, type SelectionBoundaryCache } from '@/components/canvas-selection-renderer'
 import { useCanvasViewPreview } from '@/components/useCanvasViewPreview'
 import { PerformanceProfiler } from '@/components/PerformanceProfiler'
 import { useI18n } from '@/components/I18nProvider'
-import { compositeAnimationFrame, compositeAnimationFrameRegion, onionSkinFrameRefs, tintOnionSkinPixels } from '@/core/onion-skin'
+import { onionSkinFrameRefs } from '@/core/onion-skin'
 import { resolveTheme } from '@/core/theme'
 import { pixelSamplingMode } from '@/core/pixel-display'
 import { finishAnimationCellOperation, revealLayerInPanel } from '@/components/layer-panel-reveal'
-import { publishCanvasColorSample } from '@/components/color-sampling-events'
+import { publishCanvasColorSample, publishCanvasColorSamplingCompleted } from '@/components/color-sampling-events'
 import { eyedropperMagnifierPixelScale } from '@/core/eyedropper-magnifier'
 import { resolveBrushDynamics, smoothBrushSizeEnvelope } from '@/core/pressure'
 import { animationCelKey, animationCelOffsetsForKeys, parseAnimationCelKey, setAnimationCelOffsets, setAnimationCelOffsetsForKeys } from '@/core/animation'
@@ -47,7 +48,6 @@ import eyedropperMagnifierSampledMask from '@/assets/eyedropper-magnifier-sample
 import eyedropperMagnifierPreviousMask from '@/assets/eyedropper-magnifier-previous-mask.svg?raw'
 
 interface CompositeSurface { canvas: OffscreenCanvas; revision: string }
-interface OnionSkinSurfaceCache { key: string; revision: number; surfaces: Array<{ frameId: string; distance: number; side: 'previous' | 'next'; canvas: OffscreenCanvas }> }
 interface GradientPreviewSurface { canvas: OffscreenCanvas; context: OffscreenCanvasRenderingContext2D; imageData: ImageData; pixels: Uint8ClampedArray; width: number; height: number }
 interface GradientPreviewCoverageCache {
   selection: SelectionMask | null | undefined
@@ -136,7 +136,7 @@ export function CanvasStage({ session }: { session: DocumentSession }) {
   const compositeCacheRef = useRef(new CanvasCompositeCache())
   const compositePointSamplerRef = useRef<{ document: DocumentSession['document']; revision: number; sampler: (x: number, y: number) => RgbaColor } | null>(null)
   const renderDocumentSizeRef = useRef({ width: session.document.width, height: session.document.height })
-  const onionSkinCacheRef = useRef<OnionSkinSurfaceCache | null>(null)
+  const onionSkinCacheRef = useRef(new OnionSkinCompositeCache())
   const canvasResizeSurfaceRef = useRef<CompositeSurface | null>(null)
   const outlinePreviewCacheRef = useRef<{ revision: number; layerId: string; selection: SelectionMask; preview: NonNullable<DocumentSession['outlinePreview']>; indices: number[] } | null>(null)
   const selectionBoundaryCacheRef = useRef<SelectionBoundaryCache | null>(null)
@@ -267,7 +267,7 @@ export function CanvasStage({ session }: { session: DocumentSession }) {
       setSymmetryAxisPreferences(preferences.symmetryAxis)
       setActiveTheme(resolveTheme(preferences.theme))
       if (preferences.symmetryAxis.locked) symmetryDragRef.current = null
-      onionSkinCacheRef.current = null
+      onionSkinCacheRef.current.invalidateAll()
       if (!preferences.eyedropperMagnifierEnabled && eyedropperMagnifierRef.current) eyedropperMagnifierRef.current.hidden = true
       if (eyedropperMagnifierRef.current) eyedropperMagnifierRef.current.dataset.style = preferences.eyedropperMagnifierStyle
       if (!preferences.moveLayerContentPreviewEnabled) {
@@ -807,52 +807,26 @@ export function CanvasStage({ session }: { session: DocumentSession }) {
         const timeline = currentSession.document.animation
         if (timeline && timeline.frames.length > 1) {
           const refs = onionSkinFrameRefs(timeline, onionSkin.previousFrames, onionSkin.nextFrames)
-          const cacheKey = [currentSession.document.id, timeline.activeFrameId, onionSkin.previousFrames, onionSkin.nextFrames, onionSkin.previousOpacity, onionSkin.nextOpacity, onionSkin.previousColor.r, onionSkin.previousColor.g, onionSkin.previousColor.b, onionSkin.previousColor.a, onionSkin.nextColor.r, onionSkin.nextColor.g, onionSkin.nextColor.b, onionSkin.nextColor.a].join(':')
-          const cachedOnionSkin = onionSkinCacheRef.current
-          const invalidation = currentSession.contentInvalidation
-          const canPatch = cachedOnionSkin
-            && cachedOnionSkin.key === cacheKey
-            && cachedOnionSkin.revision !== currentSession.contentRevision
-            && invalidation?.kind === 'region'
-            && invalidation.fromRevision === cachedOnionSkin.revision
-            && invalidation.revision === currentSession.contentRevision
-          if (cachedOnionSkin && canPatch) {
-            const left = Math.max(0, Math.floor(invalidation.rect.x))
-            const top = Math.max(0, Math.floor(invalidation.rect.y))
-            const right = Math.min(document.width, Math.ceil(invalidation.rect.x + invalidation.rect.width))
-            const bottom = Math.min(document.height, Math.ceil(invalidation.rect.y + invalidation.rect.height))
-            if (right > left && bottom > top) for (const surface of cachedOnionSkin.surfaces) {
-              const tint = surface.side === 'previous' ? onionSkin.previousColor : onionSkin.nextColor
-              const opacity = surface.side === 'previous' ? onionSkin.previousOpacity : onionSkin.nextOpacity
-              const pixels = tintOnionSkinPixels(compositeAnimationFrameRegion(currentSession.document, surface.frameId, left, top, right - left, bottom - top), tint, opacity, surface.distance)
-              surface.canvas.getContext('2d')?.putImageData(new ImageData(pixels as Uint8ClampedArray<ArrayBuffer>, right - left, bottom - top), left, top)
-            }
-            cachedOnionSkin.revision = currentSession.contentRevision
-          } else if (!cachedOnionSkin || cachedOnionSkin.key !== cacheKey || cachedOnionSkin.revision !== currentSession.contentRevision) {
-            onionSkinCacheRef.current = {
-              key: cacheKey,
-              revision: currentSession.contentRevision,
-              surfaces: refs.map((ref) => {
-                const tint = ref.side === 'previous' ? onionSkin.previousColor : onionSkin.nextColor
-                const opacity = ref.side === 'previous' ? onionSkin.previousOpacity : onionSkin.nextOpacity
-                const pixels = tintOnionSkinPixels(compositeAnimationFrame(currentSession.document, ref.frameId), tint, opacity, ref.distance)
-                const canvas = new OffscreenCanvas(document.width, document.height)
-                canvas.getContext('2d')?.putImageData(new ImageData(pixels as Uint8ClampedArray<ArrayBuffer>, document.width, document.height), 0, 0)
-                return { ...ref, canvas }
-              })
-            }
-          }
-          context.save()
-          context.beginPath()
-          context.rect(originX, originY, canvasWidth, canvasHeight)
-          context.clip()
-          context.imageSmoothingEnabled = smoothPixelSampling
-          if (smoothPixelSampling) context.imageSmoothingQuality = 'high'
-          for (const surface of onionSkinCacheRef.current?.surfaces ?? []) context.drawImage(surface.canvas, originX, originY, canvasWidth, canvasHeight)
-          context.restore()
+          onionSkinCacheRef.current.draw({
+            context,
+            document: currentSession.document,
+            refs,
+            style: onionSkin,
+            originX,
+            originY,
+            canvasWidth,
+            canvasHeight,
+            fromX,
+            fromY,
+            toX,
+            toY,
+            zoom: view.zoom,
+            revision: currentSession.contentRevision,
+            invalidation: currentSession.contentInvalidation,
+            imageSmoothingEnabled: smoothPixelSampling
+          })
         }
       }
-      const activeDrag = inputRef.current.drag?.kind
       compositeCacheRef.current.draw({
         context,
         document,
@@ -870,7 +844,6 @@ export function CanvasStage({ session }: { session: DocumentSession }) {
         contentInvalidation: currentSession.contentInvalidation,
         frameId: document.animation?.activeFrameId,
         isolatedLayerMask: isolatedLayerMask ?? undefined,
-        activeDrag,
         imageSmoothingEnabled: smoothPixelSampling
       })
       if (view.showPixelGrid && shouldRenderPixelGrid(view.zoom)) drawGrid(0, 0, 1, 1, gridColors.pixelGridColor)
@@ -880,7 +853,7 @@ export function CanvasStage({ session }: { session: DocumentSession }) {
     const cachedPointSampler = compositePointSamplerRef.current
     const compositePointSampler = cachedPointSampler && cachedPointSampler.document === document && cachedPointSampler.revision === currentSession.contentRevision
       ? cachedPointSampler.sampler
-      : createCompositePointSampler(document)
+      : createNormalCompositePointSampler(document) ?? createCompositePointSampler(document)
     if (compositePointSampler !== cachedPointSampler?.sampler) compositePointSamplerRef.current = { document, revision: currentSession.contentRevision, sampler: compositePointSampler }
     const cachedReplacementSampler = compositeReplacementSamplerRef.current
     const compositePointReplacementSampler = cachedReplacementSampler
@@ -1653,7 +1626,7 @@ export function CanvasStage({ session }: { session: DocumentSession }) {
     if (documentSizeChanged) {
       renderDocumentSizeRef.current = { width: session.document.width, height: session.document.height }
       compositeCacheRef.current.invalidateAll()
-      onionSkinCacheRef.current = null
+      onionSkinCacheRef.current.invalidateAll()
       canvasResizeSurfaceRef.current = null
       canvasResizePreviewRef.current = null
       pendingCanvasResizeRef.current = null
@@ -2505,10 +2478,13 @@ export function CanvasStage({ session }: { session: DocumentSession }) {
       }
       return
     }
+    const eyedropperHeld = modifierActive(event.nativeEvent, 'temporaryEyedropper')
     const focusesRasterLayer = event.button === 0
       && session.tool !== 'hand'
       && session.tool !== 'zoom'
       && session.tool !== 'move'
+      && session.tool !== 'eyedropper'
+      && !eyedropperHeld
       && !session.activeLayerMaskId
       && (session.selectedGroupIds.length > 0 || session.selectedLayerIds.length > 1)
     if (focusesRasterLayer) state.selectLayer(session.document.activeLayerId)
@@ -2544,7 +2520,6 @@ export function CanvasStage({ session }: { session: DocumentSession }) {
       && session.selectedLayerIds.includes(movableActiveLayer.id)
       && isLayerEffectivelyVisible(session.document, movableActiveLayer)
       && !isLayerEffectivelyLocked(session.document, movableActiveLayer)
-    const eyedropperHeld = modifierActive(event.nativeEvent, 'temporaryEyedropper')
     const copyLayerHeld = modifierActive(event.nativeEvent, 'copyLayerOnDrag')
     if (selectionTool && (event.button === 0 || event.button === 2) && !canEditLayer && !eyedropperHeld) return
     if (session.tool === 'move' && event.button === 0) {
@@ -3283,6 +3258,7 @@ export function CanvasStage({ session }: { session: DocumentSession }) {
       inputRef.current.sampling = false
       hideEyedropperMagnifier()
       eyedropperOriginalColorRef.current = null
+      publishCanvasColorSamplingCompleted()
       if (!drag.temporarySampling && eyedropperSwitchToPencil) {
         state.setTool('pencil')
         event.currentTarget.style.cursor = canvasToolCursor('pencil', session.primaryColor)

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { compositeRegion, createDocument, createLayer, DocumentCompositeCache, getActiveLayer, readLayerColor, readLayerColorAt, resizeDocumentAt, writeLayerColor } from './document'
+import { compositeRegion, createDocument, createLayer, createSparseLayer, DocumentCompositeCache, getActiveLayer, readLayerColor, readLayerColorAt, resizeDocumentAt, writeLayerColor } from './document'
 import { beginPixelEdit, commitPixelEdit, HistoryStack } from './history'
 import { appendPerfectPixelSegment, applySelectionTransform, applySelectionTranslationPreview, brushMaskOffsets, brushStampAnchor, brushStampDimensions, captureSelectionTransform, clearSelection, fillSelectionOrCanvas, flipLayer, flipSelection, floodFill, floodFillSymmetric, moveSelection, outlinePixelIndices, outlineSelection, paintBrush, paintLine, paintShape, replaceLayerColor, rotatedShapePixelPoints, selectionTranslationPreviewEdit, shapeContainsPixel, shapePixelPoints } from './tools'
 import { combineSelection, ellipseSelection, lassoSelection, magicWandSelection, rasterLinePoints, rotatedSelectionBounds, selectionBoundarySegments, selectionContains, transformedSelectionBounds, transformedSelectionSourcePoint, transformSelectionMask } from './selection'
@@ -29,6 +29,40 @@ describe('pixel tools', () => {
       { x: 1, y: 0, size: 4, opacityScale: 0.625 },
       { x: 2, y: 0, size: 6, opacityScale: 1 }
     ])
+  })
+
+  it('paints and undoes overlapping large opaque stamps exactly once per pixel', () => {
+    const document = createDocument('large overlapping brush', 80, 48, 'rgba')
+    const layer = getActiveLayer(document)
+    const edit = beginPixelEdit(layer.id)
+
+    paintBrush(document, layer, edit, 24, 24, 32, blue, 'square')
+    paintBrush(document, layer, edit, 28, 24, 32, blue, 'square')
+
+    expect(edit.before.size).toBe(36 * 32)
+    expect(readLayerColorAt(document, layer, 12, 8)).toEqual(blue)
+    expect(readLayerColorAt(document, layer, 43, 39)).toEqual(blue)
+    const history = commitPixelEdit(document, edit, 'large brush')!
+    history.undo()
+    expect(readLayerColorAt(document, layer, 12, 8).a).toBe(0)
+    expect(readLayerColorAt(document, layer, 43, 39).a).toBe(0)
+  })
+
+  it('moves a persisted transparent 1px layer to its first distant brush edit', () => {
+    const document = createDocument('persisted sparse layer', 4596, 1767, 'rgba')
+    const layer = createSparseLayer('Blank', 'rgba')
+    document.layers = [layer]
+    document.activeLayerId = layer.id
+    const restoredLayer = createLayer(layer.name, 1, 1, 'rgba')
+    document.layers = [restoredLayer]
+    document.activeLayerId = restoredLayer.id
+    const edit = beginPixelEdit(restoredLayer.id)
+
+    paintBrush(document, restoredLayer, edit, 4000, 1500, 32, blue, 'square')
+
+    expect(restoredLayer.width).toBeLessThanOrEqual(160)
+    expect(restoredLayer.height).toBeLessThanOrEqual(160)
+    expect(readLayerColorAt(document, restoredLayer, 4000, 1500)).toEqual(blue)
   })
 
   it('keeps interpolated gradient color in perfect-pixel paths', () => {
@@ -438,6 +472,32 @@ describe('pixel tools', () => {
     expect(layer.height).toBe(5)
   })
 
+  it('keeps a large cropped layer local while painting and preserves undo across expansion', () => {
+    const document = createDocument('large cropped brush', 4596, 1767, 'rgba')
+    const layer = getActiveLayer(document)
+    layer.width = 240
+    layer.height = 131
+    layer.offsetX = 162
+    layer.offsetY = 1467
+    layer.pixels = new Uint8ClampedArray(layer.width * layer.height * 4)
+    const edit = beginPixelEdit(layer.id)
+
+    paintBrush(document, layer, edit, 500, 1500, 1, blue, 'square')
+    paintBrush(document, layer, edit, 700, 1500, 1, blue, 'square')
+
+    expect(layer.width).toBeLessThan(1000)
+    expect(layer.height).toBeLessThan(400)
+    expect(readLayerColorAt(document, layer, 500, 1500)).toEqual(blue)
+    expect(readLayerColorAt(document, layer, 700, 1500)).toEqual(blue)
+    const entry = commitPixelEdit(document, edit, 'local expansion')!
+    entry.undo()
+    expect(readLayerColorAt(document, layer, 500, 1500).a).toBe(0)
+    expect(readLayerColorAt(document, layer, 700, 1500).a).toBe(0)
+    entry.redo()
+    expect(readLayerColorAt(document, layer, 500, 1500)).toEqual(blue)
+    expect(readLayerColorAt(document, layer, 700, 1500)).toEqual(blue)
+  })
+
   it('keeps older pixel history aligned after expanding a moved layer', () => {
     const document = createDocument('history expansion', 3, 3, 'rgba')
     const layer = getActiveLayer(document)
@@ -506,6 +566,27 @@ describe('pixel tools', () => {
     expect(edit?.before.size).toBe(12)
     expect(readLayerColorAt(document, layer, 0, 0)).toEqual(blue)
     expect(readLayerColorAt(document, layer, 3, 2)).toEqual(blue)
+  })
+
+  it('keeps an enclosed cropped-layer fill local to its cel bitmap', () => {
+    const document = createDocument('cropped enclosed fill', 3, 3, 'rgba')
+    const layer = getActiveLayer(document)
+    if (layer.format !== 'rgba') throw new Error('wrong layer mode')
+    document.width = 4000
+    document.height = 2000
+    layer.width = 3
+    layer.height = 3
+    layer.offsetX = 1200
+    layer.offsetY = 700
+    layer.pixels = new Uint8ClampedArray(3 * 3 * 4)
+    for (let index = 0; index < 9; index += 1) layer.pixels[index * 4 + 3] = 255
+    layer.pixels[(1 * 3 + 1) * 4 + 3] = 0
+
+    const edit = floodFill(document, layer, 1201, 701, blue)
+
+    expect(edit?.runs?.reduce((count, run) => count + run.length, 0)).toBe(1)
+    expect(layer).toMatchObject({ width: 3, height: 3, offsetX: 1200, offsetY: 700 })
+    expect(readLayerColorAt(document, layer, 1201, 701)).toEqual(blue)
   })
 
   it('fills only selected mask pixels with the foreground color', () => {

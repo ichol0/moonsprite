@@ -18,7 +18,7 @@ test('普通 UI、交互热点和高频渲染分别归入 P1、P2、P3', () => {
 test('依赖与构建配置归入 P4 并覆盖其他级别', () => {
   const result = classifyPerformanceImpact(['src/renderer/src/components/CanvasStage.tsx', 'pnpm-lock.yaml'])
   assert.equal(result.level, 'P4')
-  assert.deepEqual(result.suites.map((suite) => suite.id), ['canvas-standard', 'canvas-profile', 'canvas-complex', 'canvas-large-800', 'canvas-large-2048', 'canvas-large-4000', 'canvas-large-sentinel', 'selection', 'document-composite', 'bundle', 'desktop'])
+  assert.deepEqual(result.suites.map((suite) => suite.id), ['canvas-standard', 'canvas-profile', 'canvas-complex', 'canvas-large-800', 'canvas-large-2048', 'canvas-large-4000', 'canvas-large-sentinel', 'selection', 'document-composite', 'project-format', 'bundle', 'desktop'])
   assert.deepEqual(result.suites.find((suite) => suite.id === 'canvas-complex').sizes, [800, 1024])
   assert.equal(result.suites.find((suite) => suite.id === 'canvas-profile').runtime, 'profile')
 })
@@ -30,9 +30,9 @@ test('仅修改 package 脚本不被误判为依赖升级', () => {
 test('发布审计至少运行 P3 并固定覆盖标准、Profiler、大画布和 1024 复杂工程', () => {
   const ordinaryRelease = classifyPerformanceAudit(['src/renderer/src/components/AboutDialog.tsx'], { minimumLevel: 'P3', releaseAudit: true })
   assert.equal(ordinaryRelease.level, 'P3')
-  assert.deepEqual(ordinaryRelease.suites.map((suite) => suite.id), ['canvas-standard', 'canvas-profile', 'canvas-large-800', 'canvas-large-2048', 'canvas-large-4000', 'canvas-large-sentinel', 'canvas-complex', 'bundle'])
+  assert.deepEqual(ordinaryRelease.suites.map((suite) => suite.id), ['canvas-standard', 'canvas-profile', 'canvas-large-800', 'canvas-large-2048', 'canvas-large-4000', 'canvas-large-sentinel', 'canvas-complex', 'project-format', 'bundle'])
   assert.deepEqual(ordinaryRelease.suites[0].scenarios, ['pan', 'zoom', 'rotated-zoom', 'draw', 'shape', 'marquee', 'bucket-fill', 'gradient'])
-  assert.deepEqual(ordinaryRelease.suites.find((suite) => suite.id === 'canvas-large-4000').scenarios, ['large-pan', 'large-zoom', 'large-draw', 'large-shape', 'large-marquee', 'large-bucket-fill', 'large-gradient', 'large-detail-pan', 'large-detail-draw'])
+  assert.deepEqual(ordinaryRelease.suites.find((suite) => suite.id === 'canvas-large-4000').scenarios, ['large-pan', 'large-zoom', 'large-draw', 'large-shape', 'large-marquee', 'large-bucket-fill', 'large-gradient', 'large-detail-pan', 'large-detail-draw', 'large-detail-draw-timelapse'])
   const complexSuite = ordinaryRelease.suites.find((suite) => suite.id === 'canvas-complex')
   assert.deepEqual(complexSuite.sizes, [1024])
   assert.deepEqual(complexSuite.scenarios, ['complex-draw', 'complex-undo', 'complex-playback'])
@@ -40,4 +40,8 @@ test('发布审计至少运行 P3 并固定覆盖标准、Profiler、大画布�
 
   const animationRelease = classifyPerformanceAudit(['src/renderer/src/core/animation.ts'], { minimumLevel: 'P3' })
   assert.deepEqual(animationRelease.suites.map((suite) => suite.id), ['canvas-standard', 'canvas-profile', 'canvas-large-800', 'canvas-large-2048', 'canvas-large-4000', 'canvas-large-sentinel', 'canvas-complex', 'document-composite', 'bundle'])
+
+  const projectFormatAudit = classifyPerformanceAudit(['src/renderer/src/core/project-format.ts'])
+  assert.equal(projectFormatAudit.level, 'P3')
+  assert.deepEqual(projectFormatAudit.suites.map((suite) => suite.id), ['canvas-standard', 'canvas-profile', 'canvas-large-800', 'canvas-large-2048', 'canvas-large-4000', 'canvas-large-sentinel', 'project-format', 'bundle'])
 })

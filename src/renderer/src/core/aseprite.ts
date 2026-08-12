@@ -1,10 +1,10 @@
 import { unzlibSync, zlibSync } from 'fflate'
-import type { AnimationCel, BlendMode, LayerGroup, PaletteEntry, RasterLayer, SpriteDocument } from '@shared/types'
+import type { AnimationCel, AnimationCelSurface, BlendMode, LayerGroup, PaletteEntry, RasterLayer, SpriteDocument } from '@shared/types'
 import { createDocument, createId, createLayer, getPaletteEntry, readLayerPacked } from './document'
 import { TRANSPARENT, unpackColor } from './raster'
 import { translateCurrent as tr } from './localization'
 import { animationLayerAtFrame, ensureAnimationDocument, refreshActiveAnimationFrame, syncActiveAnimationFrame } from './animation'
-import { normalizePaletteSlots, PALETTE_GRID_COLUMNS } from './palette-layout'
+import { applyImportedRgbaPalette } from './imported-palette'
 
 const ASE_MAGIC = 0xa5e0
 const FRAME_MAGIC = 0xf1fa
@@ -44,7 +44,7 @@ type Cel = {
   linkedFrame?: number
 }
 
-type DecodedCel = { x: number; y: number; opacity: number; width: number; height: number; pixels: Uint8ClampedArray }
+type DecodedCel = { x: number; y: number; opacity: number; width: number; height: number; pixels: Uint8ClampedArray; sourceFrame: number }
 
 const blendMode = (value: number): BlendMode => {
   const modes: Record<number, BlendMode> = {
@@ -131,7 +131,9 @@ const decodePixelData = (bytes: Uint8Array, width: number, height: number, color
   return pixels
 }
 
-export function decodeAseprite(input: Uint8Array, fallbackName = tr('core.document.importedAseprite')): SpriteDocument {
+export function decodeAseprite(input: Uint8Array, fallbackName = tr('core.document.importedAseprite'), onProgress?: (value: number) => void): SpriteDocument {
+  const reportProgress = (value: number): void => onProgress?.(Math.max(0, Math.min(1, value)))
+  reportProgress(0)
   if (input.byteLength < 128) throw new Error(tr('core.aseprite.fileCorrupt'))
   const view = new DataView(input.buffer, input.byteOffset, input.byteLength)
   if (view.getUint16(4, true) !== ASE_MAGIC) throw new Error(tr('core.aseprite.invalidFile'))
@@ -214,10 +216,13 @@ export function decodeAseprite(input: Uint8Array, fallbackName = tr('core.docume
     }
     cels.set(frame, frameCels)
     offset = frameEnd
+    reportProgress(0.72 * ((frame + 1) / frameCount))
   }
   if (!layers.length) throw new Error(tr('core.aseprite.noImportableLayers'))
 
-  const document = createDocument(fallbackName, width, height, 'rgba')
+  const document = createDocument(fallbackName, 1, 1, 'rgba')
+  document.width = width
+  document.height = height
   document.layers = []
   document.groups = []
   const groupIds = new Set(layers.filter((layer) => layer.group).map((layer) => layer.id))
@@ -237,14 +242,14 @@ export function decodeAseprite(input: Uint8Array, fallbackName = tr('core.docume
       return result
     }
     if (!cel.width || !cel.height || !cel.data) return null
-    const result = { x: cel.x, y: cel.y, opacity: cel.opacity, width: cel.width, height: cel.height, pixels: decodePixelData(cel.data, cel.width, cel.height, colorDepth, palette, transparentIndex) }
+    const result = { x: cel.x, y: cel.y, opacity: cel.opacity, width: cel.width, height: cel.height, pixels: decodePixelData(cel.data, cel.width, cel.height, colorDepth, palette, transparentIndex), sourceFrame: frame }
     resolved.set(key, result)
     return result
   }
   const documentLayerBySpecIndex = new Map<number, RasterLayer>()
   for (const spec of layers) {
     if (groupIds.has(spec.id) || spec.tilemap) continue
-    const layer = createLayer(spec.name, width, height, 'rgba')
+    const layer = createLayer(spec.name, 1, 1, 'rgba')
     if (layer.format !== 'rgba') continue
     layer.id = spec.id
     layer.groupId = spec.parentGroupId
@@ -252,52 +257,55 @@ export function decodeAseprite(input: Uint8Array, fallbackName = tr('core.docume
     layer.locked = spec.locked
     layer.opacity = spec.opacity
     layer.blendMode = spec.blendMode
-    const cel = resolveCel(0, spec.index)
-    if (cel) for (let y = 0; y < cel.height; y += 1) for (let x = 0; x < cel.width; x += 1) {
-      const targetX = cel.x + x
-      const targetY = cel.y + y
-      if (targetX < 0 || targetY < 0 || targetX >= width || targetY >= height) continue
-      const source = cel.pixels.subarray((y * cel.width + x) * 4, (y * cel.width + x + 1) * 4)
-      const target = (targetY * width + targetX) * 4
-      layer.pixels[target] = source[0]; layer.pixels[target + 1] = source[1]; layer.pixels[target + 2] = source[2]; layer.pixels[target + 3] = Math.round(source[3] * cel.opacity)
-    }
     document.layers.push(layer)
     documentLayerBySpecIndex.set(spec.index, layer)
   }
   if (!document.layers.length) throw new Error(tr('core.aseprite.noPixelLayers'))
   document.activeLayerId = document.layers[document.layers.length - 1].id
-  const importedPalette = palette.filter((entry): entry is PaletteEntry => Boolean(entry))
-  if (importedPalette.length) {
-    document.palette = importedPalette
-    document.paletteOrder = importedPalette.map((entry) => entry.id)
-    document.paletteColumns = PALETTE_GRID_COLUMNS
-    document.paletteSlots = normalizePaletteSlots(document.palette.map((entry) => entry.id), document.paletteOrder, undefined, document.paletteColumns)
-    document.nextColorId = Math.max(...importedPalette.map((entry) => entry.id), 0) + 1
-  }
   document.name = fallbackName
   const frames = frameDurations.map((duration, index) => ({ id: `frame-${index + 1}`, duration }))
   const animationCels: AnimationCel[] = []
   let celSequence = 0
+  const celIdBySlot = new Map<string, string>()
+  for (const spec of layers) {
+    const layer = documentLayerBySpecIndex.get(spec.index)
+    if (!layer) continue
+    for (let frameIndex = 0; frameIndex < frames.length; frameIndex += 1) celIdBySlot.set(`${frameIndex}:${spec.index}`, `cel-${++celSequence}`)
+  }
+  const sourceSurfaces = new Map<string, AnimationCelSurface>()
+  const createCelSurface = (cel: DecodedCel, copyPixels = false): AnimationCelSurface => {
+    const pixels = copyPixels || cel.opacity !== 1 ? cel.pixels.slice() : cel.pixels
+    if (cel.opacity !== 1) for (let index = 3; index < pixels.length; index += 4) pixels[index] = Math.round(pixels[index] * cel.opacity)
+    return { format: 'rgba', width: cel.width, height: cel.height, offsetX: cel.x, offsetY: cel.y, pixels }
+  }
   for (const spec of layers) {
     const layer = documentLayerBySpecIndex.get(spec.index)
     if (!layer) continue
     for (let frameIndex = 0; frameIndex < frames.length; frameIndex += 1) {
       const cel = resolveCel(frameIndex, spec.index)
-      const surface = cel
-        ? {
-            format: 'rgba' as const,
-            width: cel.width,
-            height: cel.height,
-            offsetX: cel.x,
-            offsetY: cel.y,
-            pixels: cel.opacity === 1 ? cel.pixels.slice() : new Uint8ClampedArray(cel.pixels.map((value, index) => index % 4 === 3 ? Math.round(value * cel.opacity) : value))
-          }
-        : { format: 'rgba' as const, width: 1, height: 1, offsetX: 0, offsetY: 0, pixels: new Uint8ClampedArray(4) }
-      animationCels.push({ id: `cel-${++celSequence}`, layerId: layer.id, frameId: frames[frameIndex].id, surface })
+      const sourceCel = cel ? resolveCel(cel.sourceFrame, spec.index) : null
+      const sharesSource = Boolean(cel && sourceCel && cel.sourceFrame !== frameIndex
+        && cel.x === sourceCel.x && cel.y === sourceCel.y && cel.opacity === sourceCel.opacity
+        && cel.width === sourceCel.width && cel.height === sourceCel.height)
+      const sourceKey = cel ? `${cel.sourceFrame}:${spec.index}` : ''
+      let surface: AnimationCelSurface
+      let linkedCelId: string | undefined
+      if (cel && sourceCel && sharesSource) {
+        surface = sourceSurfaces.get(sourceKey) ?? createCelSurface(sourceCel)
+        sourceSurfaces.set(sourceKey, surface)
+        linkedCelId = celIdBySlot.get(sourceKey)
+      } else if (cel) {
+        surface = createCelSurface(cel, cel.sourceFrame !== frameIndex)
+        if (cel.sourceFrame === frameIndex) sourceSurfaces.set(sourceKey, surface)
+      } else surface = { format: 'rgba', width: 1, height: 1, offsetX: 0, offsetY: 0, pixels: new Uint8ClampedArray(4) }
+      animationCels.push({ id: celIdBySlot.get(`${frameIndex}:${spec.index}`)!, layerId: layer.id, frameId: frames[frameIndex].id, surface, ...(linkedCelId ? { linkedCelId } : {}) })
+      reportProgress(0.72 + 0.22 * (animationCels.length / Math.max(1, celIdBySlot.size)))
     }
   }
   document.animation = { frames, cels: animationCels, activeFrameId: frames[0].id, loop: true }
   refreshActiveAnimationFrame(document)
+  applyImportedRgbaPalette(document)
+  reportProgress(1)
   return document
 }
 

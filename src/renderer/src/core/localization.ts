@@ -21,6 +21,8 @@ const localeNameKeys: Record<AppLocale, TranslationKey> = {
   'en-US': 'locale.en-US'
 }
 
+let runtimeLocale: AppLocale | null = null
+
 export function parseAppLocale(value: string | null | undefined): AppLocale {
   return AVAILABLE_APP_LOCALES.includes(value as AppLocale) ? value as AppLocale : DEFAULT_APP_LOCALE
 }
@@ -39,7 +41,12 @@ export function translate(locale: AppLocale, key: TranslationKey, params?: Trans
 
 /** Reads the persisted language for non-React code such as core algorithms and stores. */
 export function currentAppLocale(storage?: Storage): AppLocale {
-  return parseAppLocale(readStoredString(LANGUAGE_PREFERENCE_KEY, storage))
+  return runtimeLocale ?? parseAppLocale(readStoredString(LANGUAGE_PREFERENCE_KEY, storage))
+}
+
+/** Supplies a locale in runtimes without localStorage, such as decoding workers. */
+export function setRuntimeAppLocale(locale: AppLocale | null): void {
+  runtimeLocale = locale ? parseAppLocale(locale) : null
 }
 
 /** Translates runtime messages without coupling core modules to React or Tauri. */

@@ -1,6 +1,6 @@
-import { invoke } from '@tauri-apps/api/core'
+import { Channel, invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
-import type { ClipboardImage, ClipboardImageSize, MoonSpriteApi, RgbaColor, SaveDialogFormat, StoredBrush, StoredPalette, StoredWorkspace } from '@shared/types'
+import type { BinaryReadProgress, ClipboardImage, ClipboardImageSize, MoonSpriteApi, ProjectPreview, RgbaColor, SaveDialogFormat, StoredBrush, StoredPalette, StoredWorkspace } from '@shared/types'
 import { builtInPalettes } from '@/core/built-in-palettes'
 import { loadEditorPreferences } from '@/core/file-preferences'
 import { translate, type TranslationKey, type TranslationParams } from '@/core/localization'
@@ -58,7 +58,10 @@ const createBrowserApi = (): MoonSpriteApi => ({
     if (brush) return brush.data.slice()
     throw new Error(tr('platform.browser.readUnsupported'))
   },
+  readProjectPreview: async () => { throw new Error(tr('platform.browser.readUnsupported')) },
+  cacheProjectPreview: async () => {},
   writeBinaryAtomic: async () => { throw new Error(tr('platform.browser.writeUnsupported')) },
+  writeProjectIncremental: async () => { throw new Error(tr('platform.browser.writeUnsupported')) },
   writeClipboardImage: async () => {},
   readClipboardText: async () => null,
   readClipboardImage: async () => null,
@@ -117,9 +120,25 @@ const createBrowserApi = (): MoonSpriteApi => ({
 })
 
 const invokeBytes = async (command: string, args?: Record<string, unknown>): Promise<Uint8Array> => {
-  const bytes = await invoke<number[]>(command, args)
+  const bytes = await invoke<ArrayBuffer | Uint8Array | number[]>(command, args)
+  if (bytes instanceof Uint8Array) return bytes
   return new Uint8Array(bytes)
 }
+
+const writeBinaryAtomic = (filePath: string, data: Uint8Array): Promise<void> => invoke(
+  'write_binary_atomic',
+  data,
+  { headers: { 'x-moonsprite-file-path': encodeURIComponent(filePath) } }
+)
+
+const writeProjectIncremental = (filePath: string, sourcePath: string, data: Uint8Array): Promise<void> => invoke(
+  'write_project_incremental',
+  data,
+  { headers: {
+    'x-moonsprite-file-path': encodeURIComponent(filePath),
+    'x-moonsprite-source-path': encodeURIComponent(sourcePath)
+  } }
+)
 
 export const createTauriApi = (): MoonSpriteApi => ({
   openFiles: () => invoke('open_files', { language: dialogLanguage() }),
@@ -132,8 +151,24 @@ export const createTauriApi = (): MoonSpriteApi => ({
   getDefaultFileDirectories: () => invoke('default_file_directories'),
   chooseDirectory: (defaultPath) => invoke('choose_directory', { defaultPath }),
   fileExists: (filePath) => invoke('file_exists', { filePath }),
-  readBinary: (filePath) => invokeBytes('read_binary', { filePath }),
-  writeBinaryAtomic: (filePath, data) => invoke('write_binary_atomic', { filePath, data: Array.from(data) }),
+  readBinary: async (filePath, onProgress) => {
+    const progress = new Channel<BinaryReadProgress>()
+    progress.onmessage = (event) => onProgress?.(event)
+    return invokeBytes('read_binary', { filePath, onProgress: progress })
+  },
+  readProjectPreview: async (filePath) => {
+    const result = await invoke<Omit<ProjectPreview, 'preview'> & { preview: number[] }>('read_project_preview', { filePath })
+    return { ...result, preview: new Uint8Array(result.preview) }
+  },
+  cacheProjectPreview: (filePath, preview) => invoke('cache_project_preview', {
+    filePath,
+    preview: Array.from(preview.preview),
+    width: preview.width,
+    height: preview.height,
+    colorMode: preview.colorMode
+  }),
+  writeBinaryAtomic,
+  writeProjectIncremental,
   writeClipboardImage: (image) => invoke('write_clipboard_image', { width: image.width, height: image.height, data: Array.from(image.data) }),
   readClipboardText: () => invoke<string | null>('read_clipboard_text'),
   readClipboardImage: async (): Promise<ClipboardImage | null> => {

@@ -330,6 +330,20 @@ const surfaceFromLayer = (layer: RasterLayer, copyPixels = false): AnimationCelS
     : { format: 'indexed', width: layer.width, height: layer.height, offsetX: layer.offsetX, offsetY: layer.offsetY, storageOriginX: storageOrigin.x, storageOriginY: storageOrigin.y, pixels: copyPixels ? layer.pixels.slice() : layer.pixels }
 }
 
+const updateSurfaceFromLayer = (surface: AnimationCelSurface, layer: RasterLayer): AnimationCelSurface => {
+  if (surface.format !== layer.format) return surfaceFromLayer(layer)
+  const storageOrigin = getLayerStorageOrigin(layer)
+  surface.width = layer.width
+  surface.height = layer.height
+  surface.offsetX = layer.offsetX
+  surface.offsetY = layer.offsetY
+  surface.storageOriginX = storageOrigin.x
+  surface.storageOriginY = storageOrigin.y
+  if (surface.format === 'rgba' && layer.format === 'rgba') surface.pixels = layer.pixels
+  if (surface.format === 'indexed' && layer.format === 'indexed') surface.pixels = layer.pixels
+  return surface
+}
+
 const blankSurfaceFromLayer = (layer: RasterLayer): AnimationCelSurface => layer.format === 'rgba'
   ? { format: 'rgba', width: 1, height: 1, offsetX: 0, offsetY: 0, pixels: new Uint8ClampedArray(4) }
   : { format: 'indexed', width: 1, height: 1, offsetX: 0, offsetY: 0, pixels: new Uint32Array(1) }
@@ -658,6 +672,48 @@ export const disconnectAnimationCels = (document: SpriteDocument, celIds: readon
 export const syncActiveAnimationFrame = (document: SpriteDocument): void => {
   const timeline = ensureAnimationDocument(document)
   syncFrameSurfaces(document, timeline)
+}
+
+const syncAnimationLayerSurface = (timeline: AnimationTimeline, lookup: AnimationCelLookup, layer: RasterLayer): boolean => {
+  const cel = lookup.at(layer.id, timeline.activeFrameId)
+  if (!cel) return false
+  const source = lookup.resolve(cel) ?? cel
+  source.surface = source.surface ? updateSurfaceFromLayer(source.surface, layer) : surfaceFromLayer(layer)
+  source.opacity = layer.opacity
+  if (cel !== source) {
+    cel.surface = source.surface
+    cel.opacity = source.opacity
+  }
+  return true
+}
+
+/** Synchronizes the active frame with one index build and no timeline normalization. */
+export const syncActiveAnimationLayers = (document: SpriteDocument): void => {
+  const timeline = document.animation
+  if (!timeline) {
+    syncActiveAnimationFrame(document)
+    return
+  }
+  const lookup = createAnimationCelLookup(timeline)
+  if (document.layers.some((layer) => !lookup.at(layer.id, timeline.activeFrameId))) {
+    syncActiveAnimationFrame(document)
+    return
+  }
+  for (const layer of document.layers) syncAnimationLayerSurface(timeline, lookup, layer)
+}
+
+/** Keeps a pixel edit on one active layer out of the full layer-by-frame normalization path. */
+export const syncActiveAnimationLayer = (document: SpriteDocument, layerId: string): void => {
+  const timeline = document.animation
+  const layer = document.layers.find((candidate) => candidate.id === layerId)
+  if (!timeline || !layer) return
+  const cel = animationCelAt(timeline, layerId, timeline.activeFrameId)
+  if (!cel) {
+    syncActiveAnimationFrame(document)
+    return
+  }
+  const lookup = cel.linkedCelId ? createAnimationCelLookup(timeline) : { at: () => cel, resolve: () => cel }
+  syncAnimationLayerSurface(timeline, lookup, layer)
 }
 
 export const refreshActiveAnimationFrame = (document: SpriteDocument): void => {

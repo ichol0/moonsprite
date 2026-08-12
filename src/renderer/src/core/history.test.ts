@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { createDocument, getActiveLayer, readLayerPacked } from './document'
+import { createDocument, createLayer, getActiveLayer, readLayerPacked } from './document'
 import { beginPixelEdit, commitPixelEdit, HistoryStack, recordPixel, recordPixelKnownCurrent } from './history'
 
 const entry = (state: { value: number }, next: number, label = 'edit') => ({
@@ -23,6 +23,7 @@ describe('HistoryStack', () => {
     expect(edit.dirtyRect).toEqual({ x: 0, y: 0, width: 2, height: 1 })
     const committed = commitPixelEdit(document, edit, 'paint')!
     expect(committed.bytes).toBe(16)
+    expect(committed.affectedLayerIds).toEqual([layer.id])
     expect(committed.invalidation).toEqual({ kind: 'region', frameId: document.animation?.activeFrameId, rect: { x: 0, y: 0, width: 2, height: 1 } })
 
     committed.undo()
@@ -68,5 +69,35 @@ describe('HistoryStack', () => {
     expect(history.canUndo).toBe(false)
     expect(history.canRedo).toBe(false)
     expect(history.memoryBytes).toBe(0)
+  })
+
+  it('combines affected layers for compound pixel history', () => {
+    const document = createDocument('compound layers', 1, 1, 'rgba')
+    const firstLayer = getActiveLayer(document)
+    const secondLayer = createLayer('Second', 1, 1, 'rgba')
+    document.layers.push(secondLayer)
+    const first = beginPixelEdit(firstLayer.id)
+    const second = beginPixelEdit(secondLayer.id)
+    recordPixel(document, firstLayer, first, 0, 0xff0000ff)
+    recordPixel(document, secondLayer, second, 0, 0xffff0000)
+    const history = new HistoryStack()
+
+    history.beginCompound()
+    history.push(commitPixelEdit(document, first, 'first')!)
+    history.push(commitPixelEdit(document, second, 'second')!)
+    history.endCompound('both')
+
+    const committed = history.undo()!
+    expect(committed.affectedLayerIds).toEqual([firstLayer.id, secondLayer.id])
+  })
+
+  it('keeps compound metadata-only history outside content and animation refreshes', () => {
+    const history = new HistoryStack()
+    history.beginCompound()
+    history.push({ label: 'lock', bytes: 8, undo: () => undefined, redo: () => undefined, contentChanged: false, requiresAnimationSync: false })
+    history.push({ label: 'rename', bytes: 8, undo: () => undefined, redo: () => undefined, contentChanged: false, requiresAnimationSync: false })
+    history.endCompound('metadata')
+
+    expect(history.undo()).toMatchObject({ contentChanged: false, requiresAnimationSync: false })
   })
 })

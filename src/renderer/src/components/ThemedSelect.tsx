@@ -14,12 +14,13 @@ export interface ThemedSelectOption<T extends string> {
   description?: string
 }
 
-export function ThemedSelect<T extends string>({ value, groups, label, onChange, disabled = false, renderSelected, renderOption, showCheck = true, showOptionTooltips = true, popoverClassName = '', popoverWidth, preserveAnimationSelection = false }: {
+export function ThemedSelect<T extends string>({ value, groups, label, onChange, disabled = false, density = 'regular', renderSelected, renderOption, showCheck = true, showOptionTooltips = true, popoverClassName = '', popoverWidth, preserveAnimationSelection = false }: {
   value: T
   groups: Array<ThemedSelectGroup<T>>
   label: string
   onChange: (value: T) => void
   disabled?: boolean
+  density?: 'compact' | 'regular'
   renderSelected?: (option: ThemedSelectOption<T>) => ReactNode
   renderOption?: (option: ThemedSelectOption<T>) => ReactNode
   showCheck?: boolean
@@ -74,7 +75,7 @@ export function ThemedSelect<T extends string>({ value, groups, label, onChange,
     select(options[(current + direction + options.length) % options.length].value)
   }
 
-  return <span className="themed-select">
+  return <span className={`themed-select themed-select-${density}`}>
     <button ref={triggerRef} type="button" className="themed-select-trigger" aria-label={label} aria-haspopup="listbox" aria-expanded={open} disabled={disabled} onClick={() => setOpen((current) => !current)} onKeyDown={(event) => {
       if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
         event.preventDefault()

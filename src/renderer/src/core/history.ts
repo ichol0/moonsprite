@@ -1,5 +1,5 @@
 import type { RasterLayer, SelectionRect, SpriteDocument } from '@shared/types'
-import { animationLayerAtFrame, ensureAnimationDocument } from './animation'
+import { animationLayerAtFrame } from './animation'
 import { getLayer, getLayerMaskOwner, getLayerStorageOrigin, isLayerMask, layerIndexAtStoragePoint, markLayerContentChanged, readLayerPacked, writeLayerPacked, writeLayerPackedRun } from './document'
 
 export interface HistoryEntry {
@@ -8,6 +8,9 @@ export interface HistoryEntry {
   undo: () => void
   redo: () => void
   invalidation?: ContentInvalidationHint
+  affectedLayerIds?: string[]
+  contentChanged?: boolean
+  requiresAnimationSync?: boolean
 }
 
 export type ContentInvalidationHint =
@@ -76,7 +79,10 @@ export class HistoryStack {
       bytes: entries.reduce((sum, entry) => sum + entry.bytes, 0),
       undo: () => { for (let index = entries.length - 1; index >= 0; index -= 1) entries[index].undo() },
       redo: () => { for (const entry of entries) entry.redo() },
-      invalidation: combineInvalidations(entries)
+      invalidation: combineInvalidations(entries),
+      affectedLayerIds: [...new Set(entries.flatMap((entry) => entry.affectedLayerIds ?? []))],
+      contentChanged: entries.some((entry) => entry.contentChanged !== false),
+      requiresAnimationSync: entries.some((entry) => entry.requiresAnimationSync !== false)
     })
   }
 
@@ -138,7 +144,7 @@ export function preparePixelEdit(document: SpriteDocument, edit: PixelEdit): voi
   const target = getLayer(document, edit.layerId)
   edit.frameId = isLayerMask(target)
     ? getLayerMaskOwner(document, target)?.frameId
-    : ensureAnimationDocument(document).activeFrameId
+    : document.animation.activeFrameId
 }
 
 /** Records a pixel when the caller already has its current packed value. */
@@ -222,9 +228,22 @@ export function commitPixelEdit(document: SpriteDocument, edit: PixelEdit, label
   const apply = (values: Uint32Array): void => {
     const layer = layerForFrame()
     if (xs.length > 0) markLayerContentChanged(layer)
+    const origin = getLayerStorageOrigin(layer)
+    const mask = isLayerMask(layer)
     for (let offset = 0; offset < xs.length; offset += 1) {
-      const index = layerIndexAtStoragePoint(layer, xs[offset], ys[offset])
-      if (index !== null) writeLayerPacked(document, layer, index, values[offset])
+      const localX = xs[offset] - origin.x
+      const localY = ys[offset] - origin.y
+      if (localX < 0 || localY < 0 || localX >= layer.width || localY >= layer.height) continue
+      const index = localY * layer.width + localX
+      const value = values[offset]
+      if (mask || layer.format === 'indexed') writeLayerPacked(document, layer, index, value)
+      else {
+        const pixelOffset = index * 4
+        layer.pixels[pixelOffset] = value & 0xff
+        layer.pixels[pixelOffset + 1] = (value >>> 8) & 0xff
+        layer.pixels[pixelOffset + 2] = (value >>> 16) & 0xff
+        layer.pixels[pixelOffset + 3] = (value >>> 24) & 0xff
+      }
     }
   }
   const applyRuns = (values: Uint32Array): void => {
@@ -256,7 +275,8 @@ export function commitPixelEdit(document: SpriteDocument, edit: PixelEdit, label
     bytes: xs.byteLength + ys.byteLength + before.byteLength + after.byteLength + runXs.byteLength + runYs.byteLength + runLengths.byteLength + runBefore.byteLength + runAfter.byteLength + denseBytes,
     undo: () => { applyRuns(runBefore); if (denseRegion) applyDenseRegion(denseRegion.before); apply(before) },
     redo: () => { applyRuns(runAfter); if (denseRegion) applyDenseRegion(denseRegion.after); apply(after) },
-    invalidation: edit.dirtyRect ? { kind: 'region', frameId, rect: { ...edit.dirtyRect } } : undefined
+    invalidation: edit.dirtyRect ? { kind: 'region', frameId, rect: { ...edit.dirtyRect } } : undefined,
+    affectedLayerIds: [edit.layerId]
   }
 }
 

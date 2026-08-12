@@ -16,15 +16,17 @@ const ROTATION_INDICATOR_MAX_FOOTPRINT = 204
 const ROTATION_INDICATOR_CLEARANCE_RATIO = 4 / 3
 const ROTATION_INDICATOR_HALF_WIDTH = 64
 const ROTATION_INDICATOR_HALF_HEIGHT = 96
-const ROTATION_INDICATOR_POINTER_GAP = 32
+const ROTATION_INDICATOR_POINTER_GAP = 96
 
 export function rotationIndicatorPointBesidePointer(width: number, height: number, pointer: ViewportPoint): ViewportPoint {
   const clampAxis = (value: number, size: number, halfSize: number): number => size <= halfSize * 2
     ? size / 2
     : Math.max(halfSize, Math.min(size - halfSize, value))
+  const horizontalDirection = pointer.x < width / 2 ? 1 : -1
+  const verticalDirection = pointer.y < height / 2 ? 1 : -1
   return {
-    x: clampAxis(pointer.x - ROTATION_INDICATOR_HALF_WIDTH - ROTATION_INDICATOR_POINTER_GAP, width, ROTATION_INDICATOR_HALF_WIDTH),
-    y: clampAxis(pointer.y, height, ROTATION_INDICATOR_HALF_HEIGHT)
+    x: clampAxis(pointer.x + horizontalDirection * (ROTATION_INDICATOR_HALF_WIDTH + ROTATION_INDICATOR_POINTER_GAP), width, ROTATION_INDICATOR_HALF_WIDTH),
+    y: clampAxis(pointer.y + verticalDirection * (ROTATION_INDICATOR_HALF_HEIGHT + ROTATION_INDICATOR_POINTER_GAP), height, ROTATION_INDICATOR_HALF_HEIGHT)
   }
 }
 

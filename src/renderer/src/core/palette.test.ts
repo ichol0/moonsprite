@@ -1,7 +1,7 @@
 import { decode } from 'upng-js'
 import { describe, expect, it } from 'vitest'
 import { createDocument, getActiveLayer, writeLayerColor } from './document'
-import { countUsedPaletteColors, encodePalettePng, extractPaletteColors, mergePaletteColors } from './palette'
+import { countUsedPaletteColors, encodePalettePng, extractPaletteColors, mergePaletteColors, paletteGradient, sortPaletteColors } from './palette'
 
 describe('palette extraction', () => {
   it('counts palette colors used by RGBA and indexed animation surfaces', () => {
@@ -77,5 +77,33 @@ describe('palette extraction', () => {
     const decoded = decode(new Uint8Array(exported.bytes).buffer as ArrayBuffer)
     expect(decoded.width).toBe(32)
     expect(decoded.height).toBe(16)
+  })
+
+  it('sorts palette colors by hue, saturation, brightness, luminance, RGBA, and direction', () => {
+    const darkGray = { r: 24, g: 24, b: 24, a: 255 }
+    const lightGray = { r: 220, g: 220, b: 220, a: 255 }
+    const red = { r: 255, g: 0, b: 0, a: 255 }
+    const green = { r: 0, g: 255, b: 0, a: 255 }
+    const transparentBlue = { r: 0, g: 0, b: 255, a: 64 }
+    expect(sortPaletteColors([green, lightGray, red, darkGray], 'hue')).toEqual([darkGray, lightGray, red, green])
+    expect(sortPaletteColors([red, lightGray, darkGray], 'saturation')).toEqual([darkGray, lightGray, red])
+    expect(sortPaletteColors([lightGray, red, darkGray], 'brightness')).toEqual([darkGray, lightGray, red])
+    expect(sortPaletteColors([red, transparentBlue], 'alpha')).toEqual([transparentBlue, red])
+    expect(sortPaletteColors([red, green], 'red')).toEqual([green, red])
+    expect(sortPaletteColors([red, green], 'green')).toEqual([red, green])
+    expect(sortPaletteColors([red, transparentBlue], 'blue')).toEqual([red, transparentBlue])
+    expect(sortPaletteColors([red, green], 'luminance')).toEqual([red, green])
+    expect(sortPaletteColors([red, green], 'hue', 'descending')).toEqual([green, red])
+  })
+
+  it('creates RGB and shortest-path hue gradients while preserving endpoints', () => {
+    const red = { r: 255, g: 0, b: 0, a: 255 }
+    const blue = { r: 0, g: 0, b: 255, a: 127 }
+    const rgb = paletteGradient(red, blue, 3)
+    const hue = paletteGradient(red, blue, 3, true)
+    expect(rgb).toEqual([red, { r: 128, g: 0, b: 128, a: 191 }, blue])
+    expect(hue[0]).toEqual(red)
+    expect(hue[1]).toEqual({ r: 255, g: 0, b: 255, a: 191 })
+    expect(hue[2]).toEqual(blue)
   })
 })

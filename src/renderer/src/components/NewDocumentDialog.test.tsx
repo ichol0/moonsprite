@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { MoonSpriteApi } from '@shared/types'
 import { getWindowsFileNameError, NewDocumentDialog } from './NewDocumentDialog'
@@ -40,5 +40,17 @@ describe('getWindowsFileNameError', () => {
     expect(screen.getByRole('spinbutton', { name: '画布高度' })).toHaveValue('180')
     expect(readClipboardImageSize).toHaveBeenCalledOnce()
     expect(readClipboardImage).not.toHaveBeenCalled()
+  })
+
+  it('keeps drawing recording off by default and submits the selected state', () => {
+    const onCreate = vi.fn()
+    render(<NewDocumentDialog open onClose={vi.fn()} onCreate={onCreate} />)
+
+    const recording = screen.getByRole('checkbox')
+    expect(recording).not.toBeChecked()
+    fireEvent.click(recording)
+    fireEvent.submit(screen.getByRole('form'))
+
+    expect(onCreate).toHaveBeenCalledWith(expect.any(String), 64, 64, 'rgba', true)
   })
 })

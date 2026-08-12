@@ -2,11 +2,13 @@ import { create } from 'zustand'
 import type { AnimationCel, BlendMode, BrushPaintMode, BrushShape, BrushTexture, CanvasAnchor, ColorMode, FillKind, FillMode, GradientDither, ImageBrush, ImageBrushSettings, ImageResizeInterpolation, LayerGroup, LayerMask, OutlineDirections, OutlineKernel, OutlinePosition, PaletteSlotLayout, ProceduralBrushId, ProceduralBrushSettings, RasterLayer, RecoveryRecord, RgbaColor, SelectionKind, SelectionMask, SelectionMode, SelectionRect, ShapeKind, ShapeRatio, SpriteDocument, TimelapseSettings, TimelapseVideoFormat, ToolId, ViewState } from '@shared/types'
 import { checkResourceLimit } from '@/core/resource-policy'
 import { beginPixelEdit, commitPixelEdit, HistoryStack, recordPixel, revertPixelEdit, type HistoryEntry, type PixelEdit } from '@/core/history'
-import { animationMaskAt, animationMaskSlotAt, convertDocumentColorMode, createDocument, createId, createLayer, createLayerMask as createAttachedLayerMask, duplicateLayer, findLayerMask, findOrAddPaletteColor, getDescendantGroupIds, getGroup, getGroupLockingAncestor, getLayerIdsInGroup, getLayer, getActiveLayer, getLayerLockingGroup, isGroupEffectivelyLocked, isLayerEffectivelyLocked, isLayerEffectivelyVisible, isLayerMask, layerContentBounds, readLayerColor, readLayerColorAt, resolveAnimationMask, resizeDocumentAt, resizeDocumentImage, writeLayerColor } from '@/core/document'
+import { animationMaskAt, animationMaskSlotAt, convertDocumentColorMode, createDocument, createId, createLayer, createSparseLayer, createLayerMask as createAttachedLayerMask, duplicateLayer, findLayerMask, findOrAddPaletteColor, getDescendantGroupIds, getGroup, getGroupLockingAncestor, getLayerIdsInGroup, getLayer, getActiveLayer, getLayerLockingGroup, isGroupEffectivelyLocked, isLayerEffectivelyLocked, isLayerEffectivelyVisible, isLayerMask, layerContentBounds, readLayerColor, readLayerColorAt, resolveAnimationMask, resizeDocumentAt, resizeDocumentImage, writeLayerColor } from '@/core/document'
 import { decodeProject, encodeProject } from '@/core/project-format'
-import { activateAnimationFrame, addBlankAnimationFrame, animationCelContentSelection, animationCelHasContent, animationCelKey, animationGroupMaskAt, animationLayerAtFrame, cloneAnimationCel, cloneAnimationCelSurface, cloneAnimationCelsForLayer, cloneAnimationGroupMask, connectAnimationCels, deleteAnimationFrame, disconnectAnimationCels, duplicateAnimationFrame, ensureAnimationDocument, mapAnimationCelBlock, nextAnimationFrameId, parseAnimationCelKey, refreshActiveAnimationFrame, removeAnimationCelsForLayers, resolveAnimationCel, resizeAnimationCelsAt, restoreAnimationCels, setAnimationFrameDuration, setAnimationLoop, syncActiveAnimationFrame } from '@/core/animation'
+import { activateAnimationFrame, addBlankAnimationFrame, animationCelContentSelection, animationCelHasContent, animationCelKey, animationGroupMaskAt, animationLayerAtFrame, cloneAnimationCel, cloneAnimationCelSurface, cloneAnimationCelsForLayer, cloneAnimationGroupMask, connectAnimationCels, deleteAnimationFrame, disconnectAnimationCels, duplicateAnimationFrame, ensureAnimationDocument, mapAnimationCelBlock, nextAnimationFrameId, parseAnimationCelKey, refreshActiveAnimationFrame, removeAnimationCelsForLayers, resolveAnimationCel, resizeAnimationCelsAt, restoreAnimationCels, setAnimationFrameDuration, setAnimationLoop, syncActiveAnimationFrame, syncActiveAnimationLayer } from '@/core/animation'
 import { flushViewPreview } from '@/core/view-preview-lifecycle'
 import { fileNameFromPath } from '@/core/document-files'
+import { openProgress } from '@/core/open-progress'
+import { saveProgress } from '@/core/save-progress'
 import { createSelectionBrush } from '@/core/brushes'
 import { createHorizontalSpriteSheetDocument } from '@/core/sprite-sheet'
 import { applySelectionTransform, applySelectionTranslationPreview, captureSelectionTransform, clampSelection, clearSelection, fillSelectionOrCanvas, flipLayer, flipSelection, flipSelectionTransformSource, moveSelection, outlineSelection, replaceLayerColor, restoreSelectionTranslationPreview, selectionTranslationPreviewEdit, transformSelectionCopy, type SelectionTransformSource, type SelectionTranslationPreview } from '@/core/tools'
@@ -20,19 +22,21 @@ import { assignGroupToGroup as assignGroupToGroupOperation, assignGroupToRoot as
 import { buildLayerPanelTree } from '@/core/layer-panel-layout'
 import { loadEditorPreferences, SAVE_FORMAT_PREFERENCE_KEY, saveImageKindForPreference } from '@/core/file-preferences'
 import { normalizeProjectDisplaySettings, normalizeProjectStatistics, normalizeTimelapseSettings } from '@/core/project-metadata'
-import { captureTimelapseSnapshot, createTimelapseCaptureCache, type TimelapseCaptureCache, type TimelapseExportOptions } from '@/core/timelapse'
+import { commitPreparedTimelapseSnapshot, createTimelapseCaptureCache, prepareTimelapseSnapshot, type TimelapseCaptureCache, type TimelapseExportOptions } from '@/core/timelapse'
 import { translate, type TranslationKey, type TranslationParams } from '@/core/localization'
 import { resolveClipboardPlacement } from '@/core/clipboard-placement'
 import { cloneProceduralSettings, defaultToolSettings, loadToolSettings, normalizePersistedBrushProfile, saveToolSettings, type BrushTool, type PersistedBrushProfile, type PersistedToolSettings } from '@/core/tool-preferences'
 import { readStoredString } from '@/core/storage'
+import { persistProjectLayerPanelState } from '@/core/layer-panel-state'
 import { moveSymmetryCenter, type SymmetryAxes, type SymmetryCenter } from '@/core/symmetry'
 import { brushPressureFromDynamics, migrateBrushPressureSettings, normalizeBrushPressureSettings, patchBrushDynamicsGradientDither, patchBrushDynamicsMapping, type BrushDynamicsEffect, type BrushDynamicsMapping, type BrushPressureSettings } from '@/core/pressure'
 import { exportDocumentFile, exportTimelapseFile, openDocumentFile, saveDocumentFile, type ExportOptions, type SaveAsOptions } from './document-file-service'
 import { RecoveryService } from './recovery-service'
 import { ClipboardService, selectionClipboardImage, type LayerClipboard, type LayerCollectionClipboard, type LayerMaskClipboard } from './clipboard-service'
 import { captureAdjustmentSnapshot, captureLayerUi, commitLayerMerge, restoreAdjustmentSnapshot, restoreDocumentSnapshot } from './workspace-history'
-import { activePaintLayer, applyBrushProfile, brushProfileFromSession, clearSelectionBrushPaintColors, cloneSelectionMask, isBrushTool, persistToolSettings, remapSelectionBrushColors, rememberBrushProfile, sessionFromDocument, touch } from './workspace-session'
-import { addPaletteColor as addPaletteColorCommand, applyPalette as applyPaletteCommand, deletePaletteColors as deletePaletteColorsCommand, movePaletteColor as movePaletteColorCommand, reorderPaletteColors as reorderPaletteColorsCommand, selectPaletteColor as selectPaletteColorCommand, selectPaletteColors as selectPaletteColorsCommand, updatePaletteColor as updatePaletteColorCommand } from './workspace-palette'
+import { activePaintLayer, applyBrushProfile, brushProfileFromSession, clearSelectionBrushPaintColors, cloneSelectionMask, isBrushTool, persistToolSettings, remapSelectionBrushColors, rememberBrushProfile, sessionFromDocument, touch, touchMetadata } from './workspace-session'
+import { addPaletteColor as addPaletteColorCommand, applyPalette as applyPaletteCommand, deletePaletteColors as deletePaletteColorsCommand, gradientPaletteColors as gradientPaletteColorsCommand, gradientPaletteSlots as gradientPaletteSlotsCommand, movePaletteColor as movePaletteColorCommand, reorderPaletteColors as reorderPaletteColorsCommand, reversePaletteColors as reversePaletteColorsCommand, selectPaletteColor as selectPaletteColorCommand, selectPaletteColors as selectPaletteColorsCommand, sortPaletteColors as sortPaletteColorsCommand, updatePaletteColor as updatePaletteColorCommand } from './workspace-palette'
+import type { PaletteSortDirection, PaletteSortMode } from '@/core/palette'
 import type { AdjustmentSnapshot, AnimationFrameClipboardItem, AnimationMaskClipboardItem, AppDialog, CanvasResizePreview, DocumentSession, OutlinePreview } from './workspace-types'
 
 export type { ExportOptions, SaveAsOptions } from './document-file-service'
@@ -58,7 +62,7 @@ interface WorkspaceState {
   saveProgress: { title: string; value: number; label: string; requiresConfirmation?: boolean } | null
   dialog: AppDialog | null
   recoveryRecords: RecoveryRecord[]
-  newDocument(name: string, width: number, height: number, colorMode: ColorMode): Promise<void>
+  newDocument(name: string, width: number, height: number, colorMode: ColorMode, recordDrawing?: boolean): Promise<void>
   createSpriteSheetFromActive(): Promise<boolean>
   addSession(document: SpriteDocument): void
   reorderSessions(documentIds: string[]): void
@@ -127,7 +131,11 @@ interface WorkspaceState {
   deletePaletteColors(ids: number[]): void
   movePaletteColor(direction: -1 | 1): void
   reorderPaletteColors(ids: number[], targetSlots: Array<number | null>, targetColumns: number): void
-  mutateActive(mutator: (session: DocumentSession) => void, dirty?: boolean): void
+  reversePaletteColors(): void
+  gradientPaletteColors(byHue: boolean): void
+  gradientPaletteSlots(slotIndices: number[], sourceSlots: Array<number | null>, columns: number, byHue: boolean): void
+  sortPaletteColors(mode: PaletteSortMode, direction: PaletteSortDirection): void
+  mutateActive(mutator: (session: DocumentSession) => void, dirty?: boolean | 'content' | 'metadata'): void
   commitPixelEdit(edit: PixelEdit, label: string, activity?: { stroke?: boolean; durationMs?: number }): void
   setTimelapseSettings(settings: Partial<Omit<TimelapseSettings, 'snapshots'>>): void
   clearTimelapse(): void
@@ -251,7 +259,7 @@ interface WorkspaceState {
   saveActive(saveAs?: boolean, options?: SaveAsOptions): Promise<boolean>
   exportActive(options?: ExportOptions): Promise<boolean>
   openFiles(): Promise<void>
-  openPath(filePath: string, options?: { duplicate?: boolean }): Promise<boolean>
+  openPath(filePath: string, options?: { duplicate?: boolean; onBeforeSession?: () => void }): Promise<boolean>
   closeDocument(id: string): Promise<void>
   restoreRecoveries(): Promise<void>
   restoreRecovery(id: string): Promise<boolean>
@@ -299,12 +307,9 @@ const restoreFloatingPreview = (session: DocumentSession): void => {
   else if (pending.previewEdit) revertPixelEdit(session.document, pending.previewEdit)
 }
 
-const TIMELAPSE_CAPTURE_IDLE_MS = 300
-const TIMELAPSE_CAPTURE_MIN_INTERVAL_MS = 1000
-const TIMELAPSE_CAPTURE_MAX_WAIT_MS = 1200
-interface PendingTimelapseCapture { timer: number; idleCallback?: number }
-const pendingTimelapseCaptures = new Map<string, PendingTimelapseCapture>()
 const timelapseCaptureCaches = new WeakMap<SpriteDocument, TimelapseCaptureCache>()
+const timelapseCaptureTasks = new WeakMap<SpriteDocument, Promise<void>>()
+const timelapseCaptureGenerations = new WeakMap<SpriteDocument, number>()
 
 const captureCacheFor = (document: SpriteDocument): TimelapseCaptureCache => {
   const cached = timelapseCaptureCaches.get(document)
@@ -314,68 +319,48 @@ const captureCacheFor = (document: SpriteDocument): TimelapseCaptureCache => {
   return created
 }
 
-const cancelTimelapseCapture = (documentId: string): void => {
-  const pending = pendingTimelapseCaptures.get(documentId)
-  if (pending) {
-    window.clearTimeout(pending.timer)
-    if (pending.idleCallback !== undefined && typeof window.cancelIdleCallback === 'function') window.cancelIdleCallback(pending.idleCallback)
-  }
-  pendingTimelapseCaptures.delete(documentId)
+const queueTimelapseCapture = (session: DocumentSession): Promise<void> => {
+  const document = session.document
+  const captureRevision = session.contentRevision
+  const captureInvalidation = session.contentInvalidation
+  const prepared = prepareTimelapseSnapshot(document, Date.now(), {
+    cache: captureCacheFor(document),
+    contentRevision: captureRevision,
+    contentInvalidation: captureInvalidation
+  })
+  if (!prepared) return Promise.resolve()
+  const generation = timelapseCaptureGenerations.get(document) ?? 0
+  const previous = timelapseCaptureTasks.get(document) ?? Promise.resolve()
+  let tracked = Promise.resolve()
+  tracked = previous.catch(() => undefined).then(async () => {
+    await commitPreparedTimelapseSnapshot(document, prepared, () => (timelapseCaptureGenerations.get(document) ?? 0) === generation)
+    const currentSessions = useWorkspace.getState().sessions
+    if (currentSessions.some((current) => current.document === document)) useWorkspace.setState({ sessions: [...currentSessions] })
+  }).finally(() => {
+    if (timelapseCaptureTasks.get(document) === tracked) timelapseCaptureTasks.delete(document)
+  })
+  timelapseCaptureTasks.set(document, tracked)
+  return tracked
 }
 
 const scheduleTimelapseCapture = (session: DocumentSession): void => {
   const settings = normalizeTimelapseSettings(session.document.timelapse, session.document.timelapse?.snapshots ?? [])
   session.document.timelapse = settings
-  cancelTimelapseCapture(session.document.id)
   if (!settings.enabled) return
-  const document = session.document
-  const lastSnapshotAt = settings.snapshots.at(-1)?.capturedAt ?? 0
-  const elapsedSinceLastSnapshot = lastSnapshotAt > 0 ? Math.max(0, Date.now() - lastSnapshotAt) : Number.POSITIVE_INFINITY
-  const captureDelay = Math.max(TIMELAPSE_CAPTURE_IDLE_MS, TIMELAPSE_CAPTURE_MIN_INTERVAL_MS - elapsedSinceLastSnapshot)
-  const pending: PendingTimelapseCapture = { timer: 0 }
-  const capture = (): void => {
-    if (pendingTimelapseCaptures.get(document.id) !== pending) return
-    pendingTimelapseCaptures.delete(document.id)
-    const current = useWorkspace.getState().sessions.find((candidate) => candidate.document === document)
-    if (!current || !normalizeTimelapseSettings(document.timelapse, document.timelapse?.snapshots ?? []).enabled) return
-    if (current.animationPlaying) {
-      scheduleTimelapseCapture(current)
-      return
-    }
-    captureTimelapseSnapshot(document, Date.now(), {
-      cache: captureCacheFor(document),
-      contentRevision: current.contentRevision,
-      contentInvalidation: current.contentInvalidation
-    })
-    useWorkspace.setState({ sessions: [...useWorkspace.getState().sessions] })
-  }
-  pending.timer = window.setTimeout(() => {
-    if (pendingTimelapseCaptures.get(document.id) !== pending) return
-    if (typeof window.requestIdleCallback === 'function') pending.idleCallback = window.requestIdleCallback(capture, { timeout: TIMELAPSE_CAPTURE_MAX_WAIT_MS })
-    else capture()
-  }, captureDelay)
-  pendingTimelapseCaptures.set(document.id, pending)
+  if (!session.animationPlaying) void queueTimelapseCapture(session).catch(() => undefined)
 }
 
-const flushTimelapseCapture = (session: DocumentSession): void => {
-  if (!pendingTimelapseCaptures.has(session.document.id) || session.animationPlaying) return
-  cancelTimelapseCapture(session.document.id)
-  if (normalizeTimelapseSettings(session.document.timelapse, session.document.timelapse?.snapshots ?? []).enabled) {
-    captureTimelapseSnapshot(session.document, Date.now(), {
-      cache: captureCacheFor(session.document),
-      contentRevision: session.contentRevision,
-      contentInvalidation: session.contentInvalidation
-    })
-  }
+const flushTimelapseCapture = async (session: DocumentSession): Promise<void> => {
+  await timelapseCaptureTasks.get(session.document)
 }
 
-const recordDocumentOperation = (session: DocumentSession, activity?: { stroke?: boolean; durationMs?: number }): void => {
+const recordDocumentOperation = (session: DocumentSession, activity?: { stroke?: boolean; durationMs?: number }, captureTimelapse = true): void => {
   const statistics = normalizeProjectStatistics(session.document.statistics)
   statistics.operationCount += 1
   if (activity?.stroke) statistics.strokeCount += 1
   if (activity?.durationMs) statistics.drawingTimeMs += Math.max(0, Math.round(activity.durationMs))
   session.document.statistics = statistics
-  scheduleTimelapseCapture(session)
+  if (captureTimelapse) scheduleTimelapseCapture(session)
 }
 
 const persistDisplaySettings = (session: DocumentSession, view: Partial<ViewState>): boolean => {
@@ -409,6 +394,30 @@ const selectedGroupRows = (session: DocumentSession): string[] =>
 
 const selectedDirectLayerRows = (session: DocumentSession): string[] =>
   session.selectedGroupId && selectedGroupRows(session).length === 1 ? [] : [...session.selectedLayerIds]
+
+const ensureLayerSelection = (session: DocumentSession): void => {
+  const validLayerIds = new Set(session.document.layers.map((layer) => layer.id))
+  const validGroupIds = new Set(session.document.groups.map((group) => group.id))
+  session.selectedLayerIds = [...new Set(session.selectedLayerIds)].filter((id) => validLayerIds.has(id))
+  session.selectedGroupIds = [...new Set(session.selectedGroupIds)].filter((id) => validGroupIds.has(id))
+  if (!session.selectedGroupId || !validGroupIds.has(session.selectedGroupId) || !session.selectedGroupIds.includes(session.selectedGroupId)) {
+    session.selectedGroupId = null
+  }
+
+  const fallbackLayerId = validLayerIds.has(session.document.activeLayerId)
+    ? session.document.activeLayerId
+    : session.selectedLayerIds.at(-1) ?? session.document.layers.at(-1)?.id
+  if (fallbackLayerId && session.document.activeLayerId !== fallbackLayerId) session.document.activeLayerId = fallbackLayerId
+
+  if (session.selectedLayerIds.length === 0 && session.selectedGroupIds.length === 0 && fallbackLayerId) {
+    session.selectedLayerIds = [fallbackLayerId]
+  }
+  const anchorIsValid = session.layerSelectionAnchorId
+    && (validLayerIds.has(session.layerSelectionAnchorId) || validGroupIds.has(session.layerSelectionAnchorId))
+  if (!anchorIsValid) {
+    session.layerSelectionAnchorId = session.selectedGroupIds.at(-1) ?? session.selectedLayerIds.at(-1) ?? fallbackLayerId ?? null
+  }
+}
 
 const applyLayerCurrentFrameCellSelection = (session: DocumentSession, layerIds: readonly string[], anchorLayerId: string): void => {
   const timeline = ensureAnimationDocument(session.document)
@@ -514,6 +523,9 @@ const colorReplacementPalettesEqual = (left: SpriteDocument['palette'], right: S
     const candidate = right[index]
     return Boolean(candidate && entry.id === candidate.id && colorEquals(entry.color, candidate.color))
   })
+
+const optionalColorEquals = (left: RgbaColor | null | undefined, right: RgbaColor | null | undefined): boolean =>
+  left === right || Boolean(left && right && colorEquals(left, right))
 
 interface ColorReplacementResult {
   edits: PixelEdit[]
@@ -820,12 +832,12 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
   dialog: null,
   recoveryRecords: [],
 
-  async newDocument(name, width, height, colorMode) {
+  async newDocument(name, width, height, colorMode, recordDrawing = false) {
     try {
       const resource = await window.moonSprite.getResourceInfo()
       const check = checkResourceLimit(width, height, 1, colorMode, resource)
       if (!check.allowed) throw new Error(check.reason)
-      get().addSession(createDocument(name || tr('workspace.defaultName'), width, height, colorMode))
+      get().addSession(createDocument(name || tr('workspace.defaultName'), width, height, colorMode, recordDrawing))
     } catch (error) {
       set({ message: error instanceof Error ? error.message : tr('workspace.canvasCreateError') })
     }
@@ -1408,6 +1420,18 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
   reorderPaletteColors(ids, targetSlots, targetColumns) {
     get().mutateActive((session) => reorderPaletteColorsCommand(session, ids, targetSlots, targetColumns))
   },
+  reversePaletteColors() {
+    get().mutateActive((session) => reversePaletteColorsCommand(session))
+  },
+  gradientPaletteColors(byHue) {
+    get().mutateActive((session) => gradientPaletteColorsCommand(session, byHue))
+  },
+  gradientPaletteSlots(slotIndices, sourceSlots, columns, byHue) {
+    get().mutateActive((session) => gradientPaletteSlotsCommand(session, slotIndices, sourceSlots, columns, byHue))
+  },
+  sortPaletteColors(mode, direction) {
+    get().mutateActive((session) => sortPaletteColorsCommand(session, mode, direction))
+  },
 
   mutateActive(mutator, dirty = true) {
     const state = get()
@@ -1415,9 +1439,12 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     if (!session) return
     mutator(session)
     if (session.activeLayerMaskId && !findLayerMask(session.document, session.activeLayerMaskId)) session.activeLayerMaskId = null
-    if (dirty) syncActiveAnimationFrame(session.document)
-    touch(session, dirty)
-    if (dirty) recordDocumentOperation(session)
+    if (dirty === true) syncActiveAnimationFrame(session.document)
+    ensureLayerSelection(session)
+    persistProjectLayerPanelState(session)
+    if (dirty === 'metadata') touchMetadata(session)
+    else touch(session, dirty === true || dirty === 'content')
+    if (dirty === true || dirty === 'content' || dirty === 'metadata') recordDocumentOperation(session, undefined, dirty !== 'metadata')
     set({ sessions: [...state.sessions] })
   },
 
@@ -1426,7 +1453,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       const entry = commitPixelEdit(session.document, edit, label)
       if (entry) {
         session.history.push(entry)
-        syncActiveAnimationFrame(session.document)
+        syncActiveAnimationLayer(session.document, edit.layerId)
         touch(session, true, entry.invalidation)
         recordDocumentOperation(session, activity)
       }
@@ -1440,8 +1467,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     const current = normalizeTimelapseSettings(session.document.timelapse, session.document.timelapse?.snapshots ?? [])
     const next = normalizeTimelapseSettings({ ...current, ...settings }, current.snapshots)
     session.document.timelapse = next
-    if (next.enabled && next.snapshots.length === 0) scheduleTimelapseCapture(session)
-    else if (!next.enabled) cancelTimelapseCapture(session.document.id)
+    if (!next.enabled) timelapseCaptureGenerations.set(session.document, (timelapseCaptureGenerations.get(session.document) ?? 0) + 1)
     touch(session)
     set({ sessions: [...state.sessions] })
   },
@@ -1450,7 +1476,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     const state = get()
     const session = activeSession(state)
     if (!session) return
-    cancelTimelapseCapture(session.document.id)
+    timelapseCaptureGenerations.set(session.document, (timelapseCaptureGenerations.get(session.document) ?? 0) + 1)
     session.document.timelapse = { ...normalizeTimelapseSettings(session.document.timelapse), snapshots: [] }
     touch(session)
     set({ sessions: [...state.sessions] })
@@ -1459,7 +1485,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
   async exportTimelapse(format, options) {
     const session = activeSession(get())
     if (!session) return false
-    flushTimelapseCapture(session)
+    await flushTimelapseCapture(session)
     let progressStarted = false
     const updateProgress = (value: number, label: string): void => {
       if (progressStarted && !get().saveProgress) return
@@ -1497,9 +1523,13 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       Object.assign(session.view, view)
       if (!entry) return
       if (session.activeLayerMaskId && !findLayerMask(session.document, session.activeLayerMaskId)) session.activeLayerMaskId = null
-      syncActiveAnimationFrame(session.document)
-      touch(session, true, entry.invalidation)
-      recordDocumentOperation(session)
+      if (entry.requiresAnimationSync !== false) {
+        if (entry.affectedLayerIds?.length) for (const layerId of entry.affectedLayerIds) syncActiveAnimationLayer(session.document, layerId)
+        else syncActiveAnimationFrame(session.document)
+      }
+      if (entry.contentChanged === false) touchMetadata(session)
+      else touch(session, true, entry.invalidation)
+      recordDocumentOperation(session, undefined, entry.contentChanged !== false)
     }, false)
   },
 
@@ -1514,9 +1544,13 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       Object.assign(session.view, view)
       if (!entry) return
       if (session.activeLayerMaskId && !findLayerMask(session.document, session.activeLayerMaskId)) session.activeLayerMaskId = null
-      syncActiveAnimationFrame(session.document)
-      touch(session, true, entry.invalidation)
-      recordDocumentOperation(session)
+      if (entry.requiresAnimationSync !== false) {
+        if (entry.affectedLayerIds?.length) for (const layerId of entry.affectedLayerIds) syncActiveAnimationLayer(session.document, layerId)
+        else syncActiveAnimationFrame(session.document)
+      }
+      if (entry.contentChanged === false) touchMetadata(session)
+      else touch(session, true, entry.invalidation)
+      recordDocumentOperation(session, undefined, entry.contentChanged !== false)
     }, false)
   },
 
@@ -2421,13 +2455,10 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     get().commitFloatingPaste()
     const current = activeSession(get())
     if (!current) return
-    const resources = await window.moonSprite.getResourceInfo()
-    const check = checkResourceLimit(current.document.width, current.document.height, current.document.layers.length + 1, current.document.colorMode, resources)
-    if (!check.allowed) { set({ message: check.reason }); return }
     get().mutateActive((session) => {
       const document = session.document
       const placement = selectedRowInsertionTarget(session)
-      const layer = createLayer(tr('workspace.layer.defaultName', { index: document.layers.length + 1 }), document.width, document.height, document.colorMode)
+      const layer = createSparseLayer(tr('workspace.layer.defaultName', { index: document.layers.length + 1 }), document.colorMode)
       const targetGroupId = insertionTargetParent(document, placement)
       if (targetGroupId) layer.groupId = targetGroupId
       const groupMemberIds = targetGroupId ? new Set(getLayerIdsInGroup(document, targetGroupId)) : null
@@ -2776,9 +2807,10 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       session.history.push({
         label: tr('canvas.history.moveLayer'), bytes: 32,
         undo: () => { ;[document.layers[index], document.layers[target]] = [document.layers[target], document.layers[index]] },
-        redo: () => { ;[document.layers[index], document.layers[target]] = [document.layers[target], document.layers[index]] }
+        redo: () => { ;[document.layers[index], document.layers[target]] = [document.layers[target], document.layers[index]] },
+        requiresAnimationSync: false
       })
-    })
+    }, 'content')
   },
 
   moveLayerBy(layerId, deltaX, deltaY, label = tr('canvas.history.moveLayer')) {
@@ -2807,8 +2839,8 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     if (current && lockedLayerStructure(current.document, layerIds)) { set({ message: tr('workspace.layer.lockedMove') }); return }
     get().mutateActive((session) => {
       const history = reorderLayersOperation(session, layerIds, targetLayerId, insertAfterTarget)
-      if (history) session.history.push(history)
-    })
+      if (history) session.history.push({ ...history, requiresAnimationSync: false })
+    }, 'content')
   },
 
   assignLayerToGroup(layerId, groupId) {
@@ -2820,8 +2852,8 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     if (current && lockedLayerStructure(current.document, layerIds)) { set({ message: tr('workspace.layer.lockedMove') }); return }
     get().mutateActive((session) => {
       const history = assignLayersToGroupOperation(session, layerIds, groupId, targetLayerId, insertAfterTarget)
-      if (history) session.history.push(history)
-    })
+      if (history) session.history.push({ ...history, requiresAnimationSync: false })
+    }, 'content')
   },
 
   assignLayersToRoot(layerIds, targetLayerId, insertAfterTarget = true) {
@@ -2829,8 +2861,8 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     if (current && lockedLayerStructure(current.document, layerIds)) { set({ message: tr('workspace.layer.lockedMove') }); return }
     get().mutateActive((session) => {
       const history = assignLayersToRootOperation(session, layerIds, targetLayerId, insertAfterTarget)
-      if (history) session.history.push(history)
-    })
+      if (history) session.history.push({ ...history, requiresAnimationSync: false })
+    }, 'content')
   },
 
   assignLayersAboveGroup(layerIds, groupId) {
@@ -2838,8 +2870,8 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     if (current && lockedLayerStructure(current.document, layerIds)) { set({ message: tr('workspace.layer.lockedMove') }); return }
     get().mutateActive((session) => {
       const history = assignLayersAboveGroupOperation(session, layerIds, groupId)
-      if (history) session.history.push(history)
-    })
+      if (history) session.history.push({ ...history, requiresAnimationSync: false })
+    }, 'content')
   },
 
   reorderGroup(groupId, targetGroupId, insertAfterTarget = true) {
@@ -2852,8 +2884,8 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
         return
       }
       const history = reorderGroupOperation(session, groupId, targetGroupId, insertAfterTarget)
-      if (history) session.history.push(history)
-    })
+      if (history) session.history.push({ ...history, requiresAnimationSync: false })
+    }, 'content')
   },
 
   positionGroupNextToLayer(groupId, targetLayerId, insertAfterTarget = true) {
@@ -2861,8 +2893,8 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     if (current && lockedGroupStructure(current.document, groupId)) { set({ message: tr('workspace.group.lockedMove') }); return }
     get().mutateActive((session) => {
       const history = positionGroupNextToLayerOperation(session, groupId, targetLayerId, insertAfterTarget)
-      if (history) session.history.push(history)
-    })
+      if (history) session.history.push({ ...history, requiresAnimationSync: false })
+    }, 'content')
   },
 
   assignGroupToGroup(groupId, parentGroupId) {
@@ -2872,8 +2904,8 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     get().mutateActive((session) => {
       if (!canMoveGroupInto(session.document, groupId, parentGroupId)) { set({ message: tr('workspace.group.moveIntoChild') }); return }
       const history = assignGroupToGroupOperation(session, groupId, parentGroupId)
-      if (history) session.history.push(history)
-    })
+      if (history) session.history.push({ ...history, requiresAnimationSync: false })
+    }, 'content')
   },
 
   assignGroupToRoot(groupId) {
@@ -2881,8 +2913,8 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     if (current && lockedGroupStructure(current.document, groupId)) { set({ message: tr('workspace.group.lockedMove') }); return }
     get().mutateActive((session) => {
       const history = assignGroupToRootOperation(session, groupId)
-      if (history) session.history.push(history)
-    })
+      if (history) session.history.push({ ...history, requiresAnimationSync: false })
+    }, 'content')
   },
 
   moveLayersToRootEdge(layerIds, edge) {
@@ -2890,8 +2922,8 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     if (current && lockedLayerStructure(current.document, layerIds)) { set({ message: tr('workspace.layer.lockedMove') }); return }
     get().mutateActive((session) => {
       const history = moveLayersToRootEdgeOperation(session, layerIds, edge)
-      if (history) session.history.push(history)
-    })
+      if (history) session.history.push({ ...history, requiresAnimationSync: false })
+    }, 'content')
   },
 
   moveGroupToRootEdge(groupId, edge) {
@@ -2899,8 +2931,8 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     if (current && lockedGroupStructure(current.document, groupId)) { set({ message: tr('workspace.group.lockedMove') }); return }
     get().mutateActive((session) => {
       const history = moveGroupToRootEdgeOperation(session, groupId, edge)
-      if (history) session.history.push(history)
-    })
+      if (history) session.history.push({ ...history, requiresAnimationSync: false })
+    }, 'content')
   },
 
   moveLayerRows(layerIds, groupIds, target) {
@@ -2911,8 +2943,8 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     }
     get().mutateActive((session) => {
       const history = moveLayerPanelRowsOperation(session, layerIds, groupIds, target)
-      if (history) session.history.push(history)
-    })
+      if (history) session.history.push({ ...history, requiresAnimationSync: false })
+    }, 'content')
   },
 
   createLayerGroup() {
@@ -2952,8 +2984,8 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       const layer = getLayer(session.document, layerId)
       const before = layer.visible
       layer.visible = !before
-      session.history.push({ label: tr('workspace.history.showLayer'), bytes: 8, undo: () => { layer.visible = before }, redo: () => { layer.visible = !before } })
-    })
+      session.history.push({ label: tr('workspace.history.showLayer'), bytes: 8, undo: () => { layer.visible = before }, redo: () => { layer.visible = !before }, requiresAnimationSync: false })
+    }, 'content')
   },
 
   selectLayer(layerId, mode = 'replace') {
@@ -2964,7 +2996,8 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
         applyLayerRowRange(session, { kind: 'layer', id: layerId })
       } else if (selectionMode === 'toggle') {
         const layers = selectedDirectLayerRows(session)
-        const nextLayers = layers.includes(layerId) ? layers.filter((id) => id !== layerId) : [...layers, layerId]
+        const toggledLayers = layers.includes(layerId) ? layers.filter((id) => id !== layerId) : [...layers, layerId]
+        const nextLayers = toggledLayers.length === 0 && selectedGroupRows(session).length === 0 ? [layerId] : toggledLayers
         applyLayerRowSelection(session, nextLayers, selectedGroupRows(session), { kind: 'layer', id: layerId })
         session.layerSelectionAnchorId = layerId
       } else {
@@ -2980,11 +3013,12 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     get().mutateActive((session) => {
       if (!session.document.layers.some((layer) => layer.id === layerId)) return
       const currentLayerIds = selectedDirectLayerRows(session)
-      const selectedLayerIds = additive
+      const toggledLayerIds = additive
         ? currentLayerIds.includes(layerId)
           ? currentLayerIds.filter((candidate) => candidate !== layerId)
           : [...currentLayerIds, layerId]
         : [layerId]
+      const selectedLayerIds = toggledLayerIds.length > 0 ? toggledLayerIds : [layerId]
       applyLayerRowSelection(session, selectedLayerIds, [], { kind: 'layer', id: layerId })
       applyLayerCurrentFrameCellSelection(session, selectedLayerIds, layerId)
     }, false)
@@ -3010,7 +3044,11 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
 
   selectLayerRows(layerIds, groupIds) {
     get().mutateActive((session) => {
-      const focus = layerIds.length > 0 ? { kind: 'layer' as const, id: layerIds.at(-1)! } : { kind: 'group' as const, id: groupIds.at(-1)! }
+      const focus = layerIds.length > 0
+        ? { kind: 'layer' as const, id: layerIds.at(-1)! }
+        : groupIds.length > 0
+          ? { kind: 'group' as const, id: groupIds.at(-1)! }
+          : { kind: 'layer' as const, id: session.document.activeLayerId }
       applyLayerRowSelection(session, layerIds, groupIds, focus)
     }, false)
   },
@@ -3020,9 +3058,10 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     get().mutateActive((session) => {
       session.selectedGroupId = null
       session.selectedGroupIds = []
-      session.selectedLayerIds = []
+      session.selectedLayerIds = [session.document.activeLayerId]
       session.activeLayerMaskId = null
-      session.layerSelectionAnchorId = null
+      session.layerMaskIsolatedView = false
+      session.layerSelectionAnchorId = session.document.activeLayerId
     }, false)
   },
 
@@ -3040,8 +3079,8 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       const group = getGroup(session.document, groupId)
       const before = group.visible
       group.visible = !before
-      session.history.push({ label: tr('workspace.history.showGroup'), bytes: 8, undo: () => { group.visible = before }, redo: () => { group.visible = !before } })
-    })
+      session.history.push({ label: tr('workspace.history.showGroup'), bytes: 8, undo: () => { group.visible = before }, redo: () => { group.visible = !before }, requiresAnimationSync: false })
+    }, 'content')
   },
 
   selectLayerMask(celId, additive = false) {
@@ -3386,6 +3425,20 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
   setGroupProperties(groupId, name, opacity, blendMode, locked, displayColor, description, cumulativeBlend) {
     const trimmed = name.trim()
     if (!trimmed) return
+    const current = activeSession(get())
+    if (!current) return
+    const currentGroup = getGroup(current.document, groupId)
+    const currentLockingAncestor = getGroupLockingAncestor(current.document, currentGroup)
+    const currentVisualLocked = currentGroup.locked || Boolean(currentLockingAncestor)
+    const nextOpacity = currentVisualLocked ? currentGroup.opacity : Math.max(0, Math.min(1, opacity))
+    const nextBlendMode = currentVisualLocked ? currentGroup.blendMode : blendMode
+    const nextCumulativeBlend = currentVisualLocked || cumulativeBlend === undefined ? currentGroup.cumulativeBlend === true : cumulativeBlend
+    const nextLocked = currentLockingAncestor ? currentGroup.locked : locked
+    const nextDisplayColor = displayColor === undefined ? currentGroup.displayColor : displayColor ?? undefined
+    const nextDescription = description ?? currentGroup.description ?? ''
+    if (!locked && currentLockingAncestor) { set({ message: tr('workspace.group.lockedUnlock') }); return }
+    if (currentGroup.name === trimmed && currentGroup.opacity === nextOpacity && currentGroup.blendMode === nextBlendMode && currentGroup.locked === nextLocked && (currentGroup.description ?? '') === nextDescription && (currentGroup.cumulativeBlend === true) === nextCumulativeBlend && optionalColorEquals(currentGroup.displayColor, nextDisplayColor)) return
+    const contentChanged = currentGroup.opacity !== nextOpacity || currentGroup.blendMode !== nextBlendMode || (currentGroup.cumulativeBlend === true) !== nextCumulativeBlend
     get().mutateActive((session) => {
       const group = getGroup(session.document, groupId)
       const lockingAncestor = getGroupLockingAncestor(session.document, group)
@@ -3396,20 +3449,23 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       const before = { name: group.name, opacity: group.opacity, blendMode: group.blendMode, locked: group.locked, displayColor: group.displayColor, description: group.description ?? '', cumulativeBlend: group.cumulativeBlend === true }
       const visualLocked = group.locked || Boolean(lockingAncestor)
       const after = { name: trimmed, opacity: visualLocked ? group.opacity : Math.max(0, Math.min(1, opacity)), blendMode: visualLocked ? group.blendMode : blendMode, locked: lockingAncestor ? group.locked : locked, displayColor: displayColor === undefined ? group.displayColor : displayColor ?? undefined, description: description ?? group.description ?? '', cumulativeBlend: visualLocked || cumulativeBlend === undefined ? group.cumulativeBlend === true : cumulativeBlend }
+      if (before.name === after.name && before.opacity === after.opacity && before.blendMode === after.blendMode && before.locked === after.locked && before.description === after.description && before.cumulativeBlend === after.cumulativeBlend && optionalColorEquals(before.displayColor, after.displayColor)) return
       Object.assign(group, after)
-      session.history.push({ label: tr('workspace.history.groupProperties'), bytes: 48 + before.name.length + after.name.length, undo: () => Object.assign(group, before), redo: () => Object.assign(group, after) })
-    })
+      session.history.push({ label: tr('workspace.history.groupProperties'), bytes: 48 + before.name.length + after.name.length, undo: () => Object.assign(group, before), redo: () => Object.assign(group, after), contentChanged, requiresAnimationSync: false })
+    }, contentChanged ? 'content' : 'metadata')
   },
 
   renameLayer(layerId, name) {
     const trimmed = name.trim()
     if (!trimmed) return
+    const current = activeSession(get())
+    if (!current || getLayer(current.document, layerId).name === trimmed) return
     get().mutateActive((session) => {
       const layer = getLayer(session.document, layerId)
       const before = layer.name
       layer.name = trimmed
-      session.history.push({ label: tr('workspace.history.renameLayer'), bytes: before.length + trimmed.length, undo: () => { layer.name = before }, redo: () => { layer.name = trimmed } })
-    })
+      session.history.push({ label: tr('workspace.history.renameLayer'), bytes: before.length + trimmed.length, undo: () => { layer.name = before }, redo: () => { layer.name = trimmed }, contentChanged: false, requiresAnimationSync: false })
+    }, 'metadata')
   },
 
   setLayerOpacity(layerId, opacity) {
@@ -3423,8 +3479,9 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       const layer = getLayer(session.document, layerId)
       const before = layer.opacity
       layer.opacity = after
-      session.history.push({ label: tr('workspace.history.layerOpacity'), bytes: 16, undo: () => { layer.opacity = before }, redo: () => { layer.opacity = after } })
-    })
+      syncActiveAnimationLayer(session.document, layer.id)
+      session.history.push({ label: tr('workspace.history.layerOpacity'), bytes: 16, undo: () => { layer.opacity = before }, redo: () => { layer.opacity = after }, affectedLayerIds: [layer.id] })
+    }, 'content')
   },
 
   setLayerProperties(layerId, name, opacity) {
@@ -3435,19 +3492,34 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     const currentLayer = getLayer(current.document, layerId)
     const nextOpacity = isLayerEffectivelyLocked(current.document, currentLayer) ? currentLayer.opacity : Math.max(0, Math.min(1, opacity))
     if (currentLayer.name === trimmed && currentLayer.opacity === nextOpacity) return
+    const contentChanged = currentLayer.opacity !== nextOpacity
     get().mutateActive((session) => {
       const layer = getLayer(session.document, layerId)
       const before = { name: layer.name, opacity: layer.opacity }
       const after = { name: trimmed, opacity: nextOpacity }
       layer.name = after.name
       layer.opacity = after.opacity
-      session.history.push({ label: tr('workspace.history.layerProperties'), bytes: 32 + before.name.length + after.name.length, undo: () => { layer.name = before.name; layer.opacity = before.opacity }, redo: () => { layer.name = after.name; layer.opacity = after.opacity } })
-    })
+      if (contentChanged) syncActiveAnimationLayer(session.document, layer.id)
+      session.history.push({ label: tr('workspace.history.layerProperties'), bytes: 32 + before.name.length + after.name.length, undo: () => { layer.name = before.name; layer.opacity = before.opacity }, redo: () => { layer.name = after.name; layer.opacity = after.opacity }, contentChanged, affectedLayerIds: contentChanged ? [layer.id] : undefined, requiresAnimationSync: contentChanged })
+    }, contentChanged ? 'content' : 'metadata')
   },
 
   setLayerPropertiesWithBlend(layerId, name, opacity, blendMode, locked, displayColor, description) {
     const trimmed = name.trim()
     if (!trimmed) return
+    const current = activeSession(get())
+    if (!current) return
+    const currentLayer = getLayer(current.document, layerId)
+    const currentLockingGroup = getLayerLockingGroup(current.document, currentLayer)
+    const currentVisualLocked = currentLayer.locked || Boolean(currentLockingGroup)
+    const nextOpacity = currentVisualLocked ? currentLayer.opacity : Math.max(0, Math.min(1, opacity))
+    const nextBlendMode = currentVisualLocked ? currentLayer.blendMode : blendMode
+    const nextLocked = currentLockingGroup ? currentLayer.locked : locked ?? currentLayer.locked
+    const nextDisplayColor = displayColor === undefined ? currentLayer.displayColor : displayColor ?? undefined
+    const nextDescription = description ?? currentLayer.description ?? ''
+    if (locked === false && currentLockingGroup) { set({ message: tr('workspace.group.lockedUnlock') }); return }
+    if (currentLayer.name === trimmed && currentLayer.opacity === nextOpacity && currentLayer.blendMode === nextBlendMode && currentLayer.locked === nextLocked && (currentLayer.description ?? '') === nextDescription && optionalColorEquals(currentLayer.displayColor, nextDisplayColor)) return
+    const contentChanged = currentLayer.opacity !== nextOpacity || currentLayer.blendMode !== nextBlendMode
     get().mutateActive((session) => {
       const layer = getLayer(session.document, layerId)
       const lockingGroup = getLayerLockingGroup(session.document, layer)
@@ -3458,9 +3530,11 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       const before = { name: layer.name, opacity: layer.opacity, blendMode: layer.blendMode, locked: layer.locked, displayColor: layer.displayColor, description: layer.description ?? '' }
       const visualLocked = layer.locked || Boolean(lockingGroup)
       const after = { name: trimmed, opacity: visualLocked ? layer.opacity : Math.max(0, Math.min(1, opacity)), blendMode: visualLocked ? layer.blendMode : blendMode, locked: lockingGroup ? layer.locked : locked ?? layer.locked, displayColor: displayColor === undefined ? layer.displayColor : displayColor ?? undefined, description: description ?? layer.description ?? '' }
+      if (before.name === after.name && before.opacity === after.opacity && before.blendMode === after.blendMode && before.locked === after.locked && before.description === after.description && optionalColorEquals(before.displayColor, after.displayColor)) return
       Object.assign(layer, after)
-      session.history.push({ label: tr('workspace.history.layerProperties'), bytes: 40 + before.name.length + after.name.length, undo: () => Object.assign(layer, before), redo: () => Object.assign(layer, after) })
-    })
+      if (contentChanged) syncActiveAnimationLayer(session.document, layer.id)
+      session.history.push({ label: tr('workspace.history.layerProperties'), bytes: 40 + before.name.length + after.name.length, undo: () => Object.assign(layer, before), redo: () => Object.assign(layer, after), contentChanged, affectedLayerIds: contentChanged ? [layer.id] : undefined, requiresAnimationSync: contentChanged })
+    }, contentChanged ? 'content' : 'metadata')
   },
   applyActiveLayerAdjustment(adjustment) {
     get().mutateActive((session) => {
@@ -4189,20 +4263,25 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
   },
 
   async saveActive(saveAs = false, options?: SaveAsOptions) {
-    const session = activeSession(get())
+    let session = activeSession(get())
     if (!session) return false
     const documentId = session.document.id
     get().commitFloatingPaste()
-    flushTimelapseCapture(session)
-    const showProgress = true
-    const progressTitle = tr(saveAs ? 'workspace.saveAs.progressTitle' : 'workspace.save.progressTitle')
-    const progressDone = tr(saveAs ? 'workspace.saveAs.progressDone' : 'workspace.save.progressDone')
-    let progressStarted = false
-    const updateProgress = (value: number, label: string): void => {
-      if (!showProgress) return
-      if (progressStarted && !get().saveProgress) return
-      progressStarted = true
-      set({ saveProgress: { title: progressTitle, value, label } })
+    await flushTimelapseCapture(session)
+    session = get().sessions.find((item) => item.document.id === documentId) ?? null
+    if (!session) return false
+    persistProjectLayerPanelState(session)
+    if (!saveAs && session.document.filePath && !session.document.dirty) {
+      set({ message: tr('workspace.save.done') })
+      return true
+    }
+    let finishSaveProgress: ((succeeded?: boolean) => void) | undefined
+    const beginSaveProgress = (): void => {
+      if (!finishSaveProgress) finishSaveProgress = saveProgress.begin(saveAs ? 'saveAs' : 'save')
+    }
+    const endSaveProgress = (succeeded = true): void => {
+      const finish = finishSaveProgress
+      if (finish) finish(succeeded)
     }
     try {
       const result = await saveDocumentFile({
@@ -4216,28 +4295,33 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
         options,
         preferredImageFormat: saveImageKindForPreference(readStoredString(SAVE_FORMAT_PREFERENCE_KEY)),
         lifecycle: {
-          onEncodeStart: () => updateProgress(12, tr('workspace.save.encodingProject')),
-          onWriteStart: () => updateProgress(72, tr('workspace.save.writing'))
+          onEncodeStart: beginSaveProgress
         }
       })
-      if (!result) { if (progressStarted) set({ saveProgress: null }); return false }
+      if (!result) { endSaveProgress(false); return false }
       const saved = get().sessions.find((item) => item.document.id === documentId)
-      if (!saved) { if (progressStarted) set({ saveProgress: null }); return false }
+      if (!saved) { endSaveProgress(false); return false }
       saved.document.filePath = result.filePath
       saved.document.name = fileNameFromPath(result.filePath)
+      persistProjectLayerPanelState(saved)
       const fullySaved = saved.contentRevision === result.revision
       saved.document.dirty = !fullySaved
       set({ sessions: [...get().sessions] })
       recordRecentProject(result.filePath, saved.document.name)
-      await get().autosaveDirty()
       const latest = get().sessions.find((item) => item.document.id === documentId)
-      if (latest && latest.contentRevision === result.revision && !latest.document.dirty) await recoveryService.delete(window.moonSprite, documentId)
-      const progressVisible = progressStarted && Boolean(get().saveProgress)
-      set({ message: fullySaved ? tr('workspace.save.done') : tr('workspace.save.newerChanges'), ...(progressVisible ? { saveProgress: { title: progressTitle, value: 100, label: progressDone } } : {}) })
-      if (progressVisible) window.setTimeout(() => { if (get().saveProgress?.value === 100) set({ saveProgress: null }) }, 60)
+      if (latest && latest.contentRevision === result.revision && !latest.document.dirty) {
+        void recoveryService.delete(window.moonSprite, documentId).catch(() => undefined)
+      } else {
+        // A save that raced with newer edits should finish immediately; recovery
+        // protection continues in the background instead of extending Ctrl+S.
+        void get().autosaveDirty().catch(() => undefined)
+      }
+      set({ message: fullySaved ? tr('workspace.save.done') : tr('workspace.save.newerChanges') })
+      endSaveProgress()
       return true
     } catch (error) {
-      set({ message: error instanceof Error ? error.message : tr('workspace.save.error'), ...(progressStarted ? { saveProgress: null } : {}) })
+      endSaveProgress(false)
+      set({ message: error instanceof Error ? error.message : tr('workspace.save.error') })
       return false
     }
   },
@@ -4274,15 +4358,21 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
   },
 
   async openPath(filePath, options) {
+    const finishOpenProgress = openProgress.begin()
+    let opened = false
     try {
       const parsed = await openDocumentFile(window.moonSprite, filePath)
       if (options?.duplicate) parsed.id = createId('doc')
+      options?.onBeforeSession?.()
       get().addSession(parsed)
       recordRecentProject(filePath, parsed.name)
+      opened = true
       return true
     } catch (error) {
       set({ message: error instanceof Error ? `${fileNameFromPath(filePath)}: ${error.message}` : tr('workspace.open.error') })
       return false
+    } finally {
+      finishOpenProgress(opened)
     }
   },
 
@@ -4300,7 +4390,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       if (choice === 'discard') await get().discardRecovery(id)
     }
     if (!session.document.dirty) await get().discardRecovery(id)
-    cancelTimelapseCapture(id)
+    timelapseCaptureGenerations.set(session.document, (timelapseCaptureGenerations.get(session.document) ?? 0) + 1)
     set((state) => {
       const sessions = state.sessions.filter((item) => item.document.id !== id)
       return { sessions, activeId: state.activeId === id ? (sessions.at(-1)?.document.id ?? null) : state.activeId }

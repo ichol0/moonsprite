@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react'
 import type { OutlineDirection, OutlineDirections, OutlineKernel, OutlinePosition, RgbaColor } from '@shared/types'
 import { ColorPicker } from '@/components/ColorPicker'
+import { DialogHeader } from '@/components/DialogHeader'
 import { useI18n } from '@/components/I18nProvider'
 import { ModalShell } from '@/components/ModalShell'
-import { NumberInput } from '@/components/NumberInput'
-import { PixelUtilityIcon } from '@/components/PixelUtilityIcon'
+import { RangeField } from '@/components/RangeField'
+import { SegmentedControl } from '@/components/SegmentedControl'
 import { LivePreviewToggle } from '@/components/LivePreviewToggle'
 import { defaultOutlineSettings, normalizeOutlineSettings } from '@/core/outline-settings'
 import { useWorkspace, type DocumentSession } from '@/store/workspace'
@@ -110,12 +111,12 @@ export function OutlineDialog({ open, session, onClose }: { open: boolean; sessi
       event.preventDefault()
       submit()
     }}>
-      <header><div><span className="eyebrow">OUTLINE</span><h2>{t('outline.title')}</h2></div><button type="button" className="icon-button" aria-label={t('common.close')} onClick={close}><PixelUtilityIcon kind="close" /></button></header>
+      <DialogHeader eyebrow="OUTLINE" title={t('outline.title')} closeLabel={t('common.close')} onClose={close} />
       <div className="modal-body outline-modal-body">
         <section className="outline-color-section"><span className="outline-section-label">{t('outline.color')}</span><ColorPicker color={color} onChange={setColor} compact label={t('outline.color')} /></section>
-        <section className="outline-width-setting"><label><span>{t('outline.width')}</span><div className="outline-width-row"><input type="range" min="1" max="64" value={thickness} onChange={(event) => setThickness(Number(event.target.value))} /><NumberInput min={1} max={64} value={thickness} onValueChange={setThickness} /><span>px</span></div></label></section>
+        <section className="outline-width-setting"><RangeField className="outline-width-row" label={t('outline.width')} min={1} max={64} suffix="px" value={thickness} onChange={setThickness} /></section>
         <fieldset className="outline-settings-fieldset"><legend>{t('outline.settings')}</legend>
-          <div className="outline-setting-group"><span>{t('outline.position')}</span><div className="outline-position-control segmented-control"><button type="button" className={position === 'outside' ? 'selected' : ''} onClick={() => setPosition('outside')}>{t('outline.outside')}</button><button type="button" className={position === 'inside' ? 'selected' : ''} onClick={() => setPosition('inside')}>{t('outline.inside')}</button></div></div>
+          <div className="outline-setting-group"><span>{t('outline.position')}</span><SegmentedControl className="outline-position-control" label={t('outline.position')} options={[{ value: 'outside', label: t('outline.outside') }, { value: 'inside', label: t('outline.inside') }]} value={position} onChange={setPosition} /></div>
           <div className="outline-pattern-layout">
             <div className="outline-setting-group"><span>{t('outline.quickShapes')}</span><div className="outline-quick-shapes">{quickShapes.map((shape) => <button key={shape.id} type="button" className={activeQuickShape === shape.id ? 'selected' : ''} title={shape.label} aria-label={shape.label} onClick={() => applyQuickShape(shape.id)}><OutlineKernelIcon kernel={shape.id} /></button>)}</div></div>
             <div className="outline-setting-group outline-direction-setting"><span>{t('outline.pixelDirections')}</span><div className="outline-direction-grid" aria-label={t('outline.pixelDirectionsAria')}>{directionGrid.map((direction) => {

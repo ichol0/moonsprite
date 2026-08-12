@@ -3,11 +3,12 @@ import { readFile } from 'node:fs/promises'
 import test from 'node:test'
 
 test('性能 Canvas 使用独立生产预览构建和应用内 Harness', async () => {
-  const [canvas, vite, main, profiler, packageSource] = await Promise.all([
+  const [canvas, vite, main, profiler, timelapseWorker, packageSource] = await Promise.all([
     readFile('scripts/canvas-performance.mjs', 'utf8'),
     readFile('vite.config.ts', 'utf8'),
     readFile('src/renderer/src/main.tsx', 'utf8'),
     readFile('src/renderer/src/components/PerformanceProfiler.tsx', 'utf8'),
+    readFile('src/renderer/src/workers/timelapse-encode.worker.ts', 'utf8'),
     readFile('package.json', 'utf8'),
   ])
   const scripts = JSON.parse(packageSource).scripts
@@ -21,6 +22,8 @@ test('性能 Canvas 使用独立生产预览构建和应用内 Harness', async (
   assert.match(main, /__MOONSPRITE_PERFORMANCE_BUILD__/)
   assert.match(main, /import\('\.\/performance\/benchmark-harness'\)/)
   assert.match(profiler, /__MOONSPRITE_REACT_PROFILE__/)
+  assert.match(timelapseWorker, /core\/png-encode/)
+  assert.doesNotMatch(timelapseWorker, /core\/png['"]/)
   assert.match(scripts['build:web:performance'], /performance-production/)
   assert.match(scripts['build:web:performance-profile'], /performance-profile/)
 })

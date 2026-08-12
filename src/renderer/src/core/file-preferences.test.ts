@@ -128,7 +128,7 @@ describe('editor preferences persistence boundary', () => {
     expect(defaults.lineDirectionStep).toBe(1)
     expect(defaults.layerDisplayColorPresets.length).toBeGreaterThan(0)
     expect(defaults.symmetryAxis).toEqual({ locked: false, color: { r: 41, g: 121, b: 255, a: 242 }, thickness: 1 })
-    expect(defaults.timelapseRecordingEnabled).toBe(true)
+    expect(defaults.timelapseRecordingEnabled).toBe(false)
 
     storage.set(RECOVERY_MINUTES_PREFERENCE_KEY, '999')
     expect(loadEditorPreferences(adapter).recoveryMinutes).toBe(60)

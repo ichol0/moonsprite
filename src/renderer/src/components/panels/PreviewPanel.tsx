@@ -3,18 +3,18 @@ import { FloatingDockPreview, PanelResizeHandles, useFloatingPanel } from '@/com
 import { AnimationPlaybackMenu } from '@/components/AnimationPlaybackMenu'
 import { PlaybackPixelIcon } from '@/components/PlaybackPixelIcon'
 import { PixelUtilityIcon } from '@/components/PixelUtilityIcon'
+import { CanvasCompositeCache } from '@/components/canvas-composite-cache'
 import type { DockDragProps } from '@/components/workspace-panel-types'
-import { compositeRegion } from '@/core/document'
 import { cloneDocumentForAnimationFrame, ensureAnimationDocument, nextAnimationFrameId } from '@/core/animation'
 import { anchoredPreviewPan, followPreviewPosition, previewCheckerCellSize } from '@/core/preview-geometry'
 import { steppedCanvasZoom } from '@/core/canvas-input'
 import { pixelSamplingMode } from '@/core/pixel-display'
-import { applyRelativeLuminance } from '@/core/raster'
 import { loadEditorPreferences, type CheckerboardPreferences } from '@/core/file-preferences'
 import { registerViewPreviewListener } from '@/core/view-preview-lifecycle'
 import { useWorkspace, type DocumentSession } from '@/store/workspace'
 import { useI18n } from '@/components/I18nProvider'
 import { resolveTheme } from '@/core/theme'
+import { initialDocumentCompositePending, subscribeInitialDocumentComposite } from '@/core/initial-document-composite'
 
 interface FollowViewportSnapshot {
   viewportSize: { width: number; height: number }
@@ -56,7 +56,8 @@ export function PreviewPanel({ session, onClose, docked = false, onDockDragStart
   const [rotationIndicatorPosition, setRotationIndicatorPosition] = useState(() => loadEditorPreferences().rotationIndicatorPosition)
   const [timelineHidden, setTimelineHidden] = useState(() => loadEditorPreferences().timelineHidden)
   const [playbackMenu, setPlaybackMenu] = useState<{ x: number; y: number } | null>(null)
-  const timeline = ensureAnimationDocument(session.document)
+  const [initialCompositeReady, setInitialCompositeReady] = useState(() => !initialDocumentCompositePending(session.document))
+  const timeline = session.document.animation ?? ensureAnimationDocument(session.document)
   const initialFrameId = timeline.activeFrameId
   const [previewFrameId, setPreviewFrameId] = useState(initialFrameId)
   const [previewStartFrameId, setPreviewStartFrameId] = useState<string | null>(null)
@@ -65,7 +66,7 @@ export function PreviewPanel({ session, onClose, docked = false, onDockDragStart
   const [previewLoop, setPreviewLoop] = useState(timeline.loop)
   const [previewReturnToStart, setPreviewReturnToStart] = useState(false)
   const panDrag = useRef<{ x: number; y: number; panX: number; panY: number } | null>(null)
-  const sourceCacheRef = useRef(new Map<string, { canvas: OffscreenCanvas; revision: number }>())
+  const compositeCacheRef = useRef(new CanvasCompositeCache())
   const baseFitRef = useRef<{ documentId: string; width: number; height: number; viewportWidth: number; viewportHeight: number; scale: number } | null>(null)
   const followSnapshotRef = useRef<FollowViewportSnapshot>(followViewportSnapshot(session))
   const drawRef = useRef<() => void>(() => {})
@@ -74,6 +75,11 @@ export function PreviewPanel({ session, onClose, docked = false, onDockDragStart
   const pendingPanRef = useRef<{ x: number; y: number } | null>(null)
   const inheritedRelativeLuminance = session.view.relativeLuminance && relativeLuminanceInPreview
   const showRelativeLuminance = relativeLuminanceOverride ?? inheritedRelativeLuminance
+
+  useEffect(() => {
+    setInitialCompositeReady(!initialDocumentCompositePending(session.document))
+    return subscribeInitialDocumentComposite(session.document, () => setInitialCompositeReady(true))
+  }, [session.document])
 
   useEffect(() => {
     if (!followViewport) return
@@ -199,44 +205,10 @@ export function PreviewPanel({ session, onClose, docked = false, onDockDragStart
 
   useEffect(() => {
     const canvas = canvasRef.current
-    if (!canvas) return
-    const sourceKey = `${session.document.id}:${previewFrameId}:${showRelativeLuminance ? 1 : 0}`
-    let source = sourceCacheRef.current.get(sourceKey)
-    const invalidation = session.contentInvalidation
-    const canPatch = source
-      && source.revision !== session.contentRevision
-      && invalidation?.revision === session.contentRevision
-      && invalidation.fromRevision === source.revision
-      && invalidation.kind === 'region'
-    if (source && source.revision !== session.contentRevision && !canPatch) source = undefined
-    if (source && canPatch) {
-      if ((invalidation.frameId ?? 'static') === previewFrameId) {
-        const left = Math.max(0, Math.floor(invalidation.rect.x))
-        const top = Math.max(0, Math.floor(invalidation.rect.y))
-        const right = Math.min(session.document.width, Math.ceil(invalidation.rect.x + invalidation.rect.width))
-        const bottom = Math.min(session.document.height, Math.ceil(invalidation.rect.y + invalidation.rect.height))
-        if (right > left && bottom > top) {
-          const previewDocument = cloneDocumentForAnimationFrame(session.document, previewFrameId)
-          const pixels = compositeRegion(previewDocument, left, top, right - left, bottom - top)
-          if (showRelativeLuminance) applyRelativeLuminance(pixels)
-          source.canvas.getContext('2d')?.putImageData(new ImageData(pixels as Uint8ClampedArray<ArrayBuffer>, right - left, bottom - top), left, top)
-        }
-      }
-      source.revision = session.contentRevision
-    }
-    if (!source) {
-      const width = session.document.width
-      const height = session.document.height
-      const previewDocument = cloneDocumentForAnimationFrame(session.document, previewFrameId)
-      const pixels = compositeRegion(previewDocument, 0, 0, width, height)
-      if (showRelativeLuminance) applyRelativeLuminance(pixels)
-      const sourceCanvas = new OffscreenCanvas(width, height)
-      sourceCanvas.getContext('2d')?.putImageData(new ImageData(pixels as Uint8ClampedArray<ArrayBuffer>, width, height), 0, 0)
-      source = { canvas: sourceCanvas, revision: session.contentRevision }
-      sourceCacheRef.current.set(sourceKey, source)
-      while (sourceCacheRef.current.size > 32) sourceCacheRef.current.delete(sourceCacheRef.current.keys().next().value!)
-    }
-    const sourceCanvas = source.canvas
+    if (!canvas || !initialCompositeReady) return
+    const previewDocument = previewFrameId === timeline.activeFrameId
+      ? session.document
+      : cloneDocumentForAnimationFrame(session.document, previewFrameId)
     const draw = (): void => {
       const context = canvas.getContext('2d')
       const bounds = canvas.getBoundingClientRect()
@@ -292,7 +264,28 @@ export function PreviewPanel({ session, onClose, docked = false, onDockDragStart
       }
       context.imageSmoothingEnabled = pixelSamplingMode(scale) === 'smooth'
       if (context.imageSmoothingEnabled) context.imageSmoothingQuality = 'high'
-      context.drawImage(sourceCanvas, originX, originY, drawWidth, drawHeight)
+      const fromX = Math.max(0, Math.floor((0 - originX) / scale))
+      const fromY = Math.max(0, Math.floor((0 - originY) / scale))
+      const toX = Math.min(session.document.width, Math.ceil((displayWidth - originX) / scale))
+      const toY = Math.min(session.document.height, Math.ceil((displayHeight - originY) / scale))
+      if (toX > fromX && toY > fromY) compositeCacheRef.current.draw({
+        context,
+        document: previewDocument,
+        view: { zoom: scale, panX: 0, panY: 0, rotation: 0, mirrored: false, mirroredVertical: false, showGrid: false, relativeLuminance: showRelativeLuminance },
+        originX,
+        originY,
+        canvasWidth: drawWidth,
+        canvasHeight: drawHeight,
+        fromX,
+        fromY,
+        toX,
+        toY,
+        revision: session.revision,
+        contentRevision: session.contentRevision,
+        contentInvalidation: session.contentInvalidation,
+        frameId: previewFrameId,
+        imageSmoothingEnabled: context.imageSmoothingEnabled
+      })
       context.restore()
     }
     drawRef.current = draw
@@ -303,7 +296,7 @@ export function PreviewPanel({ session, onClose, docked = false, onDockDragStart
       observer.disconnect()
       if (drawRef.current === draw) drawRef.current = () => {}
     }
-  }, [session.document, session.contentRevision, previewFrameId, showRelativeLuminance, checkerboard, canvasSurround, rotationIndicatorPosition, zoom, pan, followViewport])
+  }, [session.document, session.contentRevision, previewFrameId, showRelativeLuminance, checkerboard, canvasSurround, rotationIndicatorPosition, zoom, pan, followViewport, initialCompositeReady])
 
   useEffect(() => () => {
     if (panFrameRef.current !== null) window.cancelAnimationFrame(panFrameRef.current)

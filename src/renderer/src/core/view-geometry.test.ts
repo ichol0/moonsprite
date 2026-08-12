@@ -10,9 +10,12 @@ describe('view rotation geometry', () => {
     expect(viewRotationPivot(800, 600, 120, -45, 'canvas')).toEqual({ x: 520, y: 255 })
   })
 
-  it('places the rotation indicator to the pointer left and keeps it inside the viewport', () => {
-    expect(rotationIndicatorPointBesidePointer(800, 600, { x: 500, y: 250 })).toEqual({ x: 404, y: 250 })
-    expect(rotationIndicatorPointBesidePointer(800, 600, { x: 20, y: 20 })).toEqual({ x: 64, y: 96 })
+  it('places the rotation indicator opposite the pointer quadrant and keeps it inside the viewport', () => {
+    expect(rotationIndicatorPointBesidePointer(800, 600, { x: 500, y: 250 })).toEqual({ x: 340, y: 442 })
+    expect(rotationIndicatorPointBesidePointer(800, 600, { x: 300, y: 250 })).toEqual({ x: 460, y: 442 })
+    expect(rotationIndicatorPointBesidePointer(800, 600, { x: 500, y: 350 })).toEqual({ x: 340, y: 158 })
+    expect(rotationIndicatorPointBesidePointer(800, 600, { x: 300, y: 350 })).toEqual({ x: 460, y: 158 })
+    expect(rotationIndicatorPointBesidePointer(800, 600, { x: 20, y: 20 })).toEqual({ x: 180, y: 212 })
   })
 
   it('keeps the document point beneath a nearby rotation indicator fixed', () => {

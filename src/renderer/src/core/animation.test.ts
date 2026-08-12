@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { activateAnimationFrame, addBlankAnimationFrame, animationCelAt, animationCelContentSelection, animationCelHasContent, animationCelKey, animationCelOffsetsForKeys, connectAnimationCels, createAnimationCelLookup, createDefaultAnimationTimeline, deleteAnimationFrame, disconnectAnimationCels, duplicateAnimationFrame, ensureAnimationDocument, nextAnimationFrameId, normalizeAnimationTimeline, resizeAnimationCelsAt, setAnimationCelOffsets, setAnimationCelOffsetsForKeys, syncActiveAnimationFrame } from './animation'
+import { activateAnimationFrame, addBlankAnimationFrame, animationCelAt, animationCelContentSelection, animationCelHasContent, animationCelKey, animationCelOffsetsForKeys, connectAnimationCels, createAnimationCelLookup, createDefaultAnimationTimeline, deleteAnimationFrame, disconnectAnimationCels, duplicateAnimationFrame, ensureAnimationDocument, nextAnimationFrameId, normalizeAnimationTimeline, resizeAnimationCelsAt, setAnimationCelOffsets, setAnimationCelOffsetsForKeys, syncActiveAnimationFrame, syncActiveAnimationLayer, syncActiveAnimationLayers } from './animation'
 import { animationMaskAt, compositeDocument, createDocument, createLayer, createLayerMask, ensureLayerCoversCanvas, getActiveLayer, resizeDocumentAt, writeLayerColor } from './document'
 import { beginPixelEdit, commitPixelEdit, HistoryStack, recordPixel } from './history'
 
@@ -100,6 +100,47 @@ describe('animation timeline boundary', () => {
     expect(activateAnimationFrame(document, secondFrame)).toBe(true)
     expect(getActiveLayer(document).pixels[3]).toBe(0)
     expect(getActiveLayer(document).pixels[7]).toBe(255)
+  })
+
+  it('synchronizes all active-frame layers without touching another frame', () => {
+    const document = createDocument('fast frame sync', 2, 1, 'rgba')
+    const secondLayer = createLayer('Second', 2, 1, 'rgba')
+    document.layers.push(secondLayer)
+    const timeline = ensureAnimationDocument(document)
+    const firstFrameId = timeline.activeFrameId
+    document.layers[0].pixels[0] = 11
+    secondLayer.pixels[0] = 22
+    syncActiveAnimationLayers(document)
+    const firstFrameSurfaces = document.layers.map((layer) => animationCelAt(timeline, layer.id, firstFrameId)!.surface)
+
+    const secondFrameId = addBlankAnimationFrame(document)
+    document.layers[0].pixels[0] = 33
+    document.layers[1].pixels[0] = 44
+    syncActiveAnimationLayers(document)
+
+    expect(animationCelAt(timeline, document.layers[0].id, secondFrameId)?.surface?.pixels).toBe(document.layers[0].pixels)
+    expect(animationCelAt(timeline, document.layers[1].id, secondFrameId)?.surface?.pixels).toBe(document.layers[1].pixels)
+    expect(firstFrameSurfaces[0]?.pixels[0]).toBe(11)
+    expect(firstFrameSurfaces[1]?.pixels[0]).toBe(22)
+  })
+
+  it('keeps a linked cel group sharing its source during one-layer synchronization', () => {
+    const document = createDocument('fast linked sync', 1, 1, 'rgba')
+    const timeline = ensureAnimationDocument(document)
+    const firstFrameId = timeline.activeFrameId
+    const secondFrameId = addBlankAnimationFrame(document)
+    const first = animationCelAt(timeline, document.activeLayerId, firstFrameId)!
+    const second = animationCelAt(timeline, document.activeLayerId, secondFrameId)!
+    first.surface!.pixels[3] = 255
+    expect(connectAnimationCels(document, [first.id, second.id])).toBe(true)
+    activateAnimationFrame(document, secondFrameId)
+    getActiveLayer(document).pixels[0] = 77
+
+    syncActiveAnimationLayer(document, document.activeLayerId)
+
+    expect(second.surface).toBe(first.surface)
+    expect(first.surface?.pixels).toBe(getActiveLayer(document).pixels)
+    expect(first.surface?.pixels[0]).toBe(77)
   })
 
   it('fills a large layer and frame grid without duplicate cel slots or ids', () => {

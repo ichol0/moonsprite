@@ -303,7 +303,7 @@ export const DEFAULT_EDITOR_PREFERENCES: EditorPreferences = {
   onionSkin: DEFAULT_ONION_SKIN_PREFERENCES,
   timelineHidden: false,
   symmetryAxis: DEFAULT_SYMMETRY_AXIS_PREFERENCES,
-  timelapseRecordingEnabled: true,
+  timelapseRecordingEnabled: false,
   theme: DEFAULT_THEME_PREFERENCES
 }
 
@@ -579,7 +579,7 @@ export function loadEditorPreferences(storage?: Storage): EditorPreferences {
     onionSkin: theme.onionSkin,
     timelineHidden: get(TIMELINE_HIDDEN_PREFERENCE_KEY) === 'true',
     symmetryAxis: theme.symmetryAxis,
-    timelapseRecordingEnabled: get(TIMELAPSE_RECORDING_ENABLED_PREFERENCE_KEY) !== 'false',
+    timelapseRecordingEnabled: get(TIMELAPSE_RECORDING_ENABLED_PREFERENCE_KEY) === 'true',
     theme: theme.theme
   }
 }

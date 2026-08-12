@@ -8,6 +8,7 @@ import { exportAnimationGif, type GifDirection } from '@/core/gif'
 import { encodeTimelapseVideo, type TimelapseExportOptions } from '@/core/timelapse'
 import { normalizeTimelapseSettings } from '@/core/project-metadata'
 import { RECENT_EXPORTS_CHANGED_EVENT, recordRecentExportPath } from '@/core/export-settings'
+import { acceptProjectSaveBaseline, clearProjectSaveBaseline, encodeProjectAsync, encodeProjectSaveAsync } from '@/core/project-format'
 
 export interface ExportOptions {
   name: string
@@ -52,6 +53,13 @@ export interface FileOperationLifecycle {
   onWriteStart?: () => void
 }
 
+export interface OpenDocumentLifecycle {
+  onReadStart?: () => void
+  onReadProgress?: (bytesRead: number, totalBytes: number) => void
+  onDecodeStart?: () => void
+  onDecodeProgress?: (value: number) => void
+}
+
 const saveOperations = new Map<string, Promise<SaveDocumentResult | null>>()
 
 export function saveDocumentFile(request: SaveDocumentRequest): Promise<SaveDocumentResult | null> {
@@ -84,9 +92,25 @@ export function saveDocumentFile(request: SaveDocumentRequest): Promise<SaveDocu
     const source = request.getDocument()
     if (!source || !filePath) return null
     request.lifecycle?.onEncodeStart?.()
-    const data = await encodeDocumentForPath(source.document, filePath, imageFormat, request.options?.scalePercent ?? 100)
-    request.lifecycle?.onWriteStart?.()
-    await request.api.writeBinaryAtomic(filePath, data)
+    if (!imageFormat) {
+      const encoded = await encodeProjectSaveAsync(source.document, { onProgress: request.lifecycle?.onEncodeProgress })
+      request.lifecycle?.onWriteStart?.()
+      let acceptBaseline = true
+      if (encoded.sourcePath && encoded.reusableEntries.length > 0) {
+        try {
+          await request.api.writeProjectIncremental(filePath, encoded.sourcePath, encoded.data)
+        } catch {
+          await request.api.writeBinaryAtomic(filePath, await encodeProjectAsync(source.document))
+          clearProjectSaveBaseline(source.document)
+          acceptBaseline = false
+        }
+      } else await request.api.writeBinaryAtomic(filePath, encoded.data)
+      if (acceptBaseline) acceptProjectSaveBaseline(source.document, filePath, encoded)
+    } else {
+      const data = await encodeDocumentForPath(source.document, filePath, imageFormat, request.options?.scalePercent ?? 100, request.lifecycle?.onEncodeProgress)
+      request.lifecycle?.onWriteStart?.()
+      await request.api.writeBinaryAtomic(filePath, data)
+    }
     return { filePath, revision: source.revision }
   })()
   saveOperations.set(request.documentId, operation)
@@ -137,8 +161,11 @@ export async function exportTimelapseFile(api: MoonSpriteApi, document: SpriteDo
   return translate(loadEditorPreferences().language, 'timelapse.exported', { format: format.toUpperCase() })
 }
 
-export async function openDocumentFile(api: MoonSpriteApi, filePath: string): Promise<SpriteDocument> {
-  const document = await decodeDocumentFileAsync(await api.readBinary(filePath), filePath)
+export async function openDocumentFile(api: MoonSpriteApi, filePath: string, lifecycle?: OpenDocumentLifecycle): Promise<SpriteDocument> {
+  lifecycle?.onReadStart?.()
+  const bytes = await api.readBinary(filePath, ({ bytesRead, totalBytes }) => lifecycle?.onReadProgress?.(bytesRead, totalBytes))
+  lifecycle?.onDecodeStart?.()
+  const document = await decodeDocumentFileAsync(bytes, filePath, lifecycle?.onDecodeProgress)
   const check = checkTypedArrayLimit(document.width, document.height, document.layers.length, document.colorMode)
   if (!check.allowed) throw new Error(check.reason)
   return document

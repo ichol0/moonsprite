@@ -31,7 +31,7 @@
     "bench:canvas": "pnpm build:web:performance && node scripts/canvas-performance.mjs",
     "bench:canvas:full": "pnpm bench:canvas -- --full",
     "bench:canvas:profile": "pnpm build:web:performance-profile && node scripts/canvas-performance.mjs --runtime=profile",
-    "bench:canvas:large": "pnpm bench:canvas -- --size=800,2048,4000 --scenario=large-pan,large-zoom,large-draw,large-shape,large-marquee,large-bucket-fill,large-gradient,large-detail-pan,large-detail-draw",
+    "bench:canvas:large": "pnpm bench:canvas -- --size=800,2048,4000 --scenario=large-pan,large-zoom,large-draw,large-shape,large-marquee,large-bucket-fill,large-gradient,large-detail-pan,large-detail-draw,large-detail-draw-timelapse",
     "bench:selection": "vitest bench src/renderer/src/core/selection-performance.bench.ts --run",
     "bench:document": "vitest bench src/renderer/src/core/document-performance.bench.ts --run",
     "check:performance-scope": "node scripts/performance-scope.mjs",

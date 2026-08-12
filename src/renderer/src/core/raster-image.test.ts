@@ -11,6 +11,10 @@ describe('raster image import', () => {
     expect(document.colorMode).toBe('rgba')
     expect(layer.format).toBe('rgba')
     if (layer.format === 'rgba') expect(layer.pixels).toEqual(pixels)
+    expect(document.palette.map((entry) => entry.color)).toEqual([
+      { r: 255, g: 0, b: 0, a: 255 },
+      { r: 0, g: 128, b: 255, a: 64 }
+    ])
   })
 
   it('rejects mismatched pixel data', () => {

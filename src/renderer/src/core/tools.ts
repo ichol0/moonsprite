@@ -1,5 +1,5 @@
 import type { BrushPaintMode, BrushShape, BrushTexture, GradientDither, ImageBrush, ImageBrushSettings, OutlineDirection, OutlineDirections, OutlineKernel, OutlinePosition, RasterLayer, RgbaColor, SelectionMask, SelectionRect, ShapeKind, SpriteDocument } from '@shared/types'
-import { compositeRegion, ensureLayerCoversCanvas, findOrAddPaletteColor, getActiveLayer, getLayer, getPaletteEntry, isLayerEffectivelyLocked, layerIndexAt, markLayerContentChanged, readLayerColor, readLayerColorAt, readLayerPacked, readLayerPackedAt, writeLayerPacked, writeLayerPackedRun } from './document'
+import { compositeRegion, ensureLayerCoversCanvas, expandLayerToRect, findOrAddPaletteColor, getActiveLayer, getLayer, getLayerStorageOrigin, getPaletteEntry, isLayerEffectivelyLocked, layerIndexAt, layerIndexAtStoragePoint, markLayerContentChanged, readLayerColor, readLayerColorAt, readLayerPacked, readLayerPackedAt, writeLayerPacked, writeLayerPackedRun } from './document'
 import { beginPixelEdit, preparePixelEdit, recordPixel, recordPixelKnownCurrent, type PixelEdit } from './history'
 import { blendOver, isInBounds, packColor, pixelIndex, unpackColor } from './raster'
 import { flipSelectionMask, packedColorMatchesTolerance, rasterLinePoints, rotatedEllipseSelection, rotatedRectSelection, selectionContains, transformedSelectionBounds, transformedSelectionDestinationPoint, transformedSelectionSourcePoint, type SelectionFlipAxis, type SelectionShearTransform } from './selection'
@@ -27,22 +27,107 @@ const layerColorBeforeEdit = (document: SpriteDocument, layer: RasterLayer, edit
   return layer.format === 'rgba' ? unpackColor(original) : getPaletteEntry(document, original).color
 }
 
-const brushCoverageByEdit = new WeakMap<PixelEdit, Map<string, Map<number, number>>>()
+interface BrushCoverageChunks {
+  chunks: Map<number, Uint16Array>
+}
 
-const claimBrushCoverage = (edit: PixelEdit, key: string, index: number, coverage: number, replaceEqual = false): boolean => {
+interface BrushStampState {
+  key: string
+  stampX: number
+  stampY: number
+  width: number
+  height: number
+  occupied: Uint8Array
+}
+
+const BRUSH_COVERAGE_CHUNK_BITS = 12
+const BRUSH_COVERAGE_CHUNK_SIZE = 1 << BRUSH_COVERAGE_CHUNK_BITS
+const BRUSH_COVERAGE_CHUNK_MASK = BRUSH_COVERAGE_CHUNK_SIZE - 1
+const brushCoverageByEdit = new WeakMap<PixelEdit, Map<string, BrushCoverageChunks>>()
+const lastBrushStampByEdit = new WeakMap<PixelEdit, BrushStampState>()
+const EDIT_EXPANSION_PADDING = 64
+
+const remapPixelEditAfterLayerExpansion = (layer: RasterLayer, edit: PixelEdit, oldWidth: number, oldOrigin: { x: number; y: number }): void => {
+  const remap = (index: number): number | null => layerIndexAtStoragePoint(layer, index % oldWidth + oldOrigin.x, Math.floor(index / oldWidth) + oldOrigin.y)
+  const remapValues = (values: Map<number, number>): void => {
+    const entries = [...values]
+    values.clear()
+    for (const [index, value] of entries) {
+      const nextIndex = remap(index)
+      if (nextIndex !== null) values.set(nextIndex, value)
+    }
+  }
+  remapValues(edit.before)
+  remapValues(edit.after)
+  const coverageByKey = brushCoverageByEdit.get(edit)
+  if (coverageByKey) for (const coverage of coverageByKey.values()) {
+    const remapped = new Map<number, number>()
+    for (const [chunkIndex, chunk] of coverage.chunks) for (let offset = 0; offset < chunk.length; offset += 1) {
+      const stored = chunk[offset]
+      if (stored === 0) continue
+      const nextIndex = remap((chunkIndex << BRUSH_COVERAGE_CHUNK_BITS) + offset)
+      if (nextIndex !== null) remapped.set(nextIndex, stored)
+    }
+    coverage.chunks.clear()
+    for (const [index, stored] of remapped) {
+      const chunkIndex = index >> BRUSH_COVERAGE_CHUNK_BITS
+      let chunk = coverage.chunks.get(chunkIndex)
+      if (!chunk) { chunk = new Uint16Array(BRUSH_COVERAGE_CHUNK_SIZE); coverage.chunks.set(chunkIndex, chunk) }
+      chunk[index & BRUSH_COVERAGE_CHUNK_MASK] = stored
+    }
+  }
+  lastBrushStampByEdit.delete(edit)
+}
+
+const ensureLayerCoversEditRect = (document: SpriteDocument, layer: RasterLayer, edit: PixelEdit, rect: SelectionRect, padding = EDIT_EXPANSION_PADDING): boolean => {
+  const left = Math.max(0, Math.floor(rect.x) - padding)
+  const top = Math.max(0, Math.floor(rect.y) - padding)
+  const right = Math.min(document.width, Math.ceil(rect.x + rect.width) + padding)
+  const bottom = Math.min(document.height, Math.ceil(rect.y + rect.height) + padding)
+  if (right <= left || bottom <= top) return false
+  if (left >= layer.offsetX && top >= layer.offsetY && right <= layer.offsetX + layer.width && bottom <= layer.offsetY + layer.height) return true
+  if (edit.runs?.length || edit.denseRegion?.count) return false
+  const oldWidth = layer.width
+  const oldOrigin = getLayerStorageOrigin(layer)
+  if (!expandLayerToRect(layer, left, top, right, bottom)) return false
+  if (edit.before.size > 0 || edit.after.size > 0 || brushCoverageByEdit.has(edit)) remapPixelEditAfterLayerExpansion(layer, edit, oldWidth, oldOrigin)
+  return true
+}
+
+const symmetricRect = (document: SpriteDocument, rect: SelectionRect, axes?: SymmetryAxes, center?: SymmetryCenter): SelectionRect => {
+  const corners = [
+    { x: rect.x, y: rect.y },
+    { x: rect.x + rect.width - 1, y: rect.y },
+    { x: rect.x, y: rect.y + rect.height - 1 },
+    { x: rect.x + rect.width - 1, y: rect.y + rect.height - 1 }
+  ]
+  const points = corners.flatMap((point) => symmetryPoints(point, document.width, document.height, axes, center))
+  if (points.length === 0) return rect
+  const left = Math.min(...points.map((point) => point.x))
+  const top = Math.min(...points.map((point) => point.y))
+  const right = Math.max(...points.map((point) => point.x)) + 1
+  const bottom = Math.max(...points.map((point) => point.y)) + 1
+  return { x: left, y: top, width: right - left, height: bottom - top }
+}
+
+const claimBrushCoverage = (edit: PixelEdit, key: string, index: number, coverageValue: number, replaceEqual = false): boolean => {
   let coverageByKey = brushCoverageByEdit.get(edit)
   if (!coverageByKey) {
     coverageByKey = new Map()
     brushCoverageByEdit.set(edit, coverageByKey)
   }
-  let coverageByPixel = coverageByKey.get(key)
-  if (!coverageByPixel) {
-    coverageByPixel = new Map()
-    coverageByKey.set(key, coverageByPixel)
+  let coverageRecord = coverageByKey.get(key)
+  if (!coverageRecord) {
+    coverageRecord = { chunks: new Map() }
+    coverageByKey.set(key, coverageRecord)
   }
-  const previousCoverage = coverageByPixel.get(index) ?? -1
-  if (previousCoverage > coverage || (!replaceEqual && previousCoverage === coverage)) return false
-  coverageByPixel.set(index, coverage)
+  const chunkIndex = index >> BRUSH_COVERAGE_CHUNK_BITS
+  let chunk = coverageRecord.chunks.get(chunkIndex)
+  if (!chunk) { chunk = new Uint16Array(BRUSH_COVERAGE_CHUNK_SIZE); coverageRecord.chunks.set(chunkIndex, chunk) }
+  const offset = index & BRUSH_COVERAGE_CHUNK_MASK
+  const previousCoverage = chunk[offset] - 1
+  if (previousCoverage > coverageValue || (!replaceEqual && previousCoverage === coverageValue)) return false
+  chunk[offset] = coverageValue + 1
   return true
 }
 
@@ -85,9 +170,9 @@ export function paintSquare(
   color: RgbaColor,
   selection?: SelectionMask | null
 ): void {
-  if (!ensureLayerCoversCanvas(document, layer)) return
   const radiusBefore = Math.floor(size / 2)
   const radiusAfter = size - radiusBefore - 1
+  if (!ensureLayerCoversEditRect(document, layer, edit, { x: x - radiusBefore, y: y - radiusBefore, width: size, height: size })) return
   for (let py = y - radiusBefore; py <= y + radiusAfter; py += 1) {
     for (let px = x - radiusBefore; px <= x + radiusAfter; px += 1) {
       if (!isInBounds(document.width, document.height, px, py)) continue
@@ -145,17 +230,40 @@ export function paintBrush(
   overrideImageBrushColor = false,
   gradient?: BrushGradientSample
 ): void {
-  if (!ensureLayerCoversCanvas(document, layer)) return
   const normalizedOpacityScale = Math.max(0, Math.min(1, Number.isFinite(opacityScale) ? opacityScale : 1))
   if (normalizedOpacityScale <= 0) return
+  const recordedPixelCount = edit.before.size
   const stamp = brushStampDimensions(size, imageBrush)
   const { x: beforeX, y: beforeY } = brushStampAnchor(size, imageBrush)
   const stampX = x - beforeX
   const stampY = y - beforeY
-  for (const offset of brushMaskOffsets(size, shape, texture, textureScale, stampX, stampY, imageBrush, imageBrushSettings, proceduralAntialiasStrength, brushPaintMode, patternOrigin?.x ?? stampX, patternOrigin?.y ?? stampY)) {
+  const footprint = symmetricRect(document, { x: stampX, y: stampY, width: stamp.width, height: stamp.height }, symmetryAxes, symmetryCenter)
+  if (!ensureLayerCoversEditRect(document, layer, edit, footprint)) return
+  const offsets = brushMaskOffsets(size, shape, texture, textureScale, stampX, stampY, imageBrush, imageBrushSettings, proceduralAntialiasStrength, brushPaintMode, patternOrigin?.x ?? stampX, patternOrigin?.y ?? stampY)
+  const solidStampKey = !selection && !imageBrush && texture === 'solid' && normalizedOpacityScale === 1 && !colorReplacement && !gradient && !coverageKey && !hasSymmetry(symmetryAxes) && (color.a === 0 || color.a === 255)
+    ? `${shape}:${stamp.width}x${stamp.height}:${color.a === 0 ? 'erase' : packColor(color)}`
+    : null
+  let occupancy: Uint8Array | null = null
+  const previousStamp = solidStampKey ? lastBrushStampByEdit.get(edit) : undefined
+  if (solidStampKey) {
+    const occupancyKey = `${shape}:${stamp.width}x${stamp.height}`
+    occupancy = solidBrushOccupancyCache.get(occupancyKey) ?? null
+    if (!occupancy) {
+      occupancy = new Uint8Array(stamp.width * stamp.height)
+      for (const offset of offsets) occupancy[offset.y * stamp.width + offset.x] = 1
+      if (solidBrushOccupancyCache.size >= 16) solidBrushOccupancyCache.delete(solidBrushOccupancyCache.keys().next().value!)
+      solidBrushOccupancyCache.set(occupancyKey, occupancy)
+    }
+  }
+  for (const offset of offsets) {
     const scaledCoverage = Math.round(offset.coverage * normalizedOpacityScale)
     if (scaledCoverage === 0) continue
     const sourcePoint = { x: x - beforeX + offset.x, y: y - beforeY + offset.y }
+    if (solidStampKey && previousStamp?.key === solidStampKey) {
+      const previousLocalX = sourcePoint.x - previousStamp.stampX
+      const previousLocalY = sourcePoint.y - previousStamp.stampY
+      if (previousLocalX >= 0 && previousLocalY >= 0 && previousLocalX < previousStamp.width && previousLocalY < previousStamp.height && previousStamp.occupied[previousLocalY * previousStamp.width + previousLocalX]) continue
+    }
     for (const { x: px, y: py } of symmetryPoints(sourcePoint, document.width, document.height, symmetryAxes, symmetryCenter)) {
       if (selection && !insideSelection(selection, px, py)) continue
       const index = layerIndexAt(layer, px, py)
@@ -209,6 +317,9 @@ export function paintBrush(
       }
     }
   }
+  if (solidStampKey && occupancy) lastBrushStampByEdit.set(edit, { key: solidStampKey, stampX, stampY, width: stamp.width, height: stamp.height, occupied: occupancy })
+  else lastBrushStampByEdit.delete(edit)
+  if (edit.before.size > recordedPixelCount) markLayerContentChanged(layer)
 }
 
 export interface BrushLineDynamics {
@@ -250,6 +361,7 @@ const orderedDither4x4 = [
 const defaultImageBrushSettings: ImageBrushSettings = { mode: 'dither', threshold: 128, blackPoint: 0, whitePoint: 255, invert: false }
 const imageBrushMaskCache = new WeakMap<ImageBrush, Map<string, BrushMaskPoint[]>>()
 const solidBrushMaskCache = new Map<string, BrushMaskPoint[]>()
+const solidBrushOccupancyCache = new Map<string, Uint8Array>()
 const wrappedIndex = (value: number, length: number): number => ((value % length) + length) % length
 
 const imageBrushCoverage = (sourceCoverage: number, x: number, y: number, settings: ImageBrushSettings = defaultImageBrushSettings, antialiasStrength = 0): number => {
@@ -443,6 +555,15 @@ export function paintLine(
     ? balancedStairLinePoints({ x: fromX, y: fromY }, { x: toX, y: toY })
     : rasterLinePoints({ x: fromX, y: fromY }, { x: toX, y: toY })
   if (points.length === 0) return
+  const maximumSize = Math.max(1, Math.round(Math.max(size, dynamics?.fromSize ?? size, dynamics?.toSize ?? size)))
+  const maximumStamp = brushStampDimensions(maximumSize, imageBrush)
+  const maximumAnchor = brushStampAnchor(maximumSize, imageBrush)
+  const lineLeft = Math.min(fromX, toX) - maximumAnchor.x
+  const lineTop = Math.min(fromY, toY) - maximumAnchor.y
+  const lineRight = Math.max(fromX, toX) - maximumAnchor.x + maximumStamp.width
+  const lineBottom = Math.max(fromY, toY) - maximumAnchor.y + maximumStamp.height
+  const footprint = symmetricRect(document, { x: lineLeft, y: lineTop, width: lineRight - lineLeft, height: lineBottom - lineTop }, symmetryAxes, symmetryCenter)
+  if (!ensureLayerCoversEditRect(document, layer, edit, footprint)) return
   let stepsSinceStamp = 0
   let lastStampedSize: number | null = null
   for (let index = 0; index < points.length; index += 1) {
@@ -534,8 +655,15 @@ export function paintShape(
   symmetryCenter?: SymmetryCenter,
   angle = 0
 ): void {
-  if (!ensureLayerCoversCanvas(document, layer)) return
-  for (const point of rotatedShapePixelPoints(bounds, kind, document.width, document.height, angle)) {
+  const points = [...rotatedShapePixelPoints(bounds, kind, document.width, document.height, angle)]
+  if (points.length === 0) return
+  const destinations = points.flatMap((point) => symmetryPoints(point, document.width, document.height, symmetryAxes, symmetryCenter))
+  const left = Math.min(...destinations.map((point) => point.x))
+  const top = Math.min(...destinations.map((point) => point.y))
+  const right = Math.max(...destinations.map((point) => point.x)) + 1
+  const bottom = Math.max(...destinations.map((point) => point.y)) + 1
+  if (!ensureLayerCoversEditRect(document, layer, edit, { x: left, y: top, width: right - left, height: bottom - top })) return
+  for (const point of points) {
     for (const { x, y } of symmetryPoints(point, document.width, document.height, symmetryAxes, symmetryCenter)) {
       if (selection && !insideSelection(selection, x, y)) continue
       const index = layerIndexAt(layer, x, y)
@@ -829,7 +957,8 @@ const floodFillSolidRuns = (document: SpriteDocument, layer: RasterLayer, startX
 
 export function floodFill(document: SpriteDocument, layer: RasterLayer, startX: number, startY: number, color: RgbaColor, selection?: SelectionMask | null, contiguous = true, imageBrush: ImageBrush | null = null, brushSize = 1, imageBrushSettings?: ImageBrushSettings, brushTexture: BrushTexture = 'solid', brushTextureScale = 1, proceduralAntialiasStrength = 0, brushPaintMode: BrushPaintMode = 'paint', tolerance = 0): PixelEdit | null {
   if (!isInBounds(document.width, document.height, startX, startY) || isLayerEffectivelyLocked(document, layer) || (selection && !insideSelection(selection, startX, startY))) return null
-  if (!ensureLayerCoversCanvas(document, layer)) return null
+  const startWasOutsideLayer = layerIndexAt(layer, startX, startY) === null
+  if (startWasOutsideLayer && !ensureLayerCoversCanvas(document, layer)) return null
   const startLayerIndex = layerIndexAt(layer, startX, startY)
   if (startLayerIndex === null) return null
   const target = readLayerPacked(document, layer, startLayerIndex)
@@ -841,6 +970,76 @@ export function floodFill(document: SpriteDocument, layer: RasterLayer, startX: 
   const matchesValue = (value: number): boolean => normalizedTolerance === 0
     ? value === target
     : packedColorMatchesTolerance(layer.format === 'rgba' ? value : paletteColors!.get(value) ?? 0, targetColor, normalizedTolerance)
+  if (!startWasOutsideLayer && matchesValue(0)) {
+    const bounds = selection ? clampSelection(document, selection) : { x: 0, y: 0, width: document.width, height: document.height }
+    const layerLeft = layer.offsetX
+    const layerTop = layer.offsetY
+    const layerRight = layer.offsetX + layer.width
+    const layerBottom = layer.offsetY + layer.height
+    const boundsExtendOutsideLayer = Boolean(bounds && (bounds.x < layerLeft || bounds.y < layerTop || bounds.x + bounds.width > layerRight || bounds.y + bounds.height > layerBottom))
+    const contiguousRegionCanEscapeLayer = (): boolean => {
+      if (!contiguous || !boundsExtendOutsideLayer) return boundsExtendOutsideLayer
+      const startLocalX = startX - layerLeft
+      const startLocalY = startY - layerTop
+      const visited = new Uint8Array(layer.width * layer.height)
+      let stack = new Int32Array(Math.min(layer.width * layer.height, 1024))
+      let stackLength = 0
+      const matchesLocal = (localX: number, localY: number): boolean => {
+        if (localX < 0 || localY < 0 || localX >= layer.width || localY >= layer.height) return false
+        const index = localY * layer.width + localX
+        if (visited[index]) return false
+        const canvasX = layerLeft + localX
+        const canvasY = layerTop + localY
+        return (!selection || insideSelection(selection, canvasX, canvasY)) && matchesValue(readLayerPacked(document, layer, index))
+      }
+      const push = (localX: number, localY: number): void => {
+        if (!matchesLocal(localX, localY)) return
+        const index = localY * layer.width + localX
+        visited[index] = 1
+        if (stackLength === stack.length) {
+          const expanded = new Int32Array(Math.min(layer.width * layer.height, Math.max(stack.length * 2, 1024)))
+          expanded.set(stack)
+          stack = expanded
+        }
+        stack[stackLength++] = index
+      }
+      const outsideSelected = (canvasX: number, canvasY: number): boolean => canvasX >= 0 && canvasY >= 0 && canvasX < document.width && canvasY < document.height && (!selection || insideSelection(selection, canvasX, canvasY))
+      const scanNeighbor = (left: number, right: number, localY: number): void => {
+        if (localY < 0 || localY >= layer.height) return
+        let localX = left
+        while (localX <= right) {
+          while (localX <= right && !matchesLocal(localX, localY)) localX += 1
+          if (localX > right) break
+          push(localX, localY)
+          localX += 1
+          while (localX <= right && matchesLocal(localX, localY)) localX += 1
+        }
+      }
+      push(startLocalX, startLocalY)
+      while (stackLength > 0) {
+        const index = stack[--stackLength]
+        const localX = index % layer.width
+        const localY = Math.floor(index / layer.width)
+        let left = localX
+        let right = localX
+        while (matchesLocal(left - 1, localY)) left -= 1
+        while (matchesLocal(right + 1, localY)) right += 1
+        visited.fill(1, localY * layer.width + left, localY * layer.width + right + 1)
+        const canvasY = layerTop + localY
+        if ((left === 0 && outsideSelected(layerLeft - 1, canvasY))
+          || (right === layer.width - 1 && outsideSelected(layerRight, canvasY))) return true
+        if (localY === 0 || localY === layer.height - 1) {
+          const outsideY = localY === 0 ? layerTop - 1 : layerBottom
+          for (let x = left; x <= right; x += 1) if (outsideSelected(layerLeft + x, outsideY)) return true
+        }
+        scanNeighbor(left, right, localY - 1)
+        scanNeighbor(left, right, localY + 1)
+      }
+      return false
+    }
+    const mayReachOutsideLayer = contiguousRegionCanEscapeLayer()
+    if (mayReachOutsideLayer && !ensureLayerCoversCanvas(document, layer)) return null
+  }
   const edit = beginPixelEdit(layer.id)
   preparePixelEdit(document, edit)
   const next = paintLayerValue(document, layer, edit, startLayerIndex, color)
@@ -952,7 +1151,6 @@ export function floodFillSymmetric(document: SpriteDocument, layer: RasterLayer,
 export function clearSelection(document: SpriteDocument, selection: SelectionMask, targetLayer?: RasterLayer): PixelEdit | null {
   const layer = targetLayer ?? getActiveLayer(document)
   if (isLayerEffectivelyLocked(document, layer)) return null
-  if (!ensureLayerCoversCanvas(document, layer)) return null
   const clamped = clampSelection(document, selection)
   if (!clamped) return null
   const edit = beginPixelEdit(layer.id)
@@ -968,10 +1166,10 @@ export function clearSelection(document: SpriteDocument, selection: SelectionMas
 
 export function fillSelectionOrCanvas(document: SpriteDocument, layer: RasterLayer, color: RgbaColor, selection: SelectionMask | null = null): PixelEdit | null {
   if (isLayerEffectivelyLocked(document, layer)) return null
-  if (!ensureLayerCoversCanvas(document, layer)) return null
   const bounds = selection ? clampSelection(document, selection) : { x: 0, y: 0, width: document.width, height: document.height }
   if (!bounds) return null
   const edit = beginPixelEdit(layer.id)
+  if (!ensureLayerCoversEditRect(document, layer, edit, bounds, selection ? EDIT_EXPANSION_PADDING : 0)) return null
   const value = layer.format === 'rgba' ? packColor(color) : findOrAddPaletteColor(document, color)
   for (let y = bounds.y; y < bounds.y + bounds.height; y += 1) {
     for (let x = bounds.x; x < bounds.x + bounds.width; x += 1) {
@@ -1099,6 +1297,7 @@ export function captureSelectionTransform(document: SpriteDocument, selection: S
 
 export function restoreSelectionTranslationPreview(document: SpriteDocument, preview: SelectionTranslationPreview): void {
   const layer = getLayer(document, preview.layerId)
+  if (preview.count > 0) markLayerContentChanged(layer)
   for (let offset = 0; offset < preview.count; offset += 1) writeLayerPacked(document, layer, preview.indices[offset], preview.before[offset])
 }
 

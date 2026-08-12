@@ -284,6 +284,15 @@ export interface TimelapseSettings {
   snapshots: TimelapseSnapshot[]
 }
 
+export interface ProjectLayerPanelState {
+  activeLayerId: string
+  selectedLayerIds: string[]
+  selectedGroupIds: string[]
+  selectedGroupId: string | null
+  layerSelectionAnchorId: string | null
+  collapsedGroupIds: string[]
+}
+
 export interface SpriteDocument {
   schemaVersion: 1 | 2 | 3 | 4
   id: string
@@ -309,6 +318,8 @@ export interface SpriteDocument {
   outlineSettings?: OutlineSettings
   /** Project-owned display toggles. View navigation remains session-only. */
   displaySettings?: ProjectDisplaySettings
+  /** Layer panel context restored when the project is reopened. */
+  layerPanelState?: ProjectLayerPanelState
   /** Persisted editing statistics used by the project information view. */
   statistics?: ProjectStatistics
   /** Optional bounded history of drawing snapshots for timelapse export. */
@@ -489,6 +500,18 @@ export interface ClipboardImageSize {
   height: number
 }
 
+export interface ProjectPreview {
+  preview: Uint8Array
+  width: number
+  height: number
+  colorMode: 'rgba' | 'indexed'
+}
+
+export interface BinaryReadProgress {
+  bytesRead: number
+  totalBytes: number
+}
+
 export interface MoonSpriteApi {
   openFiles(): Promise<OpenDialogResult>
   takeStartupFiles(): Promise<string[]>
@@ -500,8 +523,11 @@ export interface MoonSpriteApi {
   getDefaultFileDirectories(): Promise<DefaultFileDirectories>
   chooseDirectory(defaultPath?: string): Promise<DirectoryDialogResult>
   fileExists(filePath: string): Promise<boolean>
-  readBinary(filePath: string): Promise<Uint8Array>
+  readBinary(filePath: string, onProgress?: (progress: BinaryReadProgress) => void): Promise<Uint8Array>
+  readProjectPreview(filePath: string): Promise<ProjectPreview>
+  cacheProjectPreview(filePath: string, preview: ProjectPreview): Promise<void>
   writeBinaryAtomic(filePath: string, data: Uint8Array): Promise<void>
+  writeProjectIncremental(filePath: string, sourcePath: string, data: Uint8Array): Promise<void>
   writeClipboardImage(image: ClipboardImage): Promise<void>
   readClipboardText(): Promise<string | null>
   readClipboardImage(): Promise<ClipboardImage | null>

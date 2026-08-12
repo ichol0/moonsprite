@@ -1,19 +1,13 @@
 import type { LayerMask, SelectionRect, SpriteDocument, ViewState } from '@shared/types'
 import { compositeRegion, DocumentCompositeCache, renderLayerMaskRegion } from '@/core/document'
 import { applyRelativeLuminance } from '@/core/raster'
-import type { CanvasDragState } from '@/core/canvas-input'
+import { initialDocumentCompositePending, initialDocumentCompositeSurface } from '@/core/initial-document-composite'
 import type { RasterContext2D } from './canvas-selection-renderer'
 
 interface CompositeSurface {
   canvas: OffscreenCanvas
   revision: number
-  scaled?: ScaledCompositeSurface
-}
-
-interface ScaledCompositeSurface {
-  canvas: OffscreenCanvas
-  zoom: number
-  imageSmoothingEnabled: boolean
+  pendingDirtyRects?: SelectionRect[]
 }
 
 interface CompositeRegionSurface extends CompositeSurface {
@@ -46,16 +40,46 @@ interface DrawCompositeOptions {
   } | null
   frameId?: string
   isolatedLayerMask?: LayerMask
-  activeDrag?: CanvasDragState['kind']
   imageSmoothingEnabled?: boolean
 }
 
 const MAX_SURFACE_DIMENSION = 8192
 const MAX_CACHED_FRAMES = 32
 const DEFAULT_MAX_CACHE_BYTES = 128 * 1024 * 1024
-const CACHE_VERSION = 3
+const CACHE_VERSION = 9
 const imageData = (pixels: Uint8ClampedArray, width: number, height: number): ImageData =>
   new ImageData(pixels as Uint8ClampedArray<ArrayBuffer>, width, height)
+
+const intersectRect = (left: SelectionRect, right: SelectionRect): SelectionRect | null => {
+  const x = Math.max(left.x, right.x)
+  const y = Math.max(left.y, right.y)
+  const toX = Math.min(left.x + left.width, right.x + right.width)
+  const toY = Math.min(left.y + left.height, right.y + right.height)
+  return toX > x && toY > y ? { x, y, width: toX - x, height: toY - y } : null
+}
+
+const subtractRect = (source: SelectionRect, removed: SelectionRect): SelectionRect[] => {
+  const overlap = intersectRect(source, removed)
+  if (!overlap) return [source]
+  const result: SelectionRect[] = []
+  const sourceRight = source.x + source.width
+  const sourceBottom = source.y + source.height
+  const overlapRight = overlap.x + overlap.width
+  const overlapBottom = overlap.y + overlap.height
+  if (overlap.y > source.y) result.push({ x: source.x, y: source.y, width: source.width, height: overlap.y - source.y })
+  if (overlapBottom < sourceBottom) result.push({ x: source.x, y: overlapBottom, width: source.width, height: sourceBottom - overlapBottom })
+  if (overlap.x > source.x) result.push({ x: source.x, y: overlap.y, width: overlap.x - source.x, height: overlap.height })
+  if (overlapRight < sourceRight) result.push({ x: overlapRight, y: overlap.y, width: sourceRight - overlapRight, height: overlap.height })
+  return result
+}
+
+const visibleDocumentRect = (document: SpriteDocument, fromX: number, fromY: number, toX: number, toY: number): SelectionRect | null => {
+  const x = Math.max(0, Math.floor(fromX))
+  const y = Math.max(0, Math.floor(fromY))
+  const right = Math.min(document.width, Math.ceil(toX))
+  const bottom = Math.min(document.height, Math.ceil(toY))
+  return right > x && bottom > y ? { x, y, width: right - x, height: bottom - y } : null
+}
 
 export const shouldCacheFullCompositeSurface = (width: number, height: number, maxCacheBytes = DEFAULT_MAX_CACHE_BYTES): boolean =>
   width > 0 && height > 0 && width <= MAX_SURFACE_DIMENSION && height <= MAX_SURFACE_DIMENSION && width * height * 4 <= maxCacheBytes
@@ -93,7 +117,7 @@ export class CanvasCompositeCache {
   }
 
   draw({ context, document, view, originX, originY, canvasWidth, canvasHeight, fromX, fromY, toX, toY, revision, contentRevision = revision, contentInvalidation = null, frameId = 'static', isolatedLayerMask, imageSmoothingEnabled = false }: DrawCompositeOptions): void {
-    const namespace = `${CACHE_VERSION}:${document.id}:${isolatedLayerMask ? `mask:${isolatedLayerMask.id}` : view.relativeLuminance ? 'luminance' : 'color'}`
+    const namespace = this.surfaceNamespace(document, view, isolatedLayerMask)
     if (this.namespace !== namespace) {
       this.namespace = namespace
       this.invalidateAll()
@@ -106,9 +130,14 @@ export class CanvasCompositeCache {
     context.clip()
     context.imageSmoothingEnabled = imageSmoothingEnabled
     if (imageSmoothingEnabled) context.imageSmoothingQuality = 'high'
-    if (shouldCacheFullCompositeSurface(document.width, document.height, this.maxCacheBytes)) this.drawSurface(context, document, view, originX, originY, canvasWidth, canvasHeight, fromX, fromY, toX, toY, frameKey, frameId, contentRevision, contentInvalidation, imageSmoothingEnabled, isolatedLayerMask)
+    const initialCompositeIsPending = contentRevision === 0 && !isolatedLayerMask && !view.relativeLuminance && initialDocumentCompositePending(document)
+    if (isolatedLayerMask || (shouldCacheFullCompositeSurface(document.width, document.height, this.maxCacheBytes) && !initialCompositeIsPending)) this.drawSurface(context, document, view, originX, originY, canvasWidth, canvasHeight, fromX, fromY, toX, toY, frameKey, frameId, contentRevision, contentInvalidation, imageSmoothingEnabled, isolatedLayerMask)
     else this.drawRegion(context, document, view, originX, originY, fromX, fromY, toX, toY, frameKey, contentRevision, isolatedLayerMask)
     context.restore()
+  }
+
+  private surfaceNamespace(document: SpriteDocument, view: Pick<ViewState, 'relativeLuminance'>, isolatedLayerMask?: LayerMask): string {
+    return `${CACHE_VERSION}:${document.id}:${isolatedLayerMask ? `mask:${isolatedLayerMask.id}` : view.relativeLuminance ? 'luminance' : 'color'}`
   }
 
   private drawSurface(context: RasterContext2D, document: SpriteDocument, view: ViewState, originX: number, originY: number, canvasWidth: number, canvasHeight: number, fromX: number, fromY: number, toX: number, toY: number, key: string, frameId: string, contentRevision: number, invalidation: DrawCompositeOptions['contentInvalidation'], imageSmoothingEnabled: boolean, isolatedLayerMask?: LayerMask): void {
@@ -117,65 +146,61 @@ export class CanvasCompositeCache {
       && surface.revision !== contentRevision
       && invalidation?.revision === contentRevision
       && invalidation.fromRevision === surface.revision
-    if (surface && surface.revision !== contentRevision && (!canApplyInvalidation || invalidation?.kind === 'full')) surface = undefined
-    if (surface && canApplyInvalidation) {
-      if (invalidation?.kind === 'region' && (isolatedLayerMask || (invalidation.frameId ?? 'static') === frameId) && invalidation.rect) {
-        this.invalidateRect(invalidation.rect, document.width, document.height, frameId)
+    if (surface && surface.revision !== contentRevision) {
+      if (canApplyInvalidation && invalidation?.kind === 'region') {
+        if ((isolatedLayerMask || (invalidation.frameId ?? 'static') === frameId) && invalidation.rect) {
+          this.invalidateRect(invalidation.rect, document.width, document.height, frameId)
+        }
+      } else {
+        surface.pendingDirtyRects = [{ x: 0, y: 0, width: document.width, height: document.height }]
+        this.dirtyRects.delete(frameId)
       }
       surface.revision = contentRevision
     }
     if (!surface || surface.canvas.width !== document.width || surface.canvas.height !== document.height) {
-      const pixels = isolatedLayerMask
-        ? renderLayerMaskRegion(isolatedLayerMask, 0, 0, document.width, document.height)
-        : compositeRegion(document, 0, 0, document.width, document.height, this.compositeCache, contentRevision)
-      if (!isolatedLayerMask && view.relativeLuminance) applyRelativeLuminance(pixels)
-      const canvas = new OffscreenCanvas(document.width, document.height)
-      canvas.getContext('2d')?.putImageData(imageData(pixels, document.width, document.height), 0, 0)
+      const initialSurface = !isolatedLayerMask && !view.relativeLuminance && contentRevision === 0
+        ? initialDocumentCompositeSurface(document)
+        : null
+      const canvas = initialSurface ?? new OffscreenCanvas(document.width, document.height)
+      if (!initialSurface) {
+        const pixels = isolatedLayerMask
+          ? renderLayerMaskRegion(isolatedLayerMask, 0, 0, document.width, document.height)
+          : compositeRegion(document, 0, 0, document.width, document.height, this.compositeCache, contentRevision)
+        if (!isolatedLayerMask && view.relativeLuminance) applyRelativeLuminance(pixels)
+        canvas.getContext('2d')?.putImageData(imageData(pixels, document.width, document.height), 0, 0)
+      }
       surface = { canvas, revision: contentRevision }
       this.remember(this.surfaces, key, surface)
       this.dirtyRects.delete(frameId)
     } else {
       const dirtyRects = this.dirtyRects.get(frameId) ?? []
+      const visibleRect = visibleDocumentRect(document, fromX, fromY, toX, toY)
+      if (visibleRect && surface.pendingDirtyRects) {
+        const pendingDirtyRects: SelectionRect[] = []
+        for (const rect of surface.pendingDirtyRects) {
+          const visibleDirtyRect = intersectRect(rect, visibleRect)
+          if (!visibleDirtyRect) {
+            pendingDirtyRects.push(rect)
+            continue
+          }
+          dirtyRects.push(visibleDirtyRect)
+          pendingDirtyRects.push(...subtractRect(rect, visibleDirtyRect))
+        }
+        surface.pendingDirtyRects = pendingDirtyRects.length > 0 ? pendingDirtyRects : undefined
+      }
       const surfaceContext = surface.canvas.getContext('2d')
       if (surfaceContext) for (const rect of dirtyRects) {
         const pixels = isolatedLayerMask
           ? renderLayerMaskRegion(isolatedLayerMask, rect.x, rect.y, rect.width, rect.height)
-          : compositeRegion(document, rect.x, rect.y, rect.width, rect.height)
+          : compositeRegion(document, rect.x, rect.y, rect.width, rect.height, this.compositeCache, contentRevision)
         if (!isolatedLayerMask && view.relativeLuminance) applyRelativeLuminance(pixels)
         surfaceContext.putImageData(imageData(pixels, rect.width, rect.height), rect.x, rect.y)
       }
-      if (dirtyRects.length > 0) surface.scaled = undefined
       this.dirtyRects.delete(frameId)
     }
     const visibleWidth = Math.max(0, toX - fromX)
     const visibleHeight = Math.max(0, toY - fromY)
     if (visibleWidth > 0 && visibleHeight > 0) {
-      if (view.zoom < 1) {
-        const scaledWidth = Math.max(1, Math.round(canvasWidth))
-        const scaledHeight = Math.max(1, Math.round(canvasHeight))
-        let scaled = surface.scaled
-        if (!scaled || scaled.zoom !== view.zoom || scaled.imageSmoothingEnabled !== imageSmoothingEnabled || scaled.canvas.width !== scaledWidth || scaled.canvas.height !== scaledHeight) {
-          const canvas = new OffscreenCanvas(scaledWidth, scaledHeight)
-          const scaledContext = canvas.getContext('2d')
-          if (scaledContext) {
-            scaledContext.imageSmoothingEnabled = imageSmoothingEnabled
-            if (imageSmoothingEnabled) scaledContext.imageSmoothingQuality = 'high'
-            scaledContext.drawImage(surface.canvas, 0, 0, surface.canvas.width, surface.canvas.height, 0, 0, scaledWidth, scaledHeight)
-          }
-          scaled = { canvas, zoom: view.zoom, imageSmoothingEnabled }
-          surface.scaled = scaled
-        }
-        const scaledFromX = fromX / document.width * scaledWidth
-        const scaledFromY = fromY / document.height * scaledHeight
-        const scaledVisibleWidth = visibleWidth / document.width * scaledWidth
-        const scaledVisibleHeight = visibleHeight / document.height * scaledHeight
-        if (fromX === 0 && fromY === 0 && toX === document.width && toY === document.height) {
-          context.drawImage(scaled.canvas, originX, originY, canvasWidth, canvasHeight)
-          return
-        }
-        context.drawImage(scaled.canvas, scaledFromX, scaledFromY, scaledVisibleWidth, scaledVisibleHeight, originX + fromX * view.zoom, originY + fromY * view.zoom, visibleWidth * view.zoom, visibleHeight * view.zoom)
-        return
-      }
       context.drawImage(
         surface.canvas,
         fromX,

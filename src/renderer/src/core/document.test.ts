@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { blendWithMode } from './raster'
 import { activateAnimationFrame, duplicateAnimationFrame, ensureAnimationDocument } from './animation'
-import { compositePixelWithLayerColor, compositeRegion, createCompositePointReplacementSampler, createCompositePointSampler, createCompositeSampler, createDocument, createLayer, createLayerMask, createNormalCompositePointReplacementSampler, DocumentCompositeCache, layerContentBounds, readLayerColor, readLayerColorAt, readLayerMaskDisplayColorAt, renderLayerMaskRegion, resizeDocumentAt, resizeDocumentImage, writeLayerColor } from './document'
+import { compositePixelWithLayerColor, compositeRegion, createCompositePointReplacementSampler, createCompositePointSampler, createCompositeSampler, createDocument, createLayer, createLayerMask, createNormalCompositePointReplacementSampler, createNormalCompositePointSampler, DocumentCompositeCache, layerContentBounds, markLayerContentChanged, normalCompositeLayers, readLayerColor, readLayerColorAt, readLayerMaskDisplayColorAt, renderLayerMaskRegion, resizeDocumentAt, resizeDocumentImage, writeLayerColor } from './document'
 
 const red = { r: 255, g: 0, b: 0, a: 255 }
 const blue = { r: 0, g: 0, b: 255, a: 128 }
@@ -21,6 +21,41 @@ describe('document compositing', () => {
     writeLayerColor(document, layer, 4, red)
 
     expect(Array.from(compositeRegion(document, 1, 1, 2, 1))).toEqual([255, 0, 0, 255, 0, 0, 0, 0])
+  })
+
+  it('invalidates transparent-tile occupancy when a large layer changes', () => {
+    const document = createDocument('large sparse layer', 1025, 1025, 'rgba')
+    const layer = document.layers[0]
+    const cache = new DocumentCompositeCache()
+
+    expect(Array.from(compositeRegion(document, 1000, 1000, 1, 1, cache, 1))).toEqual([0, 0, 0, 0])
+    const index = 1000 * layer.width + 1000
+    layer.pixels.set([255, 0, 0, 255], index * 4)
+    markLayerContentChanged(layer)
+
+    expect(Array.from(compositeRegion(document, 1000, 1000, 1, 1, cache, 2))).toEqual([255, 0, 0, 255])
+  })
+
+  it('ignores transparent special-blend layers without changing exact output', () => {
+    const document = createDocument('transparent special blend', 2, 1, 'rgba')
+    writeLayerColor(document, document.layers[0], 0, red)
+    const special = createLayer('empty color blend', 1, 1, 'rgba')
+    special.blendMode = 'color'
+    document.layers.push(special)
+
+    expect(normalCompositeLayers(document)).toEqual([document.layers[0]])
+    expect(Array.from(compositeRegion(document, 0, 0, 2, 1))).toEqual([255, 0, 0, 255, 0, 0, 0, 0])
+
+    writeLayerColor(document, special, 0, blue)
+    expect(normalCompositeLayers(document)).toBeNull()
+  })
+
+  it('does not scan a large layer to composite a small dirty region', () => {
+    const document = createDocument('large dirty region', 1025, 1025, 'rgba')
+    const cache = new DocumentCompositeCache()
+    cache.rowsFor = () => { throw new Error('large row scan should be skipped') }
+
+    expect(Array.from(compositeRegion(document, 512, 512, 1, 1, cache, 1))).toEqual([0, 0, 0, 0])
   })
 
   it('preserves normal alpha compositing across flat layers', () => {
@@ -534,6 +569,26 @@ describe('document compositing', () => {
 
     local.blendMode = 'multiply'
     expect(createNormalCompositePointReplacementSampler(document, active.id)).toBeNull()
+  })
+
+  it('matches the generic sampler with spatially bucketed normal layers', () => {
+    const document = createDocument('normal point sampling', 1025, 3, 'rgba')
+    const background = document.layers[0]
+    const local = createLayer('local', 8, 3, 'rgba')
+    background.opacity = 0.8
+    local.offsetX = 510
+    writeLayerColor(document, background, 0, { r: 30, g: 40, b: 50, a: 255 })
+    writeLayerColor(document, background, 512, { r: 80, g: 90, b: 100, a: 180 })
+    writeLayerColor(document, local, 1, { r: 220, g: 40, b: 80, a: 160 })
+    document.layers = [background, local]
+    const generic = createCompositePointSampler(document)
+    const bucketed = createNormalCompositePointSampler(document)
+    expect(bucketed).not.toBeNull()
+
+    for (const [x, y] of [[0, 0], [511, 0], [512, 0], [517, 0], [1024, 2]]) expect(bucketed!(x, y)).toEqual(generic(x, y))
+
+    local.blendMode = 'multiply'
+    expect(createNormalCompositePointSampler(document)).toBeNull()
   })
 
   it('previews a replacement color in newly expanded canvas space', () => {

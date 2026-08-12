@@ -1,5 +1,6 @@
 import type { SpriteDocument } from '@shared/types'
 import { createDocument } from './document'
+import { applyImportedRgbaPalette } from './imported-palette'
 import { translateCurrent as tr } from './localization'
 
 export const browserRasterImageExtensions = ['jpg', 'jpeg', 'webp', 'bmp', 'gif'] as const
@@ -12,6 +13,7 @@ export function documentFromRgbaImage(name: string, width: number, height: numbe
   const layer = document.layers[0]
   if (layer.format !== 'rgba') throw new Error(tr('core.raster.createRgba'))
   layer.pixels.set(pixels)
+  applyImportedRgbaPalette(document)
   return document
 }
 

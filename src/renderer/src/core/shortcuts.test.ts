@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { DEFAULT_SHORTCUTS, GRID_SHORTCUT_MIGRATION_KEY, POLYGON_LASSO_SHORTCUT_MIGRATION_KEY, SHORTCUTS_KEY, SHORTCUT_GROUPS, SHORTCUT_LABELS, deriveShortcutConflicts, loadShortcuts, normalizeShortcut, parseShortcutJson, saveShortcuts, shortcutText } from './shortcuts'
+import { DEFAULT_SHORTCUTS, GRID_SHORTCUT_MIGRATION_KEY, POLYGON_LASSO_SHORTCUT_MIGRATION_KEY, REPLACE_COLOR_SHORTCUT_MIGRATION_KEY, SHORTCUTS_KEY, SHORTCUT_GROUPS, SHORTCUT_LABELS, deriveShortcutConflicts, loadShortcuts, normalizeShortcut, parseShortcutJson, saveShortcuts, shortcutText } from './shortcuts'
 
 describe('shortcut persistence boundary', () => {
   it('only accepts known shortcut ids and string values', () => {
@@ -46,6 +46,24 @@ describe('shortcut persistence boundary', () => {
     expect(loadShortcuts(storage)).toMatchObject({ toggleGrid: '', toggleCustomGrid: '' })
   })
 
+  it('migrates the old replace-color shortcut without overriding custom shortcuts', () => {
+    const values = new Map<string, string>()
+    const storage = {
+      getItem: (key: string) => values.get(key) ?? null,
+      setItem: (key: string, value: string) => { values.set(key, value) },
+      removeItem: (key: string) => { values.delete(key) },
+      clear: () => values.clear(),
+      key: (index: number) => [...values.keys()][index] ?? null,
+      get length() { return values.size }
+    } as Storage
+    values.set(SHORTCUTS_KEY, JSON.stringify({ replaceColor: 'Ctrl+Alt+R' }))
+
+    expect(loadShortcuts(storage).replaceColor).toBe('Ctrl+Shift+K')
+    expect(values.get(REPLACE_COLOR_SHORTCUT_MIGRATION_KEY)).toBe('done')
+    saveShortcuts({ ...DEFAULT_SHORTCUTS, replaceColor: 'Alt+K' }, storage)
+    expect(loadShortcuts(storage).replaceColor).toBe('Alt+K')
+  })
+
   it('registers every configurable command in one labeled group', () => {
     const grouped = new Set(Object.values(SHORTCUT_GROUPS).flat())
     expect(grouped).toEqual(new Set(Object.keys(DEFAULT_SHORTCUTS)))
@@ -64,9 +82,15 @@ describe('shortcut persistence boundary', () => {
     expect(DEFAULT_SHORTCUTS.toggleGrid).toBe("Ctrl+Shift+'")
     expect(DEFAULT_SHORTCUTS.toolRailLeft).toBe('')
     expect(DEFAULT_SHORTCUTS.swapForegroundBackground).toBe('X')
-    expect(DEFAULT_SHORTCUTS.replaceColor).toBe('Ctrl+Alt+R')
-    expect(SHORTCUT_GROUPS.colors).toContain('replaceColor')
+    expect(DEFAULT_SHORTCUTS.replaceColor).toBe('Ctrl+Shift+K')
+    expect(SHORTCUT_GROUPS.color).toContain('replaceColor')
     expect(SHORTCUT_GROUPS.selection).toContain('toggleSelectionOutline')
+    expect(SHORTCUT_GROUPS.file).toContain('exportSpriteSheet')
+    expect(SHORTCUT_GROUPS.animation).toContain('toggleAnimationPlayback')
+    expect(SHORTCUT_GROUPS.interface).toContain('toggleColorPanel')
+    expect(SHORTCUT_GROUPS.interface).toContain('toggleTimeline')
+    expect(SHORTCUT_GROUPS.tools).toContain('tool.shape.rectangle')
+    expect(DEFAULT_SHORTCUTS.toggleTimeline).toBe('')
     expect(DEFAULT_SHORTCUTS.rotateViewClockwise90).toBe('')
     expect(DEFAULT_SHORTCUTS.rotateViewCounterClockwise90).toBe('')
     expect(SHORTCUT_LABELS.openPreferences).toBe('首选项')
