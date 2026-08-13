@@ -97,6 +97,11 @@ const createBrowserApi = (): MoonSpriteApi => ({
   },
   deleteBrush: async (id) => { browserBrushes.delete(id) },
   openBrushFolder: async () => {},
+  listFonts: async () => ({ directoryPath: 'Font', fonts: [] }),
+  listSystemFonts: async () => [],
+  importFont: async () => null,
+  importSystemFont: async () => { throw new Error(tr('platform.browser.readUnsupported')) },
+  deleteFont: async () => {},
   listRecoveries: async () => [...browserRecoveries].map(([id, item]) => ({ id, name: item.name, updatedAt: item.updatedAt })),
   readRecovery: async (id) => {
     const recovery = browserRecoveries.get(id)
@@ -188,6 +193,11 @@ export const createTauriApi = (): MoonSpriteApi => ({
   saveBrush: (name, data, intrinsicSize = false, sourceX, sourceY) => invoke('save_brush', { name, data: Array.from(data), intrinsicSize, sourceX, sourceY }),
   deleteBrush: (id) => invoke('delete_brush', { id }),
   openBrushFolder: () => invoke('open_brush_folder'),
+  listFonts: () => invoke('list_fonts'),
+  listSystemFonts: () => invoke('list_system_fonts'),
+  importFont: () => invoke('import_font'),
+  importSystemFont: (id) => invoke('import_system_font', { id }),
+  deleteFont: (id) => invoke('delete_font', { id }),
   listRecoveries: () => invoke('list_recoveries'),
   readRecovery: (id) => invokeBytes('read_recovery', { id }),
   writeRecovery: (id, name, data) => invoke('write_recovery', { id, name, data: Array.from(data) }),

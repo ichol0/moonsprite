@@ -1,10 +1,17 @@
-import type { RasterLayer, RgbaColor, SelectionMask, SelectionMode, SelectionRect, ShapeRatio, SpriteDocument } from '@shared/types'
+import type { RasterLayer, RgbaColor, SelectionMask, SelectionMode, SelectionRect, ShapeRatio, SpriteDocument, ToolId } from '@shared/types'
 import { revertPixelEdit, type PixelEdit } from './history'
 import { restoreSelectionTranslationPreview, type BrushGradientSample, type SelectionTransformSource, type SelectionTranslationPreview } from './tools'
 import { inverseTransformedSelectionPoint, rasterLinePoints, selectionBoundarySegments, selectionContains, type SelectionShearTransform } from './selection'
 import { balancedStairLinePoints } from './pixel-line'
+import { modifierShortcutMatches } from './shortcuts'
 
 const selectionHitBoundaryCache = new WeakMap<SelectionMask, Int32Array>()
+
+export const shouldUseTemporaryMoveTool = (
+  tool: ToolId,
+  event: Pick<KeyboardEvent, 'ctrlKey' | 'metaKey' | 'altKey' | 'shiftKey'>,
+  shortcut: string
+): boolean => !['move', 'selection', 'shape', 'rotate'].includes(tool) && modifierShortcutMatches(event, shortcut)
 
 const cachedSelectionBoundarySegments = (selection: SelectionMask): Int32Array => {
   const cached = selectionHitBoundaryCache.get(selection)
@@ -162,7 +169,7 @@ export const selectionResizeHit = (
 }
 
 export interface CanvasDragState {
-  kind: 'draw' | 'airbrush' | 'shape' | 'freeform-shape' | 'polygon-shape' | 'line-shape' | 'curve-shape' | 'gradient' | 'marquee' | 'lasso' | 'polygon-lasso' | 'magic-preview' | 'sample-color' | 'move-content' | 'move-selection' | 'transform-content' | 'rotate-content' | 'shear-content' | 'move-layer' | 'create-slice' | 'move-slice' | 'resize-slice' | 'brush-size' | 'canvas-resize' | 'canvas-move' | 'zoom-drag' | 'rotate-view' | 'pan'
+  kind: 'draw' | 'airbrush' | 'shape' | 'freeform-shape' | 'polygon-shape' | 'line-shape' | 'curve-shape' | 'gradient' | 'marquee' | 'lasso' | 'polygon-lasso' | 'magic-preview' | 'sample-color' | 'move-content' | 'move-selection' | 'transform-content' | 'rotate-content' | 'shear-content' | 'move-layer' | 'create-text-box' | 'transform-text-box' | 'create-slice' | 'move-slice' | 'resize-slice' | 'brush-size' | 'canvas-resize' | 'canvas-move' | 'zoom-drag' | 'rotate-view' | 'pan'
   start: CanvasPoint
   last: CanvasPoint
   edit?: PixelEdit
@@ -213,6 +220,8 @@ export interface CanvasDragState {
   layerOffset?: CanvasPoint
   layerIds?: string[]
   layerOffsets?: Record<string, CanvasPoint>
+  layerContentBounds?: Record<string, SelectionRect | null>
+  layerPreviewOffset?: CanvasPoint
   layerFrameId?: string
   animationCellKeys?: string[]
   animationCellOffsets?: Record<string, CanvasPoint>

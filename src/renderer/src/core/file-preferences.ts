@@ -29,6 +29,7 @@ export const CHECKER_DARK_COLOR_PREFERENCE_KEY = 'moonsprite.preference.checker-
 export const PIXEL_GRID_COLOR_PREFERENCE_KEY = 'moonsprite.preference.pixel-grid-color'
 export const GRID_COLOR_PREFERENCE_KEY = 'moonsprite.preference.grid-color'
 export const SLICE_COLOR_PREFERENCE_KEY = 'moonsprite.preference.slice-color'
+export const TEXT_BOX_COLOR_PREFERENCE_KEY = 'moonsprite.preference.text-box-color'
 export const SLICE_OUTLINES_VISIBLE_PREFERENCE_KEY = 'moonsprite.preference.slice-outlines-visible'
 export const WHEEL_ZOOM_ENABLED_PREFERENCE_KEY = 'moonsprite.preference.wheel-zoom-enabled'
 export const SHIFT_LINE_PREVIEW_ENABLED_PREFERENCE_KEY = 'moonsprite.preference.shift-line-preview-enabled'
@@ -38,6 +39,7 @@ export const EYEDROPPER_MAGNIFIER_ENABLED_PREFERENCE_KEY = 'moonsprite.preferenc
 export const EYEDROPPER_MAGNIFIER_STYLE_PREFERENCE_KEY = 'moonsprite.preference.eyedropper-magnifier-style'
 export const EYEDROPPER_MAGNIFIER_DISTORTION_ENABLED_PREFERENCE_KEY = 'moonsprite.preference.eyedropper-magnifier-distortion-enabled'
 export const MOVE_LAYER_CONTENT_PREVIEW_ENABLED_PREFERENCE_KEY = 'moonsprite.preference.move-layer-content-preview-enabled'
+export const MOVE_LAYER_CLICK_FLASH_ENABLED_PREFERENCE_KEY = 'moonsprite.preference.move-layer-click-flash-enabled'
 export const SELECTION_CROSSHAIR_PREFERENCE_KEY = 'moonsprite.preference.selection-crosshair'
 export const BALANCED_SHIFT_LINE_ENABLED_PREFERENCE_KEY = 'moonsprite.preference.balanced-shift-line-enabled'
 export const LINE_DIRECTION_STEP_PREFERENCE_KEY = 'moonsprite.preference.line-direction-step'
@@ -78,6 +80,7 @@ export const DEFAULT_CHECKERBOARD_PREFERENCES: CheckerboardPreferences = {
 export const DEFAULT_PIXEL_GRID_COLOR: RgbaColor = { r: 69, g: 77, b: 92, a: 143 }
 export const DEFAULT_GRID_COLOR: RgbaColor = { r: 0, g: 0, b: 255, a: 255 }
 export const DEFAULT_SLICE_COLOR: RgbaColor = { r: 0, g: 0, b: 255, a: 255 }
+export const DEFAULT_TEXT_BOX_COLOR: RgbaColor = { r: 0, g: 0, b: 255, a: 255 }
 
 export function parseRotationIndicatorPosition(value: string | null): RotationIndicatorPosition {
   return value === 'canvas' ? 'canvas' : 'view'
@@ -246,6 +249,7 @@ export interface EditorPreferences {
   pixelGridColor: RgbaColor
   gridColor: RgbaColor
   sliceColor: RgbaColor
+  textBoxColor: RgbaColor
   sliceOutlinesVisible: boolean
   wheelZoomEnabled: boolean
   wheelZoomMode: WheelZoomMode
@@ -256,6 +260,7 @@ export interface EditorPreferences {
   eyedropperMagnifierStyle: EyedropperMagnifierStyle
   eyedropperMagnifierDistortionEnabled: boolean
   moveLayerContentPreviewEnabled: boolean
+  moveLayerClickFlashEnabled: boolean
   selectionCrosshair: boolean
   balancedShiftLineEnabled: boolean
   lineDirectionStep: number
@@ -292,6 +297,7 @@ export const DEFAULT_EDITOR_PREFERENCES: EditorPreferences = {
   pixelGridColor: DEFAULT_PIXEL_GRID_COLOR,
   gridColor: DEFAULT_GRID_COLOR,
   sliceColor: DEFAULT_SLICE_COLOR,
+  textBoxColor: DEFAULT_TEXT_BOX_COLOR,
   sliceOutlinesVisible: true,
   wheelZoomEnabled: true,
   wheelZoomMode: 'stepped',
@@ -302,6 +308,7 @@ export const DEFAULT_EDITOR_PREFERENCES: EditorPreferences = {
   eyedropperMagnifierStyle: 'pixel',
   eyedropperMagnifierDistortionEnabled: true,
   moveLayerContentPreviewEnabled: true,
+  moveLayerClickFlashEnabled: true,
   selectionCrosshair: false,
   balancedShiftLineEnabled: true,
   lineDirectionStep: 1,
@@ -570,6 +577,7 @@ export function loadEditorPreferences(storage?: Storage): EditorPreferences {
     pixelGridColor: theme.grid.pixelGridColor,
     gridColor: theme.grid.gridColor,
     sliceColor: parseHexColor(get(SLICE_COLOR_PREFERENCE_KEY), DEFAULT_SLICE_COLOR),
+    textBoxColor: parseHexColor(get(TEXT_BOX_COLOR_PREFERENCE_KEY), DEFAULT_TEXT_BOX_COLOR),
     sliceOutlinesVisible: get(SLICE_OUTLINES_VISIBLE_PREFERENCE_KEY) !== 'false',
     wheelZoomEnabled: get(WHEEL_ZOOM_ENABLED_PREFERENCE_KEY) !== 'false',
     wheelZoomMode: parseWheelZoomMode(get(WHEEL_ZOOM_MODE_PREFERENCE_KEY)),
@@ -580,6 +588,7 @@ export function loadEditorPreferences(storage?: Storage): EditorPreferences {
     eyedropperMagnifierStyle: parseEyedropperMagnifierStyle(get(EYEDROPPER_MAGNIFIER_STYLE_PREFERENCE_KEY)),
     eyedropperMagnifierDistortionEnabled: get(EYEDROPPER_MAGNIFIER_DISTORTION_ENABLED_PREFERENCE_KEY) !== 'false',
     moveLayerContentPreviewEnabled: get(MOVE_LAYER_CONTENT_PREVIEW_ENABLED_PREFERENCE_KEY) !== 'false',
+    moveLayerClickFlashEnabled: get(MOVE_LAYER_CLICK_FLASH_ENABLED_PREFERENCE_KEY) !== 'false',
     selectionCrosshair: get(SELECTION_CROSSHAIR_PREFERENCE_KEY) === 'true',
     balancedShiftLineEnabled: get(BALANCED_SHIFT_LINE_ENABLED_PREFERENCE_KEY) !== 'false',
     lineDirectionStep: parseLineDirectionStep(get(LINE_DIRECTION_STEP_PREFERENCE_KEY)),
@@ -621,6 +630,7 @@ export function saveEditorPreferences(preferences: EditorPreferences, storage?: 
     [PIXEL_GRID_COLOR_PREFERENCE_KEY]: colorHex(preferences.pixelGridColor),
     [GRID_COLOR_PREFERENCE_KEY]: colorHex(preferences.gridColor),
     [SLICE_COLOR_PREFERENCE_KEY]: colorHex(preferences.sliceColor),
+    [TEXT_BOX_COLOR_PREFERENCE_KEY]: colorHex(preferences.textBoxColor),
     [SLICE_OUTLINES_VISIBLE_PREFERENCE_KEY]: String(preferences.sliceOutlinesVisible),
     [WHEEL_ZOOM_ENABLED_PREFERENCE_KEY]: String(preferences.wheelZoomEnabled),
     [WHEEL_ZOOM_MODE_PREFERENCE_KEY]: preferences.wheelZoomMode,
@@ -631,6 +641,7 @@ export function saveEditorPreferences(preferences: EditorPreferences, storage?: 
     [EYEDROPPER_MAGNIFIER_STYLE_PREFERENCE_KEY]: preferences.eyedropperMagnifierStyle,
     [EYEDROPPER_MAGNIFIER_DISTORTION_ENABLED_PREFERENCE_KEY]: String(preferences.eyedropperMagnifierDistortionEnabled),
     [MOVE_LAYER_CONTENT_PREVIEW_ENABLED_PREFERENCE_KEY]: String(preferences.moveLayerContentPreviewEnabled),
+    [MOVE_LAYER_CLICK_FLASH_ENABLED_PREFERENCE_KEY]: String(preferences.moveLayerClickFlashEnabled),
     [SELECTION_CROSSHAIR_PREFERENCE_KEY]: String(preferences.selectionCrosshair),
     [BALANCED_SHIFT_LINE_ENABLED_PREFERENCE_KEY]: String(preferences.balancedShiftLineEnabled),
     [LINE_DIRECTION_STEP_PREFERENCE_KEY]: String(parseLineDirectionStep(String(preferences.lineDirectionStep))),

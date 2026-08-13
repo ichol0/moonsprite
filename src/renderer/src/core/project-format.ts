@@ -1,5 +1,5 @@
 import { inflateSync, strFromU8, strToU8, unzipSync, zipSync, type Zippable } from 'fflate'
-import { BLEND_MODES, type AnimationCelSurface, type AnimationFrame, type BlendMode, type ColorMode, type LayerGroup, type LayerMask, type PaletteEntry, type ProjectBrush, type RasterLayer, type RgbaColor, type RuntimeRasterTiles, type SpriteDocument, type TimelapseSettings } from '@shared/types'
+import { BLEND_MODES, type AnimationCelSurface, type AnimationFrame, type BlendMode, type ColorMode, type LayerGroup, type LayerMask, type PaletteEntry, type ProjectBrush, type RasterLayer, type RgbaColor, type RuntimeRasterTiles, type SpriteDocument, type TextCelData, type TimelapseSettings } from '@shared/types'
 import { compositeDocument, createCompositePointSampler, createId, createNormalCompositePointSampler, getLayerStorageOrigin, getRasterContentRevision, setLayerStorageOrigin } from './document'
 import { createDefaultAnimationTimeline, ensureAnimationDocument, normalizeAnimationTimeline, refreshActiveAnimationFrame, syncActiveAnimationLayers } from './animation'
 import { normalizeOutlineSettings } from './outline-settings'
@@ -11,12 +11,14 @@ import { normalizePaletteColumns, normalizePaletteSlots } from './palette-layout
 import { normalizeProjectLayerPanelState } from './layer-panel-state'
 import { installRuntimeRaster, rasterStorageIdentity, runtimeRasterForSurface } from './runtime-raster'
 import { normalizeDocumentSlices } from './slices'
+import { normalizeTextCelData } from './text-raster'
 
 interface ManifestLayer {
   id: string
   name: string
   displayColor?: RgbaColor
   description?: string
+  kind?: 'text'
   visible: boolean
   locked: boolean
   opacity: number
@@ -66,6 +68,7 @@ interface ManifestCel {
   dataFile?: string
   dataEncoding?: RasterDataEncoding
   mask?: ManifestMask
+  text?: TextCelData
 }
 
 interface ManifestGroupMask {
@@ -97,7 +100,10 @@ interface ManifestTimelapse extends Omit<TimelapseSettings, 'snapshots'> {
 
 type RasterDataEncoding = 'raw' | 'sparse-tiles-v1'
 
-export const PROJECT_SCHEMA_VERSION = 6
+export const PROJECT_SCHEMA_VERSION = 9
+const STYLED_TEXT_PROJECT_SCHEMA_VERSION = 8
+const EDITABLE_TEXT_PROJECT_SCHEMA_VERSION = 7
+const SLICES_PROJECT_SCHEMA_VERSION = 6
 const SPARSE_RASTER_PROJECT_SCHEMA_VERSION = 5
 const LEGACY_PROJECT_SCHEMA_VERSION = 4
 const SPARSE_TILE_SIZE = 64
@@ -461,7 +467,7 @@ const normalizeManifestAnimation = (value: unknown): ManifestAnimation => {
     cels: normalized.cels.map((cel) => {
       const raw = rawCels.find((candidate) => candidate && typeof candidate === 'object' && (candidate as { id?: unknown }).id === cel.id) as Partial<ManifestCel> | undefined
       const { mask: _runtimeMask, surface: _runtimeSurface, ...normalizedCel } = cel
-      return { ...normalizedCel, ...(Number.isFinite(raw?.opacity) ? { opacity: Math.max(0, Math.min(1, Number(raw!.opacity))) } : {}), ...(raw?.format === 'rgba' || raw?.format === 'indexed' ? { format: raw.format } : {}), ...(Number.isSafeInteger(raw?.width) ? { width: raw!.width } : {}), ...(Number.isSafeInteger(raw?.height) ? { height: raw!.height } : {}), ...(Number.isFinite(raw?.offsetX) ? { offsetX: Math.trunc(raw!.offsetX!) } : {}), ...(Number.isFinite(raw?.offsetY) ? { offsetY: Math.trunc(raw!.offsetY!) } : {}), ...(typeof raw?.dataFile === 'string' ? { dataFile: raw.dataFile } : {}), ...(raw?.dataEncoding === 'raw' || raw?.dataEncoding === 'sparse-tiles-v1' ? { dataEncoding: raw.dataEncoding } : {}), ...(raw?.mask ? { mask: raw.mask } : {}) }
+      return { ...normalizedCel, ...(Number.isFinite(raw?.opacity) ? { opacity: Math.max(0, Math.min(1, Number(raw!.opacity))) } : {}), ...(raw?.format === 'rgba' || raw?.format === 'indexed' ? { format: raw.format } : {}), ...(Number.isSafeInteger(raw?.width) ? { width: raw!.width } : {}), ...(Number.isSafeInteger(raw?.height) ? { height: raw!.height } : {}), ...(Number.isFinite(raw?.offsetX) ? { offsetX: Math.trunc(raw!.offsetX!) } : {}), ...(Number.isFinite(raw?.offsetY) ? { offsetY: Math.trunc(raw!.offsetY!) } : {}), ...(typeof raw?.dataFile === 'string' ? { dataFile: raw.dataFile } : {}), ...(raw?.dataEncoding === 'raw' || raw?.dataEncoding === 'sparse-tiles-v1' ? { dataEncoding: raw.dataEncoding } : {}), ...(raw?.mask ? { mask: raw.mask } : {}), ...(raw?.text && typeof raw.text === 'object' ? { text: normalizeTextCelData(raw.text) } : {}) }
     }),
     groupMasks: value && typeof value === 'object' && Array.isArray((value as { groupMasks?: unknown }).groupMasks)
       ? (value as { groupMasks: unknown[] }).groupMasks.flatMap((item) => {
@@ -562,6 +568,7 @@ const createProjectArchiveFiles = (document: SpriteDocument, options: ProjectEnc
       name: layer.name,
       ...(layer.displayColor ? { displayColor: layer.displayColor } : {}),
       ...(layer.description ? { description: layer.description } : {}),
+      ...(layer.kind === 'text' ? { kind: 'text' as const } : {}),
       visible: layer.visible,
       locked: layer.locked,
       opacity: layer.opacity,
@@ -608,7 +615,8 @@ const createProjectArchiveFiles = (document: SpriteDocument, options: ProjectEnc
           dataFile: encoded.dataFile,
           dataEncoding: encoded.dataEncoding
         } : {}),
-        ...(cel.mask ? { mask: encodeMask(cel.mask) } : {})
+        ...(cel.mask ? { mask: encodeMask(cel.mask) } : {}),
+        ...(cel.text ? { text: normalizeTextCelData(cel.text) } : {})
       }]
     })
   }
@@ -866,7 +874,7 @@ export function migrateProjectManifest(input: unknown): ProjectManifest {
   const candidate = input as { app?: unknown; schemaVersion?: unknown; document?: Record<string, unknown> }
   if (candidate.app !== 'MoonSprite' || !candidate.document) throw new Error(tr('core.project.unsupportedVersion'))
   const version = Number(candidate.schemaVersion)
-  if (![1, 2, 3, LEGACY_PROJECT_SCHEMA_VERSION, SPARSE_RASTER_PROJECT_SCHEMA_VERSION, PROJECT_SCHEMA_VERSION].includes(version) || candidate.document.schemaVersion !== candidate.schemaVersion) throw new Error(tr('core.project.unsupportedVersion'))
+  if (![1, 2, 3, LEGACY_PROJECT_SCHEMA_VERSION, SPARSE_RASTER_PROJECT_SCHEMA_VERSION, SLICES_PROJECT_SCHEMA_VERSION, EDITABLE_TEXT_PROJECT_SCHEMA_VERSION, STYLED_TEXT_PROJECT_SCHEMA_VERSION, PROJECT_SCHEMA_VERSION].includes(version) || candidate.document.schemaVersion !== candidate.schemaVersion) throw new Error(tr('core.project.unsupportedVersion'))
   if (version >= SPARSE_RASTER_PROJECT_SCHEMA_VERSION) {
     const layers = Array.isArray(candidate.document.layers) ? candidate.document.layers : []
     const animation = candidate.document.animation && typeof candidate.document.animation === 'object' ? candidate.document.animation as { cels?: unknown } : null
@@ -1235,6 +1243,7 @@ export function decodeProject(input: Uint8Array, onProgress?: (value: number) =>
       opacity: Number.isFinite(metadata.opacity) ? Math.max(0, Math.min(1, Number(metadata.opacity))) : 1,
       blendMode: normalizeBlendMode(metadata.blendMode),
       ...(metadata.clippingMask === true ? { clippingMask: true } : {}),
+      ...(metadata.kind === 'text' ? { kind: 'text' as const } : {}),
       groupId: typeof metadata.groupId === 'string' ? metadata.groupId : null,
       ...(normalizeDisplayColor(metadata.displayColor) ? { displayColor: normalizeDisplayColor(metadata.displayColor)! } : {}),
       width: decoded.width,
@@ -1294,7 +1303,7 @@ export function decodeProject(input: Uint8Array, onProgress?: (value: number) =>
     const mask = decodeMask(metadata.mask, cel.id)
     if (!metadata.dataFile) {
       reportItem()
-      return cel.linkedCelId ? [{ ...cel, mask }] : []
+      return cel.linkedCelId ? [{ ...cel, text: metadata.text ? normalizeTextCelData(metadata.text) : cel.text, mask }] : []
     }
     if (metadata.format !== 'rgba' && metadata.format !== 'indexed') throw new Error(tr('core.project.layerCorrupt', { name: cel.id }))
     const width = Number(metadata.width)
@@ -1306,7 +1315,7 @@ export function decodeProject(input: Uint8Array, onProgress?: (value: number) =>
       : { format: 'indexed' as const, width: decoded.width, height: decoded.height, offsetX: Math.trunc(metadata.offsetX ?? 0) + decoded.storageOffsetX, offsetY: Math.trunc(metadata.offsetY ?? 0) + decoded.storageOffsetY, storageOriginX: decoded.storageOffsetX, storageOriginY: decoded.storageOffsetY, pixels: decoded.pixels as Uint32Array }
     if (decoded.runtimeRaster) installRuntimeRaster(surface, decoded.runtimeRaster)
     reportItem()
-    return [{ ...cel, surface, mask }]
+    return [{ ...cel, text: metadata.text ? normalizeTextCelData(metadata.text) : cel.text, surface, mask }]
   })
   const manifestGroupMasks = Array.isArray(source.animation?.groupMasks) ? source.animation.groupMasks : []
   const decodedGroupMaskSlots = new Set<string>()

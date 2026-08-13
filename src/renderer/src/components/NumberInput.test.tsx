@@ -57,4 +57,14 @@ describe('NumberInput', () => {
     expect(onValueChange).toHaveBeenCalledWith(12)
     expect(onBlur).toHaveBeenCalledOnce()
   })
+
+  it('steps mixed values from zero instead of the minimum bound', () => {
+    const onValueChange = vi.fn()
+    render(<NumberInput aria-label="混合间距" min={-64} max={256} value="" onValueChange={onValueChange} />)
+
+    fireEvent.click(screen.getAllByRole('button')[0])
+    expect(onValueChange).toHaveBeenLastCalledWith(1)
+    fireEvent.click(screen.getAllByRole('button')[1])
+    expect(onValueChange).toHaveBeenLastCalledWith(-1)
+  })
 })

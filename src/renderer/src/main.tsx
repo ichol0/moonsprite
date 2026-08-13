@@ -10,6 +10,7 @@ import { translate } from './core/localization'
 import { installTauriApi } from './platform/tauri-api'
 import { applyCursorPreferences } from './platform/cursor-theme'
 import { applyToolIconScale, applyUiScale } from './platform/ui-scale'
+import { loadTextFontCatalog } from './platform/font-service'
 
 const rootElement = document.getElementById('root')
 
@@ -23,6 +24,7 @@ void applyCursorPreferences(startupPreferences.useLocalCursors, startupPreferenc
 void installTauriApi()
   .then(async () => {
     await applyUiScale(startupPreferences.uiScale).catch(() => undefined)
+    void loadTextFontCatalog().catch(() => undefined)
     if (__MOONSPRITE_PERFORMANCE_BUILD__ && new URLSearchParams(window.location.search).has('moonsprite-perf')) {
       const { installPerformanceHarness } = await import('./performance/benchmark-harness')
       installPerformanceHarness()

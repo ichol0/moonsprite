@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 're
 import { createPortal } from 'react-dom'
 import { Tooltip } from '@/components/Tooltip'
 import { PixelDownIcon as ChevronDown, PixelUtilityIcon } from '@/components/PixelUtilityIcon'
+import { TextInput } from '@/components/TextInput'
 
 export interface ThemedSelectGroup<T extends string> {
   label: string
@@ -14,7 +15,7 @@ export interface ThemedSelectOption<T extends string> {
   description?: string
 }
 
-export function ThemedSelect<T extends string>({ value, groups, label, onChange, disabled = false, density = 'regular', renderSelected, renderOption, showCheck = true, showOptionTooltips = true, popoverClassName = '', popoverWidth, preserveAnimationSelection = false }: {
+export function ThemedSelect<T extends string>({ value, groups, label, onChange, disabled = false, density = 'regular', renderSelected, renderOption, showCheck = true, showOptionTooltips = true, popoverClassName = '', popoverWidth, preserveAnimationSelection = false, searchable = false, searchPlaceholder = '' }: {
   value: T
   groups: Array<ThemedSelectGroup<T>>
   label: string
@@ -28,12 +29,16 @@ export function ThemedSelect<T extends string>({ value, groups, label, onChange,
   popoverClassName?: string
   popoverWidth?: number
   preserveAnimationSelection?: boolean
+  searchable?: boolean
+  searchPlaceholder?: string
 }) {
   const [open, setOpen] = useState(false)
+  const [query, setQuery] = useState('')
   const [position, setPosition] = useState({ left: 8, top: 8, width: 220 })
   const triggerRef = useRef<HTMLButtonElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
   const options = groups.flatMap((group) => group.options)
+  const filteredGroups = query.trim() ? groups.map((group) => ({ ...group, options: group.options.filter((option) => `${option.label} ${option.description ?? ''}`.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase())) })).filter((group) => group.options.length > 0) : groups
   const selected = options.find((option) => option.value === value) ?? options[0]
 
   useLayoutEffect(() => {
@@ -68,9 +73,11 @@ export function ThemedSelect<T extends string>({ value, groups, label, onChange,
   const select = (next: T): void => {
     onChange(next)
     setOpen(false)
+    setQuery('')
     window.requestAnimationFrame(() => triggerRef.current?.focus())
   }
   const moveSelection = (direction: -1 | 1): void => {
+    if (options.length === 0) return
     const current = Math.max(0, options.findIndex((option) => option.value === value))
     select(options[(current + direction + options.length) % options.length].value)
   }
@@ -83,6 +90,6 @@ export function ThemedSelect<T extends string>({ value, groups, label, onChange,
       }
       if (event.key === 'Escape') setOpen(false)
     }}><span className="themed-select-selected-copy">{selected ? renderSelected?.(selected) ?? selected.label : value}</span><ChevronDown size={14} /></button>
-    {open && createPortal(<div ref={menuRef} className={`themed-select-popover ${popoverClassName}`.trim()} data-hide-check={!showCheck ? 'true' : undefined} data-preserve-animation-selection={preserveAnimationSelection ? '' : undefined} role="listbox" aria-label={label} style={position}>{groups.map((group) => <section key={group.label} className="themed-select-group"><span>{group.label}</span>{group.options.map((option) => { const optionCopy = <span className="themed-select-option-copy">{renderOption?.(option) ?? <strong>{option.label}</strong>}</span>; return <button key={option.value} type="button" role="option" aria-selected={option.value === value} onClick={() => select(option.value)}>{showOptionTooltips ? <Tooltip content={option.description}>{optionCopy}</Tooltip> : optionCopy}{showCheck && option.value === value && <PixelUtilityIcon kind="check" />}</button> })}</section>)}</div>, document.body)}
+    {open && createPortal(<div ref={menuRef} className={`themed-select-popover ${popoverClassName}`.trim()} data-hide-check={!showCheck ? 'true' : undefined} data-preserve-animation-selection={preserveAnimationSelection ? '' : undefined} role="listbox" aria-label={label} style={position}>{searchable && <div className="themed-select-search"><TextInput autoFocus value={query} placeholder={searchPlaceholder} aria-label={searchPlaceholder || label} onChange={(event) => setQuery(event.target.value)} onKeyDown={(event) => { if (event.key === 'Escape') { setOpen(false); setQuery('') } }} /></div>}{filteredGroups.map((group) => <section key={group.label} className="themed-select-group"><span>{group.label}</span>{group.options.map((option) => { const optionCopy = <span className="themed-select-option-copy">{renderOption?.(option) ?? <strong>{option.label}</strong>}</span>; return <button key={option.value} type="button" role="option" aria-selected={option.value === value} onClick={() => select(option.value)}>{showOptionTooltips ? <Tooltip content={option.description}>{optionCopy}</Tooltip> : optionCopy}{showCheck && option.value === value && <PixelUtilityIcon kind="check" />}</button> })}</section>)}</div>, document.body)}
   </span>
 }

@@ -27,6 +27,7 @@ export const DEFAULT_SHORTCUTS = {
   'tool.slice': '',
   'tool.shape': 'U',
   'tool.line': '',
+  'tool.text': 'T',
   'tool.curve': '',
   'tool.shape.rectangleOutline': '',
   'tool.shape.rectangle': '',
@@ -110,6 +111,7 @@ export const DEFAULT_SHORTCUTS = {
   brushSizeDecrease: '[',
   brushSizeIncrease: ']',
   temporaryEyedropper: 'Alt',
+  temporaryMove: 'Ctrl',
   copySelectionContent: 'Ctrl',
   copyLayerOnDrag: 'Alt',
   constrainAxis: 'Shift',
@@ -153,8 +155,8 @@ export const SHORTCUT_GROUPS = {
   animation: ['toggleAnimationPlayback', 'previousAnimationFrame', 'nextAnimationFrame', 'addAnimationFrame', 'addBlankAnimationFrame', 'deleteAnimationFrame', 'copyAnimationCel'],
   view: ['relativeLuminance', 'toggleGrid', 'toggleCustomGrid', 'openGridSettings', 'mirrorView', 'mirrorViewVertical', 'rotateViewClockwise90', 'rotateViewCounterClockwise90', 'resetView'],
   interface: ['toggleColorPanel', 'togglePalettePanel', 'toggleLayersPanel', 'togglePreviewPanel', 'toggleTimeline', 'toolRailLeft', 'toolRailRight', 'saveWorkspaceLayout', 'openWorkspaceManager', 'advancedMode', 'openShortcutSettings', 'openPreferences'],
-  tools: ['tool.pencil', 'tool.airbrush', 'tool.eraser', 'tool.fill', 'tool.fill.gradient', 'tool.eyedropper', 'tool.selection', 'tool.selection.ellipse', 'lasso', 'polygonLasso', 'magic', 'tool.move', 'tool.slice', 'tool.shape', 'tool.shape.rectangleOutline', 'tool.shape.rectangle', 'tool.shape.ellipseOutline', 'tool.shape.ellipse', 'tool.line', 'tool.curve', 'tool.hand', 'tool.zoom', 'tool.rotate', 'brushSizeDecrease', 'brushSizeIncrease'],
-  modifiers: ['temporaryEyedropper', 'brushSizeAdjust', 'brushSizeWheelAdjust', 'lineConnectionMode', 'constrainLineDirections', 'copySelectionContent', 'addToSelection', 'proportionalSelectionTransform', 'integerSelectionScale', 'snapSelectionRotation', 'copyLayerOnDrag', 'constrainAxis', 'temporaryPan', 'snapViewRotation', 'resetViewRotation'],
+  tools: ['tool.pencil', 'tool.airbrush', 'tool.eraser', 'tool.fill', 'tool.fill.gradient', 'tool.eyedropper', 'tool.selection', 'tool.selection.ellipse', 'lasso', 'polygonLasso', 'magic', 'tool.move', 'tool.slice', 'tool.shape', 'tool.shape.rectangleOutline', 'tool.shape.rectangle', 'tool.shape.ellipseOutline', 'tool.shape.ellipse', 'tool.line', 'tool.curve', 'tool.text', 'tool.hand', 'tool.zoom', 'tool.rotate', 'brushSizeDecrease', 'brushSizeIncrease'],
+  modifiers: ['temporaryEyedropper', 'temporaryMove', 'brushSizeAdjust', 'brushSizeWheelAdjust', 'lineConnectionMode', 'constrainLineDirections', 'copySelectionContent', 'addToSelection', 'proportionalSelectionTransform', 'integerSelectionScale', 'snapSelectionRotation', 'copyLayerOnDrag', 'constrainAxis', 'temporaryPan', 'snapViewRotation', 'resetViewRotation'],
   help: ['openComponentLibrary', 'openLatestRelease', 'openRoadmap', 'openAbout']
 } as const satisfies Record<string, ReadonlyArray<ShortcutId>>
 

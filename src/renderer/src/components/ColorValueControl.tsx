@@ -23,6 +23,7 @@ interface ColorValueControlProps {
   fillWithColor?: boolean
   dismissOnFocusLoss?: boolean
   preserveAnimationSelection?: boolean
+  mixed?: boolean
 }
 
 const modeLabels: Array<{ value: ColorValueMode; label: string }> = [
@@ -70,7 +71,7 @@ const colorGradient = (mode: ColorValueMode, values: Record<string, number>, fal
   return `linear-gradient(90deg, ${stops.join(', ')})`
 }
 
-export function ColorValueControl({ color, density = 'regular', onChange, label, roleLabel, className = '', storageKey, inPalette = true, onAddToPalette, fillWithColor = false, dismissOnFocusLoss = false, preserveAnimationSelection = false }: ColorValueControlProps) {
+export function ColorValueControl({ color, density = 'regular', onChange, label, roleLabel, className = '', storageKey, inPalette = true, onAddToPalette, fillWithColor = false, dismissOnFocusLoss = false, preserveAnimationSelection = false, mixed = false }: ColorValueControlProps) {
   const { locale, t } = useI18n()
   const [open, setOpen] = useState(false)
   const [availableModes, setAvailableModes] = useState(() => loadEditorPreferences().colorEditorModes.filter((item) => item.enabled).map((item) => item.mode))
@@ -337,9 +338,9 @@ export function ColorValueControl({ color, density = 'regular', onChange, label,
   </div> : null
 
   return <>
-    <span className={`color-value-action-row color-value-density-${density} ${onAddToPalette ? 'supports-palette-action' : ''} ${onAddToPalette && !inPalette ? 'has-add-action' : ''}`}><button ref={triggerRef} type="button" className={`color-value-trigger ${fillWithColor ? 'filled-color-trigger' : ''} ${className}`.trim()} style={fillWithColor ? { '--color-value-fill': cssColor(color), '--color-value-contrast': paletteMarkerColor(color) } as React.CSSProperties : undefined} aria-label={`${label}${roleLabel ? ` ${roleLabel}` : ''}`} aria-expanded={open} onClick={() => { setPreviousColor(copyColor(color)); setWorkingColor(copyColor(color)); setConfirmedColor(copyColor(color)); setDraftMode(mode); setDraftValues(colorToValues(color, mode)); setHexText(displayRgbaHex(color)); if (open) positionedRef.current = false; else { residentRef.current = false; setResident(false) }; setOpen((value) => !value) }}>
+    <span className={`color-value-action-row color-value-density-${density} ${onAddToPalette ? 'supports-palette-action' : ''} ${onAddToPalette && !inPalette ? 'has-add-action' : ''}`}><button ref={triggerRef} type="button" className={`color-value-trigger ${fillWithColor && !mixed ? 'filled-color-trigger' : ''} ${mixed ? 'mixed-color-trigger' : ''} ${className}`.trim()} style={fillWithColor && !mixed ? { '--color-value-fill': cssColor(color), '--color-value-contrast': paletteMarkerColor(color) } as React.CSSProperties : undefined} aria-label={`${label}${roleLabel ? ` ${roleLabel}` : ''}`} aria-expanded={open} onClick={() => { setPreviousColor(copyColor(color)); setWorkingColor(copyColor(color)); setConfirmedColor(copyColor(color)); setDraftMode(mode); setDraftValues(colorToValues(color, mode)); setHexText(displayRgbaHex(color)); if (open) positionedRef.current = false; else { residentRef.current = false; setResident(false) }; setOpen((value) => !value) }}>
       {!fillWithColor && <span className="color-value-swatch"><i style={{ background: `rgba(${color.r}, ${color.g}, ${color.b}, ${clampByte(color.a) / 255})` }} /></span>}
-      <strong>{displayRgbaHex(color)}</strong>
+      <strong>{mixed ? '' : displayRgbaHex(color)}</strong>
       {roleLabel && <small>{roleLabel}</small>}
     </button>{onAddToPalette && !inPalette && <button type="button" className="color-value-add-button" title={t('palette.addCurrentColor')} aria-label={t('palette.addCurrentColor')} onClick={onAddToPalette}><PixelUtilityIcon kind="plus" /></button>}</span>
     {editor && createPortal(editor, document.body)}

@@ -1,4 +1,4 @@
-import type { ClipboardImage, RasterLayer } from '@shared/types'
+import type { ClipboardImage, RasterLayer, TextCelData } from '@shared/types'
 import { packColor, unpackColor } from '@/core/raster'
 
 export interface SelectionClipboard {
@@ -12,6 +12,7 @@ export interface SelectionClipboard {
 
 export interface LayerClipboard {
   name: string
+  kind?: 'text'
   width: number
   height: number
   offsetX: number
@@ -34,6 +35,7 @@ export interface LayerClipboard {
     storageOriginX?: number
     storageOriginY?: number
     opacity?: number
+    text?: TextCelData
     pixels: Uint8ClampedArray
     mask?: LayerMaskClipboard
   }>

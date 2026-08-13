@@ -1,5 +1,6 @@
 import type {
   AnimationCel,
+  AnimationCelSurface,
   AnimationGroupMask,
   BrushPaintMode,
   BrushShape,
@@ -27,6 +28,7 @@ import type {
   ShapeRatio,
   SpriteDocument,
   ToolId,
+  TextCelData,
   ViewState
 } from '@shared/types'
 import type { ContentInvalidationHint, HistoryStack, PixelEdit } from '@/core/history'
@@ -91,6 +93,14 @@ export interface FloatingPaste {
   translationPreview: SelectionTranslationPreview | null
   copy: boolean
   label: string
+}
+
+export interface TextBoxTransformState {
+  layerId: string
+  frameId: string
+  bounds: SelectionRect
+  originalText: TextCelData
+  originalSurface: AnimationCelSurface
 }
 
 export interface BrushProfile {
@@ -168,6 +178,7 @@ export interface DocumentSession {
   canvasResizePreview: CanvasResizePreview | null
   outlinePreview: OutlinePreview | null
   pendingPaste: FloatingPaste | null
+  textBoxTransform: TextBoxTransformState | null
   view: ViewState
   viewportSize: { width: number; height: number }
   paletteSelectionId: number | null

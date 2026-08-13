@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildLayerPanelTree, getLayerPanelAncestorGroupIds, getLayerPanelDescendantGroupIds, layerPanelRevealScrollTop, resolveLayerPanelDropTarget, resolveLayerPanelEdgeDropTarget, type LayerPanelNode } from './layer-panel-layout'
+import { buildLayerPanelTree, getLayerPanelAncestorGroupIds, getLayerPanelDescendantGroupIds, layerIdsInVisualStackOrder, layerPanelRevealScrollTop, resolveLayerPanelDropTarget, resolveLayerPanelEdgeDropTarget, type LayerPanelNode } from './layer-panel-layout'
 
 const layers = [
   { id: 'background', groupId: null },
@@ -38,6 +38,14 @@ describe('layer panel layout helpers', () => {
       { kind: 'layer', id: 'body', depth: 1 },
       { kind: 'layer', id: 'background', depth: 0 }
     ])
+  })
+
+  it('keeps grouped layers individually addressable in topmost hit-test order', () => {
+    expect(layerIdsInVisualStackOrder([
+      { id: 'background', groupId: null },
+      { id: 'group-bottom', groupId: 'group' },
+      { id: 'group-top', groupId: 'group' }
+    ], [{ id: 'group', parentGroupId: null }])).toEqual(['group-top', 'group-bottom', 'background'])
   })
 
   it('hides descendants when a group is collapsed', () => {

@@ -9,6 +9,12 @@ beforeEach(() => localStorage.clear())
 afterEach(() => cleanup())
 
 describe('ColorValueControl', () => {
+  it('renders a mixed selection without showing a misleading hex value', () => {
+    render(<ColorValueControl color={{ r: 41, g: 121, b: 255, a: 255 }} mixed onChange={vi.fn()} label="Color" fillWithColor />)
+    const trigger = screen.getByRole('button', { name: 'Color' })
+    expect(trigger).toHaveClass('mixed-color-trigger')
+    expect(trigger).not.toHaveTextContent('#2979FF')
+  })
   it('uses transparent color values and readable text over the filled control checkerboard', () => {
     const { rerender } = render(<ColorValueControl color={{ r: 0, g: 63, b: 168, a: 0 }} onChange={vi.fn()} label="Foreground" fillWithColor />)
     const trigger = screen.getByRole('button', { name: 'Foreground' })

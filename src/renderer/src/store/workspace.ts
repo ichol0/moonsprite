@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { AnimationCel, BlendMode, BrushPaintMode, BrushShape, BrushTexture, CanvasAnchor, ColorMode, DocumentSlice, FillKind, FillMode, GradientDither, ImageBrush, ImageBrushSettings, ImageResizeInterpolation, LayerGroup, LayerMask, LineKind, MoveKind, OutlineDirections, OutlineKernel, OutlinePosition, PaletteSlotLayout, ProceduralBrushId, ProceduralBrushSettings, RasterLayer, RecoveryRecord, RgbaColor, SelectionKind, SelectionMask, SelectionMode, SelectionRect, ShapeKind, ShapeRatio, SpriteDocument, TimelapseSettings, TimelapseVideoFormat, ToolId, ViewState } from '@shared/types'
+import type { AnimationCel, AnimationCelSurface, BlendMode, BrushPaintMode, BrushShape, BrushTexture, CanvasAnchor, ColorMode, DocumentSlice, FillKind, FillMode, GradientDither, ImageBrush, ImageBrushSettings, ImageResizeInterpolation, LayerGroup, LayerMask, LineKind, MoveKind, OutlineDirections, OutlineKernel, OutlinePosition, PaletteEntry, PaletteSlotLayout, ProceduralBrushId, ProceduralBrushSettings, RasterLayer, RecoveryRecord, RgbaColor, SelectionKind, SelectionMask, SelectionMode, SelectionRect, ShapeKind, ShapeRatio, SpriteDocument, TextCelData, TimelapseSettings, TimelapseVideoFormat, ToolId, ViewState } from '@shared/types'
 import { checkResourceLimit } from '@/core/resource-policy'
 import { beginPixelEdit, commitPixelEdit, HistoryStack, recordPixel, revertPixelEdit, type HistoryEntry, type PixelEdit } from '@/core/history'
 import { animationMaskAt, animationMaskSlotAt, convertDocumentColorMode, createDocument, createId, createLayer, createSparseLayer, createLayerMask as createAttachedLayerMask, duplicateLayer, findLayerMask, findOrAddPaletteColor, getDescendantGroupIds, getGroup, getGroupLockingAncestor, getLayerIdsInGroup, getLayer, getActiveLayer, getLayerLockingGroup, isGroupEffectivelyLocked, isLayerEffectivelyLocked, isLayerEffectivelyVisible, isLayerMask, layerContentBounds, readLayerColor, readLayerColorAt, resolveAnimationMask, resizeDocumentAt, resizeDocumentImage, writeLayerColor } from '@/core/document'
@@ -31,11 +31,12 @@ import { readStoredString } from '@/core/storage'
 import { persistProjectLayerPanelState } from '@/core/layer-panel-state'
 import { moveSymmetryCenter, type SymmetryAxes, type SymmetryCenter } from '@/core/symmetry'
 import { brushPressureFromDynamics, migrateBrushPressureSettings, normalizeBrushPressureSettings, patchBrushDynamicsGradientDither, patchBrushDynamicsMapping, type BrushDynamicsEffect, type BrushDynamicsMapping, type BrushPressureSettings } from '@/core/pressure'
+import { cloneTextCelData, convertTextSurface, normalizeTextCelData, rasterizeText, translateTextCelData } from '@/core/text-raster'
 import { exportDocumentFile, exportTimelapseFile, openDocumentFile, saveDocumentFile, type ExportOptions, type SaveAsOptions } from './document-file-service'
 import { RecoveryService } from './recovery-service'
 import { ClipboardService, selectionClipboardImage, type LayerClipboard, type LayerCollectionClipboard, type LayerMaskClipboard } from './clipboard-service'
 import { captureAdjustmentSnapshot, captureLayerUi, commitLayerMerge, restoreAdjustmentSnapshot, restoreDocumentSnapshot } from './workspace-history'
-import { activePaintLayer, applyBrushProfile, brushProfileFromSession, clearSelectionBrushPaintColors, cloneSelectionMask, isBrushTool, persistToolSettings, remapSelectionBrushColors, rememberBrushProfile, sessionFromDocument, touch, touchMetadata } from './workspace-session'
+import { activePaintLayer, applyBrushProfile, brushProfileFromSession, clearSelectionBrushPaintColors, cloneSelectionMask, isBrushTool, isToolAvailableForSession, persistToolSettings, remapSelectionBrushColors, rememberBrushProfile, sessionFromDocument, touch, touchMetadata } from './workspace-session'
 import { addPaletteColor as addPaletteColorCommand, applyPalette as applyPaletteCommand, deletePaletteColors as deletePaletteColorsCommand, gradientPaletteColors as gradientPaletteColorsCommand, gradientPaletteSlots as gradientPaletteSlotsCommand, movePaletteColor as movePaletteColorCommand, reorderPaletteColors as reorderPaletteColorsCommand, reversePaletteColors as reversePaletteColorsCommand, selectPaletteColor as selectPaletteColorCommand, selectPaletteColors as selectPaletteColorsCommand, sortPaletteColors as sortPaletteColorsCommand, updatePaletteColor as updatePaletteColorCommand } from './workspace-palette'
 import type { PaletteSortDirection, PaletteSortMode } from '@/core/palette'
 import type { AdjustmentSnapshot, AnimationFrameClipboardItem, AnimationMaskClipboardItem, AppDialog, CanvasResizePreview, DocumentSession, OutlinePreview } from './workspace-types'
@@ -52,6 +53,20 @@ export interface ColorReplacementPreview {
   nextColorId: number
   primaryColor: RgbaColor
   secondaryColor: RgbaColor
+}
+
+export interface TextCelPreview {
+  surface: AnimationCelSurface
+  text?: TextCelData
+  palette: PaletteEntry[]
+  paletteOrder: number[]
+  paletteSlots?: Array<number | null>
+  nextColorId: number
+}
+
+export interface TextLayerDraftTarget {
+  layerId: string
+  frameId: string
 }
 
 interface WorkspaceState {
@@ -126,6 +141,10 @@ interface WorkspaceState {
   invertSelection(): void
   toggleSelectionOutline(): void
   beginLayerTransform(): void
+  beginSelectedTextBoxTransform(): void
+  previewTextBoxTransform(bounds: SelectionRect): void
+  commitTextBoxTransform(bounds: SelectionRect): void
+  cancelTextBoxTransform(): void
   setSelectionKind(kind: SelectionKind): void
   commitSelectionChange(before: SelectionMask | null, after: SelectionMask | null, label: string): void
   setSelectionMode(mode: SelectionMode): void
@@ -193,6 +212,15 @@ interface WorkspaceState {
   setActiveAnimationFrameDuration(duration: number): void
   setAnimationLoop(loop: boolean): void
   addLayer(): Promise<void>
+  createTextLayer(data: TextCelData, x: number, y: number): void
+  beginTextLayerDraft(data: TextCelData, x: number, y: number): TextLayerDraftTarget | null
+  updateTextLayerDraft(layerId: string, frameId: string, data: TextCelData, x?: number, y?: number): void
+  commitTextLayerDraft(layerId: string): void
+  cancelTextLayerDraft(layerId: string): void
+  setTextCel(layerId: string, frameId: string, data: TextCelData, x?: number, y?: number): void
+  previewTextCel(layerId: string, frameId: string, data: TextCelData, x?: number, y?: number): TextCelPreview | null
+  restoreTextCelPreview(layerId: string, frameId: string, preview: TextCelPreview): void
+  convertTextLayer(layerId: string): void
   duplicateActiveLayer(): void
   duplicateLayers(layerIds: string[]): string[]
   duplicateSelectedLayerRows(): { layerIds: string[]; groupIds: string[] }
@@ -293,6 +321,28 @@ function activeSession(state: WorkspaceState): DocumentSession | null {
   return state.sessions.find((session) => session.document.id === state.activeId) ?? null
 }
 
+interface TextLayerDraftState {
+  documentId: string
+  before: Uint8Array
+  beforeSelection: ReturnType<typeof captureLayerUi>
+  selectedAnimationCellKeys: string[]
+  animationCellSelectionAnchorKey: string | null
+  selectedAnimationFrameIds: string[]
+  animationFrameSelectionAnchorId: string | null
+  dirty: boolean
+  updatedAt: string
+}
+
+const textLayerDrafts = new Map<string, TextLayerDraftState>()
+
+const invalidateTextLayerDraft = (session: DocumentSession, panelChanged = false): void => {
+  const fromRevision = session.contentRevision
+  session.revision += 1
+  session.contentRevision += 1
+  if (panelChanged) session.layersPanelRevision += 1
+  session.contentInvalidation = { kind: 'full', fromRevision, revision: session.contentRevision }
+}
+
 const cloneSlices = (slices: readonly DocumentSlice[] | undefined): DocumentSlice[] =>
   (slices ?? []).map((slice) => ({ ...slice }))
 
@@ -348,6 +398,25 @@ const restoreFloatingPreview = (session: DocumentSession): void => {
   if (!pending) return
   if (pending.translationPreview) restoreSelectionTranslationPreview(session.document, pending.translationPreview)
   else if (pending.previewEdit) revertPixelEdit(session.document, pending.previewEdit)
+}
+
+const applyTextSurface = (document: SpriteDocument, layer: RasterLayer, source: AnimationCel, cel: AnimationCel, text: TextCelData, surface: AnimationCelSurface): void => {
+  source.text = cloneTextCelData(text)
+  source.surface = surface
+  source.opacity = layer.opacity
+  if (cel !== source) {
+    cel.text = source.text
+    cel.surface = source.surface
+    cel.opacity = source.opacity
+  }
+}
+
+const renderTextAtCurrentSurface = (document: SpriteDocument, raw: TextCelData, targetX: number, targetY: number): ReturnType<typeof rasterizeText> => {
+  let rendered = rasterizeText(raw, targetX, targetY)
+  const deltaX = Math.trunc(targetX - rendered.rgba.offsetX)
+  const deltaY = Math.trunc(targetY - rendered.rgba.offsetY)
+  if (deltaX !== 0 || deltaY !== 0) rendered = rasterizeText(translateTextCelData(rendered.data, deltaX, deltaY), targetX, targetY)
+  return rendered
 }
 
 const timelapseCaptureCaches = new WeakMap<SpriteDocument, TimelapseCaptureCache>()
@@ -426,7 +495,7 @@ const cloneAnimationCelsForLayerIds = (document: SpriteDocument, layerIds: reado
     .filter((cel) => ids.has(cel.layerId) && (!frameId || cel.frameId === frameId))
     .map((cel) => {
       const mask = animationMaskAt(timeline, cel.layerId, cel.frameId)
-      return { ...cel, surface: cel.surface ? cloneAnimationCelSurface(cel.surface) : undefined, mask: mask ? layerMaskFromClipboard(layerMaskClipboard(mask), cel.id) : undefined }
+      return { ...cloneAnimationCel(cel), mask: mask ? layerMaskFromClipboard(layerMaskClipboard(mask), cel.id) : undefined }
     })
 }
 
@@ -824,12 +893,14 @@ function layerClipboardFromDocument(document: SpriteDocument, layer: RasterLayer
       storageOriginX: surface.storageOriginX,
       storageOriginY: surface.storageOriginY,
       opacity: cel.opacity,
+      text: cel.text ? cloneTextCelData(cel.text) : undefined,
       pixels: rgba,
       mask: layerMaskClipboard(animationMaskAt(timeline, layer.id, frame.id) ?? undefined)
     }]
   })
   return {
     name: layer.name,
+    kind: layer.kind,
     width: layer.width,
     height: layer.height,
     offsetX: layer.offsetX,
@@ -853,6 +924,7 @@ function applyLayerClipboardAnimationCel(document: SpriteDocument, layer: Raster
   const cel = frame ? timeline.cels.find((candidate) => candidate.layerId === layer.id && candidate.frameId === frame.id) : null
   if (!cel) return
   cel.opacity = source.opacity ?? layer.opacity
+  cel.text = source.text ? cloneTextCelData(source.text) : undefined
   cel.surface = layer.format === 'rgba'
     ? { format: 'rgba', width: source.width, height: source.height, offsetX: source.offsetX, offsetY: source.offsetY, storageOriginX: source.storageOriginX, storageOriginY: source.storageOriginY, pixels: source.pixels.slice() }
     : {
@@ -1012,6 +1084,12 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
   setActive(id) { get().commitFloatingPaste(); set({ activeId: id }) },
   setTool(tool) {
     get().commitFloatingPaste()
+    const current = activeSession(get())
+    if (current && !isToolAvailableForSession(current, tool)) {
+      set({ message: tr('workspace.text.convertToEditPixels') })
+      return
+    }
+    if (current?.textBoxTransform && tool !== 'selection') get().cancelTextBoxTransform()
     get().mutateActive((session) => {
       if (session.tool === tool) return
       if (isBrushTool(session.tool)) rememberBrushProfile(session)
@@ -1528,6 +1606,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
   },
   beginLayerTransform() {
     get().commitFloatingPaste()
+    get().cancelTextBoxTransform()
     const session = activeSession(get())
     if (!session) return
     if (session.selectedGroupId || session.selectedLayerIds.length !== 1) {
@@ -1547,6 +1626,14 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       set({ message: tr('workspace.transform.locked') })
       return
     }
+    const timeline = ensureAnimationDocument(session.document)
+    const textCel = layer.kind === 'text' ? timeline.cels.find((cel) => cel.layerId === layer.id && cel.frameId === timeline.activeFrameId) : null
+    const textSource = textCel ? resolveAnimationCel(timeline, textCel) ?? textCel : null
+    if (textCel && textSource?.text?.boxWidth && textSource.text.boxHeight && textSource.surface) {
+      // Boxed text already exposes its resize handles while selected. Ctrl+T
+      // must not create a second transform mode around the same text area.
+      return
+    }
     const contentBounds = layerContentBounds(session.document, layer)
     if (!contentBounds) {
       set({ message: tr('workspace.transform.empty') })
@@ -1557,8 +1644,9 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       set({ message: tr('workspace.transform.outside') })
       return
     }
-    get().setTool('selection')
     get().mutateActive((active) => {
+      if (isBrushTool(active.tool)) rememberBrushProfile(active)
+      active.tool = 'selection'
       active.document.activeLayerId = layer.id
       active.selectedGroupId = null
       active.selectedGroupIds = []
@@ -1568,6 +1656,104 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       active.selectionMode = 'replace'
     }, false)
     set({ message: tr('workspace.transform.started') })
+  },
+  beginSelectedTextBoxTransform() {
+    const session = activeSession(get())
+    if (!session || session.selectedGroupId || session.selectedGroupIds.length > 0 || session.selectedLayerIds.length !== 1) return
+    const layer = session.document.layers.find((candidate) => candidate.id === session.selectedLayerIds[0] && candidate.kind === 'text')
+    if (!layer || !isLayerEffectivelyVisible(session.document, layer) || isLayerEffectivelyLocked(session.document, layer)) return
+    const timeline = ensureAnimationDocument(session.document)
+    const cel = timeline.cels.find((candidate) => candidate.layerId === layer.id && candidate.frameId === timeline.activeFrameId)
+    const source = resolveAnimationCel(timeline, cel ?? null) ?? cel
+    if (!cel || !source?.text?.boxWidth || !source.text.boxHeight || !source.surface) return
+    get().mutateActive((active) => {
+      active.textBoxTransform = {
+        layerId: layer.id,
+        frameId: timeline.activeFrameId,
+        bounds: {
+          x: source.text!.originX ?? source.surface!.offsetX ?? layer.offsetX,
+          y: source.text!.originY ?? source.surface!.offsetY ?? layer.offsetY,
+          width: source.text!.boxWidth!,
+          height: source.text!.boxHeight!
+        },
+        originalText: cloneTextCelData(source.text!),
+        originalSurface: cloneAnimationCelSurface(source.surface!)
+      }
+    }, false)
+  },
+  previewTextBoxTransform(bounds) {
+    get().mutateActive((session) => {
+      const transform = session.textBoxTransform
+      if (!transform) return
+      const layer = session.document.layers.find((candidate) => candidate.id === transform.layerId && candidate.kind === 'text')
+      const timeline = ensureAnimationDocument(session.document)
+      const cel = timeline.cels.find((candidate) => candidate.layerId === transform.layerId && candidate.frameId === transform.frameId)
+      const source = resolveAnimationCel(timeline, cel ?? null) ?? cel
+      if (!layer || !cel || !source?.text) return
+      const target = clampSliceRect(bounds, session.document.width, session.document.height)
+      const rendered = renderTextAtCurrentSurface(session.document, {
+        ...source.text,
+        originX: target.x,
+        originY: target.y,
+        boxWidth: target.width,
+        boxHeight: target.height
+      }, target.x, target.y)
+      const surface = convertTextSurface(rendered.rgba, session.document.colorMode, session.document.palette, (color) => findOrAddPaletteColor(session.document, color, true))
+      applyTextSurface(session.document, layer, source, cel, rendered.data, surface)
+      session.textBoxTransform = { ...transform, bounds: target }
+      if (timeline.activeFrameId === transform.frameId) refreshActiveAnimationFrame(session.document)
+    }, false)
+  },
+  commitTextBoxTransform(bounds) {
+    const current = activeSession(get())
+    const transform = current?.textBoxTransform
+    if (!current || !transform) return
+    const layer = current.document.layers.find((candidate) => candidate.id === transform.layerId && candidate.kind === 'text')
+    const timeline = ensureAnimationDocument(current.document)
+    const cel = timeline.cels.find((candidate) => candidate.layerId === transform.layerId && candidate.frameId === transform.frameId)
+    const source = resolveAnimationCel(timeline, cel ?? null) ?? cel
+    if (!layer || !cel || !source?.text || !source.surface) return
+    const beforeText = cloneTextCelData(transform.originalText)
+    const beforeSurface = cloneAnimationCelSurface(transform.originalSurface)
+    const target = clampSliceRect(bounds, current.document.width, current.document.height)
+    get().previewTextBoxTransform(target)
+    get().mutateActive((session) => {
+      const activeTransform = session.textBoxTransform
+      if (!activeTransform) return
+      const activeLayer = session.document.layers.find((candidate) => candidate.id === activeTransform.layerId && candidate.kind === 'text')
+      const activeTimeline = ensureAnimationDocument(session.document)
+      const activeCel = activeTimeline.cels.find((candidate) => candidate.layerId === activeTransform.layerId && candidate.frameId === activeTransform.frameId)
+      const activeSource = resolveAnimationCel(activeTimeline, activeCel ?? null) ?? activeCel
+      if (!activeLayer || !activeCel || !activeSource?.text || !activeSource.surface) return
+      const afterText = cloneTextCelData(activeSource.text)
+      const afterSurface = cloneAnimationCelSurface(activeSource.surface)
+      const restore = (text: TextCelData, surface: AnimationCelSurface): void => {
+        applyTextSurface(session.document, activeLayer, activeSource, activeCel, cloneTextCelData(text), cloneAnimationCelSurface(surface))
+        if (activeTimeline.activeFrameId === activeTransform.frameId) refreshActiveAnimationFrame(session.document)
+      }
+      session.textBoxTransform = null
+      session.history.push({
+        label: tr('workspace.history.transformSelectionContent'),
+        bytes: beforeSurface.pixels.byteLength + afterSurface.pixels.byteLength + 128,
+        undo: () => restore(beforeText, beforeSurface),
+        redo: () => restore(afterText, afterSurface)
+      })
+    })
+  },
+  cancelTextBoxTransform() {
+    get().mutateActive((session) => {
+      const transform = session.textBoxTransform
+      if (!transform) return
+      const layer = session.document.layers.find((candidate) => candidate.id === transform.layerId && candidate.kind === 'text')
+      const timeline = ensureAnimationDocument(session.document)
+      const cel = timeline.cels.find((candidate) => candidate.layerId === transform.layerId && candidate.frameId === transform.frameId)
+      const source = resolveAnimationCel(timeline, cel ?? null) ?? cel
+      if (layer && cel && source) {
+        applyTextSurface(session.document, layer, source, cel, cloneTextCelData(transform.originalText), cloneAnimationCelSurface(transform.originalSurface))
+        if (timeline.activeFrameId === transform.frameId) refreshActiveAnimationFrame(session.document)
+      }
+      session.textBoxTransform = null
+    }, false)
   },
   setSelectionKind(kind) { get().mutateActive((session) => { session.selectionKind = kind; persistToolSettings(session) }, false) },
   setSelectionMode(mode) { get().mutateActive((session) => { session.selectionMode = mode; persistToolSettings(session) }, false) },
@@ -1667,6 +1853,11 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
 
   commitPixelEdit(edit, label, activity) {
     get().mutateActive((session) => {
+      if (session.document.layers.find((layer) => layer.id === edit.layerId)?.kind === 'text') {
+        revertPixelEdit(session.document, edit)
+        set({ message: tr('workspace.text.convertToEditPixels') })
+        return
+      }
       const entry = commitPixelEdit(session.document, edit, label)
       if (entry) {
         session.history.push(entry)
@@ -1725,7 +1916,20 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
   },
 
   pushHistory(entry) {
-    get().mutateActive((session) => session.history.push(entry))
+    const state = get()
+    const session = activeSession(state)
+    if (!session) return
+    session.history.push(entry)
+    if (session.activeLayerMaskId && !findLayerMask(session.document, session.activeLayerMaskId)) session.activeLayerMaskId = null
+    if (entry.requiresAnimationSync !== false) {
+      if (entry.affectedLayerIds?.length) for (const layerId of entry.affectedLayerIds) syncActiveAnimationLayer(session.document, layerId)
+      else syncActiveAnimationFrame(session.document)
+    }
+    ensureLayerSelection(session)
+    persistProjectLayerPanelState(session)
+    touch(session, true, entry.invalidation)
+    recordDocumentOperation(session)
+    set({ sessions: [...state.sessions] })
   },
 
   undo() {
@@ -1733,6 +1937,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     if (session) flushViewPreview(session.document.id)
     session = activeSession(get())
     if (session?.pendingPaste) { get().cancelFloatingPaste(); return }
+    if (session?.textBoxTransform) get().cancelTextBoxTransform()
     if (!session?.history.canUndo) return
     get().mutateActive((session) => {
       const view = { ...session.view }
@@ -1751,6 +1956,8 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
   },
 
   redo() {
+    const current = activeSession(get())
+    if (current?.textBoxTransform) get().cancelTextBoxTransform()
     let session = activeSession(get())
     if (session) flushViewPreview(session.document.id)
     session = activeSession(get())
@@ -2177,6 +2384,16 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
         timeline.cels = timeline.cels.filter((cel) => !appendedFrameIds.has(cel.frameId))
         return
       }
+      const incompatibleTextPlacement = placements.some(({ source, target: destination }) => {
+        const destinationLayer = session.document.layers.find((layer) => layer.id === destination.layerId)
+        return Boolean(source.text) !== (destinationLayer?.kind === 'text')
+      })
+      if (incompatibleTextPlacement) {
+        timeline.frames = timeline.frames.filter((frame) => !appendedFrameIds.has(frame.id))
+        timeline.cels = timeline.cels.filter((cel) => !appendedFrameIds.has(cel.frameId))
+        set({ message: tr('workspace.text.incompatibleCel') })
+        return
+      }
       const writeTargets = [...new Map(placements.flatMap(({ target: destination }) => {
         const shared = resolveAnimationCel(timeline, destination) ?? destination
         return [[shared.id, shared] as const, [destination.id, destination] as const]
@@ -2186,6 +2403,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
         const shared = resolveAnimationCel(timeline, destination) ?? destination
         shared.surface = source.surface ? cloneAnimationCelSurface(source.surface) : undefined
         shared.opacity = source.opacity
+        shared.text = source.text ? cloneTextCelData(source.text) : undefined
         shared.mask = layerMaskFromClipboard(layerMaskClipboard(source.mask), shared.id)
         if (destination !== shared) delete destination.mask
       }
@@ -2225,6 +2443,10 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       const placements = mapAnimationCelBlock(timeline, session.document.layers.map((layer) => layer.id), sources, sourceAnchorKey, layerId, frameId)
       const affected = new Map<string, AnimationCel>()
       if (!placements.length || placements.length !== sources.length || placements.every(({ source, target }) => source.layerId === target.layerId && source.frameId === target.frameId)) return
+      if (placements.some(({ source, target }) => Boolean(source.text) !== (session.document.layers.find((layer) => layer.id === target.layerId)?.kind === 'text'))) {
+        set({ message: tr('workspace.text.incompatibleCel') })
+        return
+      }
       for (const source of sources) {
         const original = timeline.cels.find((cel) => cel.layerId === source.layerId && cel.frameId === source.frameId)
         if (original) affected.set(animationCelKey(original.layerId, original.frameId), cloneAnimationCel(original))
@@ -2233,12 +2455,14 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       for (const source of sources) {
         const original = timeline.cels.find((cel) => cel.layerId === source.layerId && cel.frameId === source.frameId)
         if (original?.surface) original.surface = original.surface.format === 'rgba' ? { ...original.surface, pixels: new Uint8ClampedArray(original.surface.pixels.length) } : { ...original.surface, pixels: new Uint32Array(original.surface.pixels.length) }
+        if (original) delete original.text
         if (original) delete original.mask
       }
       for (const { source, target: destination } of placements) {
         destination.linkedCelId = null
         destination.surface = source.surface ? cloneAnimationCelSurface(source.surface) : undefined
         destination.opacity = source.opacity
+        destination.text = source.text ? cloneTextCelData(source.text) : undefined
         destination.mask = layerMaskFromClipboard(layerMaskClipboard(source.mask), destination.id)
       }
       refreshActiveAnimationFrame(session.document)
@@ -2499,6 +2723,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
         for (const cel of selectedCels) {
           cel.surface = cel.surface?.format === 'rgba' ? { ...cel.surface, pixels: new Uint8ClampedArray(cel.surface.pixels.length) } : cel.surface ? { ...cel.surface, pixels: new Uint32Array(cel.surface.pixels.length) } : undefined
           cel.linkedCelId = null
+          delete cel.text
           delete cel.mask
         }
         refreshActiveAnimationFrame(session.document)
@@ -2697,6 +2922,271 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       const placementHistory = moveLayerPanelRowsOperation(session, [layer.id], [], placement)
       if (placementHistory) session.history.push(placementHistory)
       session.history.endCompound(tr('workspace.history.newLayer'))
+    })
+  },
+
+  createTextLayer(raw, x, y) {
+    get().commitFloatingPaste()
+    get().mutateActive((session) => {
+      const document = session.document
+      const before = encodeProject(document)
+      const beforeSelection = captureLayerUi(session)
+      const data = normalizeTextCelData({ ...raw, originX: Math.trunc(x), originY: Math.trunc(y), transforms: raw.transforms ?? [] }, session.primaryColor)
+      const rendered = rasterizeText(data, x, y)
+      const surface = convertTextSurface(rendered.rgba, document.colorMode, document.palette, (color) => findOrAddPaletteColor(document, color, true))
+      const layer = createSparseLayer(data.text.split('\n')[0].trim().slice(0, 32) || tr('workspace.layer.textName'), document.colorMode)
+      layer.kind = 'text'
+      layer.width = surface.width
+      layer.height = surface.height
+      layer.offsetX = surface.offsetX
+      layer.offsetY = surface.offsetY
+      layer.pixels = surface.pixels
+      const placement = selectedRowInsertionTarget(session)
+      const targetGroupId = insertionTargetParent(document, placement)
+      if (targetGroupId) layer.groupId = targetGroupId
+      document.layers.push(layer)
+      const timeline = ensureAnimationDocument(document)
+      const cel = timeline.cels.find((candidate) => candidate.layerId === layer.id && candidate.frameId === timeline.activeFrameId)
+      if (cel) {
+        cel.text = cloneTextCelData(rendered.data)
+        cel.surface = surface
+        cel.opacity = layer.opacity
+      }
+      document.activeLayerId = layer.id
+      session.selectedGroupId = null
+      session.selectedGroupIds = []
+      session.selectedLayerIds = [layer.id]
+      session.selectedAnimationCellKeys = [animationCelKey(layer.id, timeline.activeFrameId)]
+      syncActiveAnimationLayer(document, layer.id)
+      moveLayerPanelRowsOperation(session, [layer.id], [], placement)
+      const after = encodeProject(document)
+      const afterSelection = captureLayerUi(session)
+      const restore = (snapshot: Uint8Array, selection: ReturnType<typeof captureLayerUi>): void => {
+        restoreDocumentSnapshot(document, snapshot)
+        session.selectedLayerIds = [...selection.selectedLayerIds]
+        session.selectedGroupId = selection.selectedGroupId
+        session.selectedGroupIds = [...selection.selectedGroupIds]
+        session.collapsedGroupIds = [...selection.collapsedGroupIds]
+      }
+      session.history.push({ label: tr('workspace.history.createText'), bytes: before.byteLength + after.byteLength, undo: () => restore(before, beforeSelection), redo: () => restore(after, afterSelection) })
+    })
+  },
+
+  beginTextLayerDraft(raw, x, y) {
+    get().commitFloatingPaste()
+    let target: TextLayerDraftTarget | null = null
+    get().mutateActive((session) => {
+      const document = session.document
+      const before = encodeProject(document)
+      const beforeSelection = captureLayerUi(session)
+      const draftState: TextLayerDraftState = {
+        documentId: document.id,
+        before,
+        beforeSelection,
+        selectedAnimationCellKeys: [...session.selectedAnimationCellKeys],
+        animationCellSelectionAnchorKey: session.animationCellSelectionAnchorKey,
+        selectedAnimationFrameIds: [...session.selectedAnimationFrameIds],
+        animationFrameSelectionAnchorId: session.animationFrameSelectionAnchorId,
+        dirty: document.dirty,
+        updatedAt: document.updatedAt
+      }
+      const data = normalizeTextCelData({ ...raw, originX: Math.trunc(x), originY: Math.trunc(y), transforms: raw.transforms ?? [] }, session.primaryColor)
+      if (!data.text.length) return
+      const rendered = rasterizeText(data, x, y)
+      const surface = convertTextSurface(rendered.rgba, document.colorMode, document.palette, (color) => findOrAddPaletteColor(document, color, true))
+      const layer = createSparseLayer(data.text.split('\n')[0].trim().slice(0, 32) || tr('workspace.layer.textName'), document.colorMode)
+      layer.kind = 'text'
+      layer.width = surface.width
+      layer.height = surface.height
+      layer.offsetX = surface.offsetX
+      layer.offsetY = surface.offsetY
+      layer.pixels = surface.pixels
+      const placement = selectedRowInsertionTarget(session)
+      const targetGroupId = insertionTargetParent(document, placement)
+      if (targetGroupId) layer.groupId = targetGroupId
+      document.layers.push(layer)
+      const timeline = ensureAnimationDocument(document)
+      const cel = timeline.cels.find((candidate) => candidate.layerId === layer.id && candidate.frameId === timeline.activeFrameId)
+      if (!cel) return
+      cel.text = cloneTextCelData(rendered.data)
+      cel.surface = surface
+      cel.opacity = layer.opacity
+      document.activeLayerId = layer.id
+      session.selectedGroupId = null
+      session.selectedGroupIds = []
+      session.selectedLayerIds = [layer.id]
+      session.selectedAnimationCellKeys = [animationCelKey(layer.id, timeline.activeFrameId)]
+      session.animationCellSelectionAnchorKey = animationCelKey(layer.id, timeline.activeFrameId)
+      syncActiveAnimationLayer(document, layer.id)
+      moveLayerPanelRowsOperation(session, [layer.id], [], placement)
+      textLayerDrafts.set(layer.id, draftState)
+      target = { layerId: layer.id, frameId: timeline.activeFrameId }
+      invalidateTextLayerDraft(session, true)
+    }, false)
+    return target
+  },
+
+  updateTextLayerDraft(layerId, frameId, raw, x, y) {
+    const draft = textLayerDrafts.get(layerId)
+    if (!draft) return
+    get().mutateActive((session) => {
+      if (session.document.id !== draft.documentId) return
+      const document = session.document
+      const layer = document.layers.find((candidate) => candidate.id === layerId && candidate.kind === 'text')
+      const timeline = ensureAnimationDocument(document)
+      const cel = timeline.cels.find((candidate) => candidate.layerId === layerId && candidate.frameId === frameId)
+      const source = resolveAnimationCel(timeline, cel ?? null) ?? cel
+      if (!layer || !cel || !source) return
+      const normalized = normalizeTextCelData(raw, session.primaryColor)
+      const offsetX = Math.trunc(x ?? source.surface?.offsetX ?? normalized.originX ?? layer.offsetX)
+      const offsetY = Math.trunc(y ?? source.surface?.offsetY ?? normalized.originY ?? layer.offsetY)
+      const rendered = renderTextAtCurrentSurface(document, { ...normalized, originX: normalized.originX ?? offsetX, originY: normalized.originY ?? offsetY }, offsetX, offsetY)
+      const surface = convertTextSurface(rendered.rgba, document.colorMode, document.palette, (color) => findOrAddPaletteColor(document, color, true))
+      applyTextSurface(document, layer, source, cel, rendered.data, surface)
+      layer.name = normalized.text.split('\n')[0].trim().slice(0, 32) || tr('workspace.layer.textName')
+      if (timeline.activeFrameId === frameId) refreshActiveAnimationFrame(document)
+      invalidateTextLayerDraft(session, true)
+    }, false)
+  },
+
+  commitTextLayerDraft(layerId) {
+    const draft = textLayerDrafts.get(layerId)
+    if (!draft) return
+    get().mutateActive((session) => {
+      if (session.document.id !== draft.documentId || !session.document.layers.some((layer) => layer.id === layerId)) return
+      const after = encodeProject(session.document)
+      const afterSelection = captureLayerUi(session)
+      const restore = (snapshot: Uint8Array, selection: ReturnType<typeof captureLayerUi>): void => {
+        restoreDocumentSnapshot(session.document, snapshot)
+        session.selectedLayerIds = [...selection.selectedLayerIds]
+        session.selectedGroupId = selection.selectedGroupId
+        session.selectedGroupIds = [...selection.selectedGroupIds]
+        session.collapsedGroupIds = [...selection.collapsedGroupIds]
+      }
+      session.history.push({ label: tr('workspace.history.createText'), bytes: draft.before.byteLength + after.byteLength, undo: () => restore(draft.before, draft.beforeSelection), redo: () => restore(after, afterSelection) })
+      textLayerDrafts.delete(layerId)
+    })
+  },
+
+  cancelTextLayerDraft(layerId) {
+    const draft = textLayerDrafts.get(layerId)
+    if (!draft) return
+    get().mutateActive((session) => {
+      if (session.document.id !== draft.documentId) return
+      restoreDocumentSnapshot(session.document, draft.before)
+      session.document.dirty = draft.dirty
+      session.document.updatedAt = draft.updatedAt
+      session.selectedLayerIds = [...draft.beforeSelection.selectedLayerIds]
+      session.selectedGroupId = draft.beforeSelection.selectedGroupId
+      session.selectedGroupIds = [...draft.beforeSelection.selectedGroupIds]
+      session.collapsedGroupIds = [...draft.beforeSelection.collapsedGroupIds]
+      session.selectedAnimationCellKeys = [...draft.selectedAnimationCellKeys]
+      session.animationCellSelectionAnchorKey = draft.animationCellSelectionAnchorKey
+      session.selectedAnimationFrameIds = [...draft.selectedAnimationFrameIds]
+      session.animationFrameSelectionAnchorId = draft.animationFrameSelectionAnchorId
+      textLayerDrafts.delete(layerId)
+      invalidateTextLayerDraft(session, true)
+    }, false)
+  },
+
+  setTextCel(layerId, frameId, raw, x, y) {
+    get().mutateActive((session) => {
+      const document = session.document
+      const layer = document.layers.find((candidate) => candidate.id === layerId && candidate.kind === 'text')
+      const timeline = ensureAnimationDocument(document)
+      const cel = timeline.cels.find((candidate) => candidate.layerId === layerId && candidate.frameId === frameId)
+      if (!layer || !cel) return
+      const before = encodeProject(document)
+      const source = resolveAnimationCel(timeline, cel) ?? cel
+      const normalized = normalizeTextCelData(raw, session.primaryColor)
+      const offsetX = Math.trunc(x ?? source.surface?.offsetX ?? normalized.originX ?? layer.offsetX)
+      const offsetY = Math.trunc(y ?? source.surface?.offsetY ?? normalized.originY ?? layer.offsetY)
+      const rendered = renderTextAtCurrentSurface(document, { ...normalized, originX: normalized.originX ?? offsetX, originY: normalized.originY ?? offsetY }, offsetX, offsetY)
+      const surface = convertTextSurface(rendered.rgba, document.colorMode, document.palette, (color) => findOrAddPaletteColor(document, color, true))
+      applyTextSurface(document, layer, source, cel, rendered.data, surface)
+      if (timeline.activeFrameId === frameId) refreshActiveAnimationFrame(document)
+      const after = encodeProject(document)
+      session.history.push({ label: tr('workspace.history.editText'), bytes: before.byteLength + after.byteLength, undo: () => restoreDocumentSnapshot(document, before), redo: () => restoreDocumentSnapshot(document, after) })
+    })
+  },
+
+  previewTextCel(layerId, frameId, raw, x, y) {
+    const current = activeSession(get())
+    if (!current) return null
+    const layer = current.document.layers.find((candidate) => candidate.id === layerId && candidate.kind === 'text')
+    const timeline = ensureAnimationDocument(current.document)
+    const cel = timeline.cels.find((candidate) => candidate.layerId === layerId && candidate.frameId === frameId)
+    const source = resolveAnimationCel(timeline, cel ?? null) ?? cel
+    if (!layer || !cel || !source?.surface) return null
+    const before: TextCelPreview = {
+      surface: cloneAnimationCelSurface(source.surface),
+      text: source.text ? cloneTextCelData(source.text) : undefined,
+      palette: current.document.palette.map((entry) => ({ ...entry, color: { ...entry.color } })),
+      paletteOrder: [...current.document.paletteOrder],
+      paletteSlots: current.document.paletteSlots ? [...current.document.paletteSlots] : undefined,
+      nextColorId: current.document.nextColorId
+    }
+    get().mutateActive((session) => {
+      const document = session.document
+      const activeLayer = document.layers.find((candidate) => candidate.id === layerId && candidate.kind === 'text')
+      const activeTimeline = ensureAnimationDocument(document)
+      const activeCel = activeTimeline.cels.find((candidate) => candidate.layerId === layerId && candidate.frameId === frameId)
+      const activeSource = resolveAnimationCel(activeTimeline, activeCel ?? null) ?? activeCel
+      if (!activeLayer || !activeCel || !activeSource) return
+      const normalized = normalizeTextCelData(raw, session.primaryColor)
+      const offsetX = Math.trunc(x ?? activeSource.surface?.offsetX ?? normalized.originX ?? activeLayer.offsetX)
+      const offsetY = Math.trunc(y ?? activeSource.surface?.offsetY ?? normalized.originY ?? activeLayer.offsetY)
+      const rendered = renderTextAtCurrentSurface(document, { ...normalized, originX: normalized.originX ?? offsetX, originY: normalized.originY ?? offsetY }, offsetX, offsetY)
+      const surface = convertTextSurface(rendered.rgba, document.colorMode, document.palette, (color) => findOrAddPaletteColor(document, color, true))
+      activeSource.text = cloneTextCelData(rendered.data)
+      activeSource.surface = surface
+      if (activeCel !== activeSource) {
+        activeCel.text = activeSource.text
+        activeCel.surface = surface
+      }
+      if (activeTimeline.activeFrameId === frameId) refreshActiveAnimationFrame(document)
+      const fromRevision = session.contentRevision
+      session.revision += 1
+      session.contentRevision += 1
+      session.contentInvalidation = { kind: 'full', fromRevision, revision: session.contentRevision }
+    }, false)
+    return before
+  },
+
+  restoreTextCelPreview(layerId, frameId, preview) {
+    get().mutateActive((session) => {
+      const timeline = ensureAnimationDocument(session.document)
+      const cel = timeline.cels.find((candidate) => candidate.layerId === layerId && candidate.frameId === frameId)
+      const source = resolveAnimationCel(timeline, cel ?? null) ?? cel
+      if (!cel || !source) return
+      source.text = preview.text ? cloneTextCelData(preview.text) : undefined
+      source.surface = cloneAnimationCelSurface(preview.surface)
+      if (cel !== source) {
+        cel.text = source.text
+        cel.surface = source.surface
+      }
+      session.document.palette = preview.palette.map((entry) => ({ ...entry, color: { ...entry.color } }))
+      session.document.paletteOrder = [...preview.paletteOrder]
+      session.document.paletteSlots = preview.paletteSlots ? [...preview.paletteSlots] : undefined
+      session.document.nextColorId = preview.nextColorId
+      if (timeline.activeFrameId === frameId) refreshActiveAnimationFrame(session.document)
+      const fromRevision = session.contentRevision
+      session.revision += 1
+      session.contentRevision += 1
+      session.contentInvalidation = { kind: 'full', fromRevision, revision: session.contentRevision }
+    }, false)
+  },
+
+  convertTextLayer(layerId) {
+    get().mutateActive((session) => {
+      const document = session.document
+      const layer = document.layers.find((candidate) => candidate.id === layerId && candidate.kind === 'text')
+      if (!layer) return
+      const before = encodeProject(document)
+      delete layer.kind
+      for (const cel of ensureAnimationDocument(document).cels) if (cel.layerId === layerId) delete cel.text
+      const after = encodeProject(document)
+      session.history.push({ label: tr('workspace.history.convertText'), bytes: before.byteLength + after.byteLength, undo: () => restoreDocumentSnapshot(document, before), redo: () => restoreDocumentSnapshot(document, after) })
     })
   },
 
@@ -3039,10 +3529,14 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       if (before.x === after.x && before.y === after.y) return
       layer.offsetX = after.x
       layer.offsetY = after.y
+      const timeline = ensureAnimationDocument(session.document)
+      const activeCel = timeline.cels.find((candidate) => candidate.layerId === layer.id && candidate.frameId === timeline.activeFrameId)
+      const textSource = activeCel ? resolveAnimationCel(timeline, activeCel) ?? activeCel : null
+      if (layer.kind === 'text' && textSource?.text) translateTextCelData(textSource.text, after.x - before.x, after.y - before.y)
       session.history.push({
         label, bytes: 32,
-        undo: () => { layer.offsetX = before.x; layer.offsetY = before.y },
-        redo: () => { layer.offsetX = after.x; layer.offsetY = after.y }
+        undo: () => { layer.offsetX = before.x; layer.offsetY = before.y; if (textSource?.text) translateTextCelData(textSource.text, before.x - after.x, before.y - after.y) },
+        redo: () => { layer.offsetX = after.x; layer.offsetY = after.y; if (textSource?.text) translateTextCelData(textSource.text, after.x - before.x, after.y - before.y) }
       })
     })
   },
@@ -3206,6 +3700,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
   },
 
   selectLayer(layerId, mode = 'replace') {
+    get().cancelTextBoxTransform()
     get().commitFloatingPaste()
     get().mutateActive((session) => {
       const selectionMode: Exclude<LayerRowSelectionMode, boolean> = mode === true ? 'toggle' : mode === false ? 'replace' : mode
@@ -3242,6 +3737,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
   },
 
   selectGroup(groupId, mode = 'replace') {
+    get().cancelTextBoxTransform()
     get().commitFloatingPaste()
     get().mutateActive((session) => {
       getGroup(session.document, groupId)
@@ -3805,7 +4301,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       restoreAdjustmentSnapshot(session, before)
       for (const layerSnapshot of before.layers) {
         const layer = session.document.layers.find((candidate) => candidate.id === layerSnapshot.layerId)
-        if (layer && !isLayerEffectivelyLocked(session.document, layer)) applyColorAdjustment(session.document, layer, adjustment, session.selection)
+        if (layer && layer.kind !== 'text' && !isLayerEffectivelyLocked(session.document, layer)) applyColorAdjustment(session.document, layer, adjustment, session.selection)
       }
       const after = captureAdjustmentSnapshot(session, before.layers.map((layer) => layer.layerId))
       const labels: Record<ColorAdjustment['kind'], string> = {
@@ -3966,6 +4462,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       }})
       const layers = clipboard.layers.map((source) => {
         const layer = createLayer(`${source.name} ${tr('canvas.history.copySuffix')}`, source.width, source.height, document.colorMode)
+        layer.kind = source.kind
         layer.offsetX = source.offsetX
         layer.offsetY = source.offsetY
         layer.visible = source.visible
@@ -4097,6 +4594,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       if (!clipboard) { set({ message: tr('workspace.clipboard.emptyPixels') }); return }
       const document = session.document
       const layer = activePaintLayer(session)
+      if (layer.kind === 'text') { set({ message: tr('workspace.text.incompatibleCel') }); return }
       if (isLayerEffectivelyLocked(document, layer)) { set({ message: tr('workspace.clipboard.layerLocked') }); return }
       const beforeSelection = cloneSelectionMask(session.selection)
       // Keep the entire clipboard image, even when it is larger than the
@@ -4269,12 +4767,20 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
   commitFloatingPaste() {
     const current = activeSession(get())
     if (!current?.pendingPaste) return
-    const documentChanged = Boolean(current.pendingPaste.previewEdit || current.pendingPaste.translationPreview?.count)
+    const activeLayerForCommit = current.document.layers.find((layer) => layer.id === current.pendingPaste?.layerId)
+    const documentChanged = activeLayerForCommit?.kind === 'text' || Boolean(current.pendingPaste.previewEdit || current.pendingPaste.translationPreview?.count)
     get().mutateActive((session) => {
       const pending = session.pendingPaste
       if (!pending) return
       const edit = pending.previewEdit ?? (pending.translationPreview ? selectionTranslationPreviewEdit(session.document, pending.translationPreview) : null)
-      const pixelEntry = edit ? commitPixelEdit(session.document, edit, pending.label) : null
+      const activeLayer = session.document.layers.find((layer) => layer.id === pending.layerId)
+      const timeline = ensureAnimationDocument(session.document)
+      const activeCel = activeLayer?.kind === 'text' ? timeline.cels.find((cel) => cel.layerId === activeLayer.id && cel.frameId === timeline.activeFrameId) : null
+      const textSource = activeCel ? resolveAnimationCel(timeline, activeCel) ?? activeCel : null
+      if (activeLayer?.kind === 'text' && textSource?.text) restoreFloatingPreview(session)
+      const beforeText = textSource?.text ? cloneTextCelData(textSource.text) : null
+      const beforeTextSurface = activeLayer?.kind === 'text' && textSource?.surface ? cloneAnimationCelSurface(textSource.surface) : null
+      const pixelEntry = activeLayer?.kind === 'text' ? null : edit ? commitPixelEdit(session.document, edit, pending.label) : null
       const beforeSelection = cloneSelectionMask(pending.beforeSelection)
       const afterSelection = cloneSelectionMask(pending.target)
       const sameMask = beforeSelection?.mask === afterSelection?.mask
@@ -4283,17 +4789,46 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
         || beforeSelection?.width !== afterSelection?.width || beforeSelection?.height !== afterSelection?.height || !sameMask
       session.pendingPaste = null
       session.selection = afterSelection
+      let textHistory: { before: TextCelData; after: TextCelData; restore: (value: TextCelData) => void } | null = null
+      if (activeLayer?.kind === 'text' && textSource?.text && (edit || selectionChanged)) {
+        const sourceTarget = { x: pending.source.selection.x, y: pending.source.selection.y, width: pending.source.selection.width, height: pending.source.selection.height }
+        const target = pending.transformTarget ?? { x: pending.target.x, y: pending.target.y, width: pending.target.width, height: pending.target.height }
+        const sourceRect = { ...sourceTarget }
+        const targetRect = { ...target }
+        const nextText = cloneTextCelData(textSource.text)
+        nextText.transforms = [...(nextText.transforms ?? []), {
+          source: sourceRect,
+          target: targetRect,
+          angle: pending.transformAngle ?? 0,
+          ...(pending.transformShear ? { shear: { ...pending.transformShear } } : {})
+        }]
+        const rendered = rasterizeText(nextText, nextText.originX ?? sourceRect.x, nextText.originY ?? sourceRect.y)
+        const surface = convertTextSurface(rendered.rgba, session.document.colorMode, session.document.palette, (color) => findOrAddPaletteColor(session.document, color, true))
+        applyTextSurface(session.document, activeLayer, textSource, activeCel!, rendered.data, surface)
+        refreshActiveAnimationFrame(session.document)
+        const afterText = cloneTextCelData(nextText)
+        const afterTextSurface = cloneAnimationCelSurface(surface)
+        const restoreText = (value: TextCelData, restoredSurface: AnimationCelSurface): void => {
+          applyTextSurface(session.document, activeLayer, textSource, activeCel!, value, cloneAnimationCelSurface(restoredSurface))
+          refreshActiveAnimationFrame(session.document)
+        }
+        textHistory = {
+          before: beforeText!,
+          after: afterText,
+          restore: (value) => restoreText(value, value === beforeText ? beforeTextSurface! : afterTextSurface)
+        }
+      }
       if (pixelEntry) session.history.push({
         ...pixelEntry,
         bytes: pixelEntry.bytes + (beforeSelection?.mask?.byteLength ?? 0) + (afterSelection?.mask?.byteLength ?? 0) + 64,
         undo: () => { pixelEntry.undo(); session.selection = cloneSelectionMask(beforeSelection) },
         redo: () => { pixelEntry.redo(); session.selection = cloneSelectionMask(afterSelection) }
       })
-      else if (selectionChanged) session.history.push({
+      else if (selectionChanged || textHistory) session.history.push({
         label: pending.label,
         bytes: 48 + (beforeSelection?.mask?.byteLength ?? 0) + (afterSelection?.mask?.byteLength ?? 0),
-        undo: () => { session.selection = cloneSelectionMask(beforeSelection) },
-        redo: () => { session.selection = cloneSelectionMask(afterSelection) }
+        undo: () => { textHistory?.restore(textHistory.before); session.selection = cloneSelectionMask(beforeSelection) },
+        redo: () => { textHistory?.restore(textHistory.after); session.selection = cloneSelectionMask(afterSelection) }
       })
     }, documentChanged)
   },

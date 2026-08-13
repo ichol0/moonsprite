@@ -13,6 +13,7 @@ mod platform_brushes;
 mod platform_clipboard;
 mod platform_dialogs;
 mod platform_files;
+mod platform_fonts;
 mod platform_gallery;
 mod platform_palette;
 mod platform_paths;
@@ -149,6 +150,11 @@ pub fn run() {
             platform_brushes::save_brush,
             platform_brushes::delete_brush,
             platform_brushes::open_brush_folder,
+            platform_fonts::list_fonts,
+            platform_fonts::list_system_fonts,
+            platform_fonts::import_font,
+            platform_fonts::import_system_font,
+            platform_fonts::delete_font,
             platform_recovery::list_recoveries,
             platform_recovery::read_recovery,
             platform_recovery::write_recovery,

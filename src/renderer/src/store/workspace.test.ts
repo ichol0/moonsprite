@@ -1,14 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { MoonSpriteApi } from '@shared/types'
-import { animationMaskAt, compositeDocument, createDocument, createLayer, createLayerMask, ensureLayerCoversCanvas, getActiveLayer, isLayerEffectivelyLocked, isLayerEffectivelyVisible, readLayerColor, readLayerColorAt, writeLayerColor } from '@/core/document'
+import { animationMaskAt, compositeDocument, createDocument, createLayer, createLayerMask, ensureLayerCoversCanvas, getActiveLayer, isLayerEffectivelyLocked, isLayerEffectivelyVisible, layerContentBounds, readLayerColor, readLayerColorAt, writeLayerColor } from '@/core/document'
 import { beginPixelEdit, recordPixel, revertPixelEdit } from '@/core/history'
 import { packColor, relativeLuminanceColor } from '@/core/raster'
 import { applySelectionTransform, applySelectionTranslationPreview, captureSelectionTransform, paintBrush, selectionTranslationPreviewEdit } from '@/core/tools'
 import { builtInPalettes } from '@/core/built-in-palettes'
 import { createProceduralBrush } from '@/core/brushes'
-import { addBlankAnimationFrame, animationCelAt, animationCelKey, ensureAnimationDocument, resolveAnimationCel } from '@/core/animation'
+import { addBlankAnimationFrame, animationCelAt, animationCelKey, ensureAnimationDocument, resolveAnimationCel, setAnimationCelOffsetsForKeys } from '@/core/animation'
 import { buildLayerPanelTree } from '@/core/layer-panel-layout'
-import { transformSelectionMask } from '@/core/selection'
+import { transformedSelectionBounds, transformSelectionMask } from '@/core/selection'
 import { registerViewPreviewFlusher } from '@/core/view-preview-lifecycle'
 import { RECENT_EXPORT_PATHS_STORAGE_KEY } from '@/core/export-settings'
 import { decodeProject, encodeProject, registerProjectSaveBaseline } from '@/core/project-format'
@@ -21,6 +21,41 @@ import { useWorkspace } from './workspace'
 const transparent = { r: 0, g: 0, b: 0, a: 0 }
 const red = { r: 255, g: 0, b: 0, a: 255 }
 const blue = { r: 0, g: 80, b: 255, a: 255 }
+
+class MockTextCanvasContext {
+  font = ''
+  textBaseline: CanvasTextBaseline = 'alphabetic'
+  fillStyle: string | CanvasGradient | CanvasPattern = ''
+  private drawX = 0
+  private drawY = 0
+  measureText(text: string): TextMetrics {
+    return { width: text.length * 6, actualBoundingBoxAscent: 8, actualBoundingBoxDescent: 2 } as TextMetrics
+  }
+  fillText(_text: string, x: number, y: number): void { this.drawX = Math.round(x); this.drawY = Math.round(y) }
+  getImageData(_x: number, _y: number, width: number, height: number): ImageData {
+    const data = new Uint8ClampedArray(width * height * 4)
+    const offset = (this.drawY * width + this.drawX) * 4
+    if (offset >= 0 && offset + 3 < data.length) data.set([12, 34, 56, 255], offset)
+    return { data, width, height, colorSpace: 'srgb' } as ImageData
+  }
+}
+
+class MockTextCanvas {
+  private readonly context = new MockTextCanvasContext()
+  constructor(public width: number, public height: number) {}
+  getContext(): MockTextCanvasContext { return this.context }
+}
+
+const textData = (text: string, color = { r: 12, g: 34, b: 56, a: 255 }) => ({
+  text,
+  fontFamily: 'Consolas',
+  fontSize: 16,
+  lineSpacing: 0,
+  letterSpacing: 0,
+  spacingMode: 'font' as const,
+  antialias: 'pixel' as const,
+  color
+})
 
 function installApi(overrides: Partial<MoonSpriteApi> = {}): MoonSpriteApi {
   const api = {
@@ -38,9 +73,253 @@ function installApi(overrides: Partial<MoonSpriteApi> = {}): MoonSpriteApi {
 
 beforeEach(() => {
   installApi()
+  vi.stubGlobal('OffscreenCanvas', MockTextCanvas)
   localStorage.clear()
   saveProgress.dismiss()
   useWorkspace.setState({ sessions: [], activeId: null, message: null, saveProgress: null, dialog: null })
+})
+
+describe('editable text layers', () => {
+  it('shows a draft text layer immediately and records history only when committed', () => {
+    const document = createDocument('text draft', 32, 24, 'rgba')
+    const originalLayerId = document.activeLayerId
+    useWorkspace.getState().addSession(document)
+
+    const draft = useWorkspace.getState().beginTextLayerDraft(textData('M'), 4, 6)
+    expect(draft).not.toBeNull()
+    expect(document.layers.find((layer) => layer.id === draft!.layerId)).toMatchObject({ kind: 'text', name: 'M' })
+    expect(useWorkspace.getState().sessions[0].history.canUndo).toBe(false)
+
+    useWorkspace.getState().updateTextLayerDraft(draft!.layerId, draft!.frameId, textData('Moon'), 4, 6)
+    expect(animationCelAt(ensureAnimationDocument(document), draft!.layerId, draft!.frameId)?.text?.text).toBe('Moon')
+    useWorkspace.getState().commitTextLayerDraft(draft!.layerId)
+    expect(useWorkspace.getState().sessions[0].history.canUndo).toBe(true)
+    useWorkspace.getState().undo()
+    expect(document.layers.some((layer) => layer.id === draft!.layerId)).toBe(false)
+    expect(document.activeLayerId).toBe(originalLayerId)
+  })
+
+  it('removes a cancelled draft text layer without adding history', () => {
+    const document = createDocument('cancel text draft', 32, 24, 'rgba')
+    const originalLayerId = document.activeLayerId
+    useWorkspace.getState().addSession(document)
+
+    const draft = useWorkspace.getState().beginTextLayerDraft(textData('Moon'), 4, 6)!
+    useWorkspace.getState().cancelTextLayerDraft(draft.layerId)
+
+    expect(document.layers.some((layer) => layer.id === draft.layerId)).toBe(false)
+    expect(document.activeLayerId).toBe(originalLayerId)
+    expect(useWorkspace.getState().sessions[0].history.canUndo).toBe(false)
+  })
+
+  it('blocks raster editing tools while a text layer is selected', () => {
+    const document = createDocument('text tool boundary', 32, 24, 'rgba')
+    useWorkspace.getState().addSession(document)
+    useWorkspace.getState().createTextLayer(textData('Moon'), 4, 6)
+    useWorkspace.getState().setTool('text')
+
+    useWorkspace.getState().setTool('selection')
+    expect(useWorkspace.getState().sessions[0].tool).toBe('text')
+    expect(useWorkspace.getState().message).toBeTruthy()
+
+    useWorkspace.getState().setTool('move')
+    expect(useWorkspace.getState().sessions[0].tool).toBe('move')
+  })
+
+  it('creates, edits, converts, and restores editable text through history', () => {
+    const document = createDocument('text history', 32, 24, 'rgba')
+    const originalLayerId = document.activeLayerId
+    useWorkspace.getState().addSession(document)
+
+    useWorkspace.getState().createTextLayer(textData('Moon'), 5, 7)
+    let layer = getActiveLayer(document)
+    let cel = animationCelAt(ensureAnimationDocument(document), layer.id, ensureAnimationDocument(document).activeFrameId)!
+    const textLayerId = layer.id
+    expect(layer).toMatchObject({ id: textLayerId, kind: 'text', offsetX: 5, offsetY: 7 })
+    expect(cel.text).toEqual({ ...textData('Moon'), originX: 5, originY: 7 })
+
+    useWorkspace.getState().setTextCel(textLayerId, cel.frameId, textData('Sprite'), 9, 11)
+    cel = animationCelAt(ensureAnimationDocument(document), textLayerId, cel.frameId)!
+    expect(cel.text?.text).toBe('Sprite')
+    expect(cel.surface).toMatchObject({ offsetX: 9, offsetY: 11 })
+    useWorkspace.getState().undo()
+    expect(animationCelAt(ensureAnimationDocument(document), textLayerId, cel.frameId)?.text?.text).toBe('Moon')
+    useWorkspace.getState().redo()
+    expect(animationCelAt(ensureAnimationDocument(document), textLayerId, cel.frameId)?.text?.text).toBe('Sprite')
+
+    useWorkspace.getState().convertTextLayer(textLayerId)
+    expect(document.layers.find((candidate) => candidate.id === textLayerId)?.kind).toBeUndefined()
+    expect(animationCelAt(ensureAnimationDocument(document), textLayerId, cel.frameId)?.text).toBeUndefined()
+    useWorkspace.getState().undo()
+    expect(document.layers.find((candidate) => candidate.id === textLayerId)?.kind).toBe('text')
+    expect(animationCelAt(ensureAnimationDocument(document), textLayerId, cel.frameId)?.text?.text).toBe('Sprite')
+    useWorkspace.getState().undo()
+    useWorkspace.getState().undo()
+    expect(document.layers.some((candidate) => candidate.id === textLayerId)).toBe(false)
+    expect(document.activeLayerId).toBe(originalLayerId)
+    useWorkspace.getState().redo()
+    expect(document.layers.find((candidate) => candidate.id === textLayerId)?.kind).toBe('text')
+  })
+
+  it('preserves text cel metadata when duplicating a text layer', () => {
+    const document = createDocument('text duplicate', 32, 24, 'rgba')
+    useWorkspace.getState().addSession(document)
+    useWorkspace.getState().createTextLayer(textData('Copy me'), 2, 3)
+    const sourceLayerId = document.activeLayerId
+
+    useWorkspace.getState().duplicateActiveLayer()
+
+    const duplicate = getActiveLayer(document)
+    const duplicateCel = animationCelAt(ensureAnimationDocument(document), duplicate.id, ensureAnimationDocument(document).activeFrameId)!
+    expect(duplicate.id).not.toBe(sourceLayerId)
+    expect(duplicate.kind).toBe('text')
+    expect(duplicateCel.text).toEqual({ ...textData('Copy me'), originX: 2, originY: 3 })
+  })
+
+  it('deletes a selected text layer with the normal layer deletion command and restores it on undo', () => {
+    const document = createDocument('text deletion', 32, 24, 'rgba')
+    useWorkspace.getState().addSession(document)
+    useWorkspace.getState().createTextLayer(textData('Delete me'), 2, 3)
+    const textLayerId = document.activeLayerId
+    const frameId = ensureAnimationDocument(document).activeFrameId
+
+    useWorkspace.getState().deleteSelectedLayers()
+
+    expect(document.layers.some((layer) => layer.id === textLayerId)).toBe(false)
+    expect(animationCelAt(ensureAnimationDocument(document), textLayerId, frameId)).toBeNull()
+
+    useWorkspace.getState().undo()
+    expect(document.layers.find((layer) => layer.id === textLayerId)?.kind).toBe('text')
+    expect(animationCelAt(ensureAnimationDocument(document), textLayerId, frameId)?.text?.text).toBe('Delete me')
+  })
+
+  it('keeps editable text at its moved cel position when it is edited again', () => {
+    const document = createDocument('text movement', 64, 48, 'rgba')
+    useWorkspace.getState().addSession(document)
+    useWorkspace.getState().createTextLayer(textData('Moon'), 5, 7)
+    const layer = getActiveLayer(document)
+    const timeline = ensureAnimationDocument(document)
+    const key = animationCelKey(layer.id, timeline.activeFrameId)
+
+    setAnimationCelOffsetsForKeys(document, { [key]: { x: 19, y: 23 } })
+    const cel = animationCelAt(timeline, layer.id, timeline.activeFrameId)!
+    expect(cel.text).toMatchObject({ originX: 19, originY: 23 })
+
+    useWorkspace.getState().setTextCel(layer.id, timeline.activeFrameId, { ...cel.text!, text: 'Sprite' }, cel.surface!.offsetX, cel.surface!.offsetY)
+    expect(cel.surface).toMatchObject({ offsetX: 19, offsetY: 23 })
+    expect(cel.text).toMatchObject({ text: 'Sprite', originX: 19, originY: 23 })
+  })
+
+  it('starts Ctrl+T selection transforms for editable text and keeps them through edit and history', () => {
+    const document = createDocument('text transform', 64, 48, 'rgba')
+    useWorkspace.getState().addSession(document)
+    useWorkspace.getState().createTextLayer(textData('Moon'), 5, 7)
+    const layer = getActiveLayer(document)
+    const timeline = ensureAnimationDocument(document)
+    const cel = animationCelAt(timeline, layer.id, timeline.activeFrameId)!
+
+    useWorkspace.getState().beginLayerTransform()
+    let session = useWorkspace.getState().sessions[0]
+    const before = session.selection!
+    expect(session.tool).toBe('selection')
+    expect(before).toEqual(layerContentBounds(document, layer))
+
+    const target = { ...before, x: 11, y: 13, width: 2, height: 3 }
+    const source = captureSelectionTransform(document, before)!
+    const preview = applySelectionTransform(document, source, target, 45)
+    const transformed = transformSelectionMask(source.selection, target, document.width, document.height, 45, undefined, false)!
+    useWorkspace.getState().beginFloatingSelectionTransform(source, preview, before, transformed, false, 'Transform text', null, target, 45)
+    useWorkspace.getState().commitFloatingPaste()
+
+    expect(cel.text?.transforms).toEqual([{ source: before, target, angle: 45 }])
+    useWorkspace.getState().setTextCel(layer.id, timeline.activeFrameId, { ...cel.text!, text: 'Sprite' })
+    const renderedBounds = transformedSelectionBounds(target, 45)
+    expect(cel.surface).toMatchObject({ offsetX: renderedBounds.x, offsetY: renderedBounds.y })
+    expect(cel.surface!.width).toBeGreaterThanOrEqual(renderedBounds.width)
+    expect(cel.surface!.height).toBeGreaterThanOrEqual(renderedBounds.height)
+    useWorkspace.getState().undo()
+    useWorkspace.getState().undo()
+    expect(cel.text?.transforms).toBeUndefined()
+    useWorkspace.getState().redo()
+    expect(cel.text?.transforms).toEqual([{ source: before, target, angle: 45 }])
+  })
+
+  it('resizes selected boxed text directly without adding an editable glyph transform', () => {
+    const document = createDocument('boxed text transform', 64, 48, 'rgba')
+    useWorkspace.getState().addSession(document)
+    useWorkspace.getState().createTextLayer({ ...textData('MoonSprite'), boxWidth: 18, boxHeight: 14 }, 5, 7)
+    const layer = getActiveLayer(document)
+    const timeline = ensureAnimationDocument(document)
+    const cel = animationCelAt(timeline, layer.id, timeline.activeFrameId)!
+
+    useWorkspace.getState().beginLayerTransform()
+    let session = useWorkspace.getState().sessions[0]
+    expect(session.selection).toBeNull()
+    expect(session.textBoxTransform).toBeNull()
+
+    useWorkspace.getState().beginSelectedTextBoxTransform()
+    session = useWorkspace.getState().sessions[0]
+    expect(session.textBoxTransform?.bounds).toEqual({ x: 5, y: 7, width: 18, height: 14 })
+    useWorkspace.getState().previewTextBoxTransform({ x: 8, y: 9, width: 24, height: 16 })
+    expect(cel.text).toMatchObject({ originX: 8, originY: 9, boxWidth: 24, boxHeight: 16 })
+    expect(cel.text?.transforms).toBeUndefined()
+    useWorkspace.getState().cancelTextBoxTransform()
+    expect(cel.text).toMatchObject({ originX: 5, originY: 7, boxWidth: 18, boxHeight: 14 })
+
+    useWorkspace.getState().beginSelectedTextBoxTransform()
+    useWorkspace.getState().previewTextBoxTransform({ x: 10, y: 11, width: 28, height: 18 })
+    useWorkspace.getState().commitTextBoxTransform({ x: 10, y: 11, width: 28, height: 18 })
+    session = useWorkspace.getState().sessions[0]
+    expect(session.textBoxTransform).toBeNull()
+    expect(cel.text).toMatchObject({ originX: 10, originY: 11, boxWidth: 28, boxHeight: 18 })
+    expect(cel.text?.transforms).toBeUndefined()
+    useWorkspace.getState().undo()
+    expect(cel.text).toMatchObject({ originX: 5, originY: 7, boxWidth: 18, boxHeight: 14 })
+    useWorkspace.getState().redo()
+    expect(cel.text).toMatchObject({ originX: 10, originY: 11, boxWidth: 28, boxHeight: 18 })
+  })
+
+  it('restores text preview pixels without adding history', () => {
+    const document = createDocument('text preview', 32, 24, 'rgba')
+    useWorkspace.getState().addSession(document)
+    useWorkspace.getState().createTextLayer(textData('Moon'), 2, 3)
+    const layer = getActiveLayer(document)
+    const timeline = ensureAnimationDocument(document)
+    const cel = animationCelAt(timeline, layer.id, timeline.activeFrameId)!
+    const originalWidth = cel.surface!.width
+
+    const preview = useWorkspace.getState().previewTextCel(layer.id, timeline.activeFrameId, textData('MoonSprite'), 2, 3)
+    expect(preview).not.toBeNull()
+    expect(cel.surface!.width).toBeGreaterThan(originalWidth)
+    expect(cel.text?.text).toBe('MoonSprite')
+    useWorkspace.getState().restoreTextCelPreview(layer.id, timeline.activeFrameId, preview!)
+    expect(cel.surface!.width).toBe(originalWidth)
+    expect(cel.text?.text).toBe('Moon')
+    useWorkspace.getState().undo()
+    expect(document.layers.some((candidate) => candidate.id === layer.id)).toBe(false)
+  })
+
+  it('rejects text cel paste into a raster layer and raster cel paste into a text layer', () => {
+    const document = createDocument('text cel boundary', 32, 24, 'rgba')
+    const rasterLayerId = document.activeLayerId
+    useWorkspace.getState().addSession(document)
+    useWorkspace.getState().createTextLayer(textData('Text'), 1, 1)
+    const textLayerId = document.activeLayerId
+    const timeline = ensureAnimationDocument(document)
+    const frameId = timeline.activeFrameId
+
+    useWorkspace.getState().selectAnimationCell(animationCelKey(textLayerId, frameId))
+    useWorkspace.getState().copySelectedAnimationCels()
+    useWorkspace.getState().selectAnimationCell(animationCelKey(rasterLayerId, frameId))
+    useWorkspace.getState().pasteAnimationCels()
+    expect(animationCelAt(timeline, rasterLayerId, frameId)?.text).toBeUndefined()
+
+    useWorkspace.getState().selectAnimationCell(animationCelKey(rasterLayerId, frameId))
+    useWorkspace.getState().copySelectedAnimationCels()
+    useWorkspace.getState().selectAnimationCell(animationCelKey(textLayerId, frameId))
+    useWorkspace.getState().pasteAnimationCels()
+    expect(animationCelAt(timeline, textLayerId, frameId)?.text?.text).toBe('Text')
+  })
 })
 
 describe('gradient tool settings', () => {
@@ -1280,6 +1559,29 @@ describe('workspace history', () => {
     expect(session.view).toMatchObject({ zoom: 9, panX: 34, panY: -18, rotation: 45 })
     useWorkspace.getState().redo()
     expect(session.view).toMatchObject({ zoom: 9, panX: 34, panY: -18, rotation: 45 })
+  })
+
+  it('publishes a history entry region without forcing full content invalidation', () => {
+    const document = createDocument('history region', 8, 8, 'rgba')
+    useWorkspace.getState().addSession(document)
+    const session = useWorkspace.getState().sessions[0]
+
+    useWorkspace.getState().pushHistory({
+      label: 'move layer',
+      bytes: 32,
+      undo: () => {},
+      redo: () => {},
+      invalidation: { kind: 'region', rect: { x: 1, y: 2, width: 3, height: 4 } },
+      affectedLayerIds: [document.activeLayerId],
+      requiresAnimationSync: false
+    })
+
+    expect(session.contentInvalidation).toEqual({
+      kind: 'region',
+      rect: { x: 1, y: 2, width: 3, height: 4 },
+      fromRevision: 0,
+      revision: 1
+    })
   })
 
   it('flushes a pending zoom preview before preserving the view for undo', () => {

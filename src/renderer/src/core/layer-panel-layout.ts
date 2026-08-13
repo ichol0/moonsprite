@@ -159,6 +159,13 @@ export const buildLayerPanelTree = ({ layers, groups, collapsedGroupIds = [] }: 
   return nodes
 }
 
+/** Returns raster layer ids from visually topmost to bottommost, including group members. */
+export const layerIdsInVisualStackOrder = (
+  layers: readonly LayerPanelLayerRef[],
+  groups: readonly LayerPanelGroupRef[]
+): string[] => buildLayerPanelTree({ layers, groups })
+  .flatMap((node) => node.kind === 'layer' ? [node.id] : [])
+
 const nodeDepth = (nodes: readonly LayerPanelNode[], kind: LayerPanelNode['kind'], id: string): number =>
   nodes.find((node) => node.kind === kind && node.id === id)?.depth ?? 0
 

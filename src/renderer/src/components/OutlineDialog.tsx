@@ -104,7 +104,7 @@ export function OutlineDialog({ open, session, onClose }: { open: boolean; sessi
   const quickShapes = quickShapeIds.map((id) => ({ id, label: t(`outline.shape.${id}`) }))
 
   return <div className="modal-backdrop" role="presentation">
-    <ModalShell as="form" storageKey="outline" defaultWidth={560} defaultHeight={540} className="outline-modal" onSubmit={(event) => { event.preventDefault(); submit() }} onKeyDown={(event) => {
+    <ModalShell as="form" storageKey="outline" defaultWidth={560} defaultHeight={470} className="outline-modal" onSubmit={(event) => { event.preventDefault(); submit() }} onKeyDown={(event) => {
       if (event.key !== 'Enter' || event.nativeEvent.isComposing || (event.target as HTMLElement).tagName === 'TEXTAREA') return
       event.stopPropagation()
       if (event.defaultPrevented) return

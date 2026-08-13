@@ -1,5 +1,5 @@
-import type { TextareaHTMLAttributes } from 'react'
+import { forwardRef, type TextareaHTMLAttributes } from 'react'
 
-export function TextAreaInput({ className = '', ...props }: TextareaHTMLAttributes<HTMLTextAreaElement>) {
-  return <textarea {...props} className={`text-area-input ${className}`.trim()} />
-}
+export const TextAreaInput = forwardRef<HTMLTextAreaElement, TextareaHTMLAttributes<HTMLTextAreaElement>>(function TextAreaInput({ className = '', ...props }, ref) {
+  return <textarea ref={ref} {...props} className={`text-area-input ${className}`.trim()} />
+})

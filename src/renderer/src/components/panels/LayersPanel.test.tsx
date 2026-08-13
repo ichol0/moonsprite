@@ -551,6 +551,35 @@ describe('LayersPanel animation', () => {
     vi.useRealTimers()
   })
 
+  it('updates the cel range outline continuously while dragging across cells', () => {
+    const document = createDocument('animation live cel range preview', 1, 1, 'rgba')
+    const secondLayer = createLayer('second', 1, 1, 'rgba')
+    document.layers.push(secondLayer)
+    useWorkspace.getState().addSession(document)
+    const session = useWorkspace.getState().sessions[0]
+    const { container, rerender } = render(<LayersPanel session={session} docked />)
+
+    useWorkspace.getState().duplicateAnimationFrame()
+    rerender(<LayersPanel session={session} docked />)
+
+    const timeline = ensureAnimationDocument(document)
+    const firstKey = animationCelKey(document.layers[0].id, timeline.frames[0].id)
+    const lastKey = animationCelKey(secondLayer.id, timeline.frames[1].id)
+    const firstCell = container.querySelector<HTMLElement>(`[data-animation-cel-key="${firstKey}"]`)!
+    const lastCell = container.querySelector<HTMLElement>(`[data-animation-cel-key="${lastKey}"]`)!
+
+    fireEvent.pointerDown(firstCell, { button: 0, pointerId: 1, clientX: 10, clientY: 50 })
+    fireEvent.pointerMove(lastCell, { pointerId: 1, clientX: 50, clientY: 90 })
+
+    const outline = container.querySelector<HTMLElement>('[data-animation-cel-selection]')
+    expect(outline?.style.getPropertyValue('--animation-frame-span')).toBe('2')
+    expect(outline?.style.getPropertyValue('--animation-row-span')).toBe('2')
+    expect(session.selectedAnimationCellKeys).toHaveLength(0)
+
+    fireEvent.pointerUp(lastCell, { pointerId: 1, clientX: 50, clientY: 90 })
+    expect(session.selectedAnimationCellKeys).toHaveLength(4)
+  })
+
   it('extends a selected frame range while the pointer moves through cel rows', () => {
     vi.useFakeTimers()
     const document = createDocument('animation frame range through cells', 1, 1, 'rgba')

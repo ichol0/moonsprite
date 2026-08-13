@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { blendWithMode } from './raster'
 import { activateAnimationFrame, duplicateAnimationFrame, ensureAnimationDocument } from './animation'
 import { compositePixelWithLayerColor, compositeRegion, createCompositePointReplacementSampler, createCompositePointSampler, createCompositeSampler, createDocument, createLayer, createLayerMask, createNormalCompositePointReplacementSampler, createNormalCompositePointSampler, DocumentCompositeCache, layerContentBounds, markLayerContentChanged, normalCompositeLayers, readLayerColor, readLayerColorAt, readLayerMaskDisplayColorAt, renderLayerMaskRegion, resizeDocumentAt, resizeDocumentImage, writeLayerColor } from './document'
+import { installRuntimeRaster, surfacePixelsMaterialized } from './runtime-raster'
 
 const red = { r: 255, g: 0, b: 0, a: 255 }
 const blue = { r: 0, g: 0, b: 255, a: 128 }
@@ -645,6 +646,22 @@ describe('document compositing', () => {
   it('returns no content bounds for a transparent layer', () => {
     const document = createDocument('empty bounds', 3, 2, 'indexed')
     expect(layerContentBounds(document, document.layers[0])).toBeNull()
+  })
+
+  it('reads sparse runtime content bounds without materializing the full layer', () => {
+    const document = createDocument('runtime bounds', 4096, 2048, 'rgba')
+    const layer = document.layers[0]
+    layer.offsetX = 10
+    layer.offsetY = -4
+    installRuntimeRaster(layer, {
+      kind: 'sparse-tiles-v1', format: 'rgba', width: layer.width, height: layer.height, tileSize: 2,
+      data: new Uint8Array([0, 0, 0, 0, 255, 0, 0, 255, 0, 0, 0, 0, 0, 0, 0, 0]),
+      tileOffsets: new Int32Array(Math.ceil(layer.width / 2) * Math.ceil(layer.height / 2)).fill(0)
+    })
+    layer.runtimeRaster!.tileOffsets[1] = 1
+
+    expect(layerContentBounds(document, layer)).toEqual({ x: 13, y: -4, width: 1, height: 1 })
+    expect(surfacePixelsMaterialized(layer)).toBe(false)
   })
 
   it('permanently crops layer pixels outside the resized canvas when requested', () => {

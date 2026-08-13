@@ -505,6 +505,35 @@ describe('CanvasCompositeCache', () => {
     expect(surface.context.putImageData).toHaveBeenLastCalledWith(expect.objectContaining({ width: 3, height: 3 }), 127, 127)
   })
 
+  it('keeps the composite surface while a moved layer patches its old and new bounds', () => {
+    const context = {
+      save: vi.fn(), restore: vi.fn(), beginPath: vi.fn(), rect: vi.fn(), clip: vi.fn(),
+      translate: vi.fn(), scale: vi.fn(), drawImage: vi.fn(), imageSmoothingEnabled: true
+    }
+    const document = createDocument('moved layer dirty bounds', 256, 256, 'rgba')
+    const layer = document.layers[0]
+    writeLayerColor(document, layer, 10 + 10 * layer.width, { r: 255, g: 0, b: 0, a: 255 })
+    const cache = new CanvasCompositeCache()
+    const options = {
+      context: context as never,
+      document,
+      view: { zoom: 1, panX: 0, panY: 0, rotation: 0, mirrored: false, mirroredVertical: false, showGrid: false, relativeLuminance: false },
+      originX: 0, originY: 0, canvasWidth: 256, canvasHeight: 256,
+      fromX: 0, fromY: 0, toX: 256, toY: 256, revision: 1, contentRevision: 1
+    }
+    cache.draw(options)
+    const surface = context.drawImage.mock.calls.at(-1)?.[0] as MockOffscreenCanvas
+
+    layer.offsetX = 20
+    cache.invalidateRect({ x: 10, y: 10, width: 1, height: 1 }, document.width, document.height)
+    cache.invalidateRect({ x: 30, y: 10, width: 1, height: 1 }, document.width, document.height)
+    cache.draw(options)
+
+    expect(context.drawImage.mock.calls.at(-1)?.[0]).toBe(surface)
+    expect(surface.context.putImageData).toHaveBeenCalledWith(expect.objectContaining({ width: 1, height: 1 }), 10, 10)
+    expect(surface.context.putImageData).toHaveBeenCalledWith(expect.objectContaining({ width: 1, height: 1 }), 30, 10)
+  })
+
   it('reuses cached frame surfaces while only the active frame revision changes', () => {
     const context = {
       save: vi.fn(), restore: vi.fn(), beginPath: vi.fn(), rect: vi.fn(), clip: vi.fn(),

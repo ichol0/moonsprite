@@ -1,6 +1,6 @@
 export type ColorMode = 'rgba' | 'indexed'
 export type ImageResizeInterpolation = 'nearest' | 'smooth'
-export type ToolId = 'pencil' | 'airbrush' | 'eraser' | 'fill' | 'eyedropper' | 'selection' | 'shape' | 'line' | 'move' | 'hand' | 'zoom' | 'rotate'
+export type ToolId = 'pencil' | 'airbrush' | 'eraser' | 'fill' | 'eyedropper' | 'selection' | 'shape' | 'line' | 'text' | 'move' | 'hand' | 'zoom' | 'rotate'
 export type MoveKind = 'move' | 'slice'
 export type BrushShape = 'round' | 'square' | 'line'
 export type BrushTexture = 'solid' | 'cracks' | 'wood' | 'grain'
@@ -70,6 +70,18 @@ export interface BrushListing {
   directoryPath: string
   brushes: StoredBrush[]
 }
+
+export interface StoredFont {
+  id: string
+  family: string
+  filePath: string
+  imported: boolean
+}
+
+export interface FontListing {
+  directoryPath: string
+  fonts: StoredFont[]
+}
 export type ShapeKind = 'rectangle' | 'ellipse' | 'rectangle-outline' | 'ellipse-outline' | 'freeform' | 'polygon'
 export type LineKind = 'line' | 'curve'
 export interface ShapeRatio { width: number; height: number }
@@ -117,6 +129,49 @@ export interface RgbaColor {
   a: number
 }
 
+export type TextAntialiasMode = 'pixel' | 'smooth'
+export type TextSpacingMode = 'font' | 'actual'
+
+export interface TextStyleRun {
+  start: number
+  end: number
+  fontSize?: number
+  lineSpacing?: number
+  letterSpacing?: number
+  color?: RgbaColor
+}
+
+export interface TextCelTransform {
+  source: SelectionRect
+  target: SelectionRect
+  angle: number
+  shear?: {
+    axis: 'x' | 'y'
+    edge: 'n' | 'e' | 's' | 'w'
+    amount: number
+  }
+}
+
+export interface TextCelData {
+  text: string
+  fontFamily: string
+  fontSize: number
+  lineSpacing: number
+  letterSpacing: number
+  spacingMode: TextSpacingMode
+  antialias: TextAntialiasMode
+  color: RgbaColor
+  styleRuns?: TextStyleRun[]
+  /** Original insertion point used when editable text is rasterized again. */
+  originX?: number
+  originY?: number
+  /** Optional fixed canvas area for wrapped paragraph text. */
+  boxWidth?: number
+  boxHeight?: number
+  /** Ordered transforms keep Ctrl+T edits reproducible after changing the text. */
+  transforms?: TextCelTransform[]
+}
+
 export interface PaletteEntry {
   id: number
   name: string
@@ -143,6 +198,8 @@ export interface RgbaLayer {
   displayColor?: RgbaColor
   /** Optional user-facing note shown when hovering the layer row. */
   description?: string
+  /** Editable text layers retain raster surfaces for the existing compositor. */
+  kind?: 'text'
   visible: boolean
   locked: boolean
   opacity: number
@@ -168,6 +225,8 @@ export interface IndexedLayer {
   displayColor?: RgbaColor
   /** Optional user-facing note shown when hovering the layer row. */
   description?: string
+  /** Editable text layers retain raster surfaces for the existing compositor. */
+  kind?: 'text'
   visible: boolean
   locked: boolean
   opacity: number
@@ -258,6 +317,8 @@ export interface AnimationCel {
   /** Cel 独立的不透明度，未设置时沿用图层不透明度。 */
   opacity?: number
   surface?: AnimationCelSurface
+  /** Editable source data for text cels. The surface remains the rendered cache. */
+  text?: TextCelData
   /** Independent grayscale surface for this cell; transparent pixels are neutral/unpainted. */
   mask?: LayerMask
 }
@@ -322,7 +383,7 @@ export interface DocumentSlice {
 }
 
 export interface SpriteDocument {
-  schemaVersion: 1 | 2 | 3 | 4 | 5 | 6
+  schemaVersion: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9
   id: string
   name: string
   width: number
@@ -574,6 +635,11 @@ export interface MoonSpriteApi {
   saveBrush(name: string, data: Uint8Array, intrinsicSize?: boolean, sourceX?: number, sourceY?: number): Promise<StoredBrush>
   deleteBrush(id: string): Promise<void>
   openBrushFolder(): Promise<void>
+  listFonts(): Promise<FontListing>
+  listSystemFonts(): Promise<StoredFont[]>
+  importFont(): Promise<StoredFont | null>
+  importSystemFont(id: string): Promise<StoredFont>
+  deleteFont(id: string): Promise<void>
   listRecoveries(): Promise<RecoveryRecord[]>
   readRecovery(id: string): Promise<Uint8Array>
   writeRecovery(id: string, name: string, data: Uint8Array): Promise<void>

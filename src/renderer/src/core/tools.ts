@@ -1,4 +1,4 @@
-import type { BrushPaintMode, BrushShape, BrushTexture, GradientDither, ImageBrush, ImageBrushSettings, OutlineDirection, OutlineDirections, OutlineKernel, OutlinePosition, RasterLayer, RgbaColor, SelectionMask, SelectionRect, ShapeKind, SpriteDocument } from '@shared/types'
+import type { AnimationCelSurface, BrushPaintMode, BrushShape, BrushTexture, GradientDither, ImageBrush, ImageBrushSettings, OutlineDirection, OutlineDirections, OutlineKernel, OutlinePosition, RasterLayer, RgbaColor, SelectionMask, SelectionRect, ShapeKind, SpriteDocument } from '@shared/types'
 import { compositeRegion, ensureLayerCoversCanvas, expandLayerToRect, findOrAddPaletteColor, getActiveLayer, getLayer, getLayerStorageOrigin, getPaletteEntry, isLayerEffectivelyLocked, layerIndexAt, layerIndexAtStoragePoint, markLayerContentChanged, readLayerColor, readLayerColorAt, readLayerPacked, readLayerPackedAt, writeLayerPacked, writeLayerPackedRun } from './document'
 import { beginPixelEdit, preparePixelEdit, recordPixel, recordPixelKnownCurrent, type PixelEdit } from './history'
 import { blendOver, isInBounds, packColor, pixelIndex, unpackColor } from './raster'
@@ -1702,6 +1702,88 @@ function selectionTransformCells(document: SpriteDocument, sourceData: Selection
     }
   }
   return [...cells.values()]
+}
+
+export function transformRgbaSelectionSurface(
+  surface: Extract<AnimationCelSurface, { format: 'rgba' }>,
+  sourceSelection: SelectionRect,
+  target: SelectionRect,
+  angle = 0,
+  shear?: SelectionShearTransform
+): Extract<AnimationCelSurface, { format: 'rgba' }> {
+  const destinationBounds = transformedSelectionBounds(target, angle, shear)
+  const left = Math.min(sourceSelection.x, destinationBounds.x)
+  const top = Math.min(sourceSelection.y, destinationBounds.y)
+  const right = Math.max(sourceSelection.x + sourceSelection.width, destinationBounds.x + destinationBounds.width)
+  const bottom = Math.max(sourceSelection.y + sourceSelection.height, destinationBounds.y + destinationBounds.height)
+  const shiftX = -left
+  const shiftY = -top
+  const width = Math.max(1, right - left)
+  const height = Math.max(1, bottom - top)
+  const virtualDocument = { width, height, palette: [] } as unknown as SpriteDocument
+  const virtualLayer: RasterLayer = {
+    id: 'text-transform', name: '', visible: true, locked: false, opacity: 1, blendMode: 'normal',
+    format: 'rgba', width: 1, height: 1, offsetX: 0, offsetY: 0, pixels: new Uint8ClampedArray(4)
+  }
+  const shiftedSource: SelectionMask = {
+    x: sourceSelection.x + shiftX,
+    y: sourceSelection.y + shiftY,
+    width: sourceSelection.width,
+    height: sourceSelection.height
+  }
+  const values = new Uint32Array(shiftedSource.width * shiftedSource.height)
+  const selectedOffsets = new Uint32Array(values.length)
+  const opaqueOffsets: number[] = []
+  const opaqueIndices: number[] = []
+  const opaqueValues: number[] = []
+  for (let localY = 0; localY < shiftedSource.height; localY += 1) {
+    for (let localX = 0; localX < shiftedSource.width; localX += 1) {
+      const offset = localY * shiftedSource.width + localX
+      selectedOffsets[offset] = offset
+      const sourceX = sourceSelection.x + localX - surface.offsetX
+      const sourceY = sourceSelection.y + localY - surface.offsetY
+      if (sourceX < 0 || sourceY < 0 || sourceX >= surface.width || sourceY >= surface.height) continue
+      const pixelOffset = (sourceY * surface.width + sourceX) * 4
+      const value = surface.pixels[pixelOffset]
+        | surface.pixels[pixelOffset + 1] << 8
+        | surface.pixels[pixelOffset + 2] << 16
+        | surface.pixels[pixelOffset + 3] << 24
+      values[offset] = value >>> 0
+      if (surface.pixels[pixelOffset + 3] === 0) continue
+      opaqueOffsets.push(offset)
+      opaqueIndices.push(pixelIndex(width, shiftedSource.x + localX, shiftedSource.y + localY))
+      opaqueValues.push(value >>> 0)
+    }
+  }
+  const sourceData: SelectionTransformSource = {
+    selection: shiftedSource,
+    values,
+    selectedOffsets,
+    opaqueOffsets: Uint32Array.from(opaqueOffsets),
+    opaqueIndices: Uint32Array.from(opaqueIndices),
+    opaqueValues: Uint32Array.from(opaqueValues)
+  }
+  const shiftedTarget = { ...target, x: target.x + shiftX, y: target.y + shiftY }
+  const shiftedBounds = transformedSelectionBounds(shiftedTarget, angle, shear)
+  const pixels = new Uint8ClampedArray(shiftedBounds.width * shiftedBounds.height * 4)
+  for (const cell of selectionTransformCells(virtualDocument, sourceData, shiftedTarget, angle, shear, virtualLayer)) {
+    const localX = cell.x - shiftedBounds.x
+    const localY = cell.y - shiftedBounds.y
+    if (localX < 0 || localY < 0 || localX >= shiftedBounds.width || localY >= shiftedBounds.height) continue
+    const offset = (localY * shiftedBounds.width + localX) * 4
+    pixels[offset] = cell.value & 0xff
+    pixels[offset + 1] = (cell.value >>> 8) & 0xff
+    pixels[offset + 2] = (cell.value >>> 16) & 0xff
+    pixels[offset + 3] = (cell.value >>> 24) & 0xff
+  }
+  return {
+    format: 'rgba',
+    width: shiftedBounds.width,
+    height: shiftedBounds.height,
+    offsetX: shiftedBounds.x - shiftX,
+    offsetY: shiftedBounds.y - shiftY,
+    pixels
+  }
 }
 
 const isSymmetryRepresentative = (point: { x: number; y: number }, selection: SelectionMask, document: SpriteDocument, axes?: SymmetryAxes, center?: SymmetryCenter): boolean => {

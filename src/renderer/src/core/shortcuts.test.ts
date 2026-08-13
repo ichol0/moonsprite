@@ -71,6 +71,8 @@ describe('shortcut persistence boundary', () => {
     expect(DEFAULT_SHORTCUTS.mirrorView).toBe('Ctrl+Shift+M')
     expect(DEFAULT_SHORTCUTS.mirrorViewVertical).toBe('Ctrl+Shift+Alt+M')
     expect(DEFAULT_SHORTCUTS.lineConnectionMode).toBe('Shift')
+    expect(DEFAULT_SHORTCUTS.temporaryMove).toBe('Ctrl')
+    expect(SHORTCUT_GROUPS.modifiers).toContain('temporaryMove')
     expect(DEFAULT_SHORTCUTS.adjustmentCurves).toBe('Ctrl+M')
     expect(DEFAULT_SHORTCUTS.adjustmentHueSaturation).toBe('Ctrl+U')
     expect(DEFAULT_SHORTCUTS.adjustmentColorBalance).toBe('')

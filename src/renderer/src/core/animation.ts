@@ -1,6 +1,7 @@
-import type { AnimationCel, AnimationCelSurface, AnimationFrame, AnimationGroupMask, AnimationTimeline, LayerMask, PaletteEntry, RasterLayer, SelectionMask, SpriteDocument } from '@shared/types'
+import type { AnimationCel, AnimationCelSurface, AnimationFrame, AnimationGroupMask, AnimationTimeline, LayerMask, PaletteEntry, RasterLayer, SelectionMask, SpriteDocument, TextCelData } from '@shared/types'
 import { animationMaskAt, createId, getLayerStorageOrigin, resolveAnimationMask, setLayerStorageOrigin } from './document'
 import { assignRasterStorage, installRuntimeRaster, rasterStorageIdentity, runtimeRasterVisibleBounds, readSurfacePackedLocal } from './runtime-raster'
+import { normalizeTextCelData, translateTextCelData } from './text-raster'
 
 export const DEFAULT_FRAME_DURATION = 100
 export const MAX_ANIMATION_FRAME_DURATION = 60_000
@@ -109,6 +110,18 @@ const cloneLayerMaskForCel = (mask: LayerMask, ownerId: string, id = mask.id): L
   pixels: new Uint8ClampedArray(mask.pixels)
 })
 
+const cloneAnimationText = (text: TextCelData | undefined): TextCelData | undefined => text ? ({
+  ...text,
+  color: { ...text.color },
+  styleRuns: text.styleRuns?.map((run) => ({ ...run, color: run.color ? { ...run.color } : undefined })),
+  transforms: text.transforms?.map((transform) => ({
+    ...transform,
+    source: { ...transform.source },
+    target: { ...transform.target },
+    shear: transform.shear ? { ...transform.shear } : undefined
+  }))
+}) : undefined
+
 export const cloneAnimationGroupMask = (entry: AnimationGroupMask, groupId = entry.groupId, frameId = entry.frameId, maskId = entry.mask.id): AnimationGroupMask => ({
   groupId,
   frameId,
@@ -131,6 +144,7 @@ const normalizeCels = (value: unknown, frameIds: Set<string>): AnimationCel[] =>
     slots.add(slot)
     const surface = normalizeSurface(candidate.surface)
     const mask = normalizeLayerMask(candidate.mask, candidate.id)
+    const text = candidate.text && typeof candidate.text === 'object' ? normalizeTextCelData(candidate.text) : undefined
     result.push({
       id: candidate.id,
       layerId: candidate.layerId,
@@ -138,6 +152,7 @@ const normalizeCels = (value: unknown, frameIds: Set<string>): AnimationCel[] =>
       ...(typeof candidate.linkedCelId === 'string' ? { linkedCelId: candidate.linkedCelId } : {}),
       ...(Number.isFinite(candidate.opacity) ? { opacity: Math.max(0, Math.min(1, Number(candidate.opacity))) } : {}),
       ...(surface ? { surface } : {}),
+      ...(text ? { text } : {}),
       ...(mask ? { mask } : {})
     })
   }
@@ -443,6 +458,7 @@ export const resizeAnimationCelsAt = (document: SpriteDocument, offsetX: number,
 export const cloneAnimationCel = (cel: AnimationCel): AnimationCel => ({
   ...cel,
   surface: cel.surface ? cloneAnimationCelSurface(cel.surface) : undefined,
+  text: cloneAnimationText(cel.text),
   mask: cel.mask ? cloneLayerMaskForCel(cel.mask, cel.id) : undefined
 })
 
@@ -469,7 +485,7 @@ export const cloneDocumentForAnimationFrame = (document: SpriteDocument, frameId
       ? {
           ...document.animation,
           frames: document.animation.frames.map((frame) => ({ ...frame })),
-          cels: document.animation.cels.map((cel) => ({ ...cel, surface: cel.surface ? shareAnimationCelSurface(cel.surface) : undefined, mask: cel.mask ? { ...cel.mask, pixels: cel.mask.pixels } : undefined })),
+          cels: document.animation.cels.map((cel) => ({ ...cel, text: cloneAnimationText(cel.text), surface: cel.surface ? shareAnimationCelSurface(cel.surface) : undefined, mask: cel.mask ? { ...cel.mask, pixels: cel.mask.pixels } : undefined })),
           groupMasks: (document.animation.groupMasks ?? []).map((entry) => ({ ...entry, mask: { ...entry.mask, pixels: entry.mask.pixels } }))
         }
       : undefined
@@ -650,6 +666,7 @@ export const connectAnimationCels = (document: SpriteDocument, celIds: readonly 
       cel.linkedCelId = source.id
       cel.surface = source.surface
       cel.opacity = source.opacity
+      cel.text = source.text
       if (source.mask) {
         if (!cel.mask) cel.mask = cloneLayerMaskForCel(source.mask, cel.id, `mask-${cel.id}`)
         cel.mask.linkedMaskId = source.mask.id
@@ -684,6 +701,7 @@ export const disconnectAnimationCels = (document: SpriteDocument, celIds: readon
     const resolvedMask = animationMaskAt(timeline, cel.layerId, cel.frameId)
     cel.surface = source.surface ? cloneAnimationCelSurface(source.surface) : undefined
     cel.opacity = source.opacity
+    cel.text = cloneAnimationText(source.text)
     cel.mask = resolvedMask ? cloneLayerMaskForCel(resolvedMask, cel.id, `mask-${cel.id}`) : undefined
     cel.linkedCelId = null
     changed = true
@@ -767,6 +785,7 @@ export const setAnimationCelOffsetsForKeys = (document: SpriteDocument, offsets:
     if (!target) continue
     const cel = lookup.resolve(lookup.at(target.layerId, target.frameId))
     if (!cel?.surface) continue
+    if (cel.text) translateTextCelData(cel.text, offset.x - cel.surface.offsetX, offset.y - cel.surface.offsetY)
     cel.surface.offsetX = offset.x
     cel.surface.offsetY = offset.y
   }
@@ -875,6 +894,7 @@ export const cloneAnimationCelsForLayer = (document: SpriteDocument, sourceLayer
       frameId: frame.id,
       opacity: sourceCel?.opacity ?? targetLayer.opacity,
       surface: source ? cloneAnimationCelSurface(source) : blankSurfaceFromLayer(targetLayer),
+      text: cloneAnimationText(resolvedSourceCel?.text),
       mask: animationMaskAt(timeline, sourceLayerId, frame.id) ? cloneLayerMaskForCel(animationMaskAt(timeline, sourceLayerId, frame.id)!, celId, `mask-${celId}`) : undefined
     })
   }

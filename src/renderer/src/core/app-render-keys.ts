@@ -50,7 +50,7 @@ export const appCoordinatorRenderKey = (state: AppCoordinatorState): string => {
 }
 
 export const toolRailRenderKey = (session: DocumentSession | null): string => session
-  ? `${session.document.id}:${session.tool}:${session.moveKind}:${session.selectionKind}:${session.shapeKind}:${session.lineKind}:${session.fillKind ?? 'bucket'}`
+  ? `${session.document.id}:${session.tool}:${session.moveKind}:${session.selectionKind}:${session.shapeKind}:${session.lineKind}:${session.fillKind ?? 'bucket'}:${session.activeLayerMaskId ?? ''}:${session.selectedGroupIds.join(',')}:${session.selectedLayerIds.filter((id) => session.document.layers.some((layer) => layer.id === id && layer.kind === 'text')).join(',')}`
   : ''
 
 export const appMenuRenderKey = (session: DocumentSession | null): string => session

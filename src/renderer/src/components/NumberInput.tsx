@@ -36,7 +36,7 @@ export function NumberInput({ value, onValueChange, live = false, min, max, dens
     if (!Number.isFinite(next)) return typeof value === 'number' ? value : min ?? 0
     return Math.min(max ?? Number.POSITIVE_INFINITY, Math.max(min ?? Number.NEGATIVE_INFINITY, next))
   }
-  const adjust = (delta: number): void => onValueChange(normalize((typeof value === 'number' ? value : min ?? 0) + delta))
+  const adjust = (delta: number): void => onValueChange(normalize((typeof value === 'number' ? value : 0) + delta))
   const commit = (): void => {
     if (!draft.trim()) { setDraft(String(value)); return }
     const evaluated = evaluateNumericExpression(draft)

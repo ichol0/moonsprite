@@ -26,6 +26,14 @@ const defaultSecondary: RgbaColor = { r: 241, g: 244, b: 248, a: 255 }
 
 export const isBrushTool = (tool: ToolId): tool is BrushTool => BRUSH_TOOLS.includes(tool as BrushTool)
 
+const TEXT_LAYER_ALLOWED_TOOLS = new Set<ToolId>(['text', 'move', 'eyedropper', 'hand', 'zoom', 'rotate'])
+
+export const isToolAvailableForSession = (session: DocumentSession, tool: ToolId): boolean => {
+  if (session.activeLayerMaskId || session.selectedGroupIds.length > 0) return true
+  const textLayerSelected = session.selectedLayerIds.some((id) => session.document.layers.some((layer) => layer.id === id && layer.kind === 'text'))
+  return !textLayerSelected || TEXT_LAYER_ALLOWED_TOOLS.has(tool)
+}
+
 export const activeLayerMask = (session: DocumentSession): LayerMask | null => session.activeLayerMaskId
   ? findLayerMask(session.document, session.activeLayerMaskId)
   : null
@@ -232,6 +240,7 @@ export const sessionFromDocument = (document: SpriteDocument): DocumentSession =
     canvasResizePreview: null,
     outlinePreview: null,
     pendingPaste: null,
+    textBoxTransform: null,
     view: {
       zoom: 16,
       panX: 0,

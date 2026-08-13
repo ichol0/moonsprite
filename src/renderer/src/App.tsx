@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom'
 import { CheckCircle2, ExternalLink, FileOutput, GitFork } from 'lucide-react'
 import { PhysicalPosition, PhysicalSize } from '@tauri-apps/api/dpi'
 import { availableMonitors, getCurrentWindow } from '@tauri-apps/api/window'
-import type { ColorMode, ImageResizeInterpolation, StoredWorkspace, WorkspaceLayout } from '@shared/types'
+import type { ColorMode, ImageResizeInterpolation, StoredWorkspace, TextCelData, WorkspaceLayout } from '@shared/types'
 import type { AdjustmentKind } from '@/core/adjustments'
 import { compositePixelWithLayerColor, getActiveLayer, isLayerEffectivelyVisible, readLayerColorAt } from '@/core/document'
 import { blendOver, packColor, unpackColor } from '@/core/raster'
@@ -34,6 +34,8 @@ import { LatestReleaseDialog } from '@/components/LatestReleaseDialog'
 import { GridSettingsDialog } from '@/components/GridSettingsDialog'
 import { ProjectInfoDialog } from '@/components/ProjectInfoDialog'
 import { TimelapseDialog } from '@/components/TimelapseDialog'
+import { TextToolDialog } from '@/components/TextToolDialog'
+import { publishTextToolPreview, TEXT_TOOL_DIALOG_EVENT, type TextToolDialogDetail } from '@/components/text-tool-events'
 import { DialogHeader } from '@/components/DialogHeader'
 import { FormField } from '@/components/FormField'
 import { NumberInput } from '@/components/NumberInput'
@@ -47,6 +49,7 @@ import { adjacentFormInput } from '@/core/form-focus'
 import { saveProgress } from '@/core/save-progress'
 import { startDocumentDropService } from '@/platform/document-drop-service'
 import { APP_CHANNEL_LABEL } from '@/core/app-meta'
+import { cloneTextCelData, normalizeTextCelData, rasterizeText } from '@/core/text-raster'
 import { getRecentProjects, type RecentProject } from '@/core/home-history'
 import { RECENT_EXPORTS_CHANGED_EVENT, loadExportPresets, loadRecentExportPaths, parentDirectoryFromPath, saveExportPresets, withExportFileExtension, type ExportPreset } from '@/core/export-settings'
 import { EXPORT_FORMAT_PREFERENCE_KEY, EXPORT_SCALE_PRESETS_KEY, NEW_DOCUMENT_SIZE_PRESETS_KEY, RELATIVE_LUMINANCE_SCOPE_KEY, SAVE_FORMAT_PREFERENCE_KEY, imageExportKindForPreference, loadEditorPreferences, parseDocumentSizePresets, parseExportScalePresets, parseRelativeLuminanceScope, saveEditorPreferences, type RelativeLuminanceScope } from '@/core/file-preferences'
@@ -56,7 +59,7 @@ import { readStoredString, writeStoredString } from '@/core/storage'
 import { applyCursorPreferences } from '@/platform/cursor-theme'
 import { applyToolIconScale, applyUiScale } from '@/platform/ui-scale'
 import { ACTIVE_WORKSPACE_STORAGE_KEY, BOTTOM_DOCK_HEIGHT_STORAGE_KEY, COLOR_SQUARE_ANCHOR_STORAGE_KEY, COLOR_SQUARE_DOCK_STORAGE_KEY, constrainBottomDockHeight, constrainInspectorWidth, constrainLeftDockWidth, DEFAULT_PANEL_DOCKS, FLOATING_PANEL_STORAGE_KEYS, INSPECTOR_LAYOUT_STORAGE_KEY, INSPECTOR_WIDTH_STORAGE_KEY, LEFT_DOCK_WIDTH_STORAGE_KEY, PANEL_DOCKS_STORAGE_KEY, TOOL_RAIL_SIDE_STORAGE_KEY, loadBottomDockHeight, loadInspectorWidth, loadLeftDockWidth, loadMainWindowState, loadPanelDocks, loadPanelVisibility, loadToolRailSide, normalizeWorkspaceLayout, readLayoutStorage, saveMainWindowState, savePanelDocks, savePanelVisibility, writeLayoutStorage } from '@/core/workspace-layout-preferences'
-import { type ExportOptions, type SaveAsOptions, useWorkspace } from '@/store/workspace'
+import { type ExportOptions, type SaveAsOptions, type TextCelPreview, type TextLayerDraftTarget, useWorkspace } from '@/store/workspace'
 import { useI18n } from '@/components/I18nProvider'
 import './styles.css'
 
@@ -160,6 +163,9 @@ export default function App() {
   const [saveAsOpen, setSaveAsOpen] = useState(false)
   const [workspaceSaveOpen, setWorkspaceSaveOpen] = useState(false)
   const [workspaceManagerOpen, setWorkspaceManagerOpen] = useState(false)
+  const [textToolRequest, setTextToolRequest] = useState<TextToolDialogDetail | null>(null)
+  const textPreviewSurfaceRef = useRef<TextCelPreview | null>(null)
+  const textLayerDraftRef = useRef<(TextLayerDraftTarget & { documentId: string }) | null>(null)
   const [workspaceSaveName, setWorkspaceSaveName] = useState('')
   const [savedWorkspaces, setSavedWorkspaces] = useState<StoredWorkspace[]>([])
   const [activeWorkspaceId, setActiveWorkspaceId] = useState<string | null>(null)
@@ -215,6 +221,91 @@ export default function App() {
   const preferredInspectorWidthRef = useRef(inspectorWidth)
   const closeInProgress = useRef(false)
   const session = workspace.sessions.find((item) => item.document.id === workspace.activeId) ?? null
+
+  useEffect(() => {
+    const openTextDialog = (event: Event): void => {
+      const detail = (event as CustomEvent<TextToolDialogDetail>).detail
+      if (detail?.documentId) setTextToolRequest(detail)
+    }
+    window.addEventListener(TEXT_TOOL_DIALOG_EVENT, openTextDialog)
+    return () => window.removeEventListener(TEXT_TOOL_DIALOG_EVENT, openTextDialog)
+  }, [])
+
+  const textToolInitial = useMemo<Partial<TextCelData> | undefined>(() => {
+    if (!textToolRequest) return undefined
+    const target = workspace.sessions.find((item) => item.document.id === textToolRequest.documentId)
+    if (!target) return undefined
+    if (!textToolRequest.layerId || !textToolRequest.frameId) return {
+      color: { ...target.primaryColor },
+      ...(textToolRequest.width ? { boxWidth: textToolRequest.width } : {}),
+      ...(textToolRequest.height ? { boxHeight: textToolRequest.height } : {})
+    }
+    const cel = target?.document.animation?.cels.find((candidate) => candidate.layerId === textToolRequest.layerId && candidate.frameId === textToolRequest.frameId)
+    return cel?.text ? cloneTextCelData(cel.text) : { color: { ...target.primaryColor } }
+  }, [coordinatorRenderKey, textToolRequest, workspace.sessions])
+  const textToolBox = textToolRequest && textToolInitial?.boxWidth && textToolInitial.boxHeight ? {
+    x: textToolInitial.originX ?? textToolRequest.x,
+    y: textToolInitial.originY ?? textToolRequest.y,
+    width: textToolInitial.boxWidth,
+    height: textToolInitial.boxHeight
+  } : null
+  const clearTextToolPreview = useCallback((): void => {
+    const request = textToolRequest
+    if (!request) return
+    if (request.layerId && request.frameId && textPreviewSurfaceRef.current) {
+      useWorkspace.getState().setActive(request.documentId)
+      useWorkspace.getState().restoreTextCelPreview(request.layerId, request.frameId, textPreviewSurfaceRef.current)
+    }
+    textPreviewSurfaceRef.current = null
+    publishTextToolPreview({ documentId: request.documentId, surface: null, box: null })
+  }, [textToolRequest])
+  const changeTextTool = useCallback((value: TextCelData): void => {
+    const request = textToolRequest
+    if (!request) return
+    const state = useWorkspace.getState()
+    state.setActive(request.documentId)
+    const draft = textLayerDraftRef.current
+    const x = value.originX ?? request.x
+    const y = value.originY ?? request.y
+    const box = value.boxWidth && value.boxHeight ? { x, y, width: value.boxWidth, height: value.boxHeight } : null
+    if (draft?.documentId === request.documentId) {
+      state.updateTextLayerDraft(draft.layerId, draft.frameId, value, x, y)
+      publishTextToolPreview({ documentId: request.documentId, surface: null, box })
+      return
+    }
+    if (request.layerId || !value.text.length) return
+    const target = state.beginTextLayerDraft(value, x, y)
+    if (!target) return
+    textLayerDraftRef.current = { ...target, documentId: request.documentId }
+    setTextToolRequest((current) => current?.documentId === request.documentId ? { ...current, ...target } : current)
+    publishTextToolPreview({ documentId: request.documentId, surface: null, box })
+  }, [textToolRequest])
+  const previewTextTool = useCallback((value: TextCelData | null): void => {
+    const request = textToolRequest
+    if (!request) return
+    const state = useWorkspace.getState()
+    state.setActive(request.documentId)
+    const draft = textLayerDraftRef.current
+    const x = value?.originX ?? request.x
+    const y = value?.originY ?? request.y
+    const boxWidth = value?.boxWidth ?? request.width
+    const boxHeight = value?.boxHeight ?? request.height
+    const box = boxWidth && boxHeight ? { x, y, width: boxWidth, height: boxHeight } : null
+    if (draft?.documentId === request.documentId) {
+      publishTextToolPreview({ documentId: request.documentId, surface: null, box })
+      return
+    }
+    if (request.layerId && request.frameId) {
+      if (textPreviewSurfaceRef.current) state.restoreTextCelPreview(request.layerId, request.frameId, textPreviewSurfaceRef.current)
+      textPreviewSurfaceRef.current = value ? state.previewTextCel(request.layerId, request.frameId, value, x, y) : null
+      return
+    }
+    const target = state.sessions.find((item) => item.document.id === request.documentId)
+    const preview = value && target
+      ? rasterizeText(normalizeTextCelData({ ...value, originX: x, originY: y }, target.primaryColor), x, y).rgba
+      : null
+    publishTextToolPreview({ documentId: request.documentId, surface: preview, box })
+  }, [textToolRequest])
   const visibleDocumentPaneLayout = useMemo(() => {
     if (!session) return null
     return resolveDocumentPanePreviewLayout(documentPaneLayout, session.document.id, documentPanePreview)
@@ -965,6 +1056,7 @@ export default function App() {
         else if (openMenu) setOpenMenu(null)
         else if (hasOwnedPopover) window.dispatchEvent(new CustomEvent('moonsprite:close-dialog', { detail: { target: 'popover' } }))
         else if (session?.pendingPaste) workspace.cancelFloatingPaste()
+        else if (session?.textBoxTransform) workspace.cancelTextBoxTransform()
         else workspace.setSelection(null)
         event.preventDefault()
         event.stopPropagation()
@@ -1006,7 +1098,9 @@ export default function App() {
       if (matches('transform') && !isTextEntry) {
         event.preventDefault()
         event.stopPropagation()
-        if (!event.repeat) workspace.beginLayerTransform()
+        if (!event.repeat) {
+          workspace.beginLayerTransform()
+        }
         return
       }
       if (!isTextEntry && (matches('undo') || matches('redo'))) {
@@ -1197,12 +1291,18 @@ export default function App() {
       if (runCommand('tool.shape.ellipse', () => { workspace.setTool('shape'); workspace.setShapeKind('ellipse') })) return
       if (runCommand('tool.curve', () => { workspace.setTool('line'); workspace.setLineKind('curve') })) return
       if (runCommand('tool.line', () => { workspace.setTool('line'); workspace.setLineKind('line') })) return
+      if (runCommand('tool.text', () => workspace.setTool('text'))) return
       if (runCommand('tool.slice', () => { workspace.setTool('move'); workspace.setMoveKind('slice') })) return
       if (event.key === 'Enter' && session?.selection && shouldHandleGlobalSelectionEnter(outlineOpen, true)) {
         event.preventDefault()
         if (session.pendingPaste) workspace.commitFloatingPaste()
         const active = useWorkspace.getState().sessions.find((item) => item.document.id === session.document.id)
         if (active?.selection) workspace.commitSelectionChange(active.selection, null, t('app.selection.completeHistory'))
+        return
+      }
+      if (event.key === 'Enter' && session?.textBoxTransform) {
+        event.preventDefault()
+        workspace.cancelTextBoxTransform()
         return
       }
       const tool = TOOL_DEFINITIONS.find((item) => matches(`tool.${item.id}`))
@@ -1216,11 +1316,11 @@ export default function App() {
         event.preventDefault()
         event.stopPropagation()
         if (commandScopeRef.current === 'canvas' && session?.tool === 'move' && session.moveKind === 'slice' && (session.selectedSliceIds?.length || session.selectedSliceId)) { workspace.deleteSlices(session.selectedSliceIds?.length ? session.selectedSliceIds : [session.selectedSliceId!]); return }
+        const target = resolveDeleteCommand(commandScopeRef.current, Boolean(session?.selection))
+        if (target === 'layers' && (session?.selectedLayerIds.length || session?.selectedGroupIds.length)) { workspace.deleteSelectedLayers(); return }
         if (session?.selectedAnimationMaskCellKeys.length && !selectionCommandOverrideRef.current) { workspace.deleteSelectedLayerMasks(); return }
         if ((session?.selectedAnimationCellKeys.length || session?.selectedAnimationFrameIds.length) && !selectionCommandOverrideRef.current) { workspace.deleteSelectedAnimationItems(); return }
-        const target = resolveDeleteCommand(commandScopeRef.current, Boolean(session?.selection))
         if (target === 'palette' && session?.selectedPaletteIds.length) workspace.deletePaletteColors(session.selectedPaletteIds)
-        else if (target === 'layers' && (session?.selectedLayerIds.length || session?.selectedGroupIds.length)) workspace.deleteSelectedLayers()
         else if (target === 'selection' && session?.selection) workspace.deleteSelection()
         return
       }
@@ -1465,6 +1565,30 @@ export default function App() {
     {session && gridSettingsOpen && <GridSettingsDialog value={session.view.grid} onApply={(grid) => workspace.setView({ grid })} onClose={() => setGridSettingsOpen(false)} />}
     {session && projectInfoOpen && <ProjectInfoDialog document={session.document} onClose={() => setProjectInfoOpen(false)} />}
     {session && timelapseOpen && <TimelapseDialog settings={session.document.timelapse!} onChange={(settings) => workspace.setTimelapseSettings(settings)} onClear={() => workspace.clearTimelapse()} onExport={(format, options) => workspace.exportTimelapse(format, options)} onClose={() => setTimelapseOpen(false)} />}
+    {textToolRequest && <TextToolDialog editing={Boolean(textToolRequest.layerId && !textLayerDraftRef.current)} initial={textToolInitial} box={textToolBox} onChange={changeTextTool} onPreview={previewTextTool} onClose={() => {
+      const draft = textLayerDraftRef.current
+      clearTextToolPreview()
+      if (draft) {
+        useWorkspace.getState().setActive(draft.documentId)
+        useWorkspace.getState().cancelTextLayerDraft(draft.layerId)
+        textLayerDraftRef.current = null
+      }
+      setTextToolRequest(null)
+    }} onSubmit={(value) => {
+      const request = textToolRequest
+      clearTextToolPreview()
+      useWorkspace.getState().setActive(request.documentId)
+      const draft = textLayerDraftRef.current
+      const x = value.originX ?? request.x
+      const y = value.originY ?? request.y
+      if (draft?.documentId === request.documentId) {
+        workspace.updateTextLayerDraft(draft.layerId, draft.frameId, value, x, y)
+        workspace.commitTextLayerDraft(draft.layerId)
+        textLayerDraftRef.current = null
+      } else if (request.layerId && request.frameId) workspace.setTextCel(request.layerId, request.frameId, value, x, y)
+      else workspace.createTextLayer(value, x, y)
+      setTextToolRequest(null)
+    }} />}
     {workspaceSaveOpen && <div className="modal-backdrop" role="presentation" onPointerDown={(event) => { if (event.target === event.currentTarget && !workspaceBusy) setWorkspaceSaveOpen(false) }}><ModalShell as="form" storageKey="workspace-save" defaultWidth={420} defaultHeight={330} className="workspace-save-dialog" onSubmit={(event) => { event.preventDefault(); void saveWorkspace(workspaceSaveName) }}><DialogHeader eyebrow="WORKSPACE" title={t('app.workspace.saveTitle')} closeLabel={t('common.close')} closeDisabled={workspaceBusy} onClose={() => setWorkspaceSaveOpen(false)} /><div className="modal-body"><FormField label={t('app.workspace.name')}><TextInput autoFocus maxLength={96} value={workspaceSaveName} placeholder={t('app.workspace.namePlaceholder')} onChange={(event) => setWorkspaceSaveName(event.target.value)} /></FormField><p className="modal-note">{t('app.workspace.saveHint')}</p><p className="modal-note">{t('app.workspace.folder', { path: workspaceDirectory || 'workspaces' })}</p></div><footer><button type="button" className="quiet-button" disabled={workspaceBusy} onClick={() => setWorkspaceSaveOpen(false)}>{t('common.cancel')}</button><button type="submit" className="primary-button" disabled={workspaceBusy || !workspaceSaveName.trim()}><PixelUtilityIcon kind="save" />{t('common.save')}</button></footer></ModalShell></div>}
     {workspaceManagerOpen && <div className="modal-backdrop" role="presentation" onPointerDown={(event) => { if (event.target === event.currentTarget) setWorkspaceManagerOpen(false) }}><ModalShell storageKey="workspace-manager" defaultWidth={520} defaultHeight={500} className="workspace-manager-dialog" role="dialog" aria-labelledby="workspace-manager-title"><DialogHeader eyebrow="WORKSPACE" title={t('app.workspace.managerTitle')} titleId="workspace-manager-title" closeLabel={t('common.close')} onClose={() => setWorkspaceManagerOpen(false)} /><div className="workspace-manager-list">{savedWorkspaces.map((saved) => <div key={saved.id} className={`${saved.id === activeWorkspaceId ? 'active ' : ''}${saved.builtIn ? 'built-in' : ''}`}><button type="button" onClick={() => void applyWorkspaceLayout(saved)}><span>{saved.name}</span><small>{saved.id === activeWorkspaceId ? t('app.workspace.current') : t('app.workspace.load')}</small></button>{!saved.builtIn && <button type="button" className="icon-button" title={t('app.workspace.delete', { name: saved.name })} aria-label={t('app.workspace.delete', { name: saved.name })} onClick={() => void deleteSavedWorkspace(saved)}><PixelUtilityIcon kind="delete" /></button>}</div>)}</div><footer className="workspace-manager-footer"><button type="button" className="quiet-button" onClick={() => void window.moonSprite.openWorkspaceFolder()}><PixelUtilityIcon kind="folderOpen" />{t('app.workspace.openFolder')}</button><button type="button" className="primary-button" onClick={() => { setWorkspaceManagerOpen(false); setWorkspaceSaveName(''); setWorkspaceSaveOpen(true) }}><PixelUtilityIcon kind="plus" />{t('app.workspace.create')}</button></footer></ModalShell></div>}
     <NewDocumentDialog open={newOpen} presets={documentSizePresets} onClose={() => setNewOpen(false)} onCreate={(name, width, height, mode, recordDrawing) => void createDocumentAndShow(name, width, height, mode, recordDrawing)} />

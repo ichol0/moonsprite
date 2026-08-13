@@ -4,8 +4,10 @@ import { PixelUtilityIcon } from '@/components/PixelUtilityIcon'
 import { Tooltip } from '@/components/Tooltip'
 import { useI18n } from '@/components/I18nProvider'
 import { toolRailRenderKey } from '@/core/app-render-keys'
+import { shouldUseTemporaryMoveTool } from '@/core/canvas-input'
 import { loadShortcuts } from '@/core/shortcuts'
 import { useWorkspace } from '@/store/workspace'
+import { isToolAvailableForSession } from '@/store/workspace-session'
 import { ALL_EDITOR_TOOL_ICONS, FILL_KIND_ICONS, PixelAssetIcon, SELECTION_KIND_ICONS, activeToolPresentation, fillKindDefinitions, lineKindDefinitions, moveKindDefinitions, selectionKindDefinitions, shapeKindDefinitions, toolDefinitions } from './editor-tools'
 
 interface EditorToolRailProps {
@@ -23,6 +25,7 @@ export const EditorToolRail = memo(function EditorToolRail({ side, onGripPointer
   const [selectionFlyoutOpen, setSelectionFlyoutOpen] = useState(false)
   const [fillFlyoutOpen, setFillFlyoutOpen] = useState(false)
   const [moveFlyoutOpen, setMoveFlyoutOpen] = useState(false)
+  const [temporaryMoveSelected, setTemporaryMoveSelected] = useState(false)
   const [shortcuts, setShortcuts] = useState(() => loadShortcuts())
   const state = useWorkspace.getState()
   const session = state.sessions.find((item) => item.document.id === state.activeId) ?? null
@@ -32,6 +35,26 @@ export const EditorToolRail = memo(function EditorToolRail({ side, onGripPointer
     window.addEventListener('moonsprite:shortcuts-changed', refreshShortcuts)
     return () => window.removeEventListener('moonsprite:shortcuts-changed', refreshShortcuts)
   }, [])
+
+  useEffect(() => {
+    const updateTemporaryMove = (event: KeyboardEvent): void => {
+      if (!['Alt', 'Control', 'Meta', 'Shift'].includes(event.key)) return
+      const current = useWorkspace.getState()
+      const active = current.sessions.find((item) => item.document.id === current.activeId)
+      setTemporaryMoveSelected(Boolean(active && shouldUseTemporaryMoveTool(active.tool, event, shortcuts.temporaryMove ?? '')))
+    }
+    const clearTemporaryMove = (): void => setTemporaryMoveSelected(false)
+    window.addEventListener('keydown', updateTemporaryMove)
+    window.addEventListener('keyup', updateTemporaryMove)
+    window.addEventListener('blur', clearTemporaryMove)
+    document.addEventListener('visibilitychange', clearTemporaryMove)
+    return () => {
+      window.removeEventListener('keydown', updateTemporaryMove)
+      window.removeEventListener('keyup', updateTemporaryMove)
+      window.removeEventListener('blur', clearTemporaryMove)
+      document.removeEventListener('visibilitychange', clearTemporaryMove)
+    }
+  }, [shortcuts.temporaryMove])
 
   useEffect(() => {
     const closeOutside = (event: PointerEvent): void => {
@@ -89,7 +112,9 @@ export const EditorToolRail = memo(function EditorToolRail({ side, onGripPointer
     {tools.map((tool) => {
       const presentation = activeToolPresentation(tool.id, session.selectionKind, session.shapeKind, locale, fillKind, session.lineKind, session.moveKind)
       const shortcut = shortcuts[presentation.shortcutId] ?? ''
+      const toolAvailable = isToolAvailableForSession(session, tool.id)
       const openToolFlyout = (): void => {
+        if (!toolAvailable) return
         workspace.setTool(tool.id)
         setShapeFlyoutOpen(tool.id === 'shape' ? !shapeFlyoutOpen : false)
         setLineFlyoutOpen(tool.id === 'line' ? !lineFlyoutOpen : false)
@@ -98,7 +123,7 @@ export const EditorToolRail = memo(function EditorToolRail({ side, onGripPointer
         setMoveFlyoutOpen(tool.id === 'move' ? !moveFlyoutOpen : false)
       }
       return <div className="tool-slot" key={tool.id}>
-        <Tooltip className="rail-tool-tooltip" content={flyoutTooltip(presentation.label, presentation.description, shortcut)}><button className={session.tool === tool.id ? 'selected' : ''} aria-label={presentation.label} onClick={openToolFlyout}>
+        <Tooltip className="rail-tool-tooltip" content={flyoutTooltip(presentation.label, presentation.description, shortcut)}><button className={(temporaryMoveSelected ? tool.id === 'move' : session.tool === tool.id) ? 'selected' : ''} aria-label={presentation.label} disabled={!toolAvailable} onClick={openToolFlyout}>
           <PixelAssetIcon src={presentation.icon} className="rail-tool-icon" />
           <small>{shortcut}</small>
         </button></Tooltip>

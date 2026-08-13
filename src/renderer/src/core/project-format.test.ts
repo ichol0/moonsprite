@@ -34,13 +34,33 @@ interface TestRasterManifestEntry {
   height?: number
   offsetX?: number
   offsetY?: number
+  text?: {
+    text: string
+    fontFamily: string
+    fontSize: number
+    lineSpacing: number
+    letterSpacing: number
+    spacingMode?: 'font' | 'actual'
+    antialias: 'pixel' | 'smooth'
+    color: { r: number; g: number; b: number; a: number }
+    boxWidth?: number
+    boxHeight?: number
+    styleRuns?: Array<{
+      start: number
+      end: number
+      fontSize?: number
+      lineSpacing?: number
+      letterSpacing?: number
+      color?: { r: number; g: number; b: number; a: number }
+    }>
+  }
 }
 
 interface TestProjectManifest {
   schemaVersion: number
   document: {
     schemaVersion: number
-    layers: TestRasterManifestEntry[]
+    layers: Array<TestRasterManifestEntry & { kind?: 'text' }>
     animation: { cels: TestRasterManifestEntry[] }
   }
 }
@@ -82,13 +102,40 @@ describe('project manifest migration boundary', () => {
     expect(migrated).toMatchObject({ schemaVersion: PROJECT_SCHEMA_VERSION, document: { schemaVersion: PROJECT_SCHEMA_VERSION, groups: [] } })
   })
 
-  it('migrates v5 projects with sparse rasters and no slices to v6', () => {
+  it('migrates v5 projects with sparse rasters and no slices to the current schema', () => {
     const migrated = migrateProjectManifest({
       app: 'MoonSprite',
       schemaVersion: 5,
       document: { schemaVersion: 5, width: 16, height: 12, layers: [], animation: { frames: [], cels: [] } }
     })
-    expect(migrated).toMatchObject({ schemaVersion: 6, sourceSchemaVersion: 5, document: { schemaVersion: 6, slices: [] } })
+    expect(migrated).toMatchObject({ schemaVersion: PROJECT_SCHEMA_VERSION, sourceSchemaVersion: 5, document: { schemaVersion: PROJECT_SCHEMA_VERSION, slices: [] } })
+  })
+
+  it('migrates v6 projects without inventing editable text metadata', () => {
+    const migrated = migrateProjectManifest({
+      app: 'MoonSprite',
+      schemaVersion: 6,
+      document: { schemaVersion: 6, width: 16, height: 12, layers: [], animation: { frames: [], cels: [] }, slices: [] }
+    })
+    expect(migrated).toMatchObject({ schemaVersion: PROJECT_SCHEMA_VERSION, sourceSchemaVersion: 6, document: { schemaVersion: PROJECT_SCHEMA_VERSION, slices: [] } })
+  })
+
+  it('migrates v7 editable text without inventing local style runs', () => {
+    const migrated = migrateProjectManifest({
+      app: 'MoonSprite',
+      schemaVersion: 7,
+      document: { schemaVersion: 7, width: 16, height: 12, layers: [], animation: { frames: [], cels: [] }, slices: [] }
+    })
+    expect(migrated).toMatchObject({ schemaVersion: PROJECT_SCHEMA_VERSION, sourceSchemaVersion: 7, document: { schemaVersion: PROJECT_SCHEMA_VERSION } })
+  })
+
+  it('migrates v8 styled text without inventing a text box', () => {
+    const migrated = migrateProjectManifest({
+      app: 'MoonSprite',
+      schemaVersion: 8,
+      document: { schemaVersion: 8, width: 16, height: 12, layers: [], animation: { frames: [], cels: [] }, slices: [] }
+    })
+    expect(migrated).toMatchObject({ schemaVersion: PROJECT_SCHEMA_VERSION, sourceSchemaVersion: 8, document: { schemaVersion: PROJECT_SCHEMA_VERSION } })
   })
 
   it('migrates v4 raster resources as raw data', () => {
@@ -107,7 +154,7 @@ describe('project manifest migration boundary', () => {
   })
 
   it('rejects unknown versions without guessing their fields', () => {
-    expect(() => migrateProjectManifest({ app: 'MoonSprite', schemaVersion: 7, document: { schemaVersion: 7 } })).toThrow()
+    expect(() => migrateProjectManifest({ app: 'MoonSprite', schemaVersion: PROJECT_SCHEMA_VERSION + 1, document: { schemaVersion: PROJECT_SCHEMA_VERSION + 1 } })).toThrow()
     expect(() => migrateProjectManifest({ app: 'Other', schemaVersion: 1, document: { schemaVersion: 1 } })).toThrow()
   })
 
@@ -122,6 +169,49 @@ describe('project manifest migration boundary', () => {
       schemaVersion: 5,
       document: { schemaVersion: 5, animation: { cels: [{ dataFile: 'cels/unknown', dataEncoding: 'future-tiles' }] } }
     })).toThrow()
+  })
+
+  it('round-trips editable text layer and cel metadata with the rendered surface', () => {
+    const document = createDocument('editable text', 8, 8, 'rgba')
+    const layer = getActiveLayer(document)
+    const cel = ensureAnimationDocument(document).cels[0]
+    layer.kind = 'text'
+    cel.text = {
+      text: 'Moon\nSprite',
+      fontFamily: 'Consolas',
+      fontSize: 18,
+      lineSpacing: 3,
+      letterSpacing: 1,
+      spacingMode: 'actual',
+      antialias: 'smooth',
+      color: { r: 12, g: 34, b: 56, a: 200 },
+      styleRuns: [
+        { start: 0, end: 4, fontSize: 24, letterSpacing: 0, color: { r: 255, g: 0, b: 0, a: 255 } },
+        { start: 5, end: 11, lineSpacing: 2, color: { r: 0, g: 0, b: 255, a: 255 } }
+      ],
+      originX: 3,
+      originY: 4,
+      boxWidth: 7,
+      boxHeight: 6,
+      transforms: [{ source: { x: 3, y: 4, width: 4, height: 2 }, target: { x: 2, y: 3, width: 8, height: 4 }, angle: 45, shear: { axis: 'x', edge: 'n', amount: 2 } }]
+    }
+    layer.offsetX = 3
+    layer.offsetY = 4
+    cel.surface!.offsetX = 3
+    cel.surface!.offsetY = 4
+    cel.surface!.pixels.set([12, 34, 56, 200])
+
+    const archive = encodeProject(document)
+    const manifest = readTestManifest(unzipSync(archive))
+    const restored = decodeProject(archive)
+    const restoredCel = ensureAnimationDocument(restored).cels[0]
+
+    expect(manifest.document.layers[0].kind).toBe('text')
+    expect(manifest.document.animation.cels[0].text).toEqual(cel.text)
+    expect(getActiveLayer(restored).kind).toBe('text')
+    expect(restoredCel.text).toEqual(cel.text)
+    expect(restoredCel.surface).toMatchObject({ offsetX: 3, offsetY: 4 })
+    expect(restoredCel.surface?.pixels.slice(0, 4)).toEqual(new Uint8ClampedArray([12, 34, 56, 200]))
   })
 
   it('round-trips sparse RGBA bytes exactly, including transparent RGB values', () => {

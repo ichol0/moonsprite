@@ -18,5 +18,7 @@ ADR 用于记录会长期影响实现的决定，避免后续只看到代码而�
 - [0006：自适应调色板槽位](0006-fixed-palette-slots.md)
 - [0007：逐单元格可编辑图层蒙版](0007-attached-layer-masks.md)
 - [0008：工程文件稀疏栅格存储](0008-sparse-raster-project-storage.md)
+- [0009：可编辑文本局部样式区间](0009-editable-text-style-runs.md)
+- [0010：可编辑区域文本](0010-editable-text-boxes.md)
 
 新增 ADR 时按编号递增；废弃旧决定时保留原文件并指向替代 ADR。

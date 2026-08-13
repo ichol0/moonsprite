@@ -4,7 +4,7 @@ import { translateCurrent as tr } from './localization'
 import { DEFAULT_PROJECT_DISPLAY_SETTINGS, DEFAULT_PROJECT_STATISTICS, DEFAULT_TIMELAPSE_SETTINGS } from './project-metadata'
 import { buildLayerPanelTree } from './layer-panel-layout'
 import { addPaletteIdToSlots, normalizePaletteColumns, normalizePaletteSlots, paletteOrderFromSlots, PALETTE_GRID_COLUMNS } from './palette-layout'
-import { detachRuntimeRaster, lazyRuntimeRasterForSurface, rasterStorageIdentity, readSurfacePackedLocal, runtimeRasterForSurface, runtimeTileHasVisiblePixels, surfacePixelsMaterialized } from './runtime-raster'
+import { detachRuntimeRaster, lazyRuntimeRasterForSurface, rasterStorageIdentity, readSurfacePackedLocal, runtimeRasterForSurface, runtimeRasterVisibleBounds, runtimeTileHasVisiblePixels, surfacePixelsMaterialized } from './runtime-raster'
 
 let sequence = 0
 const layerStorageOrigins = new WeakMap<RasterLayer, { x: number; y: number }>()
@@ -160,7 +160,7 @@ export function createDocument(name: string, width: number, height: number, colo
     ? { format: 'rgba' as const, width, height, offsetX: 0, offsetY: 0, pixels: layer.pixels }
     : { format: 'indexed' as const, width, height, offsetX: 0, offsetY: 0, pixels: layer.pixels }
   return {
-    schemaVersion: 6,
+    schemaVersion: 9,
     id: createId('doc'),
     name,
     width,
@@ -580,13 +580,20 @@ export function readLayerColorAt(document: SpriteDocument, layer: RasterLayer, x
 
 /** Returns the canvas-space bounds of every non-transparent pixel stored by a layer. */
 export function layerContentBounds(document: SpriteDocument, layer: RasterLayer): SelectionRect | null {
+  const opaquePaletteIds = layer.format === 'indexed'
+    ? new Set(document.palette.filter((entry) => entry.color.a > 0).map((entry) => entry.id))
+    : undefined
+  const runtimeBounds = runtimeRasterVisibleBounds(layer, opaquePaletteIds)
+  if (runtimeBounds !== undefined) return runtimeBounds ? {
+    x: layer.offsetX + runtimeBounds.x,
+    y: layer.offsetY + runtimeBounds.y,
+    width: runtimeBounds.width,
+    height: runtimeBounds.height
+  } : null
   let minX = layer.width
   let minY = layer.height
   let maxX = -1
   let maxY = -1
-  const opaquePaletteIds = layer.format === 'indexed'
-    ? new Set(document.palette.filter((entry) => entry.color.a > 0).map((entry) => entry.id))
-    : null
   for (let y = 0; y < layer.height; y += 1) {
     for (let x = 0; x < layer.width; x += 1) {
       const index = y * layer.width + x
