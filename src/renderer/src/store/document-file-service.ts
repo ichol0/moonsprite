@@ -1,7 +1,8 @@
 import type { MoonSpriteApi, SpriteDocument, TimelapseVideoFormat } from '@shared/types'
 import { checkResourceLimit, checkTypedArrayLimit } from '@/core/resource-policy'
 import { decodeDocumentFileAsync, encodeDocumentForPath, joinDirectoryPath, normalizeSaveDialogPath, sanitizeFileStem, saveImageDialogFormat, saveImageExtension, saveImageKindForPath } from '@/core/document-files'
-import { exportDocumentImage, type ImageExportKind, type SaveImageKind } from '@/core/png'
+import { exportDocumentImage, exportDocumentSliceImage, type ImageExportKind, type SaveImageKind } from '@/core/png'
+import { sliceExportFileName } from '@/core/slices'
 import { loadEditorPreferences } from '@/core/file-preferences'
 import { translate } from '@/core/localization'
 import { exportAnimationGif, type GifDirection } from '@/core/gif'
@@ -9,11 +10,13 @@ import { encodeTimelapseVideo, type TimelapseExportOptions } from '@/core/timela
 import { normalizeTimelapseSettings } from '@/core/project-metadata'
 import { RECENT_EXPORTS_CHANGED_EVENT, recordRecentExportPath } from '@/core/export-settings'
 import { acceptProjectSaveBaseline, clearProjectSaveBaseline, encodeProjectAsync, encodeProjectSaveAsync } from '@/core/project-format'
+import { cloneDocumentForAnimationFrame } from '@/core/animation'
 
 export interface ExportOptions {
   name: string
   format: ImageExportKind
   scalePercent: number
+  target?: 'document' | 'slices' | 'frames'
   directory?: string
   gifFrameRange?: 'all' | 'range'
   gifFrameStart?: number
@@ -122,15 +125,62 @@ export function saveDocumentFile(request: SaveDocumentRequest): Promise<SaveDocu
 
 export async function exportDocumentFile(api: MoonSpriteApi, document: SpriteDocument, options?: ExportOptions, lifecycle?: FileOperationLifecycle): Promise<string | null> {
   const scalePercent = Math.max(1, Math.min(6400, Math.round(options?.scalePercent ?? 100)))
-  const exportWidth = Math.max(1, Math.round(document.width * scalePercent / 100))
-  const exportHeight = Math.max(1, Math.round(document.height * scalePercent / 100))
-  if (!Number.isSafeInteger(exportWidth) || !Number.isSafeInteger(exportHeight)) throw new Error(translate(loadEditorPreferences().language, 'file.export.safeRange'))
   const resources = await api.getResourceInfo()
-  const check = checkResourceLimit(exportWidth, exportHeight, 1, 'rgba', resources)
-  if (!check.allowed) throw new Error(check.reason)
   const fallbackName = sanitizeFileStem(document.name, 'MoonSprite-export')
   const requestedName = sanitizeFileStem(options?.name ?? fallbackName, fallbackName)
   const format = options?.format ?? 'png-auto'
+  if (options?.target === 'slices') {
+    if (format === 'gif') throw new Error(translate(loadEditorPreferences().language, 'file.export.slicesGifUnsupported'))
+    const slices = document.slices ?? []
+    if (slices.length === 0) throw new Error(translate(loadEditorPreferences().language, 'file.export.noSlices'))
+    const directoryResult = await api.chooseDirectory(options.directory?.trim() || loadEditorPreferences().exportDirectory)
+    if (directoryResult.canceled || !directoryResult.directoryPath) return null
+    lifecycle?.onEncodeStart?.()
+    const used = new Set<string>()
+    let lastPath = directoryResult.directoryPath
+    for (const slice of slices) {
+      const width = Math.max(1, Math.round(slice.width * scalePercent / 100))
+      const height = Math.max(1, Math.round(slice.height * scalePercent / 100))
+      const check = checkResourceLimit(width, height, 1, 'rgba', resources)
+      if (!check.allowed) throw new Error(check.reason)
+      const output = await exportDocumentSliceImage(document, slice, scalePercent, format)
+      const fileName = sliceExportFileName(slice, output.extension, used)
+      lastPath = joinDirectoryPath(directoryResult.directoryPath, fileName)
+      lifecycle?.onWriteStart?.()
+      await api.writeBinaryAtomic(lastPath, output.bytes)
+    }
+    rememberExportPath(lastPath)
+    return translate(loadEditorPreferences().language, 'file.export.slices', { count: slices.length })
+  }
+  if (options?.target === 'frames') {
+    if (format === 'gif') throw new Error(translate(loadEditorPreferences().language, 'file.export.framesGifUnsupported'))
+    const exportWidth = Math.max(1, Math.round(document.width * scalePercent / 100))
+    const exportHeight = Math.max(1, Math.round(document.height * scalePercent / 100))
+    if (!Number.isSafeInteger(exportWidth) || !Number.isSafeInteger(exportHeight)) throw new Error(translate(loadEditorPreferences().language, 'file.export.safeRange'))
+    const check = checkResourceLimit(exportWidth, exportHeight, 1, 'rgba', resources)
+    if (!check.allowed) throw new Error(check.reason)
+    const directoryResult = await api.chooseDirectory(options.directory?.trim() || loadEditorPreferences().exportDirectory)
+    if (directoryResult.canceled || !directoryResult.directoryPath) return null
+    const frameIds = document.animation?.frames.map((frame) => frame.id) ?? [null]
+    const digits = Math.max(3, String(frameIds.length).length)
+    lifecycle?.onEncodeStart?.()
+    let lastPath = directoryResult.directoryPath
+    for (const [index, frameId] of frameIds.entries()) {
+      const frameDocument = frameId ? cloneDocumentForAnimationFrame(document, frameId) : document
+      const output = await exportDocumentImage(frameDocument, scalePercent, format)
+      const frameNumber = String(index + 1).padStart(digits, '0')
+      lastPath = joinDirectoryPath(directoryResult.directoryPath, `${requestedName}-${frameNumber}.${output.extension}`)
+      if (index === 0) lifecycle?.onWriteStart?.()
+      await api.writeBinaryAtomic(lastPath, output.bytes)
+    }
+    rememberExportPath(lastPath)
+    return translate(loadEditorPreferences().language, 'file.export.frames', { count: frameIds.length })
+  }
+  const exportWidth = Math.max(1, Math.round(document.width * scalePercent / 100))
+  const exportHeight = Math.max(1, Math.round(document.height * scalePercent / 100))
+  if (!Number.isSafeInteger(exportWidth) || !Number.isSafeInteger(exportHeight)) throw new Error(translate(loadEditorPreferences().language, 'file.export.safeRange'))
+  const check = checkResourceLimit(exportWidth, exportHeight, 1, 'rgba', resources)
+  if (!check.allowed) throw new Error(check.reason)
   const extension = format === 'gif' ? 'gif' : saveImageExtension(format)
   const dialogFormat = extension === 'jpg' ? 'jpeg' : extension === 'png' ? 'png' : extension === 'svg' ? 'svg' : extension === 'gif' ? 'gif' : 'webp'
   const exportDirectory = options?.directory?.trim() || loadEditorPreferences().exportDirectory

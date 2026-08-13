@@ -1,8 +1,8 @@
-import type { FillKind, LineKind, SelectionKind, SelectionMode, ShapeKind, ToolId } from '@shared/types'
+import type { FillKind, LineKind, MoveKind, SelectionKind, SelectionMode, ShapeKind, ToolId } from '@shared/types'
 import type { CSSProperties } from 'react'
 import type { ShortcutId } from '@/core/shortcuts'
 import { DEFAULT_APP_LOCALE, type AppLocale } from '@/core/localization'
-import { editorToolCopyByLocale, fillToolCopyByLocale, lineToolCopyByLocale, selectionModeLabelsByLocale, selectionToolCopyByLocale, shapeToolCopyByLocale } from '@/locales/editor-tools'
+import { editorToolCopyByLocale, fillToolCopyByLocale, lineToolCopyByLocale, moveToolCopyByLocale, selectionModeLabelsByLocale, selectionToolCopyByLocale, shapeToolCopyByLocale } from '@/locales/editor-tools'
 import toolSelectionIcon from '@/assets/tool-icons/tool-selection.svg'
 import toolPencilIcon from '@/assets/tool-icons/tool-pencil.svg'
 import toolAirbrushIcon from '@/assets/tool-icons/tool-airbrush.svg'
@@ -11,6 +11,7 @@ import toolFillIcon from '@/assets/tool-icons/tool-fill.svg'
 import toolEyedropperIcon from '@/assets/tool-icons/tool-eyedropper.svg'
 import toolHandIcon from '@/assets/tool-icons/tool-hand.svg'
 import toolMoveIcon from '@/assets/tool-icons/tool-move.svg'
+import toolSliceIcon from '@/assets/tool-icons/tool-slice.svg'
 import toolRotateIcon from '@/assets/tool-icons/tool-rotate.svg'
 import toolZoomIcon from '@/assets/tool-icons/tool-zoom.svg'
 import toolShapeIcon from '@/assets/tool-icons/tool-shape.svg'
@@ -42,6 +43,7 @@ import selectionLassoNormalIcon from '@/assets/tool-icons/selection-lasso-normal
 import selectionPolygonLassoNormalIcon from '@/assets/tool-icons/selection-polygon-lasso-normal.svg'
 import selectionMagicNormalIcon from '@/assets/tool-icons/selection-magic-normal.svg'
 import toolMoveNormalIcon from '@/assets/tool-icons/tool-move-normal.svg'
+import toolSliceNormalIcon from '@/assets/tool-icons/tool-slice-normal.svg'
 import shapeRectangleNormalIcon from '@/assets/tool-icons/shape-rectangle-normal.svg'
 import shapeRectangleFillNormalIcon from '@/assets/tool-icons/shape-rectangle-fill-normal.svg'
 import shapeEllipseNormalIcon from '@/assets/tool-icons/shape-ellipse-normal.svg'
@@ -66,6 +68,7 @@ const NORMAL_EDITOR_TOOL_ICON_BY_SOURCE = new Map<string, string>([
   [selectionPolygonLassoIcon, selectionPolygonLassoNormalIcon],
   [selectionMagicIcon, selectionMagicNormalIcon],
   [toolMoveIcon, toolMoveNormalIcon],
+  [toolSliceIcon, toolSliceNormalIcon],
   [shapeRectangleIcon, shapeRectangleNormalIcon],
   [shapeRectangleFillIcon, shapeRectangleFillNormalIcon],
   [shapeEllipseIcon, shapeEllipseNormalIcon],
@@ -97,6 +100,12 @@ export const SELECTION_KIND_ICONS = {
   'polygon-lasso': selectionPolygonLassoIcon,
   magic: selectionMagicIcon
 } as const
+
+const MOVE_KIND_BASE: Array<{ id: MoveKind; shortcutId: ShortcutId; icon: string }> = [
+  { id: 'move', shortcutId: 'tool.move', icon: toolMoveIcon },
+  { id: 'slice', shortcutId: 'tool.slice', icon: toolSliceIcon }
+]
+export const moveKindDefinitions = (locale: AppLocale) => MOVE_KIND_BASE.map((item) => ({ ...item, ...moveToolCopyByLocale[locale][item.id] }))
 
 const SELECTION_KIND_BASE: Array<{
   id: SelectionKind
@@ -146,8 +155,13 @@ export const activeToolPresentation = (
   shapeKind: ShapeKind,
   locale: AppLocale = DEFAULT_APP_LOCALE,
   fillKind: FillKind = 'bucket',
-  lineKind: LineKind = 'line'
+  lineKind: LineKind = 'line',
+  moveKind: MoveKind = 'move'
 ): ActiveToolPresentation => {
+  if (toolId === 'move') {
+    const definition = moveKindDefinitions(locale).find((item) => item.id === moveKind)!
+    return { ...definition, id: toolId }
+  }
   if (toolId === 'selection') {
     const definition = selectionKindDefinitions(locale).find((item) => item.id === selectionKind)!
     return { ...definition, id: toolId, icon: SELECTION_KIND_ICONS[selectionKind] }
@@ -179,6 +193,7 @@ export const temporarySelectionModeForModifiers = (shiftHeld: boolean, secondary
 export const ALL_EDITOR_TOOL_ICONS = [...new Set([
   ...TOOL_BASE.map((item) => item.icon),
   ...Object.values(SELECTION_KIND_ICONS),
+  ...MOVE_KIND_BASE.map((item) => item.icon),
   ...SELECTION_MODE_BASE.map((item) => item.icon),
   ...SHAPE_KIND_BASE.map((item) => item.icon),
   ...LINE_KIND_BASE.map((item) => item.icon),

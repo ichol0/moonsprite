@@ -4,6 +4,7 @@ import { setRuntimeAppLocale, type AppLocale } from '@/core/localization'
 import { decodeProject } from '@/core/project-format'
 import { compositeDocument } from '@/core/document'
 import { canPrepareInitialDocumentComposite } from '@/core/initial-document-composite'
+import { prepareRuntimeRasterDocumentForTransfer, prepareRuntimeRasterMetadata } from '@/core/runtime-raster'
 
 interface DecodeWorkerRequest {
   id: number
@@ -77,6 +78,10 @@ scope.onmessage = (event): void => {
     const response = returnDocument
       ? { id, document, initialComposite }
       : { id, initialComposite, completed: true }
+    if (returnDocument) {
+      prepareRuntimeRasterMetadata(document)
+      prepareRuntimeRasterDocumentForTransfer(document)
+    }
     scope.postMessage(response, collectTransferables(response))
   } catch (error) {
     scope.postMessage({ id, error: error instanceof Error ? error.message : String(error) }, [])

@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createDocument, createLayerMask, writeLayerColor } from '@/core/document'
-import { ensureAnimationDocument } from '@/core/animation'
+import { addBlankAnimationFrame, ensureAnimationDocument } from '@/core/animation'
 import { CanvasCompositeCache, shouldCacheFullCompositeSurface } from './canvas-composite-cache'
 import { canPrepareInitialDocumentComposite, registerInitialDocumentComposite, registerPendingInitialDocumentComposite } from '@/core/initial-document-composite'
 
@@ -99,6 +99,34 @@ describe('CanvasCompositeCache', () => {
 
     expect(MockOffscreenCanvas.instances).toHaveLength(1)
     expect(secondContext.drawImage.mock.calls[0][0]).toBe(firstSurface)
+  })
+
+  it('does not reuse the initial composite after animation playback switches frames', () => {
+    const document = createDocument('animated initial composite', 1, 1, 'rgba')
+    const layer = document.layers[0]
+    writeLayerColor(document, layer, 0, { r: 255, g: 0, b: 0, a: 255 })
+    const firstFrameId = ensureAnimationDocument(document).activeFrameId
+    registerInitialDocumentComposite(document, new Uint8ClampedArray([255, 0, 0, 255]), firstFrameId)
+    const secondFrameId = addBlankAnimationFrame(document)
+    writeLayerColor(document, layer, 0, { r: 0, g: 0, b: 255, a: 255 })
+    const context = {
+      save: vi.fn(), restore: vi.fn(), beginPath: vi.fn(), rect: vi.fn(), clip: vi.fn(),
+      translate: vi.fn(), scale: vi.fn(), drawImage: vi.fn(), imageSmoothingEnabled: true
+    }
+
+    new CanvasCompositeCache().draw({
+      context: context as never,
+      document,
+      view: { zoom: 1, panX: 0, panY: 0, rotation: 0, mirrored: false, mirroredVertical: false, showGrid: false, relativeLuminance: false },
+      originX: 0, originY: 0, canvasWidth: 1, canvasHeight: 1,
+      fromX: 0, fromY: 0, toX: 1, toY: 1,
+      revision: 0,
+      contentRevision: 0,
+      frameId: secondFrameId
+    })
+
+    const rendered = MockOffscreenCanvas.instances[0].context.putImageData.mock.calls[0][0] as MockImageData
+    expect(Array.from(rendered.data)).toEqual([0, 0, 255, 255])
   })
 
   it('prepares initial composites only within the exact surface budget', () => {

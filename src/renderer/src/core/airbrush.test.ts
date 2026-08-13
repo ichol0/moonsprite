@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { airbrushParticleSize, generateAirbrushParticles } from './airbrush'
+import { airbrushParticleSize, airbrushSymmetryPoints, generateAirbrushParticles } from './airbrush'
 
 describe('airbrush particles', () => {
   it('creates the requested number of particles inside the scatter radius', () => {
@@ -18,5 +18,19 @@ describe('airbrush particles', () => {
   it('maps a pixel radius to an odd brush diameter', () => {
     expect(airbrushParticleSize(1)).toBe(1)
     expect(airbrushParticleSize(3)).toBe(5)
+  })
+
+  it('returns every deduplicated symmetry target used by preview and invalidation', () => {
+    expect(airbrushSymmetryPoints(
+      [{ x: 2, y: 3 }, { x: 2, y: 3 }],
+      10,
+      8,
+      { horizontal: true, vertical: true, diagonalUp: false, diagonalDown: false }
+    )).toEqual([
+      { x: 2, y: 3 },
+      { x: 2, y: 4 },
+      { x: 7, y: 3 },
+      { x: 7, y: 4 }
+    ])
   })
 })

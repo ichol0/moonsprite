@@ -17,7 +17,8 @@ import {
 } from './pressure'
 
 export const TOOL_SETTINGS_KEY = 'moonsprite.tool-settings.v1'
-export type BrushTool = 'pencil' | 'eraser' | 'fill'
+export const BRUSH_TOOLS = ['pencil', 'eraser', 'fill', 'line'] as const
+export type BrushTool = typeof BRUSH_TOOLS[number]
 
 export interface PersistedBrushProfile {
   brushSize: number
@@ -165,7 +166,7 @@ export function loadToolSettings(storage?: Storage): PersistedToolSettings {
     if (stored.brushPaintModePreferenceVersion !== 1) legacyProfile.brushPaintMode = defaultToolSettings.brushPaintMode
     if (stored.proceduralAntialiasPreferenceVersion !== 1) legacyProfile.proceduralAntialias = defaultToolSettings.proceduralAntialias
     const storedProfiles = stored.brushProfiles
-    const brushProfiles = Object.fromEntries((['pencil', 'eraser', 'fill'] as BrushTool[]).map((tool) => [
+    const brushProfiles = Object.fromEntries(BRUSH_TOOLS.map((tool) => [
       tool,
       normalizePersistedBrushProfile(storedProfiles?.[tool], legacyProfile)
     ])) as Record<BrushTool, PersistedBrushProfile>

@@ -3,6 +3,7 @@ import { compositeDocument } from './document'
 import { encodePng } from './png-encode'
 import { translateCurrent as tr } from './localization'
 import { clampByte, hsvToRgb, packColor, rgbToHsv } from './raster'
+import { lazyRuntimeRasterForSurface } from './runtime-raster'
 
 interface WeightedColor extends RgbaColor { count: number }
 
@@ -125,15 +126,38 @@ export function countUsedPaletteColors(document: SpriteDocument): number {
   }
 
   const usedIds = new Set<number>()
-  const visitedPixels = new Set<Uint8ClampedArray | Uint32Array>()
+  const visitedStorage = new Set<object>()
   const surfaces = [
     ...document.layers,
     ...(document.animation?.cels.flatMap((cel) => cel.surface ? [cel.surface] : []) ?? [])
   ]
 
   for (const surface of surfaces) {
-    if (visitedPixels.has(surface.pixels)) continue
-    visitedPixels.add(surface.pixels)
+    const runtime = lazyRuntimeRasterForSurface(surface)
+    const storage = runtime ?? surface.pixels
+    if (visitedStorage.has(storage)) continue
+    visitedStorage.add(storage)
+
+    if (runtime) {
+      if (runtime.format === 'indexed') {
+        for (let offset = 0; offset < runtime.data.length; offset += 4) {
+          const id = (runtime.data[offset] | (runtime.data[offset + 1] << 8) | (runtime.data[offset + 2] << 16) | (runtime.data[offset + 3] << 24)) >>> 0
+          if (paletteIds.has(id)) usedIds.add(id)
+          if (usedIds.size === opaqueEntries.length) return usedIds.size
+        }
+        continue
+      }
+
+      for (let offset = 0; offset < runtime.data.length; offset += 4) {
+        if (runtime.data[offset + 3] === 0) continue
+        const key = (runtime.data[offset] | (runtime.data[offset + 1] << 8) | (runtime.data[offset + 2] << 16) | (runtime.data[offset + 3] << 24)) >>> 0
+        const ids = paletteIdsByColor.get(key)
+        if (!ids) continue
+        for (const id of ids) usedIds.add(id)
+        if (usedIds.size === opaqueEntries.length) return usedIds.size
+      }
+      continue
+    }
 
     if (surface.format === 'indexed') {
       for (const id of surface.pixels) {

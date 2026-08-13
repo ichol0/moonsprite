@@ -11,6 +11,7 @@ import type {
   LayerMask,
   ImageBrushSettings,
   LineKind,
+  MoveKind,
   OutlineDirections,
   OutlineKernel,
   OutlinePosition,
@@ -118,6 +119,9 @@ export interface DocumentSession {
   document: SpriteDocument
   history: HistoryStack
   tool: ToolId
+  moveKind: MoveKind
+  selectedSliceId: string | null
+  selectedSliceIds: string[]
   primaryColor: RgbaColor
   secondaryColor: RgbaColor
   brushSize: number

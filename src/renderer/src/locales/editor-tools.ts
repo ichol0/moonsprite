@@ -1,4 +1,4 @@
-import type { FillKind, LineKind, SelectionKind, SelectionMode, ShapeKind, ToolId } from '@shared/types'
+import type { FillKind, LineKind, MoveKind, SelectionKind, SelectionMode, ShapeKind, ToolId } from '@shared/types'
 import type { AppLocale } from '@/core/localization'
 
 interface ToolCopy { label: string; description: string }
@@ -31,6 +31,16 @@ const enTools: Record<ToolId, ToolCopy> = {
   hand: { label: 'Hand Tool', description: 'Drag the canvas view without changing pixel content.' },
   zoom: { label: 'Zoom Tool', description: 'Drag or click to zoom the view. Right-click to zoom in the opposite direction.' },
   rotate: { label: 'Rotate View Tool', description: 'Drag around the rotation indicator to rotate only the current canvas view.' }
+}
+
+const zhMoves: Record<MoveKind, ToolCopy> = {
+  move: zhTools.move,
+  slice: { label: '切片工具', description: '拖动创建导出切片；选择已有切片后可移动、缩放并在属性栏命名。' }
+}
+
+const enMoves: Record<MoveKind, ToolCopy> = {
+  move: enTools.move,
+  slice: { label: 'Slice Tool', description: 'Drag to create export slices. Select an existing slice to move, resize, or name it in the options bar.' }
 }
 
 const zhLines: Record<LineKind, ToolCopy> = {
@@ -88,6 +98,7 @@ const enShapes: Record<ShapeKind, ToolCopy> = {
 }
 
 export const editorToolCopyByLocale: Record<AppLocale, Record<ToolId, ToolCopy>> = { 'zh-CN': zhTools, 'en-US': enTools }
+export const moveToolCopyByLocale: Record<AppLocale, Record<MoveKind, ToolCopy>> = { 'zh-CN': zhMoves, 'en-US': enMoves }
 export const lineToolCopyByLocale: Record<AppLocale, Record<LineKind, ToolCopy>> = { 'zh-CN': zhLines, 'en-US': enLines }
 export const selectionToolCopyByLocale: Record<AppLocale, Record<SelectionKind, ToolCopy>> = { 'zh-CN': zhSelections, 'en-US': enSelections }
 export const shapeToolCopyByLocale: Record<AppLocale, Record<ShapeKind, ToolCopy>> = { 'zh-CN': zhShapes, 'en-US': enShapes }

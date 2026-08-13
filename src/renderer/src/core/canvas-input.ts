@@ -162,7 +162,7 @@ export const selectionResizeHit = (
 }
 
 export interface CanvasDragState {
-  kind: 'draw' | 'airbrush' | 'shape' | 'freeform-shape' | 'polygon-shape' | 'line-shape' | 'curve-shape' | 'gradient' | 'marquee' | 'lasso' | 'polygon-lasso' | 'magic-preview' | 'sample-color' | 'move-content' | 'move-selection' | 'transform-content' | 'rotate-content' | 'shear-content' | 'move-layer' | 'brush-size' | 'canvas-resize' | 'canvas-move' | 'zoom-drag' | 'rotate-view' | 'pan'
+  kind: 'draw' | 'airbrush' | 'shape' | 'freeform-shape' | 'polygon-shape' | 'line-shape' | 'curve-shape' | 'gradient' | 'marquee' | 'lasso' | 'polygon-lasso' | 'magic-preview' | 'sample-color' | 'move-content' | 'move-selection' | 'transform-content' | 'rotate-content' | 'shear-content' | 'move-layer' | 'create-slice' | 'move-slice' | 'resize-slice' | 'brush-size' | 'canvas-resize' | 'canvas-move' | 'zoom-drag' | 'rotate-view' | 'pan'
   start: CanvasPoint
   last: CanvasPoint
   edit?: PixelEdit
@@ -222,6 +222,12 @@ export interface CanvasDragState {
   duplicatedLayerIndex?: number
   originalSelectedLayerIds?: string[]
   clickLayerId?: string
+  sliceId?: string
+  sliceStart?: SelectionRect
+  sliceIds?: string[]
+  sliceStarts?: Record<string, SelectionRect>
+  slicePreviewTargets?: Record<string, SelectionRect>
+  collapseSliceSelectionOnClick?: boolean
   collapseLayerSelectionOnClick?: boolean
   color?: RgbaColor
   colorReplacement?: { source: RgbaColor; target: RgbaColor }

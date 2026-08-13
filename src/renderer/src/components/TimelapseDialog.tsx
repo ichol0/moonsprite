@@ -24,6 +24,7 @@ interface TimelapseDialogProps {
 export function TimelapseDialog({ settings, onChange, onClear, onExport, onClose }: TimelapseDialogProps) {
   const { t } = useI18n()
   const canvasRef = useRef<HTMLCanvasElement>(null)
+  const previewStartFrameRef = useRef(0)
   const [previewPlaying, setPreviewPlaying] = useState(false)
   const [previewFrame, setPreviewFrame] = useState(0)
   const [format, setFormat] = useState<TimelapseVideoFormat>('mp4')
@@ -36,7 +37,10 @@ export function TimelapseDialog({ settings, onChange, onClear, onExport, onClose
   })
   const snapshot = settings.snapshots[Math.min(previewFrame, Math.max(0, settings.snapshots.length - 1))]
   const exportOptions = useMemo<TimelapseExportOptions>(() => ({ mode: exportMode, durationSeconds }), [durationSeconds, exportMode])
-  const frameDurations = timelapseFrameDurations(settings, exportOptions)
+  const frameDurations = useMemo(
+    () => timelapseFrameDurations(settings, exportOptions),
+    [exportOptions, settings.fps, settings.snapshots.length, settings.speed]
+  )
   const { width: outputWidth, height: outputHeight } = timelapseOutputDimensions(settings)
   const outputDurationMs = frameDurations.reduce((total, duration) => total + duration, 0)
   const outputDuration = outputDurationMs === 0 ? '0 s' : outputDurationMs < 10_000 ? `${(outputDurationMs / 1000).toFixed(1)} s` : `${Math.round(outputDurationMs / 1000)} s`
@@ -47,6 +51,17 @@ export function TimelapseDialog({ settings, onChange, onClear, onExport, onClose
     const scale = timelapseOutputScale({ quality, snapshots: settings.snapshots })
     return { value: quality, label: `${name} - ${scale}x - ${dimensions.width} x ${dimensions.height}` }
   })
+  const togglePreviewPlayback = (): void => {
+    if (previewPlaying) {
+      setPreviewPlaying(false)
+      return
+    }
+    const lastFrame = Math.max(0, settings.snapshots.length - 1)
+    const startFrame = previewFrame >= lastFrame ? 0 : previewFrame
+    previewStartFrameRef.current = startFrame
+    if (startFrame !== previewFrame) setPreviewFrame(startFrame)
+    setPreviewPlaying(true)
+  }
 
   useEffect(() => {
     if (previewFrame < settings.snapshots.length) return
@@ -63,12 +78,28 @@ export function TimelapseDialog({ settings, onChange, onClear, onExport, onClose
   }, [])
 
   useEffect(() => {
-    if (!previewPlaying || settings.snapshots.length < 2) return
-    const timer = window.setTimeout(() => {
-      setPreviewFrame((frame) => (frame + 1) % settings.snapshots.length)
-    }, frameDurations[previewFrame] ?? 1000 / settings.fps)
-    return () => window.clearTimeout(timer)
-  }, [frameDurations, previewFrame, previewPlaying, settings.fps, settings.snapshots.length])
+    if (!previewPlaying || settings.snapshots.length < 2 || outputDurationMs <= 0) return
+    const frameCount = settings.snapshots.length
+    const lastFrame = frameCount - 1
+    const frameDuration = outputDurationMs / frameCount
+    const startFrame = Math.min(previewStartFrameRef.current, lastFrame)
+    const startOffset = startFrame * frameDuration
+    const startedAt = performance.now()
+    let animationFrame = 0
+    const advance = (now: number): void => {
+      const elapsed = startOffset + now - startedAt
+      if (elapsed >= outputDurationMs) {
+        setPreviewFrame(lastFrame)
+        setPreviewPlaying(false)
+        return
+      }
+      const nextFrame = Math.min(lastFrame, Math.floor(elapsed / frameDuration))
+      setPreviewFrame((frame) => frame === nextFrame ? frame : nextFrame)
+      animationFrame = window.requestAnimationFrame(advance)
+    }
+    animationFrame = window.requestAnimationFrame(advance)
+    return () => window.cancelAnimationFrame(animationFrame)
+  }, [outputDurationMs, previewPlaying, settings.snapshots.length])
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -120,7 +151,7 @@ export function TimelapseDialog({ settings, onChange, onClear, onExport, onClose
         <section className="timelapse-preview" aria-label={t('timelapse.preview')}>
           <div className="timelapse-preview-frame"><canvas ref={canvasRef} /></div>
           <div className="timelapse-preview-controls">
-            <button type="button" className="icon-button" disabled={settings.snapshots.length < 2} title={previewPlaying ? t('timelapse.pausePreview') : t('timelapse.playPreview')} aria-label={previewPlaying ? t('timelapse.pausePreview') : t('timelapse.playPreview')} onClick={() => setPreviewPlaying((playing) => !playing)}>{previewPlaying ? <Pause size={15} /> : <Play size={15} />}</button>
+            <button type="button" className="icon-button" disabled={settings.snapshots.length < 2} title={previewPlaying ? t('timelapse.pausePreview') : t('timelapse.playPreview')} aria-label={previewPlaying ? t('timelapse.pausePreview') : t('timelapse.playPreview')} onClick={togglePreviewPlayback}>{previewPlaying ? <Pause size={15} /> : <Play size={15} />}</button>
             <input type="range" min={0} max={Math.max(0, settings.snapshots.length - 1)} value={Math.min(previewFrame, Math.max(0, settings.snapshots.length - 1))} disabled={settings.snapshots.length === 0} aria-label={t('timelapse.previewPosition')} onChange={(event) => { setPreviewPlaying(false); setPreviewFrame(Number(event.target.value)) }} />
             <output>{settings.snapshots.length === 0 ? '0 / 0' : `${previewFrame + 1} / ${settings.snapshots.length}`}</output>
           </div>

@@ -39,7 +39,10 @@
     "package": "tauri build && pnpm package:prepare && pnpm package:size",
     "package:prepare": "node scripts/prepare-release.mjs",
     "package:size": "node scripts/check-package-size.mjs",
-    "preview": "vite preview --config vite.config.ts"
+    "preview": "vite preview --config vite.config.ts",
+    "website:dev": "pnpm --dir website dev",
+    "website:build": "pnpm --dir website build",
+    "website:capture": "node website/scripts/capture-product.mjs"
   },
   "dependencies": {},
   "devDependencies": {

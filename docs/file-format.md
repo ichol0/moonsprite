@@ -1,4 +1,6 @@
-# MoonSprite 文件格式 v5
+# MoonSprite 文件格式 v6
+
+v6 新增项目级 `slices` 数组；每个切片保存稳定 ID、名称和画布像素坐标下的矩形。v1-v5 缺失该字段时迁移为空数组，v5 的 `sparse-tiles-v1` 栅格语义保持不变。
 
 `.moonsprite` 是 ZIP 容器，包含：
 

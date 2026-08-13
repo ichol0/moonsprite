@@ -33,6 +33,7 @@ describe('export settings persistence', () => {
       { presetName: 'JPEG', name: 'sprite.jpg', format: 'jpeg', scalePercent: 300 },
       { presetName: 'WebP', name: 'sprite.webp', format: 'webp', scalePercent: 400 },
       { presetName: 'SVG', name: 'sprite.svg', format: 'svg', scalePercent: 800 },
+      { presetName: 'All frames', name: 'walk.png', format: 'png-rgba', scalePercent: 100, target: 'frames' },
       {
         presetName: 'GIF preview',
         name: 'walk.gif',

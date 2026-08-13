@@ -1,5 +1,5 @@
 import { decode, toRGBA8 } from 'upng-js'
-import type { PaletteEntry, SpriteDocument } from '@shared/types'
+import type { DocumentSlice, PaletteEntry, SpriteDocument } from '@shared/types'
 import { encodeAseprite } from './aseprite'
 import { createDocument } from './document'
 import { compositeDocument } from './document'
@@ -108,6 +108,38 @@ function scaleDocumentPixels(document: SpriteDocument, scalePercent: number): { 
   return { pixels: output, width, height }
 }
 
+function scalePixels(source: Uint8ClampedArray, sourceWidth: number, sourceHeight: number, scalePercent: number): { pixels: Uint8ClampedArray; width: number; height: number } {
+  const ratio = Math.max(0.01, Math.min(64, scalePercent / 100))
+  const width = Math.max(1, Math.round(sourceWidth * ratio))
+  const height = Math.max(1, Math.round(sourceHeight * ratio))
+  if (width === sourceWidth && height === sourceHeight) return { pixels: source, width, height }
+  const output = new Uint8ClampedArray(width * height * 4)
+  for (let y = 0; y < height; y += 1) {
+    const sourceY = Math.min(sourceHeight - 1, Math.floor(y * sourceHeight / height))
+    for (let x = 0; x < width; x += 1) {
+      const sourceX = Math.min(sourceWidth - 1, Math.floor(x * sourceWidth / width))
+      const offset = (sourceY * sourceWidth + sourceX) * 4
+      output.set(source.subarray(offset, offset + 4), (y * width + x) * 4)
+    }
+  }
+  return { pixels: output, width, height }
+}
+
+async function encodeScaledPixels(scaled: { pixels: Uint8ClampedArray; width: number; height: number }, format: Exclude<SaveImageKind, 'ase' | 'aseprite'>): Promise<ImageExport> {
+  if (format === 'svg') return { bytes: encodeSvg(scaled.pixels, scaled.width, scaled.height), extension: 'svg', indexed: false, width: scaled.width, height: scaled.height }
+  if (format === 'png-auto' || format === 'png-rgba') {
+    const png = encodePng(scaled.pixels, scaled.width, scaled.height, format === 'png-rgba')
+    return { ...png, extension: 'png', width: scaled.width, height: scaled.height }
+  }
+  const canvas = new OffscreenCanvas(scaled.width, scaled.height)
+  const context = canvas.getContext('2d')
+  if (!context) throw new Error(tr('core.png.encoderCanvas'))
+  if (format === 'jpeg') { context.fillStyle = '#ffffff'; context.fillRect(0, 0, scaled.width, scaled.height) }
+  context.putImageData(new ImageData(new Uint8ClampedArray(scaled.pixels), scaled.width, scaled.height), 0, 0)
+  const blob = await canvas.convertToBlob({ type: format === 'jpeg' ? 'image/jpeg' : 'image/webp', quality: 0.92 })
+  return { bytes: new Uint8Array(await blob.arrayBuffer()), extension: format === 'jpeg' ? 'jpg' : 'webp', indexed: false, width: scaled.width, height: scaled.height }
+}
+
 function encodeSvg(rgba: Uint8ClampedArray, width: number, height: number): Uint8Array {
   const parts: string[] = [
     `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" shape-rendering="crispEdges">`
@@ -144,22 +176,15 @@ export async function exportDocumentImage(document: SpriteDocument, scalePercent
   if (format === 'ase' || format === 'aseprite') {
     return { bytes: encodeAseprite(document, scalePercent), extension: format, indexed: false, width: Math.max(1, Math.round(document.width * scalePercent / 100)), height: Math.max(1, Math.round(document.height * scalePercent / 100)) }
   }
-  const scaled = scaleDocumentPixels(document, scalePercent)
-  if (format === 'svg') {
-    return { bytes: encodeSvg(scaled.pixels, scaled.width, scaled.height), extension: 'svg', indexed: false, width: scaled.width, height: scaled.height }
+  return encodeScaledPixels(scaleDocumentPixels(document, scalePercent), format)
+}
+
+export async function exportDocumentSliceImage(document: SpriteDocument, slice: DocumentSlice, scalePercent: number, format: Exclude<SaveImageKind, 'ase' | 'aseprite'>): Promise<ImageExport> {
+  const composite = compositeDocument(document)
+  const pixels = new Uint8ClampedArray(slice.width * slice.height * 4)
+  for (let y = 0; y < slice.height; y += 1) {
+    const sourceOffset = ((slice.y + y) * document.width + slice.x) * 4
+    pixels.set(composite.subarray(sourceOffset, sourceOffset + slice.width * 4), y * slice.width * 4)
   }
-  if (format === 'png-auto' || format === 'png-rgba') {
-    const png = encodePng(scaled.pixels, scaled.width, scaled.height, format === 'png-rgba')
-    return { ...png, extension: 'png', width: scaled.width, height: scaled.height }
-  }
-  const canvas = new OffscreenCanvas(scaled.width, scaled.height)
-  const context = canvas.getContext('2d')
-  if (!context) throw new Error(tr('core.png.encoderCanvas'))
-  if (format === 'jpeg') {
-    context.fillStyle = '#ffffff'
-    context.fillRect(0, 0, scaled.width, scaled.height)
-  }
-  context.putImageData(new ImageData(new Uint8ClampedArray(scaled.pixels), scaled.width, scaled.height), 0, 0)
-  const blob = await canvas.convertToBlob({ type: format === 'jpeg' ? 'image/jpeg' : 'image/webp', quality: 0.92 })
-  return { bytes: new Uint8Array(await blob.arrayBuffer()), extension: format === 'jpeg' ? 'jpg' : 'webp', indexed: false, width: scaled.width, height: scaled.height }
+  return encodeScaledPixels(scalePixels(pixels, slice.width, slice.height, scalePercent), format)
 }

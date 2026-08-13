@@ -4,7 +4,8 @@ import { decodePng, exportDocumentImage, type SaveImageKind } from './png'
 import { decodeProject, encodeProjectAsync, readProjectExpandedRasterBytes, registerProjectSaveBaseline } from './project-format'
 import { browserRasterImageExtensions, decodeBrowserRasterImage } from './raster-image'
 import { currentAppLocale } from './localization'
-import { registerInitialDocumentComposite } from './initial-document-composite'
+import { canPrepareInitialDocumentComposite, registerInitialDocumentComposite, registerPendingInitialDocumentComposite } from './initial-document-composite'
+import { rehydrateRuntimeRasterDocument } from './runtime-raster'
 
 export type SaveImageDialogFormat = 'png' | 'jpeg' | 'webp' | 'ase' | 'aseprite'
 
@@ -160,6 +161,7 @@ interface PendingDecodeRequest {
   reject: (error: Error) => void
   onProgress?: (value: number) => void
   backgroundCompositeFor?: SpriteDocument
+  initialCompositeFrameId?: string
 }
 
 let sharedDecodeWorker: Worker | null = null
@@ -185,8 +187,9 @@ const ensureDecodeWorker = (): Worker => {
     }
     pendingDecodeRequests.delete(event.data.id)
     if (event.data.document || (request.backgroundCompositeFor && event.data.completed)) {
+      if (event.data.document) rehydrateRuntimeRasterDocument(event.data.document)
       const targetDocument = request.backgroundCompositeFor ?? event.data.document
-      if (targetDocument && event.data.initialComposite) registerInitialDocumentComposite(targetDocument, event.data.initialComposite)
+      if (targetDocument && event.data.initialComposite) registerInitialDocumentComposite(targetDocument, event.data.initialComposite, request.initialCompositeFrameId ?? event.data.document?.animation?.activeFrameId)
       request.resolve(event.data.document ?? request.backgroundCompositeFor!)
     }
     else request.reject(new Error(event.data.error || 'Document decode failed'))
@@ -200,10 +203,10 @@ export const warmDocumentDecodeWorker = (): void => {
   if (typeof Worker !== 'undefined') ensureDecodeWorker()
 }
 
-const decodeDocumentFileInWorker = (data: Uint8Array, filePath: string, onProgress?: (value: number) => void, prepareInitialComposite = true, backgroundCompositeFor?: SpriteDocument): Promise<SpriteDocument> => new Promise((resolve, reject) => {
+const decodeDocumentFileInWorker = (data: Uint8Array, filePath: string, onProgress?: (value: number) => void, prepareInitialComposite = true, backgroundCompositeFor?: SpriteDocument, initialCompositeFrameId?: string): Promise<SpriteDocument> => new Promise((resolve, reject) => {
   const worker = ensureDecodeWorker()
   const id = ++decodeRequestSequence
-  pendingDecodeRequests.set(id, { resolve, reject, onProgress, backgroundCompositeFor })
+  pendingDecodeRequests.set(id, { resolve, reject, onProgress, backgroundCompositeFor, initialCompositeFrameId })
   const transfer = data.buffer instanceof ArrayBuffer ? [data.buffer] : []
   try {
     worker.postMessage({ id, data, filePath, locale: currentAppLocale(), prepareInitialComposite, reportProgress: Boolean(onProgress), returnDocument: !backgroundCompositeFor }, transfer)
@@ -213,12 +216,27 @@ const decodeDocumentFileInWorker = (data: Uint8Array, filePath: string, onProgre
   }
 })
 
+const scheduleBackgroundInitialComposite = (document: SpriteDocument, source: Uint8Array, filePath: string): void => {
+  if (!canPrepareInitialDocumentComposite(document.width, document.height)) return
+  const frameId = document.animation?.activeFrameId
+  const run = (): Promise<void> => decodeDocumentFileInWorker(source, filePath, undefined, true, document, frameId).then(() => undefined)
+  const pending = new Promise<void>((resolve) => {
+    const start = (): void => { void run().then(resolve, resolve) }
+    window.requestAnimationFrame(() => window.requestAnimationFrame(() => {
+      if (typeof window.requestIdleCallback === 'function') window.requestIdleCallback(start)
+      else window.setTimeout(start, 250)
+    }))
+  })
+  registerPendingInitialDocumentComposite(document, pending, frameId)
+}
+
 export async function decodeDocumentFileAsync(data: Uint8Array, filePath: string, onProgress?: (value: number) => void): Promise<SpriteDocument> {
   const suffix = fileExtension(filePath)
   if ((suffix === 'moonsprite' || suffix === 'ase' || suffix === 'aseprite') && typeof Worker !== 'undefined' && shouldDecodeDocumentInWorker(data, filePath)) {
     const source = suffix === 'moonsprite' ? data.slice() : null
     const document = await decodeDocumentFileInWorker(data, filePath, onProgress, false)
     if (source) registerProjectSaveBaseline(document, filePath, source)
+    if (source) scheduleBackgroundInitialComposite(document, source, filePath)
     return document
   }
   if (!browserRasterImageExtensions.includes(suffix as (typeof browserRasterImageExtensions)[number])) {

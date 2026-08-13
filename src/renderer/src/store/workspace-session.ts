@@ -4,6 +4,7 @@ import { PROCEDURAL_BRUSH_IDS } from '@/core/brushes'
 import { packColor, unpackColor } from '@/core/raster'
 import {
   cloneProceduralSettings,
+  BRUSH_TOOLS,
   defaultToolSettings,
   loadToolSettings,
   normalizePersistedBrushProfile,
@@ -23,7 +24,7 @@ import { applyProjectLayerPanelState, loadLocalLayerPanelState, normalizeProject
 const defaultColor: RgbaColor = { r: 41, g: 121, b: 255, a: 255 }
 const defaultSecondary: RgbaColor = { r: 241, g: 244, b: 248, a: 255 }
 
-export const isBrushTool = (tool: ToolId): tool is BrushTool => tool === 'pencil' || tool === 'eraser' || tool === 'fill'
+export const isBrushTool = (tool: ToolId): tool is BrushTool => BRUSH_TOOLS.includes(tool as BrushTool)
 
 export const activeLayerMask = (session: DocumentSession): LayerMask | null => session.activeLayerMaskId
   ? findLayerMask(session.document, session.activeLayerMaskId)
@@ -118,7 +119,7 @@ function brushProfileFromPersisted(profile: PersistedBrushProfile): BrushProfile
 export function persistToolSettings(session: DocumentSession): void {
   const activeProfile = brushProfileFromSession(session)
   if (isBrushTool(session.tool)) session.brushProfiles[session.tool] = activeProfile
-  const profiles = Object.fromEntries((['pencil', 'eraser', 'fill'] as BrushTool[]).map((tool) => [
+  const profiles = Object.fromEntries(BRUSH_TOOLS.map((tool) => [
     tool,
     persistedBrushProfileFromSession(session.brushProfiles[tool])
   ])) as Record<BrushTool, PersistedBrushProfile>
@@ -173,8 +174,8 @@ export const sessionFromDocument = (document: SpriteDocument): DocumentSession =
   const layerPanelState = loadLocalLayerPanelState(document) ?? normalizeProjectLayerPanelState(document, document.layerPanelState)
   const settings = loadToolSettings()
   const fallbackProfile = normalizePersistedBrushProfile(settings, defaultToolSettings)
-  const persistedProfiles = settings.brushProfiles ?? Object.fromEntries((['pencil', 'eraser', 'fill'] as BrushTool[]).map((tool) => [tool, fallbackProfile])) as Record<BrushTool, PersistedBrushProfile>
-  const brushProfiles = Object.fromEntries((['pencil', 'eraser', 'fill'] as BrushTool[]).map((tool) => [
+  const persistedProfiles = settings.brushProfiles ?? Object.fromEntries(BRUSH_TOOLS.map((tool) => [tool, fallbackProfile])) as Record<BrushTool, PersistedBrushProfile>
+  const brushProfiles = Object.fromEntries(BRUSH_TOOLS.map((tool) => [
     tool,
     brushProfileFromPersisted(persistedProfiles[tool] ?? fallbackProfile)
   ])) as Record<BrushTool, BrushProfile>
@@ -182,6 +183,9 @@ export const sessionFromDocument = (document: SpriteDocument): DocumentSession =
     document,
     history: new HistoryStack(),
     tool: 'pencil',
+    moveKind: 'move',
+    selectedSliceId: null,
+    selectedSliceIds: [],
     primaryColor: document.palette.find((entry) => entry.id !== 0)?.color ?? defaultColor,
     secondaryColor: defaultSecondary,
     brushSize: settings.brushSize,

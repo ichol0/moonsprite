@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createDocument } from './document'
 import { decodeDocumentFile, decodeDocumentFileAsync, encodeDocumentForPath, fileExtension, fileNameFromPath, joinDirectoryPath, normalizeSaveDialogPath, sanitizeFileStem, saveImageDialogFormat, saveImageKindForPath, shouldDecodeDocumentInWorker } from './document-files'
 import { decodeProject, encodeProject } from './project-format'
-import { initialDocumentComposite } from './initial-document-composite'
+import { initialDocumentComposite, initialDocumentCompositePending } from './initial-document-composite'
 
 describe('document file rules', () => {
   afterEach(() => vi.unstubAllGlobals())
@@ -50,20 +50,32 @@ describe('document file rules', () => {
     expect(shouldDecodeDocumentInWorker(large, 'large.moonsprite')).toBe(true)
   })
 
-  it('reuses one decode worker without decoding an opened project a second time', async () => {
-    vi.stubGlobal('requestIdleCallback', vi.fn())
+  it('defers the initial composite until after editor paint and reuses the decode worker', async () => {
+    const animationFrames: FrameRequestCallback[] = []
+    const idleCallbacks: IdleRequestCallback[] = []
+    vi.stubGlobal('requestAnimationFrame', vi.fn((callback: FrameRequestCallback) => {
+      animationFrames.push(callback)
+      return animationFrames.length
+    }))
+    vi.stubGlobal('requestIdleCallback', vi.fn((callback: IdleRequestCallback) => {
+      idleCallbacks.push(callback)
+      return idleCallbacks.length
+    }))
     const documents = [createDocument('first', 2, 2, 'rgba'), createDocument('second', 2, 2, 'rgba')]
     const workers: Array<{ onmessage: ((event: MessageEvent) => void) | null }> = []
+    const messages: Array<{ id: number; prepareInitialComposite?: boolean; returnDocument?: boolean }> = []
     class FakeWorker {
       onmessage: ((event: MessageEvent) => void) | null = null
       onerror: ((event: ErrorEvent) => void) | null = null
       constructor() { workers.push(this) }
       postMessage(message: { id: number; prepareInitialComposite?: boolean; returnDocument?: boolean }): void {
-        const document = documents.shift()
+        messages.push(message)
+        const document = message.returnDocument === false ? undefined : documents.shift()
         const initialComposite = message.prepareInitialComposite && document ? new Uint8ClampedArray(document.width * document.height * 4) : undefined
+        const backgroundComposite = message.returnDocument === false ? new Uint8ClampedArray(2 * 2 * 4) : initialComposite
         this.onmessage?.({ data: { id: message.id, progress: 1 } } as MessageEvent)
         this.onmessage?.({ data: message.returnDocument === false
-          ? { id: message.id, initialComposite, completed: true }
+          ? { id: message.id, initialComposite: backgroundComposite, completed: true }
           : { id: message.id, document, initialComposite } } as MessageEvent)
       }
       terminate(): void {}
@@ -73,6 +85,19 @@ describe('document file rules', () => {
     const first = await decodeDocumentFileAsync(new Uint8Array([1]), 'first.moonsprite')
     expect(first).toMatchObject({ name: 'first' })
     expect(initialDocumentComposite(first)).toBeNull()
+    expect(initialDocumentCompositePending(first)).toBe(true)
+    expect(messages).toMatchObject([{ prepareInitialComposite: false, returnDocument: true }])
+
+    animationFrames.shift()?.(0)
+    expect(messages).toHaveLength(1)
+    animationFrames.shift()?.(0)
+    expect(messages).toHaveLength(1)
+    expect(idleCallbacks).toHaveLength(1)
+    idleCallbacks.shift()?.({ didTimeout: false, timeRemaining: () => 10 })
+    await Promise.resolve()
+    expect(messages[1]).toMatchObject({ prepareInitialComposite: true, returnDocument: false })
+    expect(initialDocumentComposite(first)?.pixels).toHaveLength(16)
+
     await expect(decodeDocumentFileAsync(new Uint8Array([2]), 'second.moonsprite')).resolves.toMatchObject({ name: 'second' })
     expect(workers).toHaveLength(1)
     expect(documents).toHaveLength(0)

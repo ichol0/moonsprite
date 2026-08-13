@@ -50,7 +50,7 @@ export const appCoordinatorRenderKey = (state: AppCoordinatorState): string => {
 }
 
 export const toolRailRenderKey = (session: DocumentSession | null): string => session
-  ? `${session.document.id}:${session.tool}:${session.selectionKind}:${session.shapeKind}:${session.lineKind}:${session.fillKind ?? 'bucket'}`
+  ? `${session.document.id}:${session.tool}:${session.moveKind}:${session.selectionKind}:${session.shapeKind}:${session.lineKind}:${session.fillKind ?? 'bucket'}`
   : ''
 
 export const appMenuRenderKey = (session: DocumentSession | null): string => session
@@ -122,6 +122,10 @@ export const toolOptionsRenderKey = (session: DocumentSession | null): string =>
     session.gradientContiguous ? 1 : 0,
     session.gradientDither ?? 'none',
     session.moveAutoSelect ? 1 : 0,
+    session.moveKind,
+    session.selectedSliceId ?? '',
+    (session.selectedSliceIds ?? []).join(','),
+    (session.document.slices ?? []).map((slice) => `${slice.id}:${slice.name}:${slice.x}:${slice.y}:${slice.width}:${slice.height}`).join('|'),
     session.selectionKind,
     session.selectionMode,
     session.wandTolerance,

@@ -165,7 +165,7 @@ export default function App() {
   const [activeWorkspaceId, setActiveWorkspaceId] = useState<string | null>(null)
   const [workspaceDirectory, setWorkspaceDirectory] = useState('')
   const [workspaceBusy, setWorkspaceBusy] = useState(false)
-  const [exportForm, setExportForm] = useState<ExportOptions>({ name: 'MoonSprite-export.png', format: 'png-auto', scalePercent: 100, directory: 'exports', gifFrameRange: 'all', gifDirection: 'forward' })
+  const [exportForm, setExportForm] = useState<ExportOptions>({ name: 'MoonSprite-export.png', format: 'png-auto', scalePercent: 100, directory: 'exports', target: 'document', gifFrameRange: 'all', gifDirection: 'forward' })
   const [presetName, setPresetName] = useState('')
   const [presets, setPresets] = useState<ExportPreset[]>(loadExportPresets)
   const [exportPathMenuOpen, setExportPathMenuOpen] = useState(false)
@@ -255,6 +255,12 @@ export default function App() {
   }, [])
   const toggleTimelineVisibility = useCallback((): void => {
     const next = { ...runtimePreferences, timelineHidden: !runtimePreferences.timelineHidden }
+    saveEditorPreferences(next)
+    setRuntimePreferences(next)
+    window.dispatchEvent(new Event('moonsprite:preferences-changed'))
+  }, [runtimePreferences])
+  const toggleSliceOutlinesVisibility = useCallback((): void => {
+    const next = { ...runtimePreferences, sliceOutlinesVisible: !runtimePreferences.sliceOutlinesVisible }
     saveEditorPreferences(next)
     setRuntimePreferences(next)
     window.dispatchEvent(new Event('moonsprite:preferences-changed'))
@@ -586,14 +592,14 @@ export default function App() {
     }
   }, [activeWorkspaceId, bottomLayersHeight, captureWorkspaceLayout, inspectorWidth, leftDockWidth, panelDocks, panelVisibility, previewOpen, toolRailSide, workspaceLayoutChange, workspaceLayoutRevision])
 
-  const openExport = (): void => {
+  const openExport = (target: NonNullable<ExportOptions['target']> = 'document'): void => {
     if (!session) return
     const preferences = loadEditorPreferences()
     const preferredFormat = imageExportKindForPreference(readStoredString(EXPORT_FORMAT_PREFERENCE_KEY))
-    const format = (session.document.animation?.frames.length ?? 1) > 1 ? 'gif' : preferredFormat
+    const format = target === 'frames' ? (preferredFormat === 'gif' ? 'png-auto' : preferredFormat) : (session.document.animation?.frames.length ?? 1) > 1 ? 'gif' : preferredFormat
     const defaultScale = format === 'svg' ? 100 : exportScalePresets.includes(100) ? 100 : exportScalePresets[0] ?? 100
     const documentName = session.document.name.replace(/\.(moonsprite|aseprite|ase|png|jpe?g|webp|svg|gif)$/i, '') || 'MoonSprite-export'
-    setExportForm({ name: withExportFileExtension(documentName, format), format, scalePercent: defaultScale, directory: preferences.exportDirectory || defaultFileDirectories.exportDirectory, gifFrameRange: 'all', gifDirection: 'forward' })
+    setExportForm({ name: withExportFileExtension(documentName, format), format, scalePercent: defaultScale, directory: preferences.exportDirectory || defaultFileDirectories.exportDirectory, target, gifFrameRange: 'all', gifDirection: 'forward' })
     setPresetName('')
     setExportPathMenuOpen(false)
     setExportOpen(true)
@@ -1062,6 +1068,7 @@ export default function App() {
       if (runCommand('openDocument', () => { void openFilesAndShowDocument() })) return
       if (runCommand('save', () => { void workspace.saveActive() })) return
       if (runCommand('exportDocument', openExport)) return
+      if (runCommand('exportAllFrames', () => openExport('frames'))) return
       if (runCommand('exportSpriteSheet', () => { if (session) void workspace.createSpriteSheetFromActive() })) return
       if (runCommand('closeDocument', () => { if (workspace.activeId) void workspace.closeDocument(workspace.activeId) })) return
       if (runCommand('openProjectFolder', () => { if (session) openProjectFolder(session.document.id) })) return
@@ -1190,6 +1197,7 @@ export default function App() {
       if (runCommand('tool.shape.ellipse', () => { workspace.setTool('shape'); workspace.setShapeKind('ellipse') })) return
       if (runCommand('tool.curve', () => { workspace.setTool('line'); workspace.setLineKind('curve') })) return
       if (runCommand('tool.line', () => { workspace.setTool('line'); workspace.setLineKind('line') })) return
+      if (runCommand('tool.slice', () => { workspace.setTool('move'); workspace.setMoveKind('slice') })) return
       if (event.key === 'Enter' && session?.selection && shouldHandleGlobalSelectionEnter(outlineOpen, true)) {
         event.preventDefault()
         if (session.pendingPaste) workspace.commitFloatingPaste()
@@ -1207,6 +1215,7 @@ export default function App() {
       if (shouldTriggerDeleteCommand(matches('deleteLayer'), event.key)) {
         event.preventDefault()
         event.stopPropagation()
+        if (commandScopeRef.current === 'canvas' && session?.tool === 'move' && session.moveKind === 'slice' && (session.selectedSliceIds?.length || session.selectedSliceId)) { workspace.deleteSlices(session.selectedSliceIds?.length ? session.selectedSliceIds : [session.selectedSliceId!]); return }
         if (session?.selectedAnimationMaskCellKeys.length && !selectionCommandOverrideRef.current) { workspace.deleteSelectedLayerMasks(); return }
         if ((session?.selectedAnimationCellKeys.length || session?.selectedAnimationFrameIds.length) && !selectionCommandOverrideRef.current) { workspace.deleteSelectedAnimationItems(); return }
         const target = resolveDeleteCommand(commandScopeRef.current, Boolean(session?.selection))
@@ -1230,7 +1239,7 @@ export default function App() {
     window.addEventListener('keydown', keydown, true)
     window.addEventListener('keyup', keyup, true)
     return () => { window.removeEventListener('keydown', keydown, true); window.removeEventListener('keyup', keyup, true) }
-  }, [adjustmentOpen, advancedMode, aboutOpen, blockedShortcuts, canvasResizeOpen, colorReplacementOpen, componentLibraryOpen, cycleAdvancedMode, exportOpen, gridSettingsOpen, homeOpen, imageResizeOpen, latestReleaseOpen, loadSavedWorkspaces, newOpen, openMenu, openSaveAs, outlineOpen, preferencesOpen, projectInfoOpen, roadmapOpen, runtimePreferences.timelineHidden, saveAsOpen, shortcutOpen, timelapseOpen, toggleMirrorView, toggleTimelineVisibility, updatePanelVisibility, updateToolRailSide, workspace, workspaceManagerOpen, workspaceSaveOpen, session?.brushSize, session?.document.id, session?.selection, shortcuts])
+  }, [adjustmentOpen, advancedMode, aboutOpen, blockedShortcuts, canvasResizeOpen, colorReplacementOpen, componentLibraryOpen, cycleAdvancedMode, exportOpen, gridSettingsOpen, homeOpen, imageResizeOpen, latestReleaseOpen, loadSavedWorkspaces, newOpen, openMenu, openSaveAs, outlineOpen, preferencesOpen, projectInfoOpen, roadmapOpen, runtimePreferences.timelineHidden, saveAsOpen, shortcutOpen, timelapseOpen, toggleMirrorView, toggleTimelineVisibility, updatePanelVisibility, updateToolRailSide, workspace, workspaceManagerOpen, workspaceSaveOpen, session?.brushSize, session?.document.id, session?.moveKind, session?.selectedSliceId, session?.selectedSliceIds, session?.selection, session?.tool, shortcuts])
 
   useEffect(() => { void window.moonSprite.getResourceInfo().then((info) => setResourceLabel(t('app.resource.freeMemory', { value: formatBytes(info.freeBytes) }))) }, [t])
   useEffect(() => {
@@ -1348,6 +1357,7 @@ export default function App() {
       homeOpen={homeOpen}
       panelVisibility={panelVisibility}
       timelineHidden={runtimePreferences.timelineHidden}
+      sliceOutlinesVisible={runtimePreferences.sliceOutlinesVisible}
       toolRailSide={toolRailSide}
       advancedModeActive={advancedMode !== null}
       recentFiles={recentFiles}
@@ -1356,7 +1366,8 @@ export default function App() {
       onOpen={() => { void openFilesAndShowDocument() }}
       onOpenRecent={(filePath) => { void openGalleryProject(filePath) }}
       onSaveAs={openSaveAs}
-      onExport={openExport}
+      onExport={() => openExport()}
+      onExportAllFrames={() => openExport('frames')}
       onOpenTimelapse={() => setTimelapseOpen(true)}
       onOpenProjectInfo={() => setProjectInfoOpen(true)}
       onOpenProjectFolder={openProjectFolder}
@@ -1371,6 +1382,7 @@ export default function App() {
       onToggleMirror={toggleMirrorView}
       onTogglePanel={(id) => updatePanelVisibility(id, !panelVisibility[id])}
       onToggleTimeline={toggleTimelineVisibility}
+      onToggleSliceOutlines={toggleSliceOutlinesVisibility}
       onToolRailSideChange={updateToolRailSide}
       onCycleAdvancedMode={cycleAdvancedMode}
       onOpenComponentLibrary={() => setComponentLibraryOpen(true)}
@@ -1426,11 +1438,12 @@ export default function App() {
     {workspace.saveProgress && createPortal(<div className={`modal-backdrop save-progress-backdrop ${workspace.saveProgress.requiresConfirmation ? 'is-complete' : 'is-running'}`} role="presentation"><ModalShell storageKey="save-progress" defaultWidth={280} defaultHeight={workspace.saveProgress.requiresConfirmation ? 190 : 142} fitContentKey={workspace.saveProgress.requiresConfirmation ? 'complete' : 'progress'} minWidth={250} minHeight={workspace.saveProgress.requiresConfirmation ? 176 : 132} className="save-progress-modal" role="dialog" aria-modal="true" aria-live="polite" aria-labelledby="save-progress-title"><header><div className="save-progress-heading"><span className="save-progress-icon" aria-hidden="true">{workspace.saveProgress.requiresConfirmation ? <CheckCircle2 size={20} /> : <span className="save-progress-animation" />}</span><div><span className="eyebrow">FILE OPERATION</span><h2 id="save-progress-title">{workspace.saveProgress.title}</h2></div></div>{!workspace.saveProgress.requiresConfirmation && <button type="button" className="icon-button" aria-label={t('app.progress.close', { title: workspace.saveProgress.title })} onClick={() => workspace.dismissSaveProgress()}><PixelUtilityIcon kind="close" /></button>}</header><div className="save-progress-body"><strong>{workspace.saveProgress.label}</strong><div className={`save-progress-track ${workspace.saveProgress.value >= 100 ? 'is-full' : ''}`} aria-label={t('app.progress.aria', { title: workspace.saveProgress.title, value: workspace.saveProgress.value })}><i style={{ width: `${workspace.saveProgress.value}%` }} /></div><div className="save-progress-meta"><span>{t(workspace.saveProgress.requiresConfirmation ? 'app.progress.complete' : 'app.progress.processing')}</span><small>{workspace.saveProgress.value}%</small></div></div>{workspace.saveProgress.requiresConfirmation && <footer><button type="button" className="primary-button" onClick={() => workspace.dismissSaveProgress()}>{t('timelapse.confirmExport')}</button></footer>}</ModalShell></div>, document.body)}
     {workspace.dialog && <div className="modal-backdrop dialog-backdrop" role="presentation"><ModalShell storageKey="confirm-content-v2" defaultWidth={420} defaultHeight={180} minHeight={0} resizable={false} className="confirm-modal" role="alertdialog" aria-modal="true" aria-labelledby="app-dialog-title"><DialogHeader eyebrow="MOONSPRITE" title={workspace.dialog.title} titleId="app-dialog-title" /><div className="confirm-content"><strong>{workspace.dialog.message}</strong>{workspace.dialog.detail && <p>{workspace.dialog.detail}</p>}</div><footer>{workspace.dialog.choices.map((choice) => <button key={choice.id} className={choice.tone === 'primary' ? 'primary-button' : choice.tone === 'danger' ? 'danger-button' : 'quiet-button'} onClick={() => workspace.resolveDialog(choice.id)}>{choice.label}</button>)}</footer></ModalShell></div>}
     {exportOpen && <div className="modal-backdrop" role="presentation" onPointerDown={(event) => { if (event.target === event.currentTarget) setExportOpen(false) }}>
-      <ModalShell as="form" storageKey="export" fitContentKey={`${exportForm.format}:${exportForm.gifFrameRange ?? 'all'}`} defaultWidth={440} defaultHeight={600} minHeight={360} maxHeight={760} className="export-modal" onSubmit={(event) => { event.preventDefault(); void workspace.exportActive(exportForm).then((exported) => { if (exported) setExportOpen(false) }) }}>
+      <ModalShell as="form" storageKey="export" fitContentKey={`${exportForm.format}:${exportForm.gifFrameRange ?? 'all'}`} defaultWidth={440} defaultHeight={600} minHeight={360} maxHeight={760} className="export-modal" onSubmit={(event) => { event.preventDefault(); const target = exportForm.format === 'gif' ? 'document' : exportForm.target === 'frames' ? 'frames' : !session?.document.slices?.length ? 'document' : exportForm.target; void workspace.exportActive({ ...exportForm, target }).then((exported) => { if (exported) setExportOpen(false) }) }}>
         <DialogHeader eyebrow="EXPORT IMAGE" title={t('app.export.settings')} closeLabel={t('common.close')} onClose={() => setExportOpen(false)} />
         <div className="modal-body component-scrollbar">
           <FormField className="export-file-field" label={t('app.export.fileName')} hint={<span className="export-selected-directory" title={exportForm.directory}>{t('app.export.selectedDirectory', { path: exportForm.directory || defaultFileDirectories.exportDirectory })}</span>}><div className="export-file-control"><TextInput autoFocus aria-label={t('app.export.fileName')} value={exportForm.name} onChange={(event) => setExportForm({ ...exportForm, name: event.target.value })} /><button type="button" className={exportPathMenuOpen ? 'icon-button selected' : 'icon-button'} title={t('app.export.pathMenu')} aria-label={t('app.export.pathMenu')} aria-expanded={exportPathMenuOpen} onClick={() => setExportPathMenuOpen((open) => !open)}><PixelUtilityIcon kind="more" /></button>{exportPathMenuOpen && <div className="export-path-menu context-menu" role="menu" aria-label={t('app.export.pathMenu')}><button type="button" className="context-menu-item" role="menuitem" onClick={() => void chooseExportDirectory()}><PixelUtilityIcon kind="folderOpen" /><span>{t('app.export.choosePath')}</span></button><button type="button" className="context-menu-item" role="menuitem" onClick={() => { setExportForm((current) => ({ ...current, directory: defaultFileDirectories.saveDirectory })); setExportPathMenuOpen(false) }}><PixelUtilityIcon kind="image" /><span>{t('app.export.localGallery')}</span></button><span className="context-menu-divider" /><strong className="export-path-menu-heading">{t('app.export.recentPaths')}</strong>{recentExportPaths.length === 0 ? <span className="export-path-menu-empty">{t('app.export.noRecentPaths')}</span> : recentExportPaths.map((item) => <button type="button" className="context-menu-item export-recent-path" role="menuitem" key={item.filePath.toLocaleLowerCase()} title={item.filePath} onClick={() => useRecentExportDirectory(item.filePath)}><PixelUtilityIcon kind="export" /><span>{item.filePath}</span></button>)}</div>}</div></FormField>
-          <FormField label={t('app.export.format')}><ThemedSelect<ExportOptions['format']> value={exportForm.format} groups={[{ label: t('app.export.formatGroup'), options: [{ value: 'png-auto', label: t('app.export.pngAuto') }, { value: 'png-rgba', label: t('app.export.pngRgba') }, { value: 'jpeg', label: t('app.export.jpegWhite') }, { value: 'webp', label: t('app.export.webp') }, { value: 'svg', label: t('app.export.svg') }, { value: 'gif', label: t('app.export.gif') }] }]} label={t('app.export.format')} onChange={(format) => setExportForm({ ...exportForm, name: withExportFileExtension(exportForm.name, format), format, scalePercent: format === 'svg' ? 100 : exportForm.scalePercent })} /></FormField>
+          <FormField label={t('app.export.format')}><ThemedSelect<ExportOptions['format']> value={exportForm.format} groups={[{ label: t('app.export.formatGroup'), options: [{ value: 'png-auto', label: t('app.export.pngAuto') }, { value: 'png-rgba', label: t('app.export.pngRgba') }, { value: 'jpeg', label: t('app.export.jpegWhite') }, { value: 'webp', label: t('app.export.webp') }, { value: 'svg', label: t('app.export.svg') }, { value: 'gif', label: t('app.export.gif') }] }]} label={t('app.export.format')} onChange={(format) => setExportForm({ ...exportForm, name: withExportFileExtension(exportForm.name, format), format, target: format === 'gif' ? 'document' : exportForm.target, scalePercent: format === 'svg' ? 100 : exportForm.scalePercent })} /></FormField>
+          <FormField label={t('app.export.target')}><ThemedSelect<NonNullable<ExportOptions['target']>> value={exportForm.format === 'gif' ? 'document' : exportForm.target === 'frames' ? 'frames' : !session?.document.slices?.length ? 'document' : exportForm.target ?? 'document'} groups={[{ label: t('app.export.target'), options: [{ value: 'document', label: t('app.export.targetDocument') }, ...((session?.document.animation?.frames.length ?? 1) > 1 && exportForm.format !== 'gif' ? [{ value: 'frames' as const, label: t('app.export.targetFrames') }] : []), ...(exportForm.format !== 'gif' && session?.document.slices?.length ? [{ value: 'slices' as const, label: t('app.export.targetSlices') }] : [])] }]} label={t('app.export.target')} onChange={(target) => setExportForm({ ...exportForm, target })} /></FormField>
           {exportForm.format === 'gif' && <section className="gif-export-options">
             <FormField label={t('app.export.gifRange')}><ThemedSelect value={exportForm.gifFrameRange ?? 'all'} groups={[{ label: t('app.export.gifRange'), options: [{ value: 'all', label: t('app.export.gifAllFrames') }, { value: 'range', label: t('app.export.gifFrameRange') }] }]} label={t('app.export.gifRange')} onChange={(gifFrameRange) => setExportForm({ ...exportForm, gifFrameRange: gifFrameRange as 'all' | 'range' })} /></FormField>
             {exportForm.gifFrameRange === 'range' && <div className="gif-range-fields"><FormField label={t('app.export.gifStart')}><NumberInput min={1} max={session?.document.animation?.frames.length ?? 1} value={exportForm.gifFrameStart ?? 1} onValueChange={(gifFrameStart) => setExportForm({ ...exportForm, gifFrameStart })} /></FormField><FormField label={t('app.export.gifEnd')}><NumberInput min={1} max={session?.document.animation?.frames.length ?? 1} value={exportForm.gifFrameEnd ?? session?.document.animation?.frames.length ?? 1} onValueChange={(gifFrameEnd) => setExportForm({ ...exportForm, gifFrameEnd })} /></FormField></div>}

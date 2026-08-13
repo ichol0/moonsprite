@@ -15,6 +15,7 @@ import { decodeProject, encodeProject, registerProjectSaveBaseline } from '@/cor
 import { LAYER_PANEL_STATE_STORAGE_KEY } from '@/core/layer-panel-state'
 import { saveProgress } from '@/core/save-progress'
 import { repositionPaletteSlots } from '@/core/palette-layout'
+import { decodePng } from '@/core/png'
 import { useWorkspace } from './workspace'
 
 const transparent = { r: 0, g: 0, b: 0, a: 0 }
@@ -1153,6 +1154,104 @@ describe('procedural brush settings', () => {
 })
 
 describe('workspace history', () => {
+  it('undoes and redoes slice creation, adjustment, and deletion', () => {
+    const document = createDocument('slice history', 16, 12, 'rgba')
+    useWorkspace.getState().addSession(document)
+
+    const sliceId = useWorkspace.getState().createSlice({ x: 2, y: 3, width: 5, height: 4 })
+    expect(sliceId).not.toBeNull()
+    expect(document.slices).toHaveLength(1)
+    expect(document.slices?.[0]).toMatchObject({ id: sliceId, x: 2, y: 3, width: 5, height: 4 })
+    expect(useWorkspace.getState().sessions[0].selectedSliceId).toBe(sliceId)
+
+    useWorkspace.getState().undo()
+    expect(document.slices).toEqual([])
+    expect(useWorkspace.getState().sessions[0].selectedSliceId).toBeNull()
+    useWorkspace.getState().redo()
+    expect(document.slices?.[0]).toMatchObject({ id: sliceId, x: 2, y: 3, width: 5, height: 4 })
+    expect(useWorkspace.getState().sessions[0].selectedSliceId).toBe(sliceId)
+
+    useWorkspace.getState().updateSlice(sliceId!, { x: 6, y: 1, width: 7, height: 8 })
+    expect(document.slices?.[0]).toMatchObject({ x: 6, y: 1, width: 7, height: 8 })
+    useWorkspace.getState().undo()
+    expect(document.slices?.[0]).toMatchObject({ x: 2, y: 3, width: 5, height: 4 })
+    useWorkspace.getState().redo()
+    expect(document.slices?.[0]).toMatchObject({ x: 6, y: 1, width: 7, height: 8 })
+
+    useWorkspace.getState().deleteSlice(sliceId!)
+    expect(document.slices).toEqual([])
+    expect(useWorkspace.getState().sessions[0].selectedSliceId).toBeNull()
+    useWorkspace.getState().undo()
+    expect(document.slices?.[0]).toMatchObject({ id: sliceId, x: 6, y: 1, width: 7, height: 8 })
+    expect(useWorkspace.getState().sessions[0].selectedSliceId).toBe(sliceId)
+    useWorkspace.getState().redo()
+    expect(document.slices).toEqual([])
+    expect(useWorkspace.getState().sessions[0].selectedSliceId).toBeNull()
+  })
+
+  it('creates an automatic slice batch as one undoable operation', () => {
+    const document = createDocument('automatic slices', 24, 16, 'rgba')
+    useWorkspace.getState().addSession(document)
+
+    const ids = useWorkspace.getState().createSlices([
+      { x: 0, y: 0, width: 8, height: 8 },
+      { x: 8, y: 0, width: 8, height: 8 },
+      { x: 16, y: 0, width: 8, height: 8 }
+    ])
+    expect(ids).toHaveLength(3)
+    expect(document.slices).toHaveLength(3)
+    expect(useWorkspace.getState().sessions[0].selectedSliceIds).toEqual(ids)
+
+    useWorkspace.getState().undo()
+    expect(document.slices).toEqual([])
+    expect(useWorkspace.getState().sessions[0].selectedSliceIds).toEqual([])
+
+    useWorkspace.getState().redo()
+    expect(document.slices).toHaveLength(3)
+    expect(useWorkspace.getState().sessions[0].selectedSliceIds).toEqual(ids)
+  })
+
+  it('selects, duplicates, moves, and deletes multiple slices as one operation', () => {
+    const document = createDocument('multi slice history', 20, 16, 'rgba')
+    useWorkspace.getState().addSession(document)
+    const first = useWorkspace.getState().createSlice({ x: 1, y: 2, width: 3, height: 4 })!
+    const second = useWorkspace.getState().createSlice({ x: 8, y: 5, width: 2, height: 3 })!
+
+    useWorkspace.getState().selectAllSlices()
+    expect(useWorkspace.getState().sessions[0].selectedSliceIds).toEqual([first, second])
+    useWorkspace.getState().selectSlice(first, true)
+    expect(useWorkspace.getState().sessions[0].selectedSliceIds).toEqual([second])
+    useWorkspace.getState().selectSlice(first, true)
+    expect(useWorkspace.getState().sessions[0].selectedSliceIds).toEqual([second, first])
+
+    useWorkspace.getState().updateSlices({
+      [first]: { x: 3, y: 4, width: 3, height: 4 },
+      [second]: { x: 10, y: 7, width: 2, height: 3 }
+    })
+    expect(document.slices).toMatchObject([{ x: 3, y: 4 }, { x: 10, y: 7 }])
+    useWorkspace.getState().undo()
+    expect(document.slices).toMatchObject([{ x: 1, y: 2 }, { x: 8, y: 5 }])
+    useWorkspace.getState().redo()
+
+    const copies = useWorkspace.getState().duplicateSlices([first, second], {
+      [first]: { x: 4, y: 5, width: 3, height: 4 },
+      [second]: { x: 11, y: 8, width: 2, height: 3 }
+    })
+    expect(copies).toHaveLength(2)
+    expect(document.slices).toHaveLength(4)
+    expect(useWorkspace.getState().sessions[0].selectedSliceIds).toEqual(copies)
+    useWorkspace.getState().undo()
+    expect(document.slices).toHaveLength(2)
+    useWorkspace.getState().redo()
+    expect(document.slices).toHaveLength(4)
+
+    useWorkspace.getState().deleteSlices(copies)
+    expect(document.slices).toHaveLength(2)
+    useWorkspace.getState().undo()
+    expect(document.slices).toHaveLength(4)
+    expect(useWorkspace.getState().sessions[0].selectedSliceIds).toEqual(copies)
+  })
+
   it('does not dirty a clean document when undo or redo history is empty', () => {
     const document = createDocument('empty history', 3, 2, 'rgba')
     document.dirty = false
@@ -3182,6 +3281,36 @@ describe('save concurrency', () => {
     await expect(useWorkspace.getState().exportActive({ name: 'custom.png', format: 'png-rgba', scalePercent: 100, directory: 'E:/delivery' })).resolves.toBe(true)
     expect(exportImage).toHaveBeenCalledWith('E:/delivery/custom.png', 'png')
     expect(localStorage.getItem(RECENT_EXPORT_PATHS_STORAGE_KEY)).toContain('E:/delivery/custom.png')
+  })
+
+  it('exports every animation frame as a numbered image without changing the active frame', async () => {
+    const chooseDirectory = vi.fn(async () => ({ canceled: false, directoryPath: 'E:/frames' }))
+    const writeBinaryAtomic = vi.fn(async (_filePath: string, _data: Uint8Array) => {})
+    installApi({ chooseDirectory, writeBinaryAtomic })
+    const document = createDocument('walk', 1, 1, 'rgba')
+    const layer = getActiveLayer(document)
+    writeLayerColor(document, layer, 0, red)
+    const secondFrameId = addBlankAnimationFrame(document)
+    animationCelAt(ensureAnimationDocument(document), layer.id, secondFrameId)!.surface = {
+      format: 'rgba',
+      width: 1,
+      height: 1,
+      offsetX: 0,
+      offsetY: 0,
+      pixels: Uint8ClampedArray.from([blue.r, blue.g, blue.b, blue.a])
+    }
+    useWorkspace.getState().addSession(document)
+    const activeFrameId = document.animation!.activeFrameId
+
+    await expect(useWorkspace.getState().exportActive({ name: 'walk.png', format: 'png-rgba', scalePercent: 100, target: 'frames', directory: 'E:/frames' })).resolves.toBe(true)
+
+    expect(chooseDirectory).toHaveBeenCalledWith('E:/frames')
+    expect(writeBinaryAtomic.mock.calls.map(([filePath]) => filePath)).toEqual(['E:/frames/walk-001.png', 'E:/frames/walk-002.png'])
+    const first = decodePng(writeBinaryAtomic.mock.calls[0][1])
+    const second = decodePng(writeBinaryAtomic.mock.calls[1][1])
+    expect(readLayerColor(first, getActiveLayer(first), 0)).toEqual(red)
+    expect(readLayerColor(second, getActiveLayer(second), 0)).toEqual(blue)
+    expect(document.animation!.activeFrameId).toBe(activeFrameId)
   })
 
   it('uses Aseprite as the preferred save format without exposing it as image export', async () => {

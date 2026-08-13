@@ -28,6 +28,8 @@ export const CHECKER_LIGHT_COLOR_PREFERENCE_KEY = 'moonsprite.preference.checker
 export const CHECKER_DARK_COLOR_PREFERENCE_KEY = 'moonsprite.preference.checker-dark-color'
 export const PIXEL_GRID_COLOR_PREFERENCE_KEY = 'moonsprite.preference.pixel-grid-color'
 export const GRID_COLOR_PREFERENCE_KEY = 'moonsprite.preference.grid-color'
+export const SLICE_COLOR_PREFERENCE_KEY = 'moonsprite.preference.slice-color'
+export const SLICE_OUTLINES_VISIBLE_PREFERENCE_KEY = 'moonsprite.preference.slice-outlines-visible'
 export const WHEEL_ZOOM_ENABLED_PREFERENCE_KEY = 'moonsprite.preference.wheel-zoom-enabled'
 export const SHIFT_LINE_PREVIEW_ENABLED_PREFERENCE_KEY = 'moonsprite.preference.shift-line-preview-enabled'
 export const LASSO_PREVIEW_CLOSED_PREFERENCE_KEY = 'moonsprite.preference.lasso-preview-closed'
@@ -75,6 +77,7 @@ export const DEFAULT_CHECKERBOARD_PREFERENCES: CheckerboardPreferences = {
 
 export const DEFAULT_PIXEL_GRID_COLOR: RgbaColor = { r: 69, g: 77, b: 92, a: 143 }
 export const DEFAULT_GRID_COLOR: RgbaColor = { r: 0, g: 0, b: 255, a: 255 }
+export const DEFAULT_SLICE_COLOR: RgbaColor = { r: 0, g: 0, b: 255, a: 255 }
 
 export function parseRotationIndicatorPosition(value: string | null): RotationIndicatorPosition {
   return value === 'canvas' ? 'canvas' : 'view'
@@ -242,6 +245,8 @@ export interface EditorPreferences {
   checkerboard: CheckerboardPreferences
   pixelGridColor: RgbaColor
   gridColor: RgbaColor
+  sliceColor: RgbaColor
+  sliceOutlinesVisible: boolean
   wheelZoomEnabled: boolean
   wheelZoomMode: WheelZoomMode
   shiftLinePreviewEnabled: boolean
@@ -286,6 +291,8 @@ export const DEFAULT_EDITOR_PREFERENCES: EditorPreferences = {
   checkerboard: DEFAULT_CHECKERBOARD_PREFERENCES,
   pixelGridColor: DEFAULT_PIXEL_GRID_COLOR,
   gridColor: DEFAULT_GRID_COLOR,
+  sliceColor: DEFAULT_SLICE_COLOR,
+  sliceOutlinesVisible: true,
   wheelZoomEnabled: true,
   wheelZoomMode: 'stepped',
   shiftLinePreviewEnabled: true,
@@ -562,6 +569,8 @@ export function loadEditorPreferences(storage?: Storage): EditorPreferences {
     checkerboard: theme.checkerboard,
     pixelGridColor: theme.grid.pixelGridColor,
     gridColor: theme.grid.gridColor,
+    sliceColor: parseHexColor(get(SLICE_COLOR_PREFERENCE_KEY), DEFAULT_SLICE_COLOR),
+    sliceOutlinesVisible: get(SLICE_OUTLINES_VISIBLE_PREFERENCE_KEY) !== 'false',
     wheelZoomEnabled: get(WHEEL_ZOOM_ENABLED_PREFERENCE_KEY) !== 'false',
     wheelZoomMode: parseWheelZoomMode(get(WHEEL_ZOOM_MODE_PREFERENCE_KEY)),
     shiftLinePreviewEnabled: get(SHIFT_LINE_PREVIEW_ENABLED_PREFERENCE_KEY) !== 'false',
@@ -611,6 +620,8 @@ export function saveEditorPreferences(preferences: EditorPreferences, storage?: 
     [CHECKER_DARK_COLOR_PREFERENCE_KEY]: colorHex(preferences.checkerboard.darkColor),
     [PIXEL_GRID_COLOR_PREFERENCE_KEY]: colorHex(preferences.pixelGridColor),
     [GRID_COLOR_PREFERENCE_KEY]: colorHex(preferences.gridColor),
+    [SLICE_COLOR_PREFERENCE_KEY]: colorHex(preferences.sliceColor),
+    [SLICE_OUTLINES_VISIBLE_PREFERENCE_KEY]: String(preferences.sliceOutlinesVisible),
     [WHEEL_ZOOM_ENABLED_PREFERENCE_KEY]: String(preferences.wheelZoomEnabled),
     [WHEEL_ZOOM_MODE_PREFERENCE_KEY]: preferences.wheelZoomMode,
     [SHIFT_LINE_PREVIEW_ENABLED_PREFERENCE_KEY]: String(preferences.shiftLinePreviewEnabled),

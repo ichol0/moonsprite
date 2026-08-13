@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { compositeRegion, createDocument, createLayer, createSparseLayer, DocumentCompositeCache, getActiveLayer, readLayerColor, readLayerColorAt, resizeDocumentAt, writeLayerColor } from './document'
 import { beginPixelEdit, commitPixelEdit, HistoryStack } from './history'
-import { appendPerfectPixelSegment, applySelectionTransform, applySelectionTranslationPreview, bezierCurvePixelPoints, brushMaskOffsets, brushStampAnchor, brushStampDimensions, captureSelectionTransform, clearSelection, filledShapePathPixelPoints, fillSelectionOrCanvas, flipLayer, flipSelection, floodFill, floodFillSymmetric, lineShapePixelPoints, moveSelection, outlinePixelIndices, outlineSelection, paintBrush, paintLine, paintShape, paintShapePixelPoints, replaceLayerColor, rotatedShapePixelPoints, selectionTranslationPreviewEdit, shapeContainsPixel, shapePixelPoints } from './tools'
+import { appendPerfectPixelSegment, applySelectionTransform, applySelectionTranslationPreview, bezierCurvePixelPoints, brushMaskOffsets, brushPathStampPoints, brushStampAnchor, brushStampDimensions, captureSelectionTransform, clearSelection, filledShapePathPixelPoints, fillSelectionOrCanvas, flipLayer, flipSelection, floodFill, floodFillSymmetric, lineShapePixelPoints, moveSelection, outlinePixelIndices, outlineSelection, paintBrush, paintBrushPath, paintLine, paintShape, paintShapePixelPoints, perfectPixelPathPoints, replaceLayerColor, rotatedShapePixelPoints, selectionTranslationPreviewEdit, shapeContainsPixel, shapePixelPoints } from './tools'
 import { combineSelection, ellipseSelection, lassoSelection, magicWandSelection, rasterLinePoints, rotatedSelectionBounds, selectionBoundarySegments, selectionContains, transformedSelectionBounds, transformedSelectionSourcePoint, transformSelectionMask } from './selection'
 import { resizeDocument } from './document'
 import { createProceduralBrush, createProceduralBrushes, createSelectionBrush, proceduralBrushCoverageAt } from './brushes'
@@ -107,6 +107,21 @@ describe('pixel tools', () => {
     expect(appendPerfectPixelSegment(diagonal, { x: 4, y: 4 })).toBe(false)
     expect(diagonal).toEqual([{ x: 0, y: 0 }, { x: 1, y: 1 }, { x: 2, y: 2 }, { x: 3, y: 3 }, { x: 4, y: 4 }])
     expect(appendPerfectPixelSegment(diagonal, { x: 2, y: 2 })).toBe(false)
+  })
+
+  it('cleans geometric path corners while preserving its endpoints', () => {
+    const cleaned = perfectPixelPathPoints([
+      { x: 1, y: 4 },
+      { x: 2, y: 4 },
+      { x: 3, y: 4 },
+      { x: 3, y: 3 }
+    ])
+
+    expect(cleaned).toEqual([
+      { x: 1, y: 4 },
+      { x: 2, y: 4 },
+      { x: 3, y: 3 }
+    ])
   })
 
   it('creates deterministic grayscale procedural brushes', () => {
@@ -311,6 +326,33 @@ describe('pixel tools', () => {
     expect(readLayerColor(document, layer, 0).a).toBe(0)
     history.redo()
     expect(readLayerColor(document, layer, 7 * 8 + 7)).toEqual(blue)
+  })
+
+  it('uses the same stamp centers for geometric brush-path preview and paint', () => {
+    const document = createDocument('brush path', 48, 24, 'rgba')
+    const layer = getActiveLayer(document)
+    const edit = beginPixelEdit(layer.id)
+    const path = lineShapePixelPoints({ x: 4, y: 12 }, { x: 36, y: 12 })
+    const centers = brushPathStampPoints(path, 32)
+
+    paintBrushPath(document, layer, edit, path, 32, blue, null, 'line')
+
+    expect(centers.map((point) => point.x)).toEqual([4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28, 30, 32, 34, 36])
+    expect(edit.before.size).toBeGreaterThan(path.length)
+    for (const center of centers) expect(readLayerColorAt(document, layer, center.x, center.y).a).toBe(255)
+  })
+
+  it('paints a thick curved brush path instead of a one-pixel curve', () => {
+    const document = createDocument('curved brush path', 24, 24, 'rgba')
+    const layer = getActiveLayer(document)
+    const edit = beginPixelEdit(layer.id)
+    const path = bezierCurvePixelPoints({ x: 3, y: 18 }, [{ x: 8, y: 2 }, { x: 16, y: 2 }], { x: 21, y: 18 })
+
+    paintBrushPath(document, layer, edit, path, 3, blue, null, 'square')
+
+    expect(edit.before.size).toBeGreaterThan(path.length)
+    expect(readLayerColorAt(document, layer, 3, 18)).toEqual(blue)
+    expect(readLayerColorAt(document, layer, 2, 17)).toEqual(blue)
   })
 
   it('paints a balanced Shift line from the same stair points used by its preview', () => {

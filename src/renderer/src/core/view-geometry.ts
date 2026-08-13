@@ -16,17 +16,14 @@ const ROTATION_INDICATOR_MAX_FOOTPRINT = 204
 const ROTATION_INDICATOR_CLEARANCE_RATIO = 4 / 3
 const ROTATION_INDICATOR_HALF_WIDTH = 64
 const ROTATION_INDICATOR_HALF_HEIGHT = 96
-const ROTATION_INDICATOR_POINTER_GAP = 96
 
-export function rotationIndicatorPointBesidePointer(width: number, height: number, pointer: ViewportPoint): ViewportPoint {
+export function rotationIndicatorPointBetweenPointerAndCanvasCenter(width: number, height: number, pointer: ViewportPoint, canvasCenter: ViewportPoint): ViewportPoint {
   const clampAxis = (value: number, size: number, halfSize: number): number => size <= halfSize * 2
     ? size / 2
     : Math.max(halfSize, Math.min(size - halfSize, value))
-  const horizontalDirection = pointer.x < width / 2 ? 1 : -1
-  const verticalDirection = pointer.y < height / 2 ? 1 : -1
   return {
-    x: clampAxis(pointer.x + horizontalDirection * (ROTATION_INDICATOR_HALF_WIDTH + ROTATION_INDICATOR_POINTER_GAP), width, ROTATION_INDICATOR_HALF_WIDTH),
-    y: clampAxis(pointer.y + verticalDirection * (ROTATION_INDICATOR_HALF_HEIGHT + ROTATION_INDICATOR_POINTER_GAP), height, ROTATION_INDICATOR_HALF_HEIGHT)
+    x: clampAxis((pointer.x + canvasCenter.x) / 2, width, ROTATION_INDICATOR_HALF_WIDTH),
+    y: clampAxis((pointer.y + canvasCenter.y) / 2, height, ROTATION_INDICATOR_HALF_HEIGHT)
   }
 }
 
@@ -35,6 +32,13 @@ export function viewRotationPivot(width: number, height: number, panX: number, p
     x: width / 2 + (position === 'canvas' ? panX : 0),
     y: height / 2 + (position === 'canvas' ? panY : 0)
   }
+}
+
+export function displayedCanvasCenter(width: number, height: number, view: ViewGeometryState, position: RotationIndicatorPosition): ViewportPoint {
+  const pivot = viewRotationPivot(width, height, view.panX, view.panY, position)
+  const center = { x: width / 2 + view.panX, y: height / 2 + view.panY }
+  const mirrored = mirrorViewportPoint(center, pivot, Boolean(view.mirrored), Boolean(view.mirroredVertical))
+  return rotateViewportPoint(mirrored, pivot, view.rotation)
 }
 
 export function viewPanDeltaFromScreen(deltaX: number, deltaY: number, rotation: number, position: RotationIndicatorPosition, mirrored = false, mirroredVertical = false): { x: number; y: number } {

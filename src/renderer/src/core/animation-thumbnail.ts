@@ -1,4 +1,5 @@
 import type { AnimationCelSurface, LayerMask, PaletteEntry } from '@shared/types'
+import { readSurfacePackedLocal, runtimeRasterVisibleBounds } from './runtime-raster'
 
 export interface AnimationThumbnailRect { x: number; y: number; width: number; height: number }
 
@@ -56,6 +57,8 @@ export const animationCelContentBounds = (
   const opaqueIds = surface.format === 'indexed' && palette.length > 0
     ? new Set(palette.filter((entry) => entry.color.a > 0).map((entry) => entry.id))
     : null
+  const runtimeBounds = runtimeRasterVisibleBounds(surface, opaqueIds ?? undefined)
+  if (runtimeBounds !== undefined) return runtimeBounds
   let minX = surface.width
   let minY = surface.height
   let maxX = -1
@@ -138,7 +141,7 @@ export const renderAnimationCelThumbnailPixels = (
   const width = Math.trunc(surface.width)
   const height = Math.trunc(surface.height)
   const expectedPixels = surface.format === 'rgba' ? width * height * 4 : width * height
-  if (!Number.isSafeInteger(width) || !Number.isSafeInteger(height) || width < 1 || height < 1 || !Number.isSafeInteger(expectedPixels) || surface.pixels.length < expectedPixels) return output
+  if (!Number.isSafeInteger(width) || !Number.isSafeInteger(height) || width < 1 || height < 1 || !Number.isSafeInteger(expectedPixels)) return output
 
   const contentBounds = animationCelContentBounds(surface, palette)
   const layout = animationCelThumbnailLayout(documentWidth, documentHeight, size, surface, contentBounds)
@@ -163,14 +166,14 @@ export const renderAnimationCelThumbnailPixels = (
     let g = 0
     let b = 0
     let alpha = 0
+    const packed = readSurfacePackedLocal(surface, sourceX, sourceY)
     if (surface.format === 'rgba') {
-      const sourceIndex = (sourceY * width + sourceX) * 4
-      r = surface.pixels[sourceIndex]
-      g = surface.pixels[sourceIndex + 1]
-      b = surface.pixels[sourceIndex + 2]
-      alpha = surface.pixels[sourceIndex + 3] / 255
+      r = packed & 0xff
+      g = (packed >>> 8) & 0xff
+      b = (packed >>> 16) & 0xff
+      alpha = (packed >>> 24) / 255
     } else {
-      const color = paletteById.get(surface.pixels[sourceY * width + sourceX])
+      const color = paletteById.get(packed)
       if (color) {
         r = color.r
         g = color.g

@@ -17,6 +17,7 @@ export interface ExportPreset {
   name: string
   format: ImageExportKind
   scalePercent: number
+  target?: 'document' | 'slices' | 'frames'
   directory?: string
   gifFrameRange?: 'all' | 'range'
   gifFrameStart?: number
@@ -58,6 +59,7 @@ function normalizeExportPreset(value: unknown): ExportPreset | null {
   const legacyScalePercent = typeof value.scale === 'number' ? value.scale * 100 : 100
   const scalePercent = finiteInteger(value.scalePercent, finiteInteger(legacyScalePercent, 100, 1, 6400), 1, 6400)
   const directory = typeof value.directory === 'string' ? value.directory.trim() : ''
+  const target = format !== 'gif' && (value.target === 'slices' || value.target === 'frames') ? value.target : 'document'
   const gifFrameRange = value.gifFrameRange === 'range' ? 'range' : 'all'
   const gifDirection: GifDirection = value.gifDirection === 'reverse'
     || value.gifDirection === 'forward-ping-pong'
@@ -71,6 +73,7 @@ function normalizeExportPreset(value: unknown): ExportPreset | null {
     name: withExportFileExtension(name, format),
     format,
     scalePercent,
+    ...(target !== 'document' ? { target } : {}),
     ...(directory ? { directory } : {}),
     ...(format === 'gif' ? {
       gifFrameRange,

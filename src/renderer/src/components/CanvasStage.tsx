@@ -5,17 +5,18 @@ import { beginPixelEdit, revertPixelEdit } from '@/core/history'
 import { applyRelativeLuminance, blendOver, relativeLuminanceColor, TRANSPARENT } from '@/core/raster'
 import { applyGradient, constrainGradientEndpoint, createGradientColorSampler, gradientRegionSelection } from '@/core/gradient'
 import { DEFAULT_GRID_SETTINGS, gridCellBoundsAt, gridLinePositions, shouldRenderPixelGrid } from '@/core/grid'
-import { appendPerfectPixelSegment, applySelectionTransform, applySelectionTranslationPreview, bezierCurvePixelPoints, brushMaskOffsets, brushStampAnchor, brushStampDimensions, captureSelectionTransform, filledShapePathPixelPoints, floodFillSymmetric, lineShapePixelPoints, outlinePixelIndices, paintBrush, paintLine, paintShape, paintShapePixelPoints, restoreSelectionTranslationPreview, rotatedShapePixelPoints, sampleCompositeColor, shapeContainsPixel, type BrushGradientSample } from '@/core/tools'
+import { appendPerfectPixelSegment, applySelectionTransform, applySelectionTranslationPreview, bezierCurvePixelPoints, brushMaskOffsets, brushPathStampPoints, brushStampAnchor, brushStampDimensions, captureSelectionTransform, filledShapePathPixelPoints, floodFillSymmetric, lineShapePixelPoints, outlinePixelIndices, paintBrush, paintBrushPath, paintLine, paintShape, paintShapePixelPoints, perfectPixelPathPoints, restoreSelectionTranslationPreview, rotatedShapePixelPoints, sampleCompositeColor, shapeContainsPixel, type BrushGradientSample } from '@/core/tools'
 import { useWorkspace, type DocumentSession } from '@/store/workspace'
 import { activeLayerMask, activePaintLayer } from '@/store/workspace-session'
 import { DEFAULT_GRID_COLOR, loadEditorPreferences, type BrushPreviewMode, type CheckerboardPreferences, type EyedropperMagnifierStyle, type GridColorPreferences, type OnionSkinPreferences, type RotationIndicatorPosition, type SymmetryAxisPreferences, type WheelZoomMode, type ZoomToolDragMode } from '@/core/file-preferences'
-import { clampCanvasViewPan, documentPointFromViewportPoint, documentPointFromViewportPointContinuous, mirrorViewportPoint, rotateViewAroundViewportPoint, rotateViewportPoint, rotationIndicatorFitsCanvas, rotationIndicatorPointBesidePointer, unrotateViewportPoint, viewPanDeltaFromScreen, viewRotationPivot, zoomViewAroundViewportPoint } from '@/core/view-geometry'
+import { clampCanvasViewPan, displayedCanvasCenter, documentPointFromViewportPoint, documentPointFromViewportPointContinuous, mirrorViewportPoint, rotateViewAroundViewportPoint, rotateViewportPoint, rotationIndicatorFitsCanvas, rotationIndicatorPointBetweenPointerAndCanvasCenter, unrotateViewportPoint, viewPanDeltaFromScreen, viewRotationPivot, zoomViewAroundViewportPoint } from '@/core/view-geometry'
 import { createCanvasRenderPlan, deviceAlignedPixelRect } from '@/core/canvas-render-plan'
 import { balancedStairLinePoints, constrainLineEndpoint } from '@/core/pixel-line'
 import { cloneSelection, combineSelection, lassoSelection, magicWandSelection, rasterLinePoints, rectSelection, rotatedEllipseSelection, rotatedRectSelection, selectionContains, shiftSelection, transformedSelectionControlPoints, transformSelectionMask } from '@/core/selection'
 import { CANVAS_RESIZE_PREVIEW_EVENT, drawCanvasResizePreviewLayers } from '@/core/canvas-resize-preview'
+import { SLICE_PREVIEW_EVENT } from '@/core/slice-preview'
 import { loadShortcuts, modifierShortcutHeld } from '@/core/shortcuts'
-import { CanvasInputState, appendPolygonLassoVertex, beginBrushSpeedTracking, canvasGestureForPreview, centeredShapeBounds, clampCanvasZoom as clampZoom, coalescedPointerClientPoints, constrainedTranslation, createCanvasPanDrag, createMarqueeResizeStart, finalizeMarqueeSelection, floatingSelectionCopyMode, polygonLassoClosedPathPoints, polygonLassoPreviewPoints, resizeRotatedMarqueeBounds, resizeTransformedSelectionBounds, restoreCanvasDragAfterPan, revertCancelledCanvasDragPixelChanges, selectionGestureMoved, selectionInteractionHit, selectionOverlayMaskForDrag, selectionRotationAngle, selectionTransformedInteractionHit, selectionTransformModifiers, selectionTransformPreviewChanged, shapeBounds, shouldClosePolygonLasso, shouldRestartFloatingSelectionForCopy, shouldStartCanvasPan, snapSelectionRotation, steppedCanvasZoom as steppedZoom, temporaryTransformOffset, translatedSelectionRect, updateBrushSpeedTracking, wheelCanvasZoom, zoomDragModeForModifiers, zoomDragTarget, type CanvasDragState as DragState, type CanvasPoint as Point, type SelectionHandle, type SelectionHit, type SelectionRotationHandle, type SelectionShearHandle } from '@/core/canvas-input'
+import { CanvasInputState, appendPolygonLassoVertex, beginBrushSpeedTracking, canvasGestureForPreview, centeredShapeBounds, clampCanvasZoom as clampZoom, coalescedPointerClientPoints, constrainedTranslation, createCanvasPanDrag, createMarqueeResizeStart, finalizeMarqueeSelection, floatingSelectionCopyMode, polygonLassoClosedPathPoints, polygonLassoPreviewPoints, resizeRotatedMarqueeBounds, resizeSelectionBounds, resizeTransformedSelectionBounds, restoreCanvasDragAfterPan, revertCancelledCanvasDragPixelChanges, selectionGestureMoved, selectionInteractionHit, selectionOverlayMaskForDrag, selectionResizeHit, selectionRotationAngle, selectionTransformedInteractionHit, selectionTransformModifiers, selectionTransformPreviewChanged, shapeBounds, shouldClosePolygonLasso, shouldRestartFloatingSelectionForCopy, shouldStartCanvasPan, snapSelectionRotation, steppedCanvasZoom as steppedZoom, temporaryTransformOffset, translatedSelectionRect, updateBrushSpeedTracking, wheelCanvasZoom, zoomDragModeForModifiers, zoomDragTarget, type CanvasDragState as DragState, type CanvasPoint as Point, type SelectionHandle, type SelectionHit, type SelectionRotationHandle, type SelectionShearHandle } from '@/core/canvas-input'
 import { canvasCursors, canvasStatusTextColor, canvasToolCursor, colorLuminance, previewCursorTools, resizeCursors, rotationCursors, selectionRotationCursorForPosition, shearCursors, selectionCreationCursor, selectionCursorCornerRects, selectionPathPreviewPixelVisible, selectionPreviewPixels, selectionTransformDragCursor, transparencyColorAt } from '@/core/canvas-visuals'
 import { defaultSymmetryCenter, hasSymmetry, moveSymmetryCenter, symmetryAxisSegment, symmetryPoints, symmetrySelection, transformSymmetrySelection, type SymmetryAxis } from '@/core/symmetry'
 import { beginAdjustmentPreviewEdit, endAdjustmentPreviewEdit, prepareAdjustmentPreviewEdit, renderAdjustmentPreviewEdit } from '@/core/adjustment-preview-lifecycle'
@@ -33,7 +34,8 @@ import { finishAnimationCellOperation, revealLayerInPanel } from '@/components/l
 import { publishCanvasColorSample, publishCanvasColorSamplingCompleted } from '@/components/color-sampling-events'
 import { eyedropperMagnifierPixelScale } from '@/core/eyedropper-magnifier'
 import { resolveBrushDynamics, smoothBrushSizeEnvelope } from '@/core/pressure'
-import { airbrushParticleSize, generateAirbrushParticles } from '@/core/airbrush'
+import { airbrushParticleSize, airbrushSymmetryPoints, generateAirbrushParticles } from '@/core/airbrush'
+import { clampSliceRect, moveSliceRect, moveSliceRects, sliceAtPoint } from '@/core/slices'
 import { animationCelKey, animationCelOffsetsForKeys, parseAnimationCelKey, setAnimationCelOffsets, setAnimationCelOffsetsForKeys } from '@/core/animation'
 import rotationBackground1 from '@/assets/rotation-indicator/background-1.png'
 import rotationBackground2 from '@/assets/rotation-indicator/background-2.png'
@@ -108,6 +110,8 @@ export function CanvasStage({ session }: { session: DocumentSession }) {
     const preferences = loadEditorPreferences()
     return { pixelGridColor: preferences.pixelGridColor, gridColor: preferences.gridColor }
   })
+  const [sliceColor, setSliceColor] = useState<RgbaColor>(() => loadEditorPreferences().sliceColor)
+  const [sliceOutlinesVisible, setSliceOutlinesVisible] = useState(() => loadEditorPreferences().sliceOutlinesVisible)
   const [wheelZoomEnabled, setWheelZoomEnabled] = useState(() => loadEditorPreferences().wheelZoomEnabled)
   const [wheelZoomMode, setWheelZoomMode] = useState<WheelZoomMode>(() => loadEditorPreferences().wheelZoomMode)
   const [shiftLinePreviewEnabled, setShiftLinePreviewEnabled] = useState(() => loadEditorPreferences().shiftLinePreviewEnabled)
@@ -147,6 +151,7 @@ export function CanvasStage({ session }: { session: DocumentSession }) {
   const sprayAirbrushRef = useRef<(drag: DragState) => void>(() => {})
   const adjustmentPreviewEditRef = useRef(false)
   const canvasResizePreviewRef = useRef(session.canvasResizePreview)
+  const autoSlicePreviewRef = useRef<SelectionRect[] | null>(null)
   const pendingCanvasResizeRef = useRef<DocumentSession['canvasResizePreview']>(null)
   const canvasResizeFrameRef = useRef<number | null>(null)
   const moveLayerContentPreviewRef = useRef<MoveLayerContentPreview | null>(null)
@@ -162,9 +167,10 @@ export function CanvasStage({ session }: { session: DocumentSession }) {
   // exist during hot reload. Resolve that legacy state once per render.
   const symmetryCenter = session.symmetryCenter ?? defaultSymmetryCenter(session.document.width, session.document.height)
   const fillKind = session.fillKind ?? 'bucket'
+  const sliceTool = session.tool === 'move' && session.moveKind === 'slice'
   const gradientDither = session.gradientDither ?? 'none'
   const activeLayerEditable = hasSelectedRasterLayer && isLayerEffectivelyVisible(session.document, activeLayer) && !isLayerEffectivelyLocked(session.document, activeLayer)
-  const brushToolEnabled = session.tool === 'pencil' || session.tool === 'eraser' || (session.tool === 'fill' && fillKind === 'bucket')
+  const brushToolEnabled = session.tool === 'pencil' || session.tool === 'eraser' || session.tool === 'line' || (session.tool === 'fill' && fillKind === 'bucket')
   const activeBrushImage = brushToolEnabled ? session.brushImage : null
   const activeBrushTexture = brushToolEnabled ? session.brushTexture : 'solid'
   const activeBrushPaintMode = activeBrushImage?.intrinsicSize ? session.brushPaintMode : 'paint'
@@ -190,7 +196,9 @@ export function CanvasStage({ session }: { session: DocumentSession }) {
       paintBrush(session.document, paintLayer, drag.edit, particle.x, particle.y, particleSize, color, session.airbrushParticleShape, session.selection, 'solid', 1, null, session.brushImageSettings, 0, 'paint', particle, session.symmetryAxes, symmetryCenter)
     }
     const radius = session.airbrushScatterRadius + session.airbrushParticleRadius
-    invalidateCompositeRect({ x: drag.last.x - radius, y: drag.last.y - radius, width: radius * 2 + 1, height: radius * 2 + 1 })
+    for (const center of airbrushSymmetryPoints([drag.last], session.document.width, session.document.height, session.symmetryAxes, symmetryCenter)) {
+      invalidateCompositeRect({ x: center.x - radius, y: center.y - radius, width: radius * 2 + 1, height: radius * 2 + 1 })
+    }
     scheduleDraw()
   }
   const stageBounds = (): DOMRect => stageRef.current?.getBoundingClientRect() ?? canvasRef.current?.getBoundingClientRect() ?? new DOMRect()
@@ -270,6 +278,8 @@ export function CanvasStage({ session }: { session: DocumentSession }) {
       setBrushPreviewMode(preferences.brushPreviewMode)
       setCheckerboard(preferences.checkerboard)
       setGridColors({ pixelGridColor: preferences.pixelGridColor, gridColor: preferences.gridColor })
+      setSliceColor(preferences.sliceColor)
+      setSliceOutlinesVisible(preferences.sliceOutlinesVisible)
       setWheelZoomEnabled(preferences.wheelZoomEnabled)
       setWheelZoomMode(preferences.wheelZoomMode)
       setShiftLinePreviewEnabled(preferences.shiftLinePreviewEnabled)
@@ -308,6 +318,21 @@ export function CanvasStage({ session }: { session: DocumentSession }) {
     return () => {
       if (moveLayerContentPreviewTimerRef.current !== null) window.clearTimeout(moveLayerContentPreviewTimerRef.current)
     }
+  }, [session.document.id])
+
+  useEffect(() => {
+    const updatePreview = (event: Event): void => {
+      const detail = (event as CustomEvent<{ documentId: string; slices: SelectionRect[] | null }>).detail
+      if (detail.documentId !== session.document.id) return
+      autoSlicePreviewRef.current = detail.slices?.map((slice) => ({ ...slice })) ?? null
+      scheduleDraw()
+    }
+    window.addEventListener(SLICE_PREVIEW_EVENT, updatePreview)
+    return () => {
+      window.removeEventListener(SLICE_PREVIEW_EVENT, updatePreview)
+      autoSlicePreviewRef.current = null
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session.document.id])
 
   useEffect(() => {
@@ -1027,26 +1052,29 @@ export function CanvasStage({ session }: { session: DocumentSession }) {
       }
       context.restore()
     }
-    const drawStrokePreview = (from: Point, to: Point, erase = false): void => {
+    const drawBrushPathPreview = (points: readonly Point[], color: RgbaColor, erase = false): void => {
+      if (points.length === 0) return
       const stamp = brushStampDimensions(session.brushSize, activeBrushImage)
       const { x: beforeX, y: beforeY } = brushStampAnchor(session.brushSize, activeBrushImage)
-      const patternOrigin = brushPatternOrigin(from)
+      const patternOrigin = brushPatternOrigin(points[0])
       const drawn = new Set<number>()
-      const centers = balancedShiftLineEnabled ? balancedStairLinePoints(from, to) : rasterLinePoints(from, to)
-      for (const center of centers) {
+      for (const center of brushPathStampPoints(points, session.brushSize, activeBrushImage)) {
         const x = center.x
         const y = center.y
-        const texture = session.tool === 'pencil' || session.tool === 'eraser' ? activeBrushTexture : 'solid'
-        const mask = brushMaskOffsets(session.brushSize, session.brushShape, texture, session.brushTextureScale, x - beforeX, y - beforeY, session.tool === 'pencil' || session.tool === 'eraser' ? activeBrushImage : null, session.brushImageSettings, proceduralAntialiasStrength, activeBrushPreviewMode, patternOrigin.x, patternOrigin.y)
+        const mask = brushMaskOffsets(session.brushSize, session.brushShape, activeBrushTexture, session.brushTextureScale, x - beforeX, y - beforeY, activeBrushImage, session.brushImageSettings, proceduralAntialiasStrength, activeBrushPreviewMode, patternOrigin.x, patternOrigin.y)
         for (const offset of mask) {
           for (const { x: pixelX, y: pixelY } of symmetryPoints({ x: x - beforeX + offset.x, y: y - beforeY + offset.y }, document.width, document.height, session.symmetryAxes, symmetryCenter)) {
             const index = pixelY * document.width + pixelX
             if (pixelX < fromX || pixelY < fromY || pixelX >= toX || pixelY >= toY || drawn.has(index) || (session.selection && !selectionContains(session.selection, pixelX, pixelY))) continue
             drawn.add(index)
-            drawPreviewPixel(pixelX, pixelY, previewColorAt(pixelX, pixelY, erase, offset.coverage, offset.color ?? session.primaryColor))
+            drawPreviewPixel(pixelX, pixelY, previewColorAt(pixelX, pixelY, erase, offset.coverage, offset.color ?? color))
           }
         }
       }
+    }
+    const drawStrokePreview = (from: Point, to: Point, erase = false): void => {
+      const points = balancedShiftLineEnabled ? balancedStairLinePoints(from, to) : rasterLinePoints(from, to)
+      drawBrushPathPreview(points, session.primaryColor, erase)
     }
 
     if (session.outlinePreview && session.selection) {
@@ -1082,23 +1110,29 @@ export function CanvasStage({ session }: { session: DocumentSession }) {
         }
       }
     }
-    if (canRenderToolPreview && drag && (drag.kind === 'freeform-shape' || drag.kind === 'polygon-shape' || drag.kind === 'line-shape' || drag.kind === 'curve-shape')) {
+    if (canRenderToolPreview && drag && (drag.kind === 'freeform-shape' || drag.kind === 'polygon-shape')) {
       const color = drag.color ?? session.primaryColor
       let points: readonly Point[] = []
       if (drag.kind === 'freeform-shape') points = filledShapePathPixelPoints(document, drag.path ?? [])
-      else if (drag.kind === 'polygon-shape') {
+      else {
         const path = drag.path ?? []
         const previewPath = path.length > 0 ? [...path, drag.last] : path
         points = previewPath.length >= 3 ? filledShapePathPixelPoints(document, polygonLassoClosedPathPoints(previewPath, balancedShiftLineEnabled)) : polygonLassoPreviewPoints(path, drag.last, false, balancedShiftLineEnabled)
-      } else if (drag.kind === 'line-shape') points = lineShapePixelPoints(drag.start, drag.last, balancedShiftLineEnabled)
-      else {
-        const end = drag.curveEnd ?? drag.last
-        const controls = drag.curveControls ?? curveDefaultControls(drag.start, end, drag.curveAnchorCount ?? session.curveAnchorCount)
-        points = bezierCurvePixelPoints(drag.start, controls, end)
       }
       for (const sourcePoint of points) {
         for (const point of symmetryPoints(sourcePoint, document.width, document.height, session.symmetryAxes, symmetryCenter)) drawPreviewPixel(point.x, point.y, previewColorAt(point.x, point.y, false, 255, color))
       }
+    }
+    if (canRenderToolPreview && drag && (drag.kind === 'line-shape' || drag.kind === 'curve-shape')) {
+      const rawPoints = drag.kind === 'line-shape'
+        ? lineShapePixelPoints(drag.start, drag.last, balancedShiftLineEnabled)
+        : bezierCurvePixelPoints(
+            drag.start,
+            drag.curveControls ?? curveDefaultControls(drag.start, drag.curveEnd ?? drag.last, drag.curveAnchorCount ?? session.curveAnchorCount),
+            drag.curveEnd ?? drag.last
+          )
+      const points = session.perfectPixels ? perfectPixelPathPoints(rawPoints) : rawPoints
+      drawBrushPathPreview(points, drag.color ?? session.primaryColor)
     }
     if (canRenderToolPreview && drag?.kind === 'gradient') {
       const moved = drag.start.x !== drag.last.x || drag.start.y !== drag.last.y
@@ -1541,6 +1575,22 @@ export function CanvasStage({ session }: { session: DocumentSession }) {
       }
     }
 
+    const activeSliceCreation = inputRef.current.drag?.kind === 'create-slice'
+    if (sliceTool && (!inputRef.current.drag || activeSliceCreation) && !inputRef.current.spaceHeld && !inputRef.current.sampling && inputRef.current.pointer.visible) {
+      const pointer = inputRef.current.pointer
+      const point = pointer.point
+      const selectedIds = currentSession.selectedSliceIds?.length ? currentSession.selectedSliceIds : currentSession.selectedSliceId ? [currentSession.selectedSliceId] : []
+      const selectedSlice = selectedIds.length === 1 ? currentSession.document.slices?.find((slice) => slice.id === selectedIds[0]) ?? null : null
+      const handle = selectedSlice ? sliceHandleAt(pointer.clientX, pointer.clientY, selectedSlice) : null
+      const hit = sliceAtPoint(currentSession.document.slices ?? [], point.x, point.y)
+      const insideDocument = point.x >= 0 && point.y >= 0 && point.x < document.width && point.y < document.height
+      if (insideDocument && !handle && !hit) {
+        const sampled = sampleCompositeForPreview(point.x, point.y)
+        const background = sampled.a > 0 ? sampled : transparencyColorAt(point.x, point.y, checkerboard)
+        drawSelectionCursorCorners(point.x, point.y, colorLuminance(background) > 145 ? activeTheme.variables['--theme-selection-outline-dark'] : activeTheme.variables['--theme-selection-outline-light'])
+      }
+    }
+
     if (canRenderToolPreview && !inputRef.current.spaceHeld && inputRef.current.pointer.visible && !inputRef.current.sampling && session.tool === 'fill' && fillKind === 'bucket') {
       const point = inputRef.current.pointer.point
       if (point.x >= 0 && point.y >= 0 && point.x < document.width && point.y < document.height && (!session.selection || selectionContains(session.selection, point.x, point.y))) {
@@ -1612,8 +1662,8 @@ export function CanvasStage({ session }: { session: DocumentSession }) {
       const sprayAnchor = brushStampAnchor(spraySize, null)
       const sprayMask = brushMaskOffsets(spraySize, 'round')
       const sprayPoints = new Map<string, { x: number; y: number }>()
-      for (const offset of sprayMask) {
-        const target = { x: point.x - sprayAnchor.x + offset.x, y: point.y - sprayAnchor.y + offset.y }
+      const spraySourcePoints = sprayMask.map((offset) => ({ x: point.x - sprayAnchor.x + offset.x, y: point.y - sprayAnchor.y + offset.y }))
+      for (const target of airbrushSymmetryPoints(spraySourcePoints, document.width, document.height, session.symmetryAxes, symmetryCenter)) {
         sprayPoints.set(`${target.x}:${target.y}`, target)
       }
       const sampled = sampleCompositeForPreview(point.x, point.y)
@@ -1634,10 +1684,12 @@ export function CanvasStage({ session }: { session: DocumentSession }) {
       }
       const particleSize = airbrushParticleSize(session.airbrushParticleRadius)
       const particleAnchor = brushStampAnchor(particleSize, null)
-      for (const offset of brushMaskOffsets(particleSize, session.airbrushParticleShape)) {
-        const x = point.x - particleAnchor.x + offset.x
-        const y = point.y - particleAnchor.y + offset.y
-        drawPreviewPixel(x, y, previewColorAt(x, y))
+      const particleSourcePoints = brushMaskOffsets(particleSize, session.airbrushParticleShape).map((offset) => ({
+        x: point.x - particleAnchor.x + offset.x,
+        y: point.y - particleAnchor.y + offset.y
+      }))
+      for (const target of airbrushSymmetryPoints(particleSourcePoints, document.width, document.height, session.symmetryAxes, symmetryCenter)) {
+        drawPreviewPixel(target.x, target.y, previewColorAt(target.x, target.y))
       }
       context.stroke()
       context.restore()
@@ -1665,6 +1717,39 @@ export function CanvasStage({ session }: { session: DocumentSession }) {
         context.strokeRect(Math.round(left) + 0.5, Math.round(top) + 0.5, Math.max(1, Math.round(right) - Math.round(left)), Math.max(1, Math.round(bottom) - Math.round(top)))
         context.restore()
       }
+    }
+
+    if (sliceTool || sliceOutlinesVisible) {
+      const sliceDrag = inputRef.current.drag
+      const previewSlice = sliceDrag?.kind === 'create-slice' && sliceDrag.moved ? sliceDrag.previewTarget : null
+      const selectedSliceIds = new Set(sliceTool ? (currentSession.selectedSliceIds?.length ? currentSession.selectedSliceIds : currentSession.selectedSliceId ? [currentSession.selectedSliceId] : []) : [])
+      const slices = currentSession.document.slices ?? []
+      const drawSlice = (slice: SelectionRect, selected: boolean, handles = false): void => {
+        const left = originX + slice.x * view.zoom
+        const top = originY + slice.y * view.zoom
+        const width = slice.width * view.zoom
+        const height = slice.height * view.zoom
+        context.save()
+        const color = `rgb(${sliceColor.r} ${sliceColor.g} ${sliceColor.b} / ${sliceColor.a / 255})`
+        context.strokeStyle = color
+        context.lineWidth = selected ? 2 : 1
+        context.setLineDash([])
+        context.strokeRect(Math.round(left) + 0.5, Math.round(top) + 0.5, Math.max(1, Math.round(width)), Math.max(1, Math.round(height)))
+        if (selected && handles) {
+          context.fillStyle = color
+          const handles = [[left, top], [left + width / 2, top], [left + width, top], [left, top + height / 2], [left + width, top + height / 2], [left, top + height], [left + width / 2, top + height], [left + width, top + height]]
+          for (const [x, y] of handles) context.fillRect(Math.round(x) - 3, Math.round(y) - 3, 7, 7)
+        }
+        context.restore()
+      }
+      for (const slice of slices) {
+        const resizePreview = sliceDrag?.kind === 'resize-slice' && sliceDrag.sliceId === slice.id ? sliceDrag.previewTarget : null
+        const preview = resizePreview ?? (sliceDrag?.copy ? null : sliceDrag?.slicePreviewTargets?.[slice.id])
+        drawSlice(preview ?? slice, selectedSliceIds.has(slice.id), selectedSliceIds.size === 1 && selectedSliceIds.has(slice.id))
+      }
+      if (sliceDrag?.copy && sliceDrag.slicePreviewTargets) for (const slice of Object.values(sliceDrag.slicePreviewTargets)) drawSlice(slice, true)
+      if (previewSlice) drawSlice(previewSlice, true)
+      if (autoSlicePreviewRef.current) for (const slice of autoSlicePreviewRef.current) drawSlice(slice, true)
     }
 
     // Keep the document boundary above selections, grids, and other previews.
@@ -1956,7 +2041,7 @@ export function CanvasStage({ session }: { session: DocumentSession }) {
       selectionPreviewFrameRef.current = null
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [session, session.revision, session.activeLayerMaskId, session.layerMaskIsolatedView, session.view.showPixelGrid, session.view.showGrid, session.view.grid?.x, session.view.grid?.y, session.view.grid?.width, session.view.grid?.height, session.view.relativeLuminance, session.view.mirrored, session.view.mirroredVertical, session.view.showSelectionOutline, session.selection, session.outlinePreview, session.brushSize, session.brushShape, session.shapeKind, session.shapeRatio, session.fillMode, fillKind, gradientDither, session.symmetryAxes.horizontal, session.symmetryAxes.vertical, session.symmetryAxes.diagonalUp, session.symmetryAxes.diagonalDown, symmetryCenter.x, symmetryCenter.y, drawingBrushPreviewEnabled, brushPreviewMode, checkerboard, gridColors, shiftLinePreviewEnabled, lassoPreviewClosed, selectionCrosshair, balancedShiftLineEnabled, lineDirectionStep, lineConnectionShortcut, rotationIndicatorPosition, onionSkin, timelineHidden, symmetryAxisPreferences])
+  }, [session, session.revision, session.activeLayerMaskId, session.layerMaskIsolatedView, session.view.showPixelGrid, session.view.showGrid, session.view.grid?.x, session.view.grid?.y, session.view.grid?.width, session.view.grid?.height, session.view.relativeLuminance, session.view.mirrored, session.view.mirroredVertical, session.view.showSelectionOutline, session.selection, session.outlinePreview, session.brushSize, session.brushShape, session.shapeKind, session.shapeRatio, session.fillMode, fillKind, gradientDither, session.symmetryAxes.horizontal, session.symmetryAxes.vertical, session.symmetryAxes.diagonalUp, session.symmetryAxes.diagonalDown, symmetryCenter.x, symmetryCenter.y, drawingBrushPreviewEnabled, brushPreviewMode, checkerboard, gridColors, sliceColor, sliceOutlinesVisible, shiftLinePreviewEnabled, lassoPreviewClosed, selectionCrosshair, balancedShiftLineEnabled, lineDirectionStep, lineConnectionShortcut, rotationIndicatorPosition, onionSkin, timelineHidden, symmetryAxisPreferences])
 
   const unrotatedStagePoint = (clientX: number, clientY: number): Point => {
     const bounds = stageBounds()
@@ -2342,6 +2427,17 @@ export function CanvasStage({ session }: { session: DocumentSession }) {
 
   const canvasResizeContains = (event: React.PointerEvent<HTMLCanvasElement>): boolean => canvasResizeContainsAt(event.clientX, event.clientY)
 
+  const sliceScreenBox = (slice: SelectionRect): SelectionRect => {
+    const bounds = stageBounds()
+    const view = liveViewRef.current
+    const originX = bounds.width / 2 + view.panX - session.document.width * view.zoom / 2
+    const originY = bounds.height / 2 + view.panY - session.document.height * view.zoom / 2
+    return { x: originX + slice.x * view.zoom, y: originY + slice.y * view.zoom, width: slice.width * view.zoom, height: slice.height * view.zoom }
+  }
+
+  const sliceHandleAt = (clientX: number, clientY: number, slice: SelectionRect): SelectionHandle | null =>
+    selectionResizeHit(sliceScreenBox(slice), unrotatedStagePoint(clientX, clientY), 6, 8, 3)
+
   const updateCursorAt = (clientX: number, clientY: number, ctrlKey: boolean, altKey: boolean, shiftKey = false): void => {
     const canvas = canvasRef.current
     if (!canvas) return
@@ -2384,6 +2480,11 @@ export function CanvasStage({ session }: { session: DocumentSession }) {
     if (drag?.kind === 'move-layer') {
       inputRef.current.sampling = false
       canvas.style.cursor = drag.duplicateOnDrag ? canvasCursors.copy : canvasCursors.move
+      return
+    }
+    if (drag?.kind === 'create-slice' || drag?.kind === 'move-slice' || drag?.kind === 'resize-slice') {
+      inputRef.current.sampling = false
+      canvas.style.cursor = drag.kind === 'resize-slice' && drag.handle ? resizeCursors[drag.handle] : drag.kind === 'move-slice' ? drag.copy ? canvasCursors.copy : canvasCursors.move : selectionCreationCursor(selectionCrosshair)
       return
     }
     const transformCursor = drag && selectionTransformDragCursor(drag.kind)
@@ -2449,6 +2550,12 @@ export function CanvasStage({ session }: { session: DocumentSession }) {
             : hit === 'edge'
               ? canvasCursors.selectionMove
             : selectionCreationCursor(selectionCrosshair, activeLayerEditable || selectionModifierActive)
+    } else if (sliceTool) {
+      const selectedIds = session.selectedSliceIds?.length ? session.selectedSliceIds : session.selectedSliceId ? [session.selectedSliceId] : []
+      const selectedSlice = selectedIds.length === 1 ? session.document.slices?.find((slice) => slice.id === selectedIds[0]) : null
+      const handle = selectedSlice ? sliceHandleAt(clientX, clientY, selectedSlice) : null
+      const hit = point ? sliceAtPoint(session.document.slices ?? [], point.x, point.y) : null
+      canvas.style.cursor = handle ? resizeCursors[handle] : hit ? canvasCursors.move : selectionCreationCursor(selectionCrosshair, insideDocument)
     } else canvas.style.cursor = canvasToolCursor(session.tool, contrastColor, available)
   }
 
@@ -2530,6 +2637,32 @@ export function CanvasStage({ session }: { session: DocumentSession }) {
     useWorkspace.getState().commitPixelEdit(edit, label)
   }
 
+  const commitBrushPath = (drag: DragState, points: readonly Point[], label: string): void => {
+    const layer = activePaintLayer(session)
+    if (isLayerEffectivelyLocked(session.document, layer) || points.length === 0) return
+    const edit = beginPixelEdit(layer.id)
+    paintBrushPath(
+      session.document,
+      layer,
+      edit,
+      points,
+      session.brushSize,
+      drag.color ?? session.primaryColor,
+      session.selection,
+      session.brushShape,
+      activeBrushTexture,
+      session.brushTextureScale,
+      activeBrushImage,
+      session.brushImageSettings,
+      proceduralAntialiasStrength,
+      activeBrushPaintMode,
+      brushPatternOrigin(points[0]),
+      session.symmetryAxes,
+      symmetryCenter
+    )
+    useWorkspace.getState().commitPixelEdit(edit, label)
+  }
+
   const commitPolygonShape = (): void => {
     const drag = inputRef.current.drag
     if (drag?.kind !== 'polygon-shape') return
@@ -2549,14 +2682,20 @@ export function CanvasStage({ session }: { session: DocumentSession }) {
 
   const curveShapePixelPoints = (drag: DragState): readonly Point[] => {
     const end = drag.curveEnd ?? drag.last
-    return bezierCurvePixelPoints(drag.start, drag.curveControls ?? curveDefaultControls(drag.start, end, drag.curveAnchorCount ?? session.curveAnchorCount), end)
+    const points = bezierCurvePixelPoints(drag.start, drag.curveControls ?? curveDefaultControls(drag.start, end, drag.curveAnchorCount ?? session.curveAnchorCount), end)
+    return session.perfectPixels ? perfectPixelPathPoints(points) : points
+  }
+
+  const lineShapeBrushPoints = (drag: DragState): readonly Point[] => {
+    const points = lineShapePixelPoints(drag.start, drag.last, balancedShiftLineEnabled)
+    return session.perfectPixels ? perfectPixelPathPoints(points) : points
   }
 
   const commitCurveShape = (): void => {
     const drag = inputRef.current.drag
     if (drag?.kind !== 'curve-shape' || !drag.curveEnd) return
     inputRef.current.finish()
-    commitShapePoints(drag, curveShapePixelPoints(drag), t('canvas.history.drawCurve'))
+    commitBrushPath(drag, curveShapePixelPoints(drag), t('canvas.history.drawCurve'))
     scheduleDraw()
   }
 
@@ -2677,6 +2816,37 @@ export function CanvasStage({ session }: { session: DocumentSession }) {
       && !isLayerEffectivelyLocked(session.document, movableActiveLayer)
     const copyLayerHeld = modifierActive(event.nativeEvent, 'copyLayerOnDrag')
     if (selectionTool && (event.button === 0 || event.button === 2) && !canEditLayer && !eyedropperHeld) return
+    if (sliceTool && event.button === 0) {
+      const selectedIds = session.selectedSliceIds?.length ? session.selectedSliceIds : session.selectedSliceId ? [session.selectedSliceId] : []
+      const selected = selectedIds.length === 1 ? session.document.slices?.find((slice) => slice.id === selectedIds[0]) ?? null : null
+      const handle = selected ? sliceHandleAt(event.clientX, event.clientY, selected) : null
+      if (selected && handle && !event.shiftKey && !event.altKey) {
+        inputRef.current.drag = { kind: 'resize-slice', start: point, last: point, sliceId: selected.id, sliceStart: { ...selected }, handle, previewTarget: { ...selected } }
+        event.currentTarget.style.cursor = resizeCursors[handle]
+        return
+      }
+      const hit = sliceAtPoint(session.document.slices ?? [], point.x, point.y)
+      if (hit) {
+        if (event.shiftKey) {
+          state.selectSlice(hit.id, true)
+          scheduleDraw()
+          return
+        }
+        const movingIds = selectedIds.includes(hit.id) ? selectedIds : [hit.id]
+        if (!selectedIds.includes(hit.id)) state.selectSlice(hit.id)
+        const starts = Object.fromEntries(movingIds.flatMap((id) => {
+          const slice = session.document.slices?.find((candidate) => candidate.id === id)
+          return slice ? [[id, { x: slice.x, y: slice.y, width: slice.width, height: slice.height }] as const] : []
+        }))
+        inputRef.current.drag = { kind: 'move-slice', start: point, last: point, startClient: { x: event.clientX, y: event.clientY }, moved: false, sliceId: hit.id, sliceIds: movingIds, sliceStart: { ...hit }, sliceStarts: starts, slicePreviewTargets: starts, previewTarget: { ...hit }, copy: event.altKey, collapseSliceSelectionOnClick: movingIds.length > 1 }
+        event.currentTarget.style.cursor = event.altKey ? canvasCursors.copy : canvasCursors.move
+        return
+      }
+      state.selectSlice(null)
+      inputRef.current.drag = { kind: 'create-slice', start: point, last: point, startClient: { x: event.clientX, y: event.clientY }, moved: false, previewTarget: clampSliceRect(shapeBounds(point, point), session.document.width, session.document.height) }
+      event.currentTarget.style.cursor = selectionCreationCursor(selectionCrosshair)
+      return
+    }
     if (session.tool === 'move' && event.button === 0) {
       const additiveSelection = event.shiftKey
       const hitTarget = session.moveAutoSelect || additiveSelection ? topEditableLayerAt(point) : null
@@ -2759,7 +2929,7 @@ export function CanvasStage({ session }: { session: DocumentSession }) {
       const bounds = stageBounds()
       const pointer = { x: event.clientX - bounds.left, y: event.clientY - bounds.top }
       const pivot = rotationIndicatorPosition === 'view'
-        ? rotationIndicatorPointBesidePointer(bounds.width, bounds.height, pointer)
+        ? rotationIndicatorPointBetweenPointerAndCanvasCenter(bounds.width, bounds.height, pointer, displayedCanvasCenter(bounds.width, bounds.height, liveViewRef.current, rotationIndicatorPosition))
         : viewRotationPivot(bounds.width, bounds.height, liveViewRef.current.panX, liveViewRef.current.panY, rotationIndicatorPosition)
       rotationIndicatorAnchorRef.current = rotationIndicatorPosition === 'view' ? pivot : null
       const angle = Math.atan2(event.clientY - bounds.top - pivot.y, event.clientX - bounds.left - pivot.x) * 180 / Math.PI
@@ -3335,6 +3505,31 @@ export function CanvasStage({ session }: { session: DocumentSession }) {
       updateMarqueePreview(drag, point, modifiers)
       return
     }
+    if (drag.kind === 'create-slice') {
+      drag.moved = drag.moved || selectionGestureMoved(drag.startClient, { x: event.clientX, y: event.clientY })
+      drag.last = point
+      drag.previewTarget = clampSliceRect(shapeBounds(drag.start, point), session.document.width, session.document.height)
+      scheduleDraw()
+      return
+    }
+    if (drag.kind === 'move-slice' && drag.sliceStart) {
+      drag.moved = drag.moved || selectionGestureMoved(drag.startClient, { x: event.clientX, y: event.clientY })
+      drag.last = point
+      if (drag.sliceIds?.length && drag.sliceStarts) {
+        const starts = drag.sliceIds.flatMap((id) => drag.sliceStarts?.[id] ? [drag.sliceStarts[id]] : [])
+        const targets = moveSliceRects(starts, point.x - drag.start.x, point.y - drag.start.y, session.document.width, session.document.height)
+        drag.slicePreviewTargets = Object.fromEntries(drag.sliceIds.map((id, index) => [id, targets[index]]).filter((entry): entry is [string, SelectionRect] => Boolean(entry[1])))
+        drag.previewTarget = drag.slicePreviewTargets[drag.sliceId ?? ''] ?? targets[0]
+      } else drag.previewTarget = moveSliceRect(drag.sliceStart, point.x - drag.start.x, point.y - drag.start.y, session.document.width, session.document.height)
+      scheduleDraw()
+      return
+    }
+    if (drag.kind === 'resize-slice' && drag.sliceStart && drag.handle) {
+      drag.last = point
+      drag.previewTarget = clampSliceRect(resizeSelectionBounds(drag.sliceStart, point, drag.handle, session.document), session.document.width, session.document.height)
+      scheduleDraw()
+      return
+    }
     if (drag.kind === 'magic-preview') {
       const mode = drag.selectionMode ?? session.selectionMode
       const incoming = symmetrySelection(magicWandSelection(session.document, activePaintLayer(session), point.x, point.y, session.wandTolerance, session.wandContiguous), session.document.width, session.document.height, session.symmetryAxes, symmetryCenter)
@@ -3588,7 +3783,7 @@ export function CanvasStage({ session }: { session: DocumentSession }) {
       }
     }
     if (drag.kind === 'freeform-shape') commitShapePoints(drag, filledShapePathPixelPoints(session.document, drag.path ?? []), t('canvas.history.drawFreeform'))
-    if (drag.kind === 'line-shape') commitShapePoints(drag, lineShapePixelPoints(drag.start, drag.last, balancedShiftLineEnabled), t('canvas.history.drawLine'))
+    if (drag.kind === 'line-shape') commitBrushPath(drag, lineShapeBrushPoints(drag), t('canvas.history.drawLine'))
     if (drag.kind === 'curve-shape') {
       if (drag.curvePhase === 'endpoint') {
         drag.curveEnd = drag.last
@@ -3606,13 +3801,30 @@ export function CanvasStage({ session }: { session: DocumentSession }) {
         scheduleDraw()
         return
       }
-      commitShapePoints(drag, curveShapePixelPoints(drag), t('canvas.history.drawCurve'))
+      commitBrushPath(drag, curveShapePixelPoints(drag), t('canvas.history.drawCurve'))
     }
     if (drag.kind === 'marquee') {
       const moved = drag.moved || selectionGestureMoved(drag.startClient, { x: event.clientX, y: event.clientY })
       const after = finalizeMarqueeSelection(drag.selectionStart ?? null, drag.previewSelection ?? session.selection, moved, drag.selectionMode ?? session.selectionMode)
       state.commitSelectionChange(drag.selectionStart ?? null, after, t('canvas.history.createSelection'))
       updateCursor(event)
+      scheduleDraw()
+    }
+    if (drag.kind === 'create-slice' && drag.previewTarget && (drag.moved || selectionGestureMoved(drag.startClient, { x: event.clientX, y: event.clientY }))) {
+      state.createSlice(drag.previewTarget)
+      scheduleDraw()
+    }
+    if (drag.kind === 'move-slice' && drag.sliceId) {
+      const moved = drag.moved || selectionGestureMoved(drag.startClient, { x: event.clientX, y: event.clientY })
+      if (!moved && drag.collapseSliceSelectionOnClick) state.selectSlice(drag.sliceId)
+      else if (moved && drag.sliceIds?.length && drag.slicePreviewTargets) {
+        if (drag.copy) state.duplicateSlices(drag.sliceIds, drag.slicePreviewTargets)
+        else state.updateSlices(drag.slicePreviewTargets)
+      } else if (moved && drag.previewTarget) state.updateSlice(drag.sliceId, drag.previewTarget)
+      scheduleDraw()
+    }
+    if (drag.kind === 'resize-slice' && drag.sliceId && drag.previewTarget) {
+      state.updateSlice(drag.sliceId, drag.previewTarget)
       scheduleDraw()
     }
     if (drag.kind === 'lasso') {

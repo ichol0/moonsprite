@@ -29,6 +29,7 @@ import { PlaybackPixelIcon } from '@/components/PlaybackPixelIcon'
 import { PixelUtilityIcon, type PixelUtilityIconKind } from '@/components/PixelUtilityIcon'
 import { CheckboxField } from '@/components/CheckboxField'
 import { ANIMATION_CELL_OPERATION_FINISHED_EVENT, LAYER_PANEL_REVEAL_EVENT, type AnimationCellOperationFinishedDetail, type LayerPanelRevealDetail } from '@/components/layer-panel-reveal'
+import { rasterStorageIdentity } from '@/core/runtime-raster'
 
 interface LayerFormTarget { id: string; kind: 'layer' | 'group' }
 type BatchProperty = 'name' | 'opacity' | 'blendMode' | 'cumulativeBlend' | 'displayColor' | 'description'
@@ -83,21 +84,21 @@ const loadLayerDensity = (): LayerDisplayDensity => {
   const value = localStorage.getItem(layerDensityKey)
   return layerDensityOrder.includes(value as LayerDisplayDensity) ? value as LayerDisplayDensity : 'normal'
 }
-type CelPixelBuffer = AnimationCelSurface['pixels']
-const celContentCache = new WeakMap<CelPixelBuffer, Map<string, { revision: number; value: boolean }>>()
-const celThumbnailCache = new WeakMap<CelPixelBuffer, Map<string, { revision: number; pixels: Uint8ClampedArray }>>()
+const celContentCache = new WeakMap<object, Map<string, { revision: number; value: boolean }>>()
+const celThumbnailCache = new WeakMap<object, Map<string, { revision: number; pixels: Uint8ClampedArray }>>()
 const paletteVisibilityKey = (palette: readonly PaletteEntry[]): string => palette.map((entry) => `${entry.id}:${entry.color.a}`).join(',')
 const paletteRenderKey = (palette: readonly PaletteEntry[]): string => palette.map((entry) => `${entry.id}:${entry.color.r},${entry.color.g},${entry.color.b},${entry.color.a}`).join('|')
 const cachedCelHasContent = (cel: AnimationCel | null, palette: readonly PaletteEntry[], revision = 0): boolean => {
   const surface = cel?.surface
   if (!surface) return false
   const key = surface.format === 'rgba' ? 'rgba' : paletteVisibilityKey(palette)
-  const entries = celContentCache.get(surface.pixels) ?? new Map<string, { revision: number; value: boolean }>()
+  const storage = rasterStorageIdentity(surface)
+  const entries = celContentCache.get(storage) ?? new Map<string, { revision: number; value: boolean }>()
   const cached = entries.get(key)
   if (cached && (revision === 0 || cached.revision === revision)) return cached.value
   const value = animationCelHasContent(cel, palette)
   entries.set(key, { revision, value })
-  celContentCache.set(surface.pixels, entries)
+  celContentCache.set(storage, entries)
   return value
 }
 function CelThumbnail({ cel, palette, revision, documentWidth, documentHeight, thumbnailSize }: { cel: AnimationCel; palette: readonly PaletteEntry[]; revision: number; documentWidth: number; documentHeight: number; thumbnailSize: number }) {
@@ -111,14 +112,15 @@ function CelThumbnail({ cel, palette, revision, documentWidth, documentHeight, t
       const context = canvas.getContext('2d')
       if (!context) return
       const key = `${documentWidth}:${documentHeight}:${canvas.width}:${surface.width}:${surface.height}:${surface.offsetX}:${surface.offsetY}:${cel.opacity ?? 1}:${surface.format === 'rgba' ? 'rgba' : paletteRenderKey(palette)}`
-      const entries = celThumbnailCache.get(surface.pixels) ?? new Map<string, { revision: number; pixels: Uint8ClampedArray }>()
+      const storage = rasterStorageIdentity(surface)
+      const entries = celThumbnailCache.get(storage) ?? new Map<string, { revision: number; pixels: Uint8ClampedArray }>()
       const cached = entries.get(key)
       const pixels = cached && (revision === 0 || cached.revision === revision)
         ? cached.pixels
         : renderAnimationCelThumbnailPixels(documentWidth, documentHeight, canvas.width, surface, palette, cel.opacity ?? 1)
       if (!cached || pixels !== cached.pixels) {
         entries.set(key, { revision, pixels })
-        celThumbnailCache.set(surface.pixels, entries)
+        celThumbnailCache.set(storage, entries)
       }
       const image = context.createImageData(canvas.width, canvas.height)
       image.data.set(pixels)

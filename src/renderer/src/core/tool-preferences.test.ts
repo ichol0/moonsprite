@@ -137,7 +137,8 @@ describe('tool preferences persistence boundary', () => {
       brushProfiles: {
         pencil: { ...profile, brushDynamics: pencilGradientDynamics, brushPressure: brushPressureFromDynamics(pencilGradientDynamics) },
         eraser: { ...profile, brushDynamics: eraserDitherDynamics, brushPressure: brushPressureFromDynamics(eraserDitherDynamics) },
-        fill: profile
+        fill: profile,
+        line: { ...profile, brushSize: 7, brushShape: 'square' }
       }
     }, storage)
 
@@ -147,6 +148,7 @@ describe('tool preferences persistence boundary', () => {
     expect(restored.brushProfiles?.pencil?.brushDynamics.gradientDither).toBe('bayer-4')
     expect(restored.brushProfiles?.eraser?.brushDynamics.effects.strength).toMatchObject({ sensor: 'speed', outputMin: 8, inputMax: 900, curve: 'hard' })
     expect(restored.brushProfiles?.eraser?.brushDynamics.gradientDither).toBe('vertical')
+    expect(restored.brushProfiles?.line).toMatchObject({ brushSize: 7, brushShape: 'square' })
   })
 
   it('writes a complete snapshot through the storage boundary', () => {

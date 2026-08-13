@@ -336,6 +336,26 @@ export interface BrushLineDynamics {
 
 export interface BrushMaskPoint { x: number; y: number; coverage: number; color?: RgbaColor }
 
+/** Selects the brush centers shared by geometric-path previews and commits. */
+export function brushPathStampPoints(
+  points: readonly { x: number; y: number }[],
+  size: number,
+  imageBrush: ImageBrush | null = null
+): Array<{ x: number; y: number }> {
+  if (points.length === 0) return []
+  const stamp = brushStampDimensions(size, imageBrush)
+  const stampSpacing = Math.max(1, Math.floor(Math.max(stamp.width, stamp.height) / 16))
+  const centers: Array<{ x: number; y: number }> = []
+  let stepsSinceStamp = 0
+  for (let index = 0; index < points.length; index += 1) {
+    if (index > 0) stepsSinceStamp += 1
+    if (index !== 0 && index !== points.length - 1 && stepsSinceStamp < stampSpacing) continue
+    centers.push({ x: Math.round(points[index].x), y: Math.round(points[index].y) })
+    stepsSinceStamp = 0
+  }
+  return centers
+}
+
 /** The footprint shared by painting and the canvas preview. */
 export function brushStampDimensions(size: number, imageBrush: ImageBrush | null = null): { width: number; height: number } {
   if (imageBrush?.intrinsicSize) return { width: Math.max(1, imageBrush.width), height: Math.max(1, imageBrush.height) }
@@ -582,6 +602,40 @@ export function paintLine(
   }
 }
 
+export function paintBrushPath(
+  document: SpriteDocument,
+  layer: RasterLayer,
+  edit: PixelEdit,
+  points: readonly { x: number; y: number }[],
+  size: number,
+  color: RgbaColor,
+  selection?: SelectionMask | null,
+  shape: BrushShape = 'square',
+  texture: BrushTexture = 'solid',
+  textureScale = 1,
+  imageBrush: ImageBrush | null = null,
+  imageBrushSettings?: ImageBrushSettings,
+  proceduralAntialiasStrength = 0,
+  brushPaintMode: BrushPaintMode = 'paint',
+  patternOrigin?: { x: number; y: number },
+  symmetryAxes?: SymmetryAxes,
+  symmetryCenter?: SymmetryCenter
+): void {
+  const centers = brushPathStampPoints(points, size, imageBrush)
+  if (centers.length === 0) return
+  const stamp = brushStampDimensions(size, imageBrush)
+  const anchor = brushStampAnchor(size, imageBrush)
+  const left = Math.min(...centers.map((point) => point.x)) - anchor.x
+  const top = Math.min(...centers.map((point) => point.y)) - anchor.y
+  const right = Math.max(...centers.map((point) => point.x)) - anchor.x + stamp.width
+  const bottom = Math.max(...centers.map((point) => point.y)) - anchor.y + stamp.height
+  const footprint = symmetricRect(document, { x: left, y: top, width: right - left, height: bottom - top }, symmetryAxes, symmetryCenter)
+  if (!ensureLayerCoversEditRect(document, layer, edit, footprint)) return
+  for (const center of centers) {
+    paintBrush(document, layer, edit, center.x, center.y, size, color, shape, selection, texture, textureScale, imageBrush, imageBrushSettings, proceduralAntialiasStrength, brushPaintMode, patternOrigin, symmetryAxes, symmetryCenter)
+  }
+}
+
 export interface PixelPathPoint { x: number; y: number; size?: number; opacityScale?: number; color?: RgbaColor; gradient?: BrushGradientSample; coverageKey?: string; overrideImageBrushColor?: boolean }
 
 export function appendPerfectPixelSegment(path: PixelPathPoint[], target: PixelPathPoint): boolean {
@@ -641,6 +695,12 @@ export function appendPerfectPixelSegment(path: PixelPathPoint[], target: PixelP
     if (!last || last.x !== point.x || last.y !== point.y) path.push(point)
   }
   return removedCorner
+}
+
+export function perfectPixelPathPoints(points: readonly { x: number; y: number }[]): PixelPathPoint[] {
+  const path: PixelPathPoint[] = []
+  for (const point of points) appendPerfectPixelSegment(path, point)
+  return path
 }
 
 export function paintShape(

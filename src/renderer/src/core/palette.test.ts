@@ -2,6 +2,7 @@ import { decode } from 'upng-js'
 import { describe, expect, it } from 'vitest'
 import { createDocument, getActiveLayer, writeLayerColor } from './document'
 import { countUsedPaletteColors, encodePalettePng, extractPaletteColors, mergePaletteColors, paletteGradient, sortPaletteColors } from './palette'
+import { installRuntimeRaster, surfacePixelsMaterialized } from './runtime-raster'
 
 describe('palette extraction', () => {
   it('counts palette colors used by RGBA and indexed animation surfaces', () => {
@@ -15,6 +16,25 @@ describe('palette extraction', () => {
     indexedLayer.pixels[0] = 1
     indexedLayer.pixels[1] = 2
     expect(countUsedPaletteColors(indexedDocument)).toBe(2)
+  })
+
+  it('counts colors from sparse raster tiles without materializing the full layer', () => {
+    const document = createDocument('sparse usage', 4096, 2048, 'rgba')
+    const layer = getActiveLayer(document)
+    const color = document.palette[1].color
+    installRuntimeRaster(layer, {
+      kind: 'sparse-tiles-v1',
+      format: 'rgba',
+      width: document.width,
+      height: document.height,
+      tileSize: 64,
+      data: new Uint8Array([color.r, color.g, color.b, color.a]),
+      tileOffsets: new Int32Array(Math.ceil(document.width / 64) * Math.ceil(document.height / 64)).fill(0)
+    })
+    layer.runtimeRaster!.tileOffsets[0] = 1
+
+    expect(countUsedPaletteColors(document)).toBe(1)
+    expect(surfacePixelsMaterialized(layer)).toBe(false)
   })
 
   it('extracts visible exact colors, preserves alpha, and omits full transparency', () => {

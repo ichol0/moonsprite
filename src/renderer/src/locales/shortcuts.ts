@@ -10,9 +10,10 @@ const enGroups: Record<ShortcutGroupId, string> = {
 }
 
 const zhLabels: Record<ShortcutId, string> = {
+  'tool.slice': '切片工具',
   toggleClippingMask: '剪贴蒙版',
   toggleAnimationPlayback: '播放或暂停动画', previousAnimationFrame: '上一帧', nextAnimationFrame: '下一帧', addAnimationFrame: '新增帧', addBlankAnimationFrame: '新建空帧', deleteAnimationFrame: '删除帧', copyAnimationCel: '复制单元格',
-  openHome: '打开主页', newDocument: '新建工程', openDocument: '打开工程', closeDocument: '关闭工程', openProjectFolder: '在文件夹中打开', exportDocument: '导出', exportSpriteSheet: '导出精灵表', openTimelapse: '缩时动画', openProjectInfo: '项目信息',
+  openHome: '打开主页', newDocument: '新建工程', openDocument: '打开工程', closeDocument: '关闭工程', openProjectFolder: '在文件夹中打开', exportDocument: '导出', exportAllFrames: '导出所有帧', exportSpriteSheet: '导出精灵表', openTimelapse: '缩时动画', openProjectInfo: '项目信息',
   'tool.airbrush': '喷枪', 'tool.pencil': '画笔', 'tool.eraser': '橡皮擦', 'tool.selection': '矩形选区', 'tool.selection.ellipse': '椭圆选区', 'tool.move': '移动工具', 'tool.shape': '形状工具', 'tool.line': '直线工具', 'tool.curve': '曲线工具', 'tool.fill': '油漆桶', 'tool.fill.gradient': '渐变工具', 'tool.eyedropper': '吸管', 'tool.hand': '抓手', 'tool.zoom': '缩放工具', 'tool.rotate': '旋转视图',
   'tool.shape.rectangleOutline': '矩形轮廓', 'tool.shape.rectangle': '填充矩形', 'tool.shape.ellipseOutline': '椭圆轮廓', 'tool.shape.ellipse': '填充椭圆',
   lasso: '套索选区', polygonLasso: '多边形套索', magic: '魔棒选区', canvasResize: '调整画布大小', imageResize: '调整图像大小', transform: '变换', outline: '描边', adjustmentColorBalance: '色彩平衡', adjustmentBrightnessContrast: '亮度/对比度', adjustmentHueSaturation: '色相/饱和度', adjustmentCurves: '曲线', openShortcutSettings: '快捷键设置', openPreferences: '首选项', flipVertical: '垂直翻转', flipHorizontal: '水平翻转', selectAll: '全选', invertSelection: '反选选区', deselect: '取消选择', createBrushFromSelection: '从选区创建笔刷',
@@ -21,9 +22,10 @@ const zhLabels: Record<ShortcutId, string> = {
 }
 
 const enLabels: Record<ShortcutId, string> = {
+  'tool.slice': 'Slice Tool',
   toggleClippingMask: 'Clipping Mask',
   toggleAnimationPlayback: 'Play or Pause Animation', previousAnimationFrame: 'Previous Frame', nextAnimationFrame: 'Next Frame', addAnimationFrame: 'Add Frame', addBlankAnimationFrame: 'New Blank Frame', deleteAnimationFrame: 'Delete Frame', copyAnimationCel: 'Copy Cel',
-  openHome: 'Open Home', newDocument: 'New Project', openDocument: 'Open Project', closeDocument: 'Close Project', openProjectFolder: 'Show in Folder', exportDocument: 'Export', exportSpriteSheet: 'Export Sprite Sheet', openTimelapse: 'Timelapse', openProjectInfo: 'Project Information',
+  openHome: 'Open Home', newDocument: 'New Project', openDocument: 'Open Project', closeDocument: 'Close Project', openProjectFolder: 'Show in Folder', exportDocument: 'Export', exportAllFrames: 'Export All Frames', exportSpriteSheet: 'Export Sprite Sheet', openTimelapse: 'Timelapse', openProjectInfo: 'Project Information',
   'tool.airbrush': 'Airbrush', 'tool.pencil': 'Pencil', 'tool.eraser': 'Eraser', 'tool.selection': 'Rectangular Selection', 'tool.selection.ellipse': 'Elliptical Selection', 'tool.move': 'Move Tool', 'tool.shape': 'Shape Tool', 'tool.line': 'Line Tool', 'tool.curve': 'Curve Tool', 'tool.fill': 'Paint Bucket', 'tool.fill.gradient': 'Gradient Tool', 'tool.eyedropper': 'Eyedropper', 'tool.hand': 'Hand Tool', 'tool.zoom': 'Zoom Tool', 'tool.rotate': 'Rotate View',
   'tool.shape.rectangleOutline': 'Rectangle Outline', 'tool.shape.rectangle': 'Filled Rectangle', 'tool.shape.ellipseOutline': 'Ellipse Outline', 'tool.shape.ellipse': 'Filled Ellipse',
   lasso: 'Lasso Selection', polygonLasso: 'Polygonal Lasso', magic: 'Magic Wand Selection', canvasResize: 'Canvas Size', imageResize: 'Image Size', transform: 'Transform', outline: 'Outline', adjustmentColorBalance: 'Color Balance', adjustmentBrightnessContrast: 'Brightness/Contrast', adjustmentHueSaturation: 'Hue/Saturation', adjustmentCurves: 'Curves', openShortcutSettings: 'Keyboard Shortcuts', openPreferences: 'Preferences', flipVertical: 'Flip Vertically', flipHorizontal: 'Flip Horizontally', selectAll: 'Select All', invertSelection: 'Invert Selection', deselect: 'Deselect', createBrushFromSelection: 'Create Brush from Selection',

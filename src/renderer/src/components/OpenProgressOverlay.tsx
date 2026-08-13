@@ -11,7 +11,7 @@ export function OpenProgressOverlay(): ReactElement | null {
 
   return createPortal(
     <div className="modal-backdrop save-progress-backdrop simulated-progress-backdrop is-running" role="presentation">
-      <section className="modal save-progress-modal simulated-progress-modal" role="dialog" aria-modal="true" aria-live="polite" aria-labelledby="open-progress-title">
+      <section className="modal save-progress-modal simulated-progress-modal save-simulated-progress-modal" role="dialog" aria-modal="true" aria-live="polite" aria-labelledby="open-progress-title">
         <header>
           <div className="save-progress-heading">
             <span className="save-progress-icon" aria-hidden="true"><span className="save-progress-animation" /></span>

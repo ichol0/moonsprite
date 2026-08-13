@@ -1,6 +1,7 @@
 export type ColorMode = 'rgba' | 'indexed'
 export type ImageResizeInterpolation = 'nearest' | 'smooth'
 export type ToolId = 'pencil' | 'airbrush' | 'eraser' | 'fill' | 'eyedropper' | 'selection' | 'shape' | 'line' | 'move' | 'hand' | 'zoom' | 'rotate'
+export type MoveKind = 'move' | 'slice'
 export type BrushShape = 'round' | 'square' | 'line'
 export type BrushTexture = 'solid' | 'cracks' | 'wood' | 'grain'
 export type BrushPaintMode = 'paint' | 'pattern-source' | 'pattern-target'
@@ -122,6 +123,19 @@ export interface PaletteEntry {
   color: RgbaColor
 }
 
+export interface RuntimeRasterTiles {
+  kind: 'sparse-tiles-v1'
+  format: ColorMode
+  width: number
+  height: number
+  tileSize: number
+  data: Uint8Array
+  /** One-based payload offset per tile slot; zero means the tile is absent. */
+  tileOffsets: Int32Array
+  /** Exact visible bounds for immutable RGBA tiles; null means fully transparent. */
+  visibleBounds?: { x: number; y: number; width: number; height: number } | null
+}
+
 export interface RgbaLayer {
   id: string
   name: string
@@ -144,6 +158,7 @@ export interface RgbaLayer {
   offsetY: number
   format: 'rgba'
   pixels: Uint8ClampedArray
+  runtimeRaster?: RuntimeRasterTiles
 }
 
 export interface IndexedLayer {
@@ -166,6 +181,7 @@ export interface IndexedLayer {
   offsetY: number
   format: 'indexed'
   pixels: Uint32Array
+  runtimeRaster?: RuntimeRasterTiles
 }
 
 export type RasterLayer = RgbaLayer | IndexedLayer
@@ -220,6 +236,7 @@ export type AnimationCelSurface =
       storageOriginX?: number
       storageOriginY?: number
       pixels: Uint8ClampedArray
+      runtimeRaster?: RuntimeRasterTiles
     }
   | {
       format: 'indexed'
@@ -230,6 +247,7 @@ export type AnimationCelSurface =
       storageOriginX?: number
       storageOriginY?: number
       pixels: Uint32Array
+      runtimeRaster?: RuntimeRasterTiles
     }
 
 export interface AnimationCel {
@@ -294,8 +312,17 @@ export interface ProjectLayerPanelState {
   collapsedGroupIds: string[]
 }
 
+export interface DocumentSlice {
+  id: string
+  name: string
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
 export interface SpriteDocument {
-  schemaVersion: 1 | 2 | 3 | 4 | 5
+  schemaVersion: 1 | 2 | 3 | 4 | 5 | 6
   id: string
   name: string
   width: number
@@ -325,6 +352,8 @@ export interface SpriteDocument {
   statistics?: ProjectStatistics
   /** Optional bounded history of drawing snapshots for timelapse export. */
   timelapse?: TimelapseSettings
+  /** Named export regions stored in document pixel coordinates. */
+  slices?: DocumentSlice[]
   filePath: string | null
   /** Original path used to open imported images or Aseprite projects. */
   sourceFilePath?: string

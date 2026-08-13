@@ -4,6 +4,7 @@ import { activateAnimationFrame, addBlankAnimationFrame, connectAnimationCels, d
 import { animationMaskAt, createDocument, createLayerMask, getActiveLayer, getLayerStorageOrigin, readLayerColorAt, writeLayerColor } from './document'
 import { applySelectionTranslationPreview, captureSelectionTransform, restoreSelectionTranslationPreview } from './tools'
 import { acceptProjectSaveBaseline, compactProjectRasterStorage, decodeProject, encodeProject, encodeProjectAsync, encodeProjectSaveAsync, PROJECT_SCHEMA_VERSION, migrateProjectManifest, readProjectGalleryMetadata, registerProjectSaveBaseline } from './project-format'
+import { runtimeRasterForSurface, surfacePixelsMaterialized } from './runtime-raster'
 
 const zipCompressionMethods = (data: Uint8Array): Map<string, number> => {
   const view = new DataView(data.buffer, data.byteOffset, data.byteLength)
@@ -59,6 +60,19 @@ describe('project manifest migration boundary', () => {
     expect(migrateProjectManifest(manifest)).toMatchObject({ ...manifest, document: { ...manifest.document, animation: { activeFrameId: 'frame-1' } } })
   })
 
+  it('round-trips document slices and normalizes invalid persisted entries', () => {
+    const document = createDocument('slice project', 16, 12, 'rgba')
+    document.slices = [
+      { id: 'head', name: 'Head', x: 2, y: 3, width: 5, height: 4 },
+      { id: 'edge', name: 'Edge', x: 14, y: 10, width: 9, height: 9 }
+    ]
+    const reopened = decodeProject(encodeProject(document))
+    expect(reopened.slices).toEqual([
+      { id: 'head', name: 'Head', x: 2, y: 3, width: 5, height: 4 },
+      { id: 'edge', name: 'Edge', x: 14, y: 10, width: 2, height: 2 }
+    ])
+  })
+
   it('migrates the v1 single-frame document into the animation-ready schema', () => {
     expect(migrateProjectManifest({ app: 'MoonSprite', schemaVersion: 1, document: { schemaVersion: 1 } })).toMatchObject({ schemaVersion: PROJECT_SCHEMA_VERSION, document: { schemaVersion: PROJECT_SCHEMA_VERSION, animation: { frames: [{ id: 'frame-1', duration: 100 }] } } })
   })
@@ -66,6 +80,15 @@ describe('project manifest migration boundary', () => {
   it('migrates v2 projects to the layer-mask schema without inventing masks', () => {
     const migrated = migrateProjectManifest({ app: 'MoonSprite', schemaVersion: 2, document: { schemaVersion: 2, groups: [], animation: { frames: [{ id: 'frame-1', duration: 100 }], cels: [], activeFrameId: 'frame-1', loop: true } } })
     expect(migrated).toMatchObject({ schemaVersion: PROJECT_SCHEMA_VERSION, document: { schemaVersion: PROJECT_SCHEMA_VERSION, groups: [] } })
+  })
+
+  it('migrates v5 projects with sparse rasters and no slices to v6', () => {
+    const migrated = migrateProjectManifest({
+      app: 'MoonSprite',
+      schemaVersion: 5,
+      document: { schemaVersion: 5, width: 16, height: 12, layers: [], animation: { frames: [], cels: [] } }
+    })
+    expect(migrated).toMatchObject({ schemaVersion: 6, sourceSchemaVersion: 5, document: { schemaVersion: 6, slices: [] } })
   })
 
   it('migrates v4 raster resources as raw data', () => {
@@ -84,7 +107,7 @@ describe('project manifest migration boundary', () => {
   })
 
   it('rejects unknown versions without guessing their fields', () => {
-    expect(() => migrateProjectManifest({ app: 'MoonSprite', schemaVersion: 6, document: { schemaVersion: 6 } })).toThrow()
+    expect(() => migrateProjectManifest({ app: 'MoonSprite', schemaVersion: 7, document: { schemaVersion: 7 } })).toThrow()
     expect(() => migrateProjectManifest({ app: 'Other', schemaVersion: 1, document: { schemaVersion: 1 } })).toThrow()
   })
 
@@ -126,14 +149,34 @@ describe('project manifest migration boundary', () => {
     const restoredIndexed = decodeProject(zipSync(indexedFiles))
     const restoredIndexedLayer = getActiveLayer(restoredIndexed)
     expect(activeRasterEntry(indexedFiles).dataEncoding).toBe('sparse-tiles-v1')
-    expect(restoredIndexedLayer).toMatchObject({ width: 64, height: 64, offsetX: 64, offsetY: 64 })
-    expect(getLayerStorageOrigin(restoredIndexedLayer)).toEqual({ x: 64, y: 64 })
-    expect((restoredIndexedLayer.pixels as Uint32Array)[1 * 64 + 2]).toBe(0x12345678)
+    expect(runtimeRasterForSurface(restoredIndexedLayer)).not.toBeNull()
+    expect(surfacePixelsMaterialized(restoredIndexedLayer)).toBe(false)
+    expect(restoredIndexedLayer).toMatchObject({ width: 128, height: 128, offsetX: 0, offsetY: 0 })
+    expect(getLayerStorageOrigin(restoredIndexedLayer)).toEqual({ x: 0, y: 0 })
+    expect((restoredIndexedLayer.pixels as Uint32Array)[65 * 128 + 66]).toBe(0x12345678)
     expect(activeRasterEntry(emptyFiles).dataEncoding).toBe('sparse-tiles-v1')
     expect(emptyFiles[activeRasterEntry(emptyFiles).dataFile].byteLength).toBe(24)
     const restoredEmptyLayer = getActiveLayer(decodeProject(zipSync(emptyFiles)))
-    expect(restoredEmptyLayer).toMatchObject({ width: 1, height: 1, offsetX: 0, offsetY: 0 })
+    expect(restoredEmptyLayer).toMatchObject({ width: 128, height: 128, offsetX: 0, offsetY: 0 })
     expect(Array.from(restoredEmptyLayer.pixels).every((value) => value === 0)).toBe(true)
+  })
+
+  it('reuses an unchanged lazy sparse resource without materializing it', async () => {
+    const document = createDocument('lazy sparse reuse', 128, 128, 'rgba')
+    writeLayerColor(document, getActiveLayer(document), 65 * 128 + 66, { r: 20, g: 40, b: 60, a: 255 })
+    const archive = encodeProject(document)
+    const restored = decodeProject(archive)
+    const layer = getActiveLayer(restored)
+    const sourceEntry = activeRasterEntry(unzipSync(archive))
+
+    registerProjectSaveBaseline(restored, 'D:/gallery/lazy-sparse-reuse.moonsprite', archive)
+    const encoded = await encodeProjectSaveAsync(restored)
+    const patch = unzipSync(encoded.data)
+    const plan = JSON.parse(strFromU8(patch['.moonsprite-save-plan.json'])) as { entries: Array<{ path: string }> }
+
+    expect(surfacePixelsMaterialized(layer)).toBe(false)
+    expect(patch[sourceEntry.dataFile]).toBeUndefined()
+    expect(plan.entries.map((entry) => entry.path)).toContain(sourceEntry.dataFile)
   })
 
   it('keeps dense small raster resources in raw form', () => {
@@ -387,6 +430,27 @@ describe('project manifest migration boundary', () => {
     expect(activeRasterEntry(patch)).toMatchObject(sourceEntry)
   })
 
+  it('keeps v5 sparse raster storage lazy while migrating document metadata to v6', () => {
+    const document = createDocument('v5 sparse migration', 128, 128, 'rgba')
+    writeLayerColor(document, getActiveLayer(document), 65 * 128 + 66, { r: 255, g: 0, b: 0, a: 255 })
+    const files = unzipSync(encodeProject(document))
+    const manifest = readTestManifest(files)
+    manifest.schemaVersion = 5
+    manifest.document.schemaVersion = 5
+    delete (manifest.document as TestProjectManifest['document'] & { slices?: unknown }).slices
+    files['manifest.json'] = new TextEncoder().encode(JSON.stringify(manifest))
+
+    const restored = decodeProject(zipSync(files))
+    const layer = getActiveLayer(restored)
+
+    expect(restored.schemaVersion).toBe(PROJECT_SCHEMA_VERSION)
+    expect(restored.slices).toEqual([])
+    expect(runtimeRasterForSurface(layer)).not.toBeNull()
+    expect(surfacePixelsMaterialized(layer)).toBe(false)
+    expect(readLayerColorAt(restored, layer, 66, 65)).toEqual({ r: 255, g: 0, b: 0, a: 255 })
+    expect(surfacePixelsMaterialized(layer)).toBe(false)
+  })
+
   it('writes compact raster geometry only after a restored v5 surface changes', async () => {
     const document = createDocument('changed compact sparse save', 128, 128, 'rgba')
     writeLayerColor(document, getActiveLayer(document), 65 * 128 + 66, { r: 255, g: 0, b: 0, a: 255 })
@@ -401,11 +465,11 @@ describe('project manifest migration boundary', () => {
     const savedEntry = activeRasterEntry(patch)
     const reopened = decodeProject(encoded.data)
 
-    expect(savedEntry).toMatchObject({ width: 64, height: 64, offsetX: 64, offsetY: 64 })
+    expect(savedEntry).toMatchObject({ width: 128, height: 128, offsetX: 0, offsetY: 0 })
     expect(['raw', 'sparse-tiles-v1']).toContain(savedEntry.dataEncoding)
     expect(patch[savedEntry.dataFile]).toBeDefined()
     expect(readLayerColorAt(reopened, getActiveLayer(reopened), 66, 65)).toEqual({ r: 255, g: 0, b: 0, a: 255 })
-    expect(readLayerColorAt(reopened, getActiveLayer(reopened), 67, 65)).toEqual({ r: 0, g: 0, b: 255, a: 255 })
+    expect(readLayerColorAt(reopened, getActiveLayer(reopened), 3, 1)).toEqual({ r: 0, g: 0, b: 255, a: 255 })
   })
 
   it('rewrites legacy v4 raw resources as v5 sparse resources on first save', async () => {
@@ -441,8 +505,8 @@ describe('project manifest migration boundary', () => {
     const savedManifest = readTestManifest(patch)
     const savedFile = activeRasterEntry(patch).dataFile
 
-    expect(savedManifest.schemaVersion).toBe(5)
-    expect(savedManifest.document.schemaVersion).toBe(5)
+    expect(savedManifest.schemaVersion).toBe(PROJECT_SCHEMA_VERSION)
+    expect(savedManifest.document.schemaVersion).toBe(PROJECT_SCHEMA_VERSION)
     expect(savedFile).toMatch(/\.tiles$/)
     expect(patch[savedFile]).toBeDefined()
   })

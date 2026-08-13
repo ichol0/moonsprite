@@ -86,6 +86,7 @@ export const shouldCacheFullCompositeSurface = (width: number, height: number, m
 
 export class CanvasCompositeCache {
   private namespace = ''
+  private lastDrawnFrameId = 'static'
   private surfaces = new Map<string, CompositeSurface>()
   private regions = new Map<string, CompositeRegionSurface>()
   private dirtyRects = new Map<string, SelectionRect[]>()
@@ -103,7 +104,7 @@ export class CanvasCompositeCache {
     this.invalidateSurface()
   }
 
-  invalidateRect(selection: SelectionRect | null | undefined, documentWidth: number, documentHeight: number, frameId = 'static'): void {
+  invalidateRect(selection: SelectionRect | null | undefined, documentWidth: number, documentHeight: number, frameId = this.lastDrawnFrameId): void {
     if (!selection) return
     const left = Math.max(0, Math.floor(selection.x))
     const top = Math.max(0, Math.floor(selection.y))
@@ -116,13 +117,15 @@ export class CanvasCompositeCache {
     this.regions.clear()
   }
 
-  draw({ context, document, view, originX, originY, canvasWidth, canvasHeight, fromX, fromY, toX, toY, revision, contentRevision = revision, contentInvalidation = null, frameId = 'static', isolatedLayerMask, imageSmoothingEnabled = false }: DrawCompositeOptions): void {
+  draw({ context, document, view, originX, originY, canvasWidth, canvasHeight, fromX, fromY, toX, toY, revision, contentRevision = revision, contentInvalidation = null, frameId, isolatedLayerMask, imageSmoothingEnabled = false }: DrawCompositeOptions): void {
+    const effectiveFrameId = frameId ?? document.animation?.activeFrameId ?? 'static'
+    this.lastDrawnFrameId = effectiveFrameId
     const namespace = this.surfaceNamespace(document, view, isolatedLayerMask)
     if (this.namespace !== namespace) {
       this.namespace = namespace
       this.invalidateAll()
     }
-    const frameKey = `${namespace}:${frameId}`
+    const frameKey = `${namespace}:${effectiveFrameId}`
 
     context.save()
     context.beginPath()
@@ -130,8 +133,8 @@ export class CanvasCompositeCache {
     context.clip()
     context.imageSmoothingEnabled = imageSmoothingEnabled
     if (imageSmoothingEnabled) context.imageSmoothingQuality = 'high'
-    const initialCompositeIsPending = contentRevision === 0 && !isolatedLayerMask && !view.relativeLuminance && initialDocumentCompositePending(document)
-    if (isolatedLayerMask || (shouldCacheFullCompositeSurface(document.width, document.height, this.maxCacheBytes) && !initialCompositeIsPending)) this.drawSurface(context, document, view, originX, originY, canvasWidth, canvasHeight, fromX, fromY, toX, toY, frameKey, frameId, contentRevision, contentInvalidation, imageSmoothingEnabled, isolatedLayerMask)
+    const initialCompositeIsPending = contentRevision === 0 && !isolatedLayerMask && !view.relativeLuminance && initialDocumentCompositePending(document, effectiveFrameId)
+    if (isolatedLayerMask || (shouldCacheFullCompositeSurface(document.width, document.height, this.maxCacheBytes) && !initialCompositeIsPending)) this.drawSurface(context, document, view, originX, originY, canvasWidth, canvasHeight, fromX, fromY, toX, toY, frameKey, effectiveFrameId, contentRevision, contentInvalidation, imageSmoothingEnabled, isolatedLayerMask)
     else this.drawRegion(context, document, view, originX, originY, fromX, fromY, toX, toY, frameKey, contentRevision, isolatedLayerMask)
     context.restore()
   }
@@ -148,7 +151,7 @@ export class CanvasCompositeCache {
       && invalidation.fromRevision === surface.revision
     if (surface && surface.revision !== contentRevision) {
       if (canApplyInvalidation && invalidation?.kind === 'region') {
-        if ((isolatedLayerMask || (invalidation.frameId ?? 'static') === frameId) && invalidation.rect) {
+        if ((isolatedLayerMask || (invalidation.frameId ?? frameId) === frameId) && invalidation.rect) {
           this.invalidateRect(invalidation.rect, document.width, document.height, frameId)
         }
       } else {
@@ -159,7 +162,7 @@ export class CanvasCompositeCache {
     }
     if (!surface || surface.canvas.width !== document.width || surface.canvas.height !== document.height) {
       const initialSurface = !isolatedLayerMask && !view.relativeLuminance && contentRevision === 0
-        ? initialDocumentCompositeSurface(document)
+        ? initialDocumentCompositeSurface(document, frameId)
         : null
       const canvas = initialSurface ?? new OffscreenCanvas(document.width, document.height)
       if (!initialSurface) {
@@ -168,7 +171,7 @@ export class CanvasCompositeCache {
           : compositeRegion(document, 0, 0, document.width, document.height, this.compositeCache, contentRevision)
         if (!isolatedLayerMask && view.relativeLuminance) applyRelativeLuminance(pixels)
         canvas.getContext('2d')?.putImageData(imageData(pixels, document.width, document.height), 0, 0)
-        if (!isolatedLayerMask && !view.relativeLuminance && contentRevision === 0) registerInitialDocumentCompositeSurface(document, canvas)
+        if (!isolatedLayerMask && !view.relativeLuminance && contentRevision === 0) registerInitialDocumentCompositeSurface(document, canvas, frameId)
       }
       surface = { canvas, revision: contentRevision }
       this.remember(this.surfaces, key, surface)
