@@ -142,8 +142,8 @@ describe('Aseprite import', () => {
     expect(readLayerColor(document, layer, 0)).toEqual({ r: 255, g: 0, b: 0, a: 255 })
     expect(readLayerColor(document, layer, 1)).toEqual({ r: 0, g: 0, b: 255, a: 128 })
     expect(document.palette.map((entry) => entry.color)).toEqual([
-      { r: 255, g: 0, b: 0, a: 255 },
-      { r: 0, g: 0, b: 255, a: 128 }
+      { r: 0, g: 0, b: 255, a: 128 },
+      { r: 255, g: 0, b: 0, a: 255 }
     ])
   })
 

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import {
   DEFAULT_COLOR_EDITOR_MODES,
   DEFAULT_LAYER_DISPLAY_COLOR_PRESETS,
+  DEFAULT_QUICK_COMMAND_PREFERENCES,
   UI_SCALE_VALUES,
   loadEditorPreferences,
   parseDocumentSizePresets,
@@ -13,6 +14,7 @@ import {
   type CursorScale,
   type DocumentSizePreset,
   type EyedropperMagnifierStyle,
+  type QuickCommandId,
   type RelativeLuminanceScope,
   type RotationIndicatorPosition,
   type ToolIconScale,
@@ -40,16 +42,20 @@ import { ThemedSelect } from '@/components/ThemedSelect'
 import { useWorkspace } from '@/store/workspace'
 import { applyThemeToDocument, resolveTheme, type ThemeVisualDefaults } from '@/core/theme'
 import { ThemePreferencesSection } from './ThemePreferencesSection'
+import { QUICK_COMMAND_METADATA } from '@/components/app/quick-command-registry'
+import { colorValueModeLabel } from '@/core/color-values'
 
 interface PreferencesDialogProps {
+  initialSection?: PreferenceSection
   onClose: () => void
   onPresetChange: (documentSizes: DocumentSizePreset[], exportScales: number[]) => void
 }
 
-type PreferenceSection = 'general' | 'appearance' | 'theme' | 'input' | 'tools' | 'files' | 'colorLayers' | 'presets' | 'reset'
+export type PreferenceSection = 'general' | 'quickCommands' | 'appearance' | 'theme' | 'input' | 'tools' | 'files' | 'colorLayers' | 'presets' | 'reset'
 
 const PREFERENCE_SECTIONS: Array<[PreferenceSection, TranslationKey]> = [
   ['general', 'preferences.sections.general'],
+  ['quickCommands', 'preferences.sections.quickCommands'],
   ['appearance', 'preferences.sections.appearance'],
   ['theme', 'preferences.sections.theme'],
   ['input', 'preferences.sections.input'],
@@ -60,33 +66,56 @@ const PREFERENCE_SECTIONS: Array<[PreferenceSection, TranslationKey]> = [
   ['reset', 'preferences.sections.reset']
 ]
 
+const QUICK_COMMAND_SEARCH_KEYS = Object.values(QUICK_COMMAND_METADATA).flatMap(({ description, label }) => [label, description])
+
 const PREFERENCE_SEARCH_KEYS: Record<PreferenceSection, TranslationKey[]> = {
   general: ['preferences.groups.interface', 'preferences.groups.project', 'preferences.language', 'preferences.uiScale', 'preferences.toolIconScale', 'preferences.timelapseRecording'],
-  appearance: ['preferences.groups.canvas', 'preferences.checkerSize', 'preferences.checkerColors', 'preferences.lightColor', 'preferences.darkColor', 'preferences.pixelGridColor', 'preferences.gridColor', 'preferences.sliceColor', 'preferences.textBoxColor', 'preferences.luminanceScope'],
+  quickCommands: ['preferences.sections.quickCommands', 'preferences.groups.quickCommandLayout', 'preferences.quickCommandBar', 'preferences.quickCommandBarTranslucent', 'preferences.quickCommandBarTranslucentHint', 'preferences.quickCommandOrderHint', ...QUICK_COMMAND_SEARCH_KEYS],
+  appearance: ['preferences.groups.canvas', 'preferences.checkerSize', 'preferences.checkerColors', 'preferences.lightColor', 'preferences.darkColor', 'preferences.pixelGridColor', 'preferences.gridColor', 'preferences.sliceColor', 'preferences.textBoxColor', 'preferences.canvasResizeColor', 'preferences.luminanceScope'],
   theme: ['preferences.groups.theme', 'preferences.theme.available', 'preferences.theme.current'],
   input: ['preferences.groups.cursor', 'preferences.localCursor', 'preferences.cursorScale', 'preferences.groups.zoom', 'preferences.wheelZoom', 'preferences.wheelZoomMode', 'preferences.zoomMode', 'preferences.position'],
   tools: ['preferences.groups.previews', 'preferences.brushPreview', 'preferences.drawingBrushPreview', 'preferences.selectionCrosshair', 'preferences.moveLayerContentPreview', 'preferences.moveLayerClickFlash', 'preferences.groups.drawing', 'preferences.shiftLinePreview', 'preferences.balancedLine', 'preferences.lineDirectionStep', 'preferences.lassoClosed', 'preferences.eyedropperPencil', 'preferences.groups.eyedropper', 'preferences.eyedropperMagnifier', 'preferences.eyedropperMagnifierStyle', 'preferences.eyedropperMagnifierDistortion'],
-  files: ['preferences.groups.locations', 'preferences.saveDirectory', 'preferences.exportDirectory', 'preferences.groups.formats', 'preferences.saveFormat', 'preferences.exportFormat', 'preferences.groups.recovery', 'preferences.recovery'],
+  files: ['preferences.groups.locations', 'preferences.saveDirectory', 'preferences.exportDirectory', 'preferences.groups.formats', 'preferences.saveFormat', 'preferences.exportFormat', 'preferences.groups.recovery', 'preferences.recovery', 'preferences.recoveryRetentionDays', 'preferences.recoveryRetentionDaysHint'],
   colorLayers: ['preferences.colorModes', 'preferences.restoreDefaults'],
   presets: ['preferences.newDocumentPresets', 'preferences.addSize', 'preferences.exportScalePresets', 'preferences.addScale', 'preferences.layerColors', 'preferences.addColor', 'preferences.restoreDefaults'],
   reset: ['preferences.resetDescription', 'preferences.resetAll']
 }
 
-function PreferenceGroup({ children, className = '', title }: { children: ReactNode; className?: string; title: ReactNode }) {
+type PreferenceOrderKind = 'color-mode' | 'quick-command'
+
+interface PreferencePointerDrag {
+  kind: PreferenceOrderKind
+  id: string
+  pointerId: number
+  captureTarget: HTMLElement
+}
+
+function reorderPreferenceItems<T>(items: T[], sourceId: string, targetId: string, insertAfter: boolean, itemId: (item: T) => string): T[] {
+  const sourceIndex = items.findIndex((item) => itemId(item) === sourceId)
+  if (sourceIndex < 0 || sourceId === targetId) return items
+  const next = [...items]
+  const [item] = next.splice(sourceIndex, 1)
+  const targetIndex = next.findIndex((candidate) => itemId(candidate) === targetId)
+  if (targetIndex < 0) return items
+  next.splice(targetIndex + (insertAfter ? 1 : 0), 0, item)
+  return next.every((candidate, index) => itemId(candidate) === itemId(items[index])) ? items : next
+}
+
+function PreferenceGroup({ actions, children, className = '', title }: { actions?: ReactNode; children: ReactNode; className?: string; title: ReactNode }) {
   return <section className={`preference-settings-group ${className}`.trim()}>
-    <SettingsSectionHeader title={title} />
+    <SettingsSectionHeader title={title} actions={actions} />
     <div className="preference-settings-group-body">{children}</div>
   </section>
 }
 
-export function PreferencesDialog({ onClose, onPresetChange }: PreferencesDialogProps) {
+export function PreferencesDialog({ initialSection = 'general', onClose, onPresetChange }: PreferencesDialogProps) {
   const { locale, t } = useI18n()
-  const [section, setSection] = useState<PreferenceSection>('general')
+  const [section, setSection] = useState<PreferenceSection>(initialSection)
   const [query, setQuery] = useState('')
   const [preferences, setPreferences] = useState(loadEditorPreferences)
   const [defaultDirectories, setDefaultDirectories] = useState({ saveDirectory: 'gallery', exportDirectory: 'exports' })
-  const [draggedColorMode, setDraggedColorMode] = useState<string | null>(null)
-  const colorModePointerDragRef = useRef<{ mode: string; pointerId: number; captureTarget: HTMLElement } | null>(null)
+  const [draggedPreferenceItem, setDraggedPreferenceItem] = useState<{ kind: PreferenceOrderKind; id: string } | null>(null)
+  const preferencePointerDragRef = useRef<PreferencePointerDrag | null>(null)
   const update = <K extends keyof typeof preferences>(key: K, value: typeof preferences[K]): void => setPreferences((current) => ({ ...current, [key]: value }))
   const updateDocumentSize = (index: number, key: keyof DocumentSizePreset, value: number): void => update('documentSizePresets', preferences.documentSizePresets.map((preset, presetIndex) => presetIndex === index ? { ...preset, [key]: value } : preset))
   const updateLayerColorPreset = (index: number, color: typeof preferences.layerDisplayColorPresets[number]): void => update('layerDisplayColorPresets', preferences.layerDisplayColorPresets.map((preset, presetIndex) => presetIndex === index ? { ...color, a: 255 } : preset))
@@ -112,29 +141,31 @@ export function PreferencesDialog({ onClose, onPresetChange }: PreferencesDialog
     }
   })
   const moveColorMode = (mode: string, targetMode: string, insertAfter: boolean): void => setPreferences((current) => {
-    const index = current.colorEditorModes.findIndex((item) => item.mode === mode)
-    if (index < 0 || mode === targetMode) return current
-    const next = current.colorEditorModes.map((item) => ({ ...item }))
-    const [item] = next.splice(index, 1)
-    const target = next.findIndex((candidate) => candidate.mode === targetMode)
-    if (target < 0) return current
-    next.splice(target + (insertAfter ? 1 : 0), 0, item)
-    if (next.every((candidate, nextIndex) => candidate.mode === current.colorEditorModes[nextIndex]?.mode)) return current
+    const next = reorderPreferenceItems(current.colorEditorModes, mode, targetMode, insertAfter, (item) => item.mode)
+    if (next === current.colorEditorModes) return current
     return { ...current, colorEditorModes: next }
   })
-  const beginColorModePointerDrag = (event: React.PointerEvent<HTMLElement>, mode: string): void => {
+  const moveQuickCommand = (id: QuickCommandId, targetId: QuickCommandId, insertAfter: boolean): void => setPreferences((current) => {
+    const next = reorderPreferenceItems(current.quickCommandPreferences, id, targetId, insertAfter, (item) => item.id)
+    if (next === current.quickCommandPreferences) return current
+    return { ...current, quickCommandPreferences: next }
+  })
+  const beginPreferencePointerDrag = (event: React.PointerEvent<HTMLElement>, kind: PreferenceOrderKind, id: string): void => {
     if (event.button !== 0) return
     event.preventDefault()
     event.stopPropagation()
     event.currentTarget.setPointerCapture(event.pointerId)
-    colorModePointerDragRef.current = { mode, pointerId: event.pointerId, captureTarget: event.currentTarget }
-    setDraggedColorMode(mode)
+    preferencePointerDragRef.current = { kind, id, pointerId: event.pointerId, captureTarget: event.currentTarget }
+    setDraggedPreferenceItem({ kind, id })
   }
   useEffect(() => {
     setEditorPreferencesPreview(preferences)
     applyThemeToDocument(preferences.theme)
     window.dispatchEvent(new Event('moonsprite:preferences-changed'))
   }, [preferences])
+  useEffect(() => {
+    setSection(initialSection)
+  }, [initialSection])
   useEffect(() => {
     if (typeof window.moonSprite?.getDefaultFileDirectories !== 'function') return
     let active = true
@@ -150,24 +181,27 @@ export function PreferencesDialog({ onClose, onPresetChange }: PreferencesDialog
   }, [])
   useEffect(() => {
     const move = (event: PointerEvent): void => {
-      const drag = colorModePointerDragRef.current
+      const drag = preferencePointerDragRef.current
       if (!drag || drag.pointerId !== event.pointerId) return
+      const selector = `[data-preference-order-kind="${drag.kind}"]`
       const row = (typeof document.elementsFromPoint === 'function' ? document.elementsFromPoint(event.clientX, event.clientY) : [])
-        .map((element) => element.closest<HTMLElement>('[data-color-mode]'))
+        .map((element) => element.closest<HTMLElement>(selector))
         .find((element): element is HTMLElement => Boolean(element))
-        ?? (event.target instanceof Element ? event.target.closest<HTMLElement>('[data-color-mode]') : null)
-      const targetMode = row?.dataset.colorMode
-      if (!row || !targetMode || targetMode === drag.mode) return
+        ?? (event.target instanceof Element ? event.target.closest<HTMLElement>(selector) : null)
+      const targetId = row?.dataset.preferenceOrderId
+      if (!row || !targetId || targetId === drag.id) return
       const bounds = row.getBoundingClientRect()
-      moveColorMode(drag.mode, targetMode, event.clientY >= bounds.top + bounds.height / 2)
+      const insertAfter = event.clientY >= bounds.top + bounds.height / 2
+      if (drag.kind === 'color-mode') moveColorMode(drag.id, targetId, insertAfter)
+      else moveQuickCommand(drag.id as QuickCommandId, targetId as QuickCommandId, insertAfter)
       event.preventDefault()
     }
     const end = (event: PointerEvent): void => {
-      const drag = colorModePointerDragRef.current
+      const drag = preferencePointerDragRef.current
       if (!drag || drag.pointerId !== event.pointerId) return
       if (drag.captureTarget.hasPointerCapture(event.pointerId)) drag.captureTarget.releasePointerCapture(event.pointerId)
-      colorModePointerDragRef.current = null
-      setDraggedColorMode(null)
+      preferencePointerDragRef.current = null
+      setDraggedPreferenceItem(null)
     }
     window.addEventListener('pointermove', move)
     window.addEventListener('pointerup', end)
@@ -226,7 +260,7 @@ export function PreferencesDialog({ onClose, onPresetChange }: PreferencesDialog
 
   return <div className="modal-backdrop" role="presentation"><ModalShell storageKey="preferences" defaultWidth={720} defaultHeight={560} minWidth={620} minHeight={460} fitContent={false} className="settings-modal" role="dialog" aria-label={t('preferences.title')}>
     <DialogHeader eyebrow={t('preferences.eyebrow')} title={t('preferences.title')} closeLabel={t('common.close')} onClose={onClose} />
-    <div className="settings-layout"><aside className="preference-settings-sidebar"><div className="preference-sidebar-search"><TextInput className="preference-search" placeholder={t('preferences.search')} value={query} onChange={(event) => setQuery(event.target.value)} /></div><SettingsNavigation label={t('preferences.title')} value={section} items={visiblePreferenceSections.map(([value, labelKey]) => ({ value, label: t(labelKey) }))} onChange={setSection} /></aside><main>
+    <div className="settings-layout"><aside className="preference-settings-sidebar"><div className="preference-sidebar-search"><TextInput className="preference-search" placeholder={t('preferences.search')} value={query} onChange={(event) => setQuery(event.target.value)} /></div><SettingsNavigation label={t('preferences.title')} value={section} items={visiblePreferenceSections.map(([value, labelKey]) => ({ value, label: t(labelKey) }))} onChange={setSection} /></aside><main className="component-scrollbar">
       {visiblePreferenceSections.length === 0 ? <p className="preference-search-empty">{t('preferences.searchNoResults')}</p> : <>
       {section === 'general' && <>
         <PreferenceGroup title={t('preferences.groups.interface')}>
@@ -238,18 +272,29 @@ export function PreferencesDialog({ onClose, onPresetChange }: PreferencesDialog
           {toggle(t('preferences.timelapseRecording'), preferences.timelapseRecordingEnabled, (value) => update('timelapseRecordingEnabled', value), t('preferences.timelapseRecordingHint'))}
         </PreferenceGroup>
       </>}
+      {section === 'quickCommands' && <PreferenceGroup title={t('preferences.groups.quickCommandLayout')} actions={<button type="button" className="quiet-button" onClick={() => update('quickCommandPreferences', DEFAULT_QUICK_COMMAND_PREFERENCES.map((item) => ({ ...item })))}><PixelUtilityIcon kind="restore" />{t('preferences.restoreDefaults')}</button>}>
+        {toggle(t('preferences.quickCommandBar'), preferences.quickCommandBarEnabled, (value) => update('quickCommandBarEnabled', value), t('preferences.quickCommandBarHint'))}
+        {toggle(t('preferences.quickCommandBarTranslucent'), preferences.quickCommandBarTranslucent, (value) => update('quickCommandBarTranslucent', value), t('preferences.quickCommandBarTranslucentHint'))}
+        <p className="preference-quick-command-hint">{t('preferences.quickCommandOrderHint')}</p>
+        <div className="preference-quick-command-list">{preferences.quickCommandPreferences.map((item) => {
+          const metadata = QUICK_COMMAND_METADATA[item.id]
+          const enabledCount = preferences.quickCommandPreferences.filter((candidate) => candidate.enabled).length
+          const label = t(metadata.label)
+          return <div className={`preference-quick-command-row reorderable-list-row ${draggedPreferenceItem?.kind === 'quick-command' && draggedPreferenceItem.id === item.id ? 'dragging' : ''}`} data-preference-order-kind="quick-command" data-preference-order-id={item.id} data-quick-command-id={item.id} key={item.id} title={t(metadata.description)}><button type="button" className="quick-command-drag-handle reorderable-list-handle" aria-label={`${label} ${t('home.reorderHint')}`} title={t('home.reorderHint')} onPointerDown={(event) => beginPreferencePointerDrag(event, 'quick-command', item.id)}><PixelUtilityIcon kind="move" /></button><span className="preference-quick-command-icon"><PixelUtilityIcon kind={metadata.icon} /></span><span className="preference-quick-command-name">{label}</span><PixelCheckbox aria-label={t('preferences.quickCommandEnabledAria', { command: label })} checked={item.enabled} disabled={item.enabled && enabledCount === 1} onChange={() => update('quickCommandPreferences', preferences.quickCommandPreferences.map((candidate) => candidate.id === item.id ? { ...candidate, enabled: !candidate.enabled } : candidate))} /></div>
+        })}</div>
+      </PreferenceGroup>}
       {section === 'appearance' && <>
         <PreferenceGroup title={t('preferences.groups.canvas')}>
           <FormField className="preference-field" label={t('preferences.checkerSize')}><NumberInput aria-label={t('preferences.checkerSize')} min={1} max={256} suffix="px" value={preferences.checkerboard.size} onValueChange={(size) => update('checkerboard', { ...preferences.checkerboard, size: Math.round(size) })} /></FormField>
-          <div className="preference-checker-colors"><SettingsSectionHeader className="preference-checker-color-heading" title={t('preferences.checkerColors')} actions={<button type="button" className="quiet-button" onClick={() => clearVisualOverrides(['checkerLight', 'checkerDark'])}><PixelUtilityIcon kind="restore" />{t('preferences.theme.restore')}</button>} /><div className="preference-color-value-list"><ColorValueControl color={preferences.checkerboard.lightColor} density="regular" onChange={(lightColor) => setVisualOverride('checkerLight', { ...lightColor, a: 255 })} label={t('preferences.checkerColors')} roleLabel={t('preferences.lightColor')} fillWithColor /><ColorValueControl color={preferences.checkerboard.darkColor} density="regular" onChange={(darkColor) => setVisualOverride('checkerDark', { ...darkColor, a: 255 })} label={t('preferences.checkerColors')} roleLabel={t('preferences.darkColor')} fillWithColor /></div></div>
-          <div className="preference-visual-color-grid"><div className="preference-checker-colors preference-grid-colors"><SettingsSectionHeader className="preference-checker-color-heading" title={t('preferences.pixelGridColor')} actions={<button type="button" className="quiet-button" onClick={() => clearVisualOverrides(['pixelGrid'])}><PixelUtilityIcon kind="restore" />{t('preferences.theme.restore')}</button>} /><div className="preference-grid-color-list"><ColorValueControl color={preferences.pixelGridColor} density="regular" onChange={(color) => setVisualOverride('pixelGrid', color)} label={t('preferences.pixelGridColor')} roleLabel={t('preferences.pixelGridColor')} fillWithColor inPalette={false} /></div></div><div className="preference-checker-colors preference-grid-colors"><SettingsSectionHeader className="preference-checker-color-heading" title={t('preferences.gridColor')} actions={<button type="button" className="quiet-button" onClick={() => clearVisualOverrides(['customGrid'])}><PixelUtilityIcon kind="restore" />{t('preferences.theme.restore')}</button>} /><div className="preference-grid-color-list"><ColorValueControl color={preferences.gridColor} density="regular" onChange={(color) => setVisualOverride('customGrid', color)} label={t('preferences.gridColor')} roleLabel={t('preferences.gridColor')} fillWithColor inPalette={false} /></div></div><div className="preference-checker-colors preference-grid-colors"><SettingsSectionHeader className="preference-checker-color-heading" title={t('preferences.sliceColor')} /><div className="preference-grid-color-list"><ColorValueControl color={preferences.sliceColor} density="regular" onChange={(sliceColor) => update('sliceColor', sliceColor)} label={t('preferences.sliceColor')} roleLabel={t('preferences.sliceColor')} fillWithColor inPalette={false} /></div></div><div className="preference-checker-colors preference-grid-colors"><SettingsSectionHeader className="preference-checker-color-heading" title={t('preferences.textBoxColor')} /><div className="preference-grid-color-list"><ColorValueControl color={preferences.textBoxColor} density="regular" onChange={(textBoxColor) => update('textBoxColor', textBoxColor)} label={t('preferences.textBoxColor')} roleLabel={t('preferences.textBoxColor')} fillWithColor inPalette={false} /></div></div></div>
           <FormField className="preference-field" label={t('preferences.luminanceScope')}><ThemedSelect value={preferences.relativeLuminanceScope} groups={[{ label: t('preferences.luminanceScopeGroup'), options: [{ value: 'canvas', label: t('preferences.luminanceScope.canvas') }, { value: 'app', label: t('preferences.luminanceScope.app') }] }]} label={t('preferences.luminanceScope')} onChange={(value) => update('relativeLuminanceScope', value as RelativeLuminanceScope)} /></FormField>
+          <div className="preference-checker-colors"><SettingsSectionHeader className="preference-checker-color-heading" title={t('preferences.checkerColors')} actions={<button type="button" className="quiet-button" onClick={() => clearVisualOverrides(['checkerLight', 'checkerDark'])}><PixelUtilityIcon kind="restore" />{t('preferences.theme.restore')}</button>} /><div className="preference-color-value-list"><ColorValueControl color={preferences.checkerboard.lightColor} density="regular" onChange={(lightColor) => setVisualOverride('checkerLight', { ...lightColor, a: 255 })} label={t('preferences.checkerColors')} roleLabel={t('preferences.lightColor')} fillWithColor /><ColorValueControl color={preferences.checkerboard.darkColor} density="regular" onChange={(darkColor) => setVisualOverride('checkerDark', { ...darkColor, a: 255 })} label={t('preferences.checkerColors')} roleLabel={t('preferences.darkColor')} fillWithColor /></div></div>
+          <div className="preference-visual-color-grid"><div className="preference-checker-colors preference-grid-colors"><SettingsSectionHeader className="preference-checker-color-heading" title={t('preferences.pixelGridColor')} actions={<button type="button" className="quiet-button" onClick={() => clearVisualOverrides(['pixelGrid'])}><PixelUtilityIcon kind="restore" />{t('preferences.theme.restore')}</button>} /><div className="preference-grid-color-list"><ColorValueControl color={preferences.pixelGridColor} density="regular" onChange={(color) => setVisualOverride('pixelGrid', color)} label={t('preferences.pixelGridColor')} roleLabel={t('preferences.pixelGridColor')} fillWithColor inPalette={false} /></div></div><div className="preference-checker-colors preference-grid-colors"><SettingsSectionHeader className="preference-checker-color-heading" title={t('preferences.gridColor')} actions={<button type="button" className="quiet-button" onClick={() => clearVisualOverrides(['customGrid'])}><PixelUtilityIcon kind="restore" />{t('preferences.theme.restore')}</button>} /><div className="preference-grid-color-list"><ColorValueControl color={preferences.gridColor} density="regular" onChange={(color) => setVisualOverride('customGrid', color)} label={t('preferences.gridColor')} roleLabel={t('preferences.gridColor')} fillWithColor inPalette={false} /></div></div><div className="preference-checker-colors preference-grid-colors"><SettingsSectionHeader className="preference-checker-color-heading" title={t('preferences.sliceColor')} /><div className="preference-grid-color-list"><ColorValueControl color={preferences.sliceColor} density="regular" onChange={(sliceColor) => update('sliceColor', sliceColor)} label={t('preferences.sliceColor')} roleLabel={t('preferences.sliceColor')} fillWithColor inPalette={false} /></div></div><div className="preference-checker-colors preference-grid-colors"><SettingsSectionHeader className="preference-checker-color-heading" title={t('preferences.textBoxColor')} /><div className="preference-grid-color-list"><ColorValueControl color={preferences.textBoxColor} density="regular" onChange={(textBoxColor) => update('textBoxColor', textBoxColor)} label={t('preferences.textBoxColor')} roleLabel={t('preferences.textBoxColor')} fillWithColor inPalette={false} /></div></div><div className="preference-checker-colors preference-grid-colors"><SettingsSectionHeader className="preference-checker-color-heading" title={t('preferences.canvasResizeColor')} /><div className="preference-grid-color-list"><ColorValueControl color={preferences.canvasResizeColor} density="regular" onChange={(canvasResizeColor) => update('canvasResizeColor', canvasResizeColor)} label={t('preferences.canvasResizeColor')} roleLabel={t('preferences.canvasResizeColor')} fillWithColor inPalette={false} /></div></div></div>
         </PreferenceGroup>
       </>}
       {section === 'theme' && <ThemePreferencesSection preferences={preferences} onChange={setPreferences} />}
       {section === 'input' && <>
         <PreferenceGroup title={t('preferences.groups.cursor')}>
-          {toggle(t('preferences.localCursor'), preferences.useLocalCursors, (value) => update('useLocalCursors', value), t('preferences.localCursorHint'))}
+          {toggle(t('preferences.localCursor'), !preferences.useLocalCursors, (value) => update('useLocalCursors', !value), t('preferences.localCursorHint'))}
           <FormField className="preference-field" label={t('preferences.cursorScale')}><ThemedSelect value={String(preferences.cursorScale)} groups={[{ label: t('preferences.cursorScaleGroup'), options: [{ value: '1', label: '100%' }, { value: '1.25', label: '125%' }, { value: '1.5', label: '150%' }, { value: '2', label: '200%' }] }]} label={t('preferences.cursorScale')} disabled={preferences.useLocalCursors} onChange={(value) => update('cursorScale', Number(value) as CursorScale)} /></FormField>
         </PreferenceGroup>
         <PreferenceGroup title={t('preferences.groups.zoom')}>
@@ -291,12 +336,13 @@ export function PreferencesDialog({ onClose, onPresetChange }: PreferencesDialog
         </PreferenceGroup>
         <PreferenceGroup title={t('preferences.groups.recovery')}>
         <FormField className="preference-field" label={t('preferences.recovery')}><ThemedSelect value={recoveryValue} groups={[{ label: t('preferences.recoveryGroup'), options: [{ value: 'off', label: t('preferences.recovery.off') }, { value: '0.5', label: t('preferences.recovery.seconds30') }, { value: '1', label: t('preferences.recovery.minutes1') }, { value: '2', label: t('preferences.recovery.minutes2') }, { value: '5', label: t('preferences.recovery.minutes5') }, { value: '10', label: t('preferences.recovery.minutes10') }] }]} label={t('preferences.recovery')} onChange={(value) => setPreferences((current) => value === 'off' ? { ...current, recovery: false } : { ...current, recovery: true, recoveryMinutes: Number(value) })} /></FormField>
+        <FormField className="preference-field" label={t('preferences.recoveryRetentionDays')} hint={t('preferences.recoveryRetentionDaysHint')}><NumberInput min={1} max={365} suffix={t('preferences.daysSuffix')} value={preferences.recoveryRetentionDays} onValueChange={(value) => update('recoveryRetentionDays', Math.round(value))} /></FormField>
         </PreferenceGroup>
       </>}
       {section === 'colorLayers' && <div className="preference-presets preference-color-layer-settings"><section className="preference-color-settings"><SettingsSectionHeader title={t('preferences.colorModes')} actions={<button type="button" className="quiet-button" onClick={() => update('colorEditorModes', DEFAULT_COLOR_EDITOR_MODES.map((item) => ({ ...item })))}><PixelUtilityIcon kind="restore" />{t('preferences.restoreDefaults')}</button>} /><div className="preference-color-mode-list">{preferences.colorEditorModes.map((item, index) => {
         const enabledCount = preferences.colorEditorModes.filter((candidate) => candidate.enabled).length
-        const modeName = item.mode === 'gray' ? 'Gray' : item.mode.toUpperCase()
-        return <div className={`preference-color-mode-row ${draggedColorMode === item.mode ? 'dragging' : ''}`} data-color-mode={item.mode} key={item.mode}><button type="button" className="color-mode-drag-handle" aria-label={`${modeName} ${t('home.reorderHint')}`} title={t('home.reorderHint')} onPointerDown={(event) => beginColorModePointerDrag(event, item.mode)}><PixelUtilityIcon kind="move" /></button><span className="color-mode-name">{modeName}</span><PixelCheckbox className="color-mode-visibility" aria-label={item.enabled ? `${item.mode} enabled` : `${item.mode} disabled`} checked={item.enabled} disabled={item.enabled && enabledCount === 1} onChange={() => update('colorEditorModes', preferences.colorEditorModes.map((candidate) => candidate.mode === item.mode ? { ...candidate, enabled: !candidate.enabled } : candidate))} /></div>
+        const modeName = colorValueModeLabel(item.mode)
+        return <div className={`preference-color-mode-row reorderable-list-row ${draggedPreferenceItem?.kind === 'color-mode' && draggedPreferenceItem.id === item.mode ? 'dragging' : ''}`} data-preference-order-kind="color-mode" data-preference-order-id={item.mode} data-color-mode={item.mode} key={item.mode}><button type="button" className="color-mode-drag-handle reorderable-list-handle" aria-label={`${modeName} ${t('home.reorderHint')}`} title={t('home.reorderHint')} onPointerDown={(event) => beginPreferencePointerDrag(event, 'color-mode', item.mode)}><PixelUtilityIcon kind="move" /></button><span className="color-mode-name">{modeName}</span><PixelCheckbox className="color-mode-visibility" aria-label={item.enabled ? `${item.mode} enabled` : `${item.mode} disabled`} checked={item.enabled} disabled={item.enabled && enabledCount === 1} onChange={() => update('colorEditorModes', preferences.colorEditorModes.map((candidate) => candidate.mode === item.mode ? { ...candidate, enabled: !candidate.enabled } : candidate))} /></div>
       })}</div></section></div>}
       {section === 'presets' && <div className="preference-presets"><section><SettingsSectionHeader title={t('preferences.newDocumentPresets')} actions={<button type="button" onClick={() => update('documentSizePresets', [...preferences.documentSizePresets, { width: 64, height: 64 }])}><PixelUtilityIcon kind="plus" />{t('preferences.addSize')}</button>} /><div className="preference-preset-grid">{preferences.documentSizePresets.map((preset, index) => <div className="document-size-preset-row" key={index}><NumberInput density="compact" aria-label={t('preferences.presetWidthAria', { index: index + 1 })} min={1} max={16384} suffix="px" value={preset.width} onValueChange={(value) => updateDocumentSize(index, 'width', value)} /><span>x</span><NumberInput density="compact" aria-label={t('preferences.presetHeightAria', { index: index + 1 })} min={1} max={16384} suffix="px" value={preset.height} onValueChange={(value) => updateDocumentSize(index, 'height', value)} /><DeleteIconButton aria-label={t('preferences.deleteSizeAria', { width: preset.width, height: preset.height })} disabled={preferences.documentSizePresets.length === 1} onClick={() => update('documentSizePresets', preferences.documentSizePresets.filter((_, presetIndex) => presetIndex !== index))} /></div>)}</div></section><section><SettingsSectionHeader title={t('preferences.exportScalePresets')} actions={<button type="button" onClick={() => update('exportScalePresets', [...preferences.exportScalePresets, 100])}><PixelUtilityIcon kind="plus" />{t('preferences.addScale')}</button>} /><div className="preference-preset-grid export-scale-preset-grid">{preferences.exportScalePresets.map((scale, index) => <div className="export-scale-preset-row" key={index}><NumberInput density="compact" aria-label={t('preferences.exportScaleAria', { index: index + 1 })} min={1} max={6400} suffix="%" value={scale} onValueChange={(value) => update('exportScalePresets', preferences.exportScalePresets.map((currentScale, scaleIndex) => scaleIndex === index ? value : currentScale))} /><DeleteIconButton aria-label={t('preferences.deleteScaleAria', { scale })} disabled={preferences.exportScalePresets.length === 1} onClick={() => update('exportScalePresets', preferences.exportScalePresets.filter((_, scaleIndex) => scaleIndex !== index))} /></div>)}</div></section><section className="preference-layer-settings preference-checker-colors"><SettingsSectionHeader title={t('preferences.layerColors')} actions={<><button type="button" className="quiet-button" aria-label={t('preferences.restoreDefaults')} onClick={() => update('layerDisplayColorPresets', DEFAULT_LAYER_DISPLAY_COLOR_PRESETS.map((color) => ({ ...color })))}><PixelUtilityIcon kind="restore" /><span>{t('preferences.restoreDefaults')}</span></button><button type="button" className="quiet-button" disabled={preferences.layerDisplayColorPresets.length >= 12} onClick={() => update('layerDisplayColorPresets', [...preferences.layerDisplayColorPresets, { r: 117, g: 117, b: 117, a: 255 }])}><PixelUtilityIcon kind="plus" /><span>{t('preferences.addColor')}</span></button></>} /><div className="preference-layer-color-grid">{preferences.layerDisplayColorPresets.map((color, index) => <div className="preference-layer-color-row" key={index}><ColorValueControl color={color} density="regular" onChange={(value) => updateLayerColorPreset(index, value)} label={t('preferences.layerColorAria', { index: index + 1 })} storageKey="layer-preset" fillWithColor /><DeleteIconButton size="regular" aria-label={t('preferences.deleteLayerColorAria', { index: index + 1 })} disabled={preferences.layerDisplayColorPresets.length === 1} onClick={() => update('layerDisplayColorPresets', preferences.layerDisplayColorPresets.filter((_, presetIndex) => presetIndex !== index))} /></div>)}</div></section></div>}
       {section === 'reset' && <><p>{t('preferences.resetDescription')}</p><button className="danger-button" onClick={() => void resetAllSettings()}>{t('preferences.resetAll')}</button></>}

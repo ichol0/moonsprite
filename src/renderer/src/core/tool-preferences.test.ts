@@ -174,10 +174,10 @@ describe('tool preferences persistence boundary', () => {
 
   it('persists independent symmetry axes and defaults legacy data to disabled', () => {
     const storage = createStorage()
-    expect(loadToolSettings(storage).symmetryAxes).toEqual({ horizontal: false, vertical: false, diagonalUp: false, diagonalDown: false })
-    saveToolSettings({ ...defaultToolSettings, symmetryAxes: { horizontal: true, vertical: false, diagonalUp: true, diagonalDown: false } }, storage)
-    expect(loadToolSettings(storage).symmetryAxes).toEqual({ horizontal: true, vertical: false, diagonalUp: true, diagonalDown: false })
+    expect(loadToolSettings(storage).symmetryAxes).toEqual({ horizontal: false, vertical: false, diagonalUp: false, diagonalDown: false, rotational: false })
+    saveToolSettings({ ...defaultToolSettings, symmetryAxes: { horizontal: true, vertical: false, diagonalUp: true, diagonalDown: false, rotational: true } }, storage)
+    expect(loadToolSettings(storage).symmetryAxes).toEqual({ horizontal: true, vertical: false, diagonalUp: true, diagonalDown: false, rotational: true })
     storage.setItem(TOOL_SETTINGS_KEY, JSON.stringify({ symmetryAxes: { horizontal: false, vertical: false, diagonal: true } }))
-    expect(loadToolSettings(storage).symmetryAxes).toEqual({ horizontal: false, vertical: false, diagonalUp: false, diagonalDown: true })
+    expect(loadToolSettings(storage).symmetryAxes).toEqual({ horizontal: false, vertical: false, diagonalUp: false, diagonalDown: true, rotational: false })
   })
 })

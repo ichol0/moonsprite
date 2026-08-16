@@ -82,7 +82,7 @@ export function App() {
     <a className="skip-link" href="#main">Skip to content</a>
     <header className="site-header">
       <div className="header-inner">
-        <a className="brand" href="#top" onClick={closeMenu} aria-label="MoonSprite"><img src="/assets/moonsprite-logo.svg" width="28" height="28" alt="" /><span>MoonSprite</span><small>DEV.4</small></a>
+        <a className="brand" href="#top" onClick={closeMenu} aria-label="MoonSprite"><img src="/assets/moonsprite-logo.svg" width="28" height="28" alt="" /><span>MoonSprite</span><small>DEV.5</small></a>
         <nav className={menuOpen ? 'site-nav open' : 'site-nav'} aria-label="Primary navigation">
           <a href="#work" onClick={closeMenu}>{t.nav.work}</a>
           <a href="#features" onClick={closeMenu}>{t.nav.features}</a>
@@ -98,7 +98,7 @@ export function App() {
     <main id="main">
       <section className="hero" id="top">
         <div className="hero-copy">
-          <div className="hero-brand"><img src="/assets/moonsprite-logo.svg" width="68" height="68" alt="" /><h1>{t.hero.title}</h1></div>
+          <div className="hero-brand"><img src="/assets/moonsprite-logo.svg" width="70" height="70" alt="" /><h1>{t.hero.title}</h1></div>
           <p className="hero-subtitle">{t.hero.subtitle}</p>
           <p className="hero-description">{t.hero.description}</p>
           <div className="hero-actions"><SteamButton label={t.common.steam} soon={t.common.steamSoon} /><a className="button secondary" href={SITE_CONFIG.githubUrl} target="_blank" rel="noopener noreferrer"><GitFork aria-hidden="true" />{t.common.github}</a></div>
@@ -142,10 +142,10 @@ export function App() {
       </section>
 
       <section className="final-cta">
-        <div className="content-wrap" data-reveal><img src="/assets/moonsprite-logo.svg" width="48" height="48" alt="" /><div><span>{t.cta.eyebrow}</span><h2>{t.cta.title}</h2><p>{t.cta.body}</p></div><div className="final-actions"><SteamButton label={t.common.steam} soon={t.common.steamSoon} /><a href={SITE_CONFIG.githubUrl} target="_blank" rel="noopener noreferrer">{t.common.github}<ArrowRight aria-hidden="true" /></a></div></div>
+        <div className="content-wrap" data-reveal><img src="/assets/moonsprite-logo.svg" width="42" height="42" alt="" /><div><span>{t.cta.eyebrow}</span><h2>{t.cta.title}</h2><p>{t.cta.body}</p></div><div className="final-actions"><SteamButton label={t.common.steam} soon={t.common.steamSoon} /><a href={SITE_CONFIG.githubUrl} target="_blank" rel="noopener noreferrer">{t.common.github}<ArrowRight aria-hidden="true" /></a></div></div>
       </section>
     </main>
 
-    <footer className="site-footer"><div className="content-wrap"><div className="footer-brand"><img src="/assets/moonsprite-logo.svg" width="24" height="24" alt="" /><strong>MoonSprite</strong></div><p>{t.footer.notice}</p><nav><a href={SITE_CONFIG.githubUrl} target="_blank" rel="noopener noreferrer">{t.footer.source}</a><a href={`${SITE_CONFIG.githubUrl}/blob/main/LICENSE`} target="_blank" rel="noopener noreferrer">{t.footer.license}</a></nav></div></footer>
+    <footer className="site-footer"><div className="content-wrap"><div className="footer-brand"><img src="/assets/moonsprite-logo.svg" width="28" height="28" alt="" /><strong>MoonSprite</strong></div><p>{t.footer.notice}</p><nav><a href={SITE_CONFIG.githubUrl} target="_blank" rel="noopener noreferrer">{t.footer.source}</a><a href={`${SITE_CONFIG.githubUrl}/blob/main/LICENSE`} target="_blank" rel="noopener noreferrer">{t.footer.license}</a></nav></div></footer>
   </div>
 }

@@ -40,6 +40,15 @@ describe('theme definitions', () => {
     }
   })
 
+  it('uses the shared blue guides and checkerboard colors across built-in themes', () => {
+    for (const definition of BUILT_IN_THEMES) {
+      expect(definition.visualDefaults.checkerLight).toEqual({ r: 215, g: 215, b: 217, a: 255 })
+      expect(definition.visualDefaults.checkerDark).toEqual({ r: 155, g: 155, b: 159, a: 255 })
+      expect(definition.visualDefaults.customGrid).toEqual({ r: 0, g: 0, b: 255, a: 255 })
+      expect(definition.visualDefaults.symmetryAxis).toEqual({ r: 0, g: 0, b: 255, a: 255 })
+    }
+  })
+
   it('keeps selection ants and transform handles identical across themes', () => {
     const outlines = BUILT_IN_THEMES.map((definition) => {
       const variables = resolveTheme({ ...DEFAULT_THEME_PREFERENCES, activeThemeId: definition.id }).variables

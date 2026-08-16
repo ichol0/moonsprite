@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { ellipseSelection, invertSelectionMask, rasterLinePoints, rotatedEllipseSelection, rotatedRectSelection, selectionContains, transformedSelectionControlPoints, transformSelectionMask } from './selection'
+import { ellipseSelection, invertSelectionMask, rasterLinePoints, remapTransformedSelectionPoint, rotateSelectionTargetAroundPivot, rotatedEllipseSelection, rotatedRectSelection, selectionContains, shearTransformedSelection, transformedSelectionBounds, transformedSelectionCenter, transformedSelectionControlPoints, transformedSelectionPivotPreset, transformedSelectionShearDirection, transformSelectionMask } from './selection'
 
 describe('selection preview geometry', () => {
   it('terminates at the requested endpoint for uneven diagonal segments', () => {
@@ -76,6 +76,137 @@ describe('selection preview geometry', () => {
       { x: 4, y: 2 }, { x: 4, y: 6 },
       { x: 3, y: 2 }, { x: 3, y: 4 }, { x: 3, y: 6 }
     ])
+  })
+
+  it('remaps the selection pivot with normal scaling, shear, and cross-boundary flips', () => {
+    expect(remapTransformedSelectionPoint(
+      { x: 2, y: 4, width: 4, height: 2 },
+      { x: 2, y: 4, width: 8, height: 6 },
+      { x: 3, y: 5 }
+    )).toEqual({ x: 4, y: 7 })
+
+    const source = { x: 0, y: 0, width: 8, height: 6 }
+    const destination = { x: 1, y: 2, width: 12, height: 9 }
+    const shear = { axis: 'x' as const, edge: 's' as const, amount: 3 }
+    const sourcePoint = transformedSelectionControlPoints(source, 37, shear)[1]
+    const expectedPoint = transformedSelectionControlPoints(destination, 37, shear)[1]
+    const remappedPoint = remapTransformedSelectionPoint(source, destination, sourcePoint, 37, shear)
+    expect(remappedPoint.x).toBeCloseTo(expectedPoint.x)
+    expect(remappedPoint.y).toBeCloseTo(expectedPoint.y)
+
+    expect(remapTransformedSelectionPoint(
+      { x: 0, y: 0, width: 10, height: 10 },
+      { x: -5, y: 0, width: 5, height: 10, flipHorizontal: true },
+      { x: 0, y: 5 }
+    )).toEqual({ x: 0, y: 5 })
+  })
+
+  it('resolves all nine pivot presets from the transformed selection geometry', () => {
+    const target = { x: 0, y: 0, width: 4, height: 4 }
+    const shear = { axis: 'x' as const, edge: 's' as const, amount: 4 }
+    const expected = {
+      nw: { x: 3.5, y: 1 }, n: { x: 3.5, y: 3 }, ne: { x: 3.5, y: 4 },
+      w: { x: 1.5, y: 3 }, center: { x: 1.5, y: 5 }, e: { x: 1.5, y: 6 },
+      sw: { x: 0.5, y: 4 }, s: { x: 0.5, y: 6 }, se: { x: 0.5, y: 7 }
+    } as const
+
+    for (const [preset, point] of Object.entries(expected)) {
+      expect(transformedSelectionPivotPreset(target, preset as keyof typeof expected, 90, shear)).toEqual(point)
+    }
+  })
+
+  it('places every pivot preset at a document pixel center', () => {
+    const target = { x: 4, y: 7, width: 1, height: 1 }
+    for (const preset of ['nw', 'n', 'ne', 'w', 'center', 'e', 'sw', 's', 'se'] as const) {
+      expect(transformedSelectionPivotPreset(target, preset)).toEqual({ x: 4.5, y: 7.5 })
+    }
+  })
+
+  it('keeps a sheared selection centered while rotating around its visible center', () => {
+    const target = { x: 0, y: 0, width: 4, height: 4 }
+    const shear = { axis: 'x' as const, edge: 's' as const, amount: 4 }
+    const pivot = transformedSelectionCenter(target, 0, shear)
+    const rotatedTarget = rotateSelectionTargetAroundPivot(target, pivot, 90)
+
+    expect(pivot).toEqual({ x: 4, y: 2 })
+    expect(rotatedTarget).toEqual({ x: 2, y: -2, width: 4, height: 4 })
+    expect(transformedSelectionCenter(rotatedTarget, 90, shear)).toEqual(pivot)
+  })
+
+  it('moves the transform target center around a custom rotation pivot', () => {
+    const target = { x: 2, y: 4, width: 4, height: 2, flipHorizontal: true, flipOriginX: 2 }
+
+    expect(rotateSelectionTargetAroundPivot(target, { x: 0, y: 0 }, 90)).toEqual({
+      x: -7,
+      y: 3,
+      width: 4,
+      height: 2,
+      flipHorizontal: true,
+      flipOriginX: -7
+    })
+  })
+
+  it('keeps the first sheared edge when another edge is sheared', () => {
+    const start = { x: 2, y: 2, width: 4, height: 4 }
+    const first = shearTransformedSelection(start, 0, undefined, 'n', 2)
+    const second = shearTransformedSelection(first.target, first.angle, first.shear, 'e', -2)
+    const points = transformedSelectionControlPoints(second.target, second.angle, second.shear)
+
+    expect([points[0], points[2], points[5], points[7]]).toEqual([
+      { x: 4, y: 2 },
+      { x: 8, y: 0 },
+      { x: 2, y: 6 },
+      { x: 6, y: 4 }
+    ])
+    expect(transformedSelectionBounds(second.target, second.angle, second.shear)).toEqual({ x: 2, y: 0, width: 6, height: 6 })
+  })
+
+  it('keeps the local transform direction while continuing a single-axis shear', () => {
+    const start = { x: 2, y: 2, width: 4, height: 4 }
+    const first = shearTransformedSelection(start, 0, undefined, 'e', 2)
+    const second = shearTransformedSelection(first.target, first.angle, first.shear, 'e', 1)
+
+    expect(first).toEqual({ target: start, angle: 0, shear: { axis: 'y', edge: 'e', amount: 2 } })
+    expect(second).toEqual({ target: start, angle: 0, shear: { axis: 'y', edge: 'e', amount: 3 } })
+  })
+
+  it('keeps the selection pivot fixed while shearing', () => {
+    const start = { x: 0, y: 0, width: 4, height: 4 }
+    const pivot = { x: 2, y: 2 }
+    const transformed = shearTransformedSelection(start, 0, undefined, 'n', 2, pivot)
+    const points = transformedSelectionControlPoints(transformed.target, transformed.angle, transformed.shear)
+
+    expect([points[0], points[2], points[5], points[7]]).toEqual([
+      { x: 2, y: 0 },
+      { x: 6, y: 0 },
+      { x: -2, y: 4 },
+      { x: 2, y: 4 }
+    ])
+    expect(transformedSelectionCenter(transformed.target, transformed.angle, transformed.shear)).toEqual(pivot)
+  })
+
+  it('continues a second shear along the current slanted edge', () => {
+    const start = { x: 2, y: 2, width: 4, height: 4 }
+    const pivot = { x: 4, y: 4 }
+    const first = shearTransformedSelection(start, 0, undefined, 'n', 1.5, pivot)
+    const direction = transformedSelectionShearDirection(first.target, first.angle, first.shear, 'e')
+    const second = shearTransformedSelection(first.target, first.angle, first.shear, 'e', 2.5, pivot)
+    const points = transformedSelectionControlPoints(second.target, second.angle, second.shear)
+
+    expect(direction?.x).toBeCloseTo(-0.6)
+    expect(direction?.y).toBeCloseTo(0.8)
+    const corners = [points[0], points[2], points[5], points[7]]
+    const expectedCorners = [
+      { x: 5, y: 0 },
+      { x: 6, y: 4 },
+      { x: 2, y: 4 },
+      { x: 3, y: 8 }
+    ]
+    for (let index = 0; index < corners.length; index += 1) {
+      expect(corners[index].x).toBeCloseTo(expectedCorners[index].x)
+      expect(corners[index].y).toBeCloseTo(expectedCorners[index].y)
+    }
+    expect(transformedSelectionCenter(second.target, second.angle, second.shear)).toEqual(pivot)
   })
 
   it('rasterizes rotated ellipses directly in rotated pixel space', () => {

@@ -2,7 +2,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { PreferencesDialog } from './PreferencesDialog'
 import { useWorkspace } from '@/store/workspace'
-import { THEME_PREFERENCE_KEY } from '@/core/file-preferences'
+import { QUICK_COMMAND_BAR_ENABLED_PREFERENCE_KEY, QUICK_COMMAND_BAR_TRANSLUCENT_PREFERENCE_KEY, QUICK_COMMAND_PREFERENCES_KEY, THEME_PREFERENCE_KEY } from '@/core/file-preferences'
 import type { MoonSpriteApi } from '@shared/types'
 
 afterEach(() => {
@@ -48,10 +48,10 @@ describe('PreferencesDialog', () => {
   it('separates system cursor behavior from tool previews', () => {
     render(<PreferencesDialog onClose={vi.fn()} onPresetChange={vi.fn()} />)
     fireEvent.click(screen.getByRole('button', { name: '输入' }))
-    const localCursor = screen.getByText('使用本地指针').closest('label')?.querySelector('input')
-    expect(localCursor).not.toBeChecked()
+    const softwareCursor = screen.getByText('使用软件指针').closest('label')?.querySelector('input')
+    expect(softwareCursor).toBeChecked()
     expect(screen.getByRole('button', { name: '鼠标光标比例' })).toBeEnabled()
-    fireEvent.click(localCursor!)
+    fireEvent.click(softwareCursor!)
     expect(screen.getByRole('button', { name: '鼠标光标比例' })).toBeDisabled()
     expect(screen.queryByText('笔刷预览')).not.toBeInTheDocument()
 
@@ -111,6 +111,45 @@ describe('PreferencesDialog', () => {
 
     await waitFor(() => expect([...document.querySelectorAll<HTMLElement>('[data-color-mode]')].slice(0, 2).map((row) => row.dataset.colorMode)).toEqual(['hsv', 'rgb']))
     fireEvent.pointerUp(window, { pointerId: 7, clientX: 220, clientY: 70 })
+  })
+
+  it('opens and configures the dedicated quick command preferences section', async () => {
+    render(<PreferencesDialog initialSection="quickCommands" onClose={vi.fn()} onPresetChange={vi.fn()} />)
+
+    expect(screen.getByRole('button', { name: '快捷指令栏' })).toHaveAttribute('aria-current', 'page')
+    const quickCommandToggle = screen.getByText('显示快捷指令栏').closest('label')?.querySelector('input')
+    const translucentToggle = screen.getByText('半透明显示').closest('label')?.querySelector('input')
+    const pixelGridToggle = screen.getByLabelText('在快捷指令栏中显示 像素网格')
+    expect(quickCommandToggle).toBeChecked()
+    expect(translucentToggle).toBeChecked()
+    expect(pixelGridToggle).not.toBeChecked()
+    fireEvent.click(pixelGridToggle)
+    expect(pixelGridToggle).toBeChecked()
+
+    const resetRow = document.querySelector<HTMLElement>('[data-quick-command-id="resetView"]')
+    const customGridRow = document.querySelector<HTMLElement>('[data-quick-command-id="customGrid"]')
+    const dragHandle = screen.getByRole('button', { name: '重置视图 拖动调整位置' })
+    if (!resetRow || !customGridRow) throw new Error('Quick command preference rows were not rendered')
+    Object.assign(dragHandle, { setPointerCapture: vi.fn(), hasPointerCapture: vi.fn(() => false), releasePointerCapture: vi.fn() })
+    vi.spyOn(customGridRow, 'getBoundingClientRect').mockReturnValue({ top: 40, bottom: 74, left: 0, right: 300, width: 300, height: 34, x: 0, y: 40, toJSON: () => ({}) })
+    Object.defineProperty(document, 'elementsFromPoint', { configurable: true, value: vi.fn(() => [customGridRow]) })
+
+    fireEvent.pointerDown(dragHandle, { button: 0, pointerId: 11, clientX: 15, clientY: 17 })
+    fireEvent.pointerMove(window, { pointerId: 11, clientX: 220, clientY: 45 })
+    await waitFor(() => {
+      const ids = [...document.querySelectorAll<HTMLElement>('[data-quick-command-id]')].map((row) => row.dataset.quickCommandId)
+      expect(ids.indexOf('resetView')).toBeLessThan(ids.indexOf('customGrid'))
+    })
+    fireEvent.pointerUp(window, { pointerId: 11, clientX: 220, clientY: 45 })
+
+    fireEvent.click(quickCommandToggle!)
+    fireEvent.click(translucentToggle!)
+    fireEvent.click(screen.getByRole('button', { name: '应用' }))
+    expect(localStorage.getItem(QUICK_COMMAND_BAR_ENABLED_PREFERENCE_KEY)).toBe('false')
+    expect(localStorage.getItem(QUICK_COMMAND_BAR_TRANSLUCENT_PREFERENCE_KEY)).toBe('false')
+    const stored = JSON.parse(localStorage.getItem(QUICK_COMMAND_PREFERENCES_KEY) ?? '[]') as Array<{ id: string; enabled: boolean }>
+    expect(stored.find((item) => item.id === 'pixelGrid')?.enabled).toBe(true)
+    expect(stored.findIndex((item) => item.id === 'resetView')).toBeLessThan(stored.findIndex((item) => item.id === 'customGrid'))
   })
 
   it('previews a theme immediately and restores the persisted theme when canceled', () => {

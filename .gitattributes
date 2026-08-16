@@ -9,3 +9,6 @@
 *.ase binary
 *.aseprite binary
 *.moonsprite binary
+*.ttf binary
+*.woff binary
+*.woff2 binary

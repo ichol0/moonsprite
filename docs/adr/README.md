@@ -20,5 +20,8 @@ ADR 用于记录会长期影响实现的决定，避免后续只看到代码而�
 - [0008：工程文件稀疏栅格存储](0008-sparse-raster-project-storage.md)
 - [0009：可编辑文本局部样式区间](0009-editable-text-style-runs.md)
 - [0010：可编辑区域文本](0010-editable-text-boxes.md)
+- [0011：文档颜色模式与栅格格式分离](0011-document-color-modes.md)
+- [0012：非破坏性图层样式](0012-non-destructive-layer-styles.md)
+- [0013：可编辑背景图层](0013-background-layers.md)
 
 新增 ADR 时按编号递增；废弃旧决定时保留原文件并指向替代 ADR。

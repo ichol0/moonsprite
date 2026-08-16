@@ -1,9 +1,12 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { MoonSpriteApi, ProjectPreview } from '@shared/types'
 import { createDocument } from '@/core/document'
+import { loadEditorPreferences } from '@/core/file-preferences'
 import { getRecentProjects, recordRecentProject } from '@/core/home-history'
+import { HOME_SECTIONS_STORAGE_KEY } from '@/core/home-sections'
 import { encodeProject } from '@/core/project-format'
+import { useWorkspace } from '@/store/workspace'
 import { HomeWorkspace } from './HomeWorkspace'
 
 const galleryProject = {
@@ -11,6 +14,10 @@ const galleryProject = {
   fileName: 'slow.moonsprite',
   modifiedAt: 1
 }
+
+beforeEach(() => {
+  useWorkspace.setState({ recoveryRecords: [] })
+})
 
 afterEach(() => {
   cleanup()
@@ -36,8 +43,130 @@ describe('HomeWorkspace', () => {
 
     render(<HomeWorkspace onNew={vi.fn()} onOpen={vi.fn()} onOpenProject={vi.fn(async () => true)} onRestoreRecovery={vi.fn(async () => true)} />)
 
-    expect(screen.getByText(/dev\.4/)).toBeInTheDocument()
-    expect(document.querySelector('.start-screen-attribution')).toHaveTextContent('MoonSprite 是独立实现的像素画编辑器 · MIT License')
+    expect(screen.getByText('DEV.5')).toBeInTheDocument()
+    expect(document.querySelector('.start-screen-version')).not.toBeInTheDocument()
+    expect(document.querySelectorAll('.start-screen-links > button')).toHaveLength(4)
+    expect(document.querySelectorAll('.start-screen-links svg.start-screen-link-icon')).toHaveLength(4)
+    expect(document.querySelector('.start-screen-attribution')).not.toBeInTheDocument()
+    expect(screen.getByText('仅供内部使用')).toBeInTheDocument()
+    expect(screen.getByText('未经允许请勿分发')).toBeInTheDocument()
+  })
+
+  it('opens homepage community links and changes language through a dialog', () => {
+    const openExternalUrl = vi.fn(async () => undefined)
+    installApi({ openExternalUrl })
+
+    render(<HomeWorkspace onNew={vi.fn()} onOpen={vi.fn()} onOpenProject={vi.fn(async () => true)} onRestoreRecovery={vi.fn(async () => true)} />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'QQ 群' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Steam' }))
+    fireEvent.click(screen.getByRole('button', { name: 'GitHub' }))
+    expect(openExternalUrl.mock.calls).toEqual([
+      ['https://qm.qq.com/q/3OUXtFg4lW'],
+      ['https://store.steampowered.com/search/?term=MoonSprite'],
+      ['https://github.com/MoonPixelTeam/moonsprite']
+    ])
+
+    fireEvent.click(screen.getByRole('button', { name: '语言' }))
+    expect(screen.getByRole('dialog', { name: '界面语言' })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('radio', { name: /English/ }))
+    fireEvent.click(screen.getByRole('button', { name: '确定' }))
+    expect(loadEditorPreferences().language).toBe('en-US')
+  })
+
+  it('conceals recent project details without removing the project cards', async () => {
+    const filePath = 'C:\\art\\private-home-test.png'
+    recordRecentProject(filePath)
+    installApi({ readProjectPreview: vi.fn(() => new Promise<ProjectPreview>(() => {})) })
+
+    render(<HomeWorkspace onNew={vi.fn()} onOpen={vi.fn()} onOpenProject={vi.fn(async () => true)} onRestoreRecovery={vi.fn(async () => true)} />)
+
+    expect(await screen.findByText('private-home-test.png')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '隐藏最近项目信息' }))
+
+    expect(screen.queryByText('private-home-test.png')).not.toBeInTheDocument()
+    expect(screen.getByText('项目已隐藏')).toBeInTheDocument()
+    expect(document.querySelectorAll('.recent-file-row[data-recent-path]')).toHaveLength(1)
+    expect(localStorage.getItem('moonsprite.home-recent-privacy.v1')).toBe('hidden')
+
+    fireEvent.click(screen.getByRole('button', { name: '显示最近项目信息' }))
+    expect(screen.getByText('private-home-test.png')).toBeInTheDocument()
+  })
+
+  it('adds a selected folder as a persisted homepage section', async () => {
+    const directoryPath = 'C:\\Reference\\Characters'
+    const project = { filePath: `${directoryPath}\\hero.png`, fileName: 'hero.png', modifiedAt: 12 }
+    const chooseDirectory = vi.fn(async () => ({ canceled: false, directoryPath }))
+    const listFolderProjects = vi.fn(async () => ({ directoryPath, projects: [project] }))
+    installApi({
+      chooseDirectory,
+      listFolderProjects,
+      readProjectPreview: vi.fn(() => new Promise<ProjectPreview>(() => {}))
+    })
+
+    render(<HomeWorkspace onNew={vi.fn()} onOpen={vi.fn()} onOpenProject={vi.fn(async () => true)} onRestoreRecovery={vi.fn(async () => true)} />)
+
+    fireEvent.click(screen.getByRole('button', { name: '管理首页栏目' }))
+    expect(screen.getByRole('dialog', { name: '首页栏目' })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '添加文件夹' }))
+
+    await waitFor(() => expect(chooseDirectory).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(listFolderProjects).toHaveBeenCalledWith(directoryPath))
+    expect(await screen.findByRole('tab', { name: 'Characters' })).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByText('hero.png')).toBeInTheDocument()
+    expect(JSON.parse(localStorage.getItem(HOME_SECTIONS_STORAGE_KEY) ?? '[]')).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: 'folder', name: 'Characters', directoryPath })
+    ]))
+  })
+
+  it('opens a recent project location from the card context menu', async () => {
+    const filePath = 'C:\\art\\context-menu-home-test.png'
+    recordRecentProject(filePath)
+    const openProjectInFolder = vi.fn(async () => undefined)
+    Object.defineProperty(URL, 'createObjectURL', { configurable: true, value: vi.fn(() => 'blob:context-preview') })
+    Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: vi.fn() })
+    installApi({
+      openProjectInFolder,
+      readProjectPreview: vi.fn(async () => ({ preview: new Uint8Array([1, 2, 3]), width: 16, height: 12, colorMode: 'rgba' as const }))
+    })
+
+    render(<HomeWorkspace onNew={vi.fn()} onOpen={vi.fn()} onOpenProject={vi.fn(async () => true)} onRestoreRecovery={vi.fn(async () => true)} />)
+    const title = await screen.findByText('context-menu-home-test.png')
+    fireEvent.contextMenu(title.closest('.recent-file-row')!)
+
+    await waitFor(() => expect(openProjectInFolder).toHaveBeenCalledWith(filePath))
+  })
+
+  it('loads cached thumbnails for recent image files', async () => {
+    const filePath = 'C:\\art\\recent-image-preview-test.webp'
+    recordRecentProject(filePath)
+    const readProjectPreview = vi.fn(async () => ({ preview: new Uint8Array([1, 2, 3]), width: 320, height: 180, colorMode: 'rgba' as const }))
+    Object.defineProperty(URL, 'createObjectURL', { configurable: true, value: vi.fn(() => 'blob:image-preview') })
+    Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: vi.fn() })
+    installApi({ readProjectPreview })
+
+    render(<HomeWorkspace onNew={vi.fn()} onOpen={vi.fn()} onOpenProject={vi.fn(async () => true)} onRestoreRecovery={vi.fn(async () => true)} />)
+
+    await waitFor(() => expect(screen.getByText('320 x 180 · RGBA')).toBeInTheDocument())
+    expect(readProjectPreview).toHaveBeenCalledWith(filePath)
+  })
+
+  it('generates a thumbnail for a recovery without an embedded preview', async () => {
+    localStorage.setItem('moonsprite.home-section.v1', 'recovery')
+    const sprite = createDocument('recovery-preview', 8, 6, 'rgba')
+    sprite.layers[0].pixels.set([255, 0, 0, 255])
+    const record = { id: sprite.id, name: 'recovery-preview', updatedAt: String(Date.now()) }
+    useWorkspace.setState({ recoveryRecords: [record] })
+    Object.defineProperty(URL, 'createObjectURL', { configurable: true, value: vi.fn(() => 'blob:recovery-preview') })
+    Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: vi.fn() })
+    installApi({ readRecovery: vi.fn(async () => encodeProject(sprite, { includePreview: false })) })
+
+    render(<HomeWorkspace onNew={vi.fn()} onOpen={vi.fn()} onOpenProject={vi.fn(async () => true)} onRestoreRecovery={vi.fn(async () => true)} />)
+
+    await waitFor(() => expect(screen.getByText('8 x 6 · RGBA')).toBeInTheDocument())
+    expect(screen.getByText('recovery-preview（恢复）')).toBeInTheDocument()
+    expect(screen.getByText('还剩 7 天自动删除')).toBeInTheDocument()
+    expect(document.querySelector('.recovery-file-row img')).toHaveAttribute('src', 'blob:recovery-preview')
   })
 
   it('shows project rows before their previews finish decoding', async () => {
@@ -48,6 +177,26 @@ describe('HomeWorkspace', () => {
 
     expect(await screen.findByText('slow.moonsprite')).toBeInTheDocument()
     expect(screen.queryByText('其他')).not.toBeInTheDocument()
+  })
+
+  it('cycles and persists the homepage project layout with Ctrl+wheel', () => {
+    installApi({})
+
+    const { unmount } = render(<HomeWorkspace onNew={vi.fn()} onOpen={vi.fn()} onOpenProject={vi.fn(async () => true)} onRestoreRecovery={vi.fn(async () => true)} />)
+    const list = document.querySelector<HTMLElement>('.recent-files-list')
+    if (!list) throw new Error('Recent file list was not rendered')
+
+    expect(list).toHaveClass('home-project-layout-medium')
+    fireEvent.wheel(list, { ctrlKey: true, deltaY: -100 })
+    expect(list).toHaveClass('home-project-layout-large')
+    fireEvent.wheel(list, { ctrlKey: true, deltaY: 100 })
+    fireEvent.wheel(list, { ctrlKey: true, deltaY: 100 })
+    expect(list).toHaveClass('home-project-layout-small')
+    expect(localStorage.getItem('moonsprite.home-project-layout.v1')).toBe('small')
+
+    unmount()
+    render(<HomeWorkspace onNew={vi.fn()} onOpen={vi.fn()} onOpenProject={vi.fn(async () => true)} onRestoreRecovery={vi.fn(async () => true)} />)
+    expect(document.querySelector('.recent-files-list')).toHaveClass('home-project-layout-small')
   })
 
   it('limits progressive preview loading to three concurrent files', async () => {

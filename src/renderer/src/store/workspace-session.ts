@@ -223,6 +223,7 @@ export const sessionFromDocument = (document: SpriteDocument): DocumentSession =
     gradientDither: settings.gradientDither,
     moveAutoSelect: settings.moveAutoSelect,
     selection: null,
+    selectionPivot: null,
     selectionKind: settings.selectionKind,
     selectionMode: settings.selectionMode,
     wandTolerance: settings.wandTolerance,
@@ -252,6 +253,9 @@ export const sessionFromDocument = (document: SpriteDocument): DocumentSession =
       showGrid: document.displaySettings.showGrid,
       relativeLuminance: false,
       showSelectionOutline: true,
+      showSelectionPivot: false,
+      quickCommandBarPositionX: 0.5,
+      quickCommandBarExpanded: false,
       grid: { ...document.displaySettings.grid }
     },
     viewportSize: { width: 0, height: 0 },

@@ -19,8 +19,8 @@ const browserPalettes = new Map<string, StoredPalette>(builtInPalettes.map((pale
 }]))
 const browserWorkspaces = new Map<string, StoredWorkspace>([['builtin-default', {
   id: 'builtin-default', name: tr('app.workspace.default'), filePath: '', updatedAt: '', builtIn: true,
-  layout: { panelDocks: { color: 'left', palette: 'left', layers: 'right', preview: 'right' }, panelVisibility: { color: true, palette: true, layers: true, preview: true }, inspectorWidth: 300, leftDockWidth: 280, bottomDockHeight: 180, toolRailSide: 'left', previewOpen: true, inspectorLayout: '{"order":["palette","color","layers","preview"],"sizes":{"color":330,"palette":620,"layers":560,"preview":220},"bottomWidths":{"color":280,"palette":280,"layers":320,"preview":280}}', colorSquareDock: 'left', colorSquareAnchor: 'end', floatingPanels: { color: null, palette: null, layers: null, preview: null }, mainWindow: null },
-  initialLayout: { panelDocks: { color: 'left', palette: 'left', layers: 'right', preview: 'right' }, panelVisibility: { color: true, palette: true, layers: true, preview: true }, inspectorWidth: 300, leftDockWidth: 280, bottomDockHeight: 180, toolRailSide: 'left', previewOpen: true, inspectorLayout: '{"order":["palette","color","layers","preview"],"sizes":{"color":330,"palette":620,"layers":560,"preview":220},"bottomWidths":{"color":280,"palette":280,"layers":320,"preview":280}}', colorSquareDock: 'left', colorSquareAnchor: 'end', floatingPanels: { color: null, palette: null, layers: null, preview: null }, mainWindow: null }
+  layout: { panelDocks: { color: 'left', palette: 'left', layers: 'bottom', preview: 'bottom' }, panelVisibility: { color: true, palette: true, layers: true, preview: true }, inspectorWidth: 300, leftDockWidth: 280, bottomDockHeight: 220, inspectorWidthRatio: 0.20833333333333334, leftDockWidthRatio: 0.19444444444444445, bottomDockHeightRatio: 0.275, toolRailSide: 'right', previewOpen: true, inspectorLayout: '{"order":["palette","color","layers","preview"],"verticalWeights":{"color":330,"palette":620,"layers":560,"preview":220},"bottomWeights":{"color":280,"palette":280,"layers":720,"preview":280}}', colorSquareDock: 'left', colorSquareAnchor: 'end', floatingPanels: { color: null, palette: null, layers: null, preview: null }, mainWindow: null },
+  initialLayout: { panelDocks: { color: 'left', palette: 'left', layers: 'bottom', preview: 'bottom' }, panelVisibility: { color: true, palette: true, layers: true, preview: true }, inspectorWidth: 300, leftDockWidth: 280, bottomDockHeight: 220, inspectorWidthRatio: 0.20833333333333334, leftDockWidthRatio: 0.19444444444444445, bottomDockHeightRatio: 0.275, toolRailSide: 'right', previewOpen: true, inspectorLayout: '{"order":["palette","color","layers","preview"],"verticalWeights":{"color":330,"palette":620,"layers":560,"preview":220},"bottomWeights":{"color":280,"palette":280,"layers":720,"preview":280}}', colorSquareDock: 'left', colorSquareAnchor: 'end', floatingPanels: { color: null, palette: null, layers: null, preview: null }, mainWindow: null }
 } as StoredWorkspace]])
 
 const readTauriResourceInfo = createResourceInfoReader(async () => {
@@ -102,7 +102,16 @@ const createBrowserApi = (): MoonSpriteApi => ({
   importFont: async () => null,
   importSystemFont: async () => { throw new Error(tr('platform.browser.readUnsupported')) },
   deleteFont: async () => {},
-  listRecoveries: async () => [...browserRecoveries].map(([id, item]) => ({ id, name: item.name, updatedAt: item.updatedAt })),
+  listBackgroundPresets: async () => ({ directoryPath: 'BackgroundPresets', presets: [] }),
+  openBackgroundPresetFolder: async () => {},
+  listRecoveries: async (retentionDays) => {
+    const cutoff = Date.now() - Math.max(1, Math.min(365, Math.round(retentionDays))) * 86_400_000
+    for (const [id, item] of browserRecoveries) {
+      const updatedAt = Date.parse(item.updatedAt)
+      if (Number.isFinite(updatedAt) && updatedAt < cutoff) browserRecoveries.delete(id)
+    }
+    return [...browserRecoveries].map(([id, item]) => ({ id, name: item.name, updatedAt: item.updatedAt }))
+  },
   readRecovery: async (id) => {
     const recovery = browserRecoveries.get(id)
     if (!recovery) throw new Error(tr('platform.recovery.notFound'))
@@ -111,8 +120,10 @@ const createBrowserApi = (): MoonSpriteApi => ({
   writeRecovery: async (id, name, data) => { browserRecoveries.set(id, { name, data: data.slice(), updatedAt: new Date().toISOString() }) },
   deleteRecovery: async (id) => { browserRecoveries.delete(id) },
   listGalleryProjects: async () => ({ directoryPath: 'gallery', projects: [] }),
+  listFolderProjects: async (directoryPath) => ({ directoryPath, projects: [] }),
   deleteGalleryProject: async () => {},
   openGalleryFolder: async () => {},
+  openDirectory: async () => {},
   ensureBuiltinExample: async () => null,
   openProjectInFolder: async () => {},
   openExternalUrl: async (url) => { window.open(url, '_blank', 'noopener,noreferrer') },
@@ -128,6 +139,19 @@ const invokeBytes = async (command: string, args?: Record<string, unknown>): Pro
   const bytes = await invoke<ArrayBuffer | Uint8Array | number[]>(command, args)
   if (bytes instanceof Uint8Array) return bytes
   return new Uint8Array(bytes)
+}
+
+export const decodeClipboardImagePayload = (payload: Uint8Array): ClipboardImage | null => {
+  if (payload.byteLength === 0) return null
+  if (payload.byteLength < 8) throw new Error('Invalid clipboard image payload header.')
+  const view = new DataView(payload.buffer, payload.byteOffset, payload.byteLength)
+  const width = view.getUint32(0, true)
+  const height = view.getUint32(4, true)
+  const expected = width * height * 4
+  if (!Number.isSafeInteger(expected) || width < 1 || height < 1 || expected !== payload.byteLength - 8) {
+    throw new Error('Invalid clipboard image payload size.')
+  }
+  return { width, height, data: payload.subarray(8) }
 }
 
 const writeBinaryAtomic = (filePath: string, data: Uint8Array): Promise<void> => invoke(
@@ -176,10 +200,7 @@ export const createTauriApi = (): MoonSpriteApi => ({
   writeProjectIncremental,
   writeClipboardImage: (image) => invoke('write_clipboard_image', { width: image.width, height: image.height, data: Array.from(image.data) }),
   readClipboardText: () => invoke<string | null>('read_clipboard_text'),
-  readClipboardImage: async (): Promise<ClipboardImage | null> => {
-    const image = await invoke<{ width: number; height: number; data: number[] } | null>('read_clipboard_image')
-    return image ? { width: image.width, height: image.height, data: new Uint8Array(image.data) } : null
-  },
+  readClipboardImage: async (): Promise<ClipboardImage | null> => decodeClipboardImagePayload(await invokeBytes('read_clipboard_image')),
   readClipboardImageSize: () => invoke<ClipboardImageSize | null>('read_clipboard_image_size'),
   listPalettes: () => invoke('list_palettes'),
   savePalette: (id, name, colors, columns, slots) => invoke('save_palette', { id, name, colors, columns, slots }),
@@ -198,13 +219,17 @@ export const createTauriApi = (): MoonSpriteApi => ({
   importFont: () => invoke('import_font'),
   importSystemFont: (id) => invoke('import_system_font', { id }),
   deleteFont: (id) => invoke('delete_font', { id }),
-  listRecoveries: () => invoke('list_recoveries'),
+  listBackgroundPresets: () => invoke('list_background_presets'),
+  openBackgroundPresetFolder: () => invoke('open_background_preset_folder'),
+  listRecoveries: (retentionDays) => invoke('list_recoveries', { retentionDays }),
   readRecovery: (id) => invokeBytes('read_recovery', { id }),
   writeRecovery: (id, name, data) => invoke('write_recovery', { id, name, data: Array.from(data) }),
   deleteRecovery: (id) => invoke('delete_recovery', { id }),
   listGalleryProjects: () => invoke('list_gallery_projects'),
+  listFolderProjects: (directoryPath) => invoke('list_folder_projects', { directoryPath }),
   deleteGalleryProject: (fileName) => invoke('delete_gallery_project', { fileName }),
   openGalleryFolder: () => invoke('open_gallery_folder'),
+  openDirectory: (directoryPath) => invoke('open_directory', { directoryPath }),
   ensureBuiltinExample: () => invoke('ensure_builtin_example'),
   openProjectInFolder: (filePath) => invoke('open_project_in_folder', { filePath }),
   openExternalUrl: (url) => invoke('open_external_url', { url }),

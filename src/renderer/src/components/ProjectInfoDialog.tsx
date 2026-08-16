@@ -48,7 +48,7 @@ export function ProjectInfoDialog({ document, onClose }: ProjectInfoDialogProps)
   ]
   const details = [
     [t('projectInfo.name'), document.name],
-    [t('projectInfo.colorMode'), document.colorMode.toUpperCase()],
+    [t('projectInfo.colorMode'), t(`colorMode.${document.colorMode}`)],
     [t('projectInfo.groups'), String(document.groups.length)],
     [t('projectInfo.operations'), statistics.operationCount.toLocaleString()],
     [t('projectInfo.drawingTime'), formatDuration(statistics.drawingTimeMs)],

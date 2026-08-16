@@ -81,9 +81,15 @@ export interface AnimationMaskClipboardItem {
   mask: LayerMask
 }
 
+export interface SelectionPivot {
+  x: number
+  y: number
+}
+
 export interface FloatingPaste {
   layerId: string
   beforeSelection: SelectionMask | null
+  beforeSelectionPivot?: SelectionPivot | null
   source: SelectionTransformSource
   target: SelectionMask
   transformTarget?: SelectionRect
@@ -91,6 +97,7 @@ export interface FloatingPaste {
   transformShear?: SelectionShearTransform
   previewEdit: PixelEdit | null
   translationPreview: SelectionTranslationPreview | null
+  previewDeferred?: boolean
   copy: boolean
   label: string
 }
@@ -161,6 +168,8 @@ export interface DocumentSession {
   gradientDither: GradientDither
   moveAutoSelect: boolean
   selection: SelectionMask | null
+  /** View-only custom transform pivot. Null uses the current transformed selection center. */
+  selectionPivot?: SelectionPivot | null
   selectionKind: SelectionKind
   selectionMode: SelectionMode
   wandTolerance: number

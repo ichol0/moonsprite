@@ -1,6 +1,7 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { MoonSpriteApi } from '@shared/types'
+import recordDrawingIcon from '@/assets/pixel-icons/record-drawing.svg'
 import { getWindowsFileNameError, NewDocumentDialog } from './NewDocumentDialog'
 
 afterEach(() => {
@@ -15,6 +16,8 @@ describe('getWindowsFileNameError', () => {
 
     expect(screen.getByRole('form', { name: '新建画布' })).toHaveStyle({ width: '480px', minWidth: '440px' })
     expect(screen.getByLabelText('常用画布尺寸').querySelectorAll('button')).toHaveLength(6)
+    expect(screen.getByRole('group', { name: '颜色模式' }).querySelectorAll('button')).toHaveLength(3)
+    expect(screen.getByRole('button', { name: '灰度' })).toBeInTheDocument()
   })
 
   it('rejects Windows filename characters and reserved names', () => {
@@ -52,5 +55,11 @@ describe('getWindowsFileNameError', () => {
     fireEvent.submit(screen.getByRole('form'))
 
     expect(onCreate).toHaveBeenCalledWith(expect.any(String), 64, 64, 'rgba', true)
+  })
+
+  it('renders the drawing recording artwork from an SVG asset', () => {
+    const { container } = render(<NewDocumentDialog open onClose={vi.fn()} onCreate={vi.fn()} />)
+
+    expect(container.querySelector<HTMLImageElement>('.new-document-recording-icon')).toHaveAttribute('src', recordDrawingIcon)
   })
 })

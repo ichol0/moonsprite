@@ -3,7 +3,7 @@ import { createDocument, getActiveLayer, readLayerColor } from './document'
 import { applyImportedRgbaPalette, IMPORTED_PALETTE_COLOR_LIMIT, normalizeImportedIndexedPalette, sortImportedPaletteColors } from './imported-palette'
 
 describe('imported palette normalization', () => {
-  it('deduplicates actual RGBA pixels and orders neutral colors before hue groups', () => {
+  it('deduplicates actual RGBA pixels and orders them by perceptual luminance', () => {
     const document = createDocument('import', 4, 1, 'rgba')
     const layer = getActiveLayer(document)
     if (layer.format !== 'rgba') throw new Error('RGBA layer required')
@@ -17,8 +17,8 @@ describe('imported palette normalization', () => {
     applyImportedRgbaPalette(document)
 
     expect(document.palette.map((entry) => entry.color)).toEqual([
-      { r: 255, g: 255, b: 255, a: 255 },
-      { r: 255, g: 0, b: 0, a: 255 }
+      { r: 255, g: 0, b: 0, a: 255 },
+      { r: 255, g: 255, b: 255, a: 255 }
     ])
     expect(document.paletteOrder).toEqual([1, 2])
   })
@@ -40,10 +40,10 @@ describe('imported palette normalization', () => {
 
     expect(document.palette.map((entry) => entry.color)).toEqual([
       { r: 0, g: 0, b: 0, a: 0 },
-      { r: 255, g: 255, b: 255, a: 255 },
-      { r: 255, g: 0, b: 0, a: 255 }
+      { r: 255, g: 0, b: 0, a: 255 },
+      { r: 255, g: 255, b: 255, a: 255 }
     ])
-    expect([...layer.pixels]).toEqual([1, 1, 2, 0])
+    expect([...layer.pixels]).toEqual([2, 2, 1, 0])
     expect(readLayerColor(document, layer, 0)).toEqual({ r: 255, g: 255, b: 255, a: 255 })
   })
 
@@ -72,12 +72,12 @@ describe('imported palette normalization', () => {
     applyImportedRgbaPalette(document)
 
     expect(document.palette.map((entry) => entry.color)).toEqual([
-      { r: 255, g: 255, b: 255, a: 255 },
-      { r: 255, g: 0, b: 0, a: 255 }
+      { r: 255, g: 0, b: 0, a: 255 },
+      { r: 255, g: 255, b: 255, a: 255 }
     ])
   })
 
-  it('sorts grayscale from dark to light and chromatic colors by hue', () => {
+  it('sorts imported colors by perceptual luminance from dark to light', () => {
     expect(sortImportedPaletteColors([
       { r: 0, g: 0, b: 255, a: 255 },
       { r: 255, g: 255, b: 255, a: 255 },
@@ -85,9 +85,9 @@ describe('imported palette normalization', () => {
       { r: 0, g: 0, b: 0, a: 255 }
     ])).toEqual([
       { r: 0, g: 0, b: 0, a: 255 },
-      { r: 255, g: 255, b: 255, a: 255 },
+      { r: 0, g: 0, b: 255, a: 255 },
       { r: 255, g: 0, b: 0, a: 255 },
-      { r: 0, g: 0, b: 255, a: 255 }
+      { r: 255, g: 255, b: 255, a: 255 }
     ])
   })
 })

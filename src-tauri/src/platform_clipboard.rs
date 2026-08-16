@@ -1,14 +1,7 @@
 use arboard::{Clipboard, ImageData};
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
-
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ClipboardImage {
-    width: usize,
-    height: usize,
-    data: Vec<u8>,
-}
+use tauri::ipc::Response;
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -58,7 +51,7 @@ pub fn read_clipboard_text() -> Result<Option<String>, String> {
 }
 
 #[tauri::command]
-pub fn read_clipboard_image() -> Result<Option<ClipboardImage>, String> {
+pub fn read_clipboard_image() -> Result<Response, String> {
     let mut clipboard = Clipboard::new().map_err(|error| format!("无法访问系统剪贴板：{error}"))?;
     match clipboard.get_image() {
         Ok(image) => {
@@ -66,13 +59,15 @@ pub fn read_clipboard_image() -> Result<Option<ClipboardImage>, String> {
             if image.bytes.len() != expected {
                 return Err("系统剪贴板图像数据无效。".to_string());
             }
-            Ok(Some(ClipboardImage {
-                width: image.width,
-                height: image.height,
-                data: image.bytes.into_owned(),
-            }))
+            let width = u32::try_from(image.width).map_err(|_| "系统剪贴板图像宽度无效。")?;
+            let height = u32::try_from(image.height).map_err(|_| "系统剪贴板图像高度无效。")?;
+            let mut payload = Vec::with_capacity(8 + expected);
+            payload.extend_from_slice(&width.to_le_bytes());
+            payload.extend_from_slice(&height.to_le_bytes());
+            payload.extend_from_slice(image.bytes.as_ref());
+            Ok(Response::new(payload))
         }
-        Err(arboard::Error::ContentNotAvailable) => Ok(None),
+        Err(arboard::Error::ContentNotAvailable) => Ok(Response::new(Vec::new())),
         Err(error) => Err(format!("无法读取系统剪贴板图像：{error}")),
     }
 }
@@ -142,12 +137,18 @@ pub fn read_clipboard_image_size() -> Result<Option<ClipboardImageSize>, String>
 #[cfg(not(windows))]
 #[tauri::command]
 pub fn read_clipboard_image_size() -> Result<Option<ClipboardImageSize>, String> {
-    read_clipboard_image().map(|image| {
-        image.map(|image| ClipboardImageSize {
-            width: image.width,
-            height: image.height,
-        })
-    })
+    let mut clipboard = Clipboard::new().map_err(|error| format!("无法访问系统剪贴板：{error}"))?;
+    match clipboard.get_image() {
+        Ok(image) => {
+            image_bytes(image.width, image.height)?;
+            Ok(Some(ClipboardImageSize {
+                width: image.width,
+                height: image.height,
+            }))
+        }
+        Err(arboard::Error::ContentNotAvailable) => Ok(None),
+        Err(error) => Err(format!("无法读取系统剪贴板图像：{error}")),
+    }
 }
 
 #[cfg(test)]

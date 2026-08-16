@@ -1,18 +1,18 @@
 import { create } from 'zustand'
-import type { AnimationCel, AnimationCelSurface, BlendMode, BrushPaintMode, BrushShape, BrushTexture, CanvasAnchor, ColorMode, DocumentSlice, FillKind, FillMode, GradientDither, ImageBrush, ImageBrushSettings, ImageResizeInterpolation, LayerGroup, LayerMask, LineKind, MoveKind, OutlineDirections, OutlineKernel, OutlinePosition, PaletteEntry, PaletteSlotLayout, ProceduralBrushId, ProceduralBrushSettings, RasterLayer, RecoveryRecord, RgbaColor, SelectionKind, SelectionMask, SelectionMode, SelectionRect, ShapeKind, ShapeRatio, SpriteDocument, TextCelData, TimelapseSettings, TimelapseVideoFormat, ToolId, ViewState } from '@shared/types'
+import type { AnimationCel, AnimationCelSurface, BackgroundPatternId, BlendMode, BrushPaintMode, BrushShape, BrushTexture, CanvasAnchor, ColorMode, DocumentSlice, FillKind, FillMode, GradientDither, ImageBrush, ImageBrushSettings, ImageResizeInterpolation, LayerGroup, LayerMask, LayerStyles, LineKind, MoveKind, OutlineDirections, OutlineKernel, OutlinePosition, PaletteEntry, PaletteSlotLayout, ProceduralBrushId, ProceduralBrushSettings, RasterLayer, RecoveryRecord, RgbaColor, SelectionKind, SelectionMask, SelectionMode, SelectionRect, ShapeKind, ShapeRatio, SpriteDocument, TextCelData, TimelapseSettings, TimelapseVideoFormat, ToolId, ViewState } from '@shared/types'
 import { checkResourceLimit } from '@/core/resource-policy'
 import { beginPixelEdit, commitPixelEdit, HistoryStack, recordPixel, revertPixelEdit, type HistoryEntry, type PixelEdit } from '@/core/history'
-import { animationMaskAt, animationMaskSlotAt, convertDocumentColorMode, createDocument, createId, createLayer, createSparseLayer, createLayerMask as createAttachedLayerMask, duplicateLayer, findLayerMask, findOrAddPaletteColor, getDescendantGroupIds, getGroup, getGroupLockingAncestor, getLayerIdsInGroup, getLayer, getActiveLayer, getLayerLockingGroup, isGroupEffectivelyLocked, isLayerEffectivelyLocked, isLayerEffectivelyVisible, isLayerMask, layerContentBounds, readLayerColor, readLayerColorAt, resolveAnimationMask, resizeDocumentAt, resizeDocumentImage, writeLayerColor } from '@/core/document'
+import { animationMaskAt, animationMaskSlotAt, captureDocumentImageResizeSnapshot, compositeRegion, convertDocumentColorMode, createDocument, createId, createLayer, createSparseLayer, createLayerMask as createAttachedLayerMask, documentImageResizeSnapshotBytes, duplicateLayer, findLayerMask, findOrAddPaletteColor, getDescendantGroupIds, getGroup, getGroupLockingAncestor, getLayerIdsInGroup, getLayer, getActiveLayer, getLayerLockingGroup, isGroupEffectivelyLocked, isLayerEffectivelyLocked, isLayerEffectivelyVisible, isLayerMask, layerContentBounds, paletteColorIdForCanvas, readLayerColor, readLayerColorAt, resolveAnimationMask, resizeDocumentAt, resizeDocumentImage, restoreDocumentImageResizeSnapshot, writeLayerColor } from '@/core/document'
 import { decodeProject, encodeProject } from '@/core/project-format'
-import { activateAnimationFrame, addBlankAnimationFrame, animationCelContentSelection, animationCelHasContent, animationCelKey, animationGroupMaskAt, animationLayerAtFrame, cloneAnimationCel, cloneAnimationCelSurface, cloneAnimationCelsForLayer, cloneAnimationGroupMask, connectAnimationCels, deleteAnimationFrame, disconnectAnimationCels, duplicateAnimationFrame, ensureAnimationDocument, mapAnimationCelBlock, nextAnimationFrameId, parseAnimationCelKey, refreshActiveAnimationFrame, removeAnimationCelsForLayers, resolveAnimationCel, resizeAnimationCelsAt, restoreAnimationCels, setAnimationFrameDuration, setAnimationLoop, syncActiveAnimationFrame, syncActiveAnimationLayer } from '@/core/animation'
+import { activateAnimationFrame, addBlankAnimationFrame, animationCelContentSelection, animationCelHasContent, animationCelKey, animationGroupMaskAt, animationLayerAtFrame, cloneAnimationCel, cloneAnimationCelSurface, cloneAnimationCelsForLayer, cloneAnimationGroupMask, cloneDocumentForAnimationFrame, connectAnimationCels, deleteAnimationFrame, disconnectAnimationCels, duplicateAnimationFrame, ensureAnimationDocument, mapAnimationCelBlock, nextAnimationFrameId, parseAnimationCelKey, refreshActiveAnimationFrame, removeAnimationCelsForLayers, resolveAnimationCel, resizeAnimationCelsAt, restoreAnimationCels, setAnimationFrameDuration, setAnimationLoop, syncActiveAnimationFrame, syncActiveAnimationLayer } from '@/core/animation'
 import { flushViewPreview } from '@/core/view-preview-lifecycle'
-import { fileNameFromPath } from '@/core/document-files'
+import { directSourceImageSaveTarget, fileNameFromPath } from '@/core/document-files'
 import { openProgress } from '@/core/open-progress'
 import { saveProgress } from '@/core/save-progress'
 import { createSelectionBrush } from '@/core/brushes'
 import { createHorizontalSpriteSheetDocument } from '@/core/sprite-sheet'
-import { applySelectionTransform, applySelectionTranslationPreview, captureSelectionTransform, clampSelection, clearSelection, fillSelectionOrCanvas, flipLayer, flipSelection, flipSelectionTransformSource, moveSelection, outlineSelection, replaceLayerColor, restoreSelectionTranslationPreview, selectionTranslationPreviewEdit, transformSelectionCopy, type SelectionTransformSource, type SelectionTranslationPreview } from '@/core/tools'
-import { colorEquals, packColor, pixelIndex, relativeLuminanceColor, unpackColor } from '@/core/raster'
+import { applySelectionTransform, applySelectionTranslationCommit, applySelectionTranslationPreview, captureSelectionTransform, clampSelection, clearSelection, fillSelectionOrCanvas, flipLayer, flipSelection, flipSelectionTransformSource, moveSelection, outlineSelection, replaceLayerColor, restoreSelectionTranslationPreview, selectionTranslationPreviewEdit, transformSelectionCopy, type SelectionTransformSource, type SelectionTranslationPreview } from '@/core/tools'
+import { applyRelativeLuminance, colorEquals, packColor, pixelIndex, relativeLuminanceColor, unpackColor } from '@/core/raster'
 import { combineSelection, flipSelectionMask, invertSelectionMask, selectionContains, shiftSelection, transformSelectionMask, type SelectionShearTransform } from '@/core/selection'
 import { recordRecentProject } from '@/core/home-history'
 import { createProceduralBrush, isProceduralBrushId, normalizeProceduralBrushSettings, PROCEDURAL_BRUSH_IDS } from '@/core/brushes'
@@ -32,6 +32,8 @@ import { persistProjectLayerPanelState } from '@/core/layer-panel-state'
 import { moveSymmetryCenter, type SymmetryAxes, type SymmetryCenter } from '@/core/symmetry'
 import { brushPressureFromDynamics, migrateBrushPressureSettings, normalizeBrushPressureSettings, patchBrushDynamicsGradientDither, patchBrushDynamicsMapping, type BrushDynamicsEffect, type BrushDynamicsMapping, type BrushPressureSettings } from '@/core/pressure'
 import { cloneTextCelData, convertTextSurface, normalizeTextCelData, rasterizeText, translateTextCelData } from '@/core/text-raster'
+import { cloneLayerStyles, hasEnabledLayerStyles, layerStyleOutputBounds, layerStylesEqual, layerStylesHistoryBytes } from '@/core/layer-styles'
+import { renderBackgroundPatternIndexed, renderBackgroundPatternRgba, renderBackgroundTileIndexed, renderBackgroundTileRgba, type BackgroundPatternTile } from '@/core/background-patterns'
 import { exportDocumentFile, exportTimelapseFile, openDocumentFile, saveDocumentFile, type ExportOptions, type SaveAsOptions } from './document-file-service'
 import { RecoveryService } from './recovery-service'
 import { ClipboardService, selectionClipboardImage, type LayerClipboard, type LayerCollectionClipboard, type LayerMaskClipboard } from './clipboard-service'
@@ -39,10 +41,10 @@ import { captureAdjustmentSnapshot, captureLayerUi, commitLayerMerge, restoreAdj
 import { activePaintLayer, applyBrushProfile, brushProfileFromSession, clearSelectionBrushPaintColors, cloneSelectionMask, isBrushTool, isToolAvailableForSession, persistToolSettings, remapSelectionBrushColors, rememberBrushProfile, sessionFromDocument, touch, touchMetadata } from './workspace-session'
 import { addPaletteColor as addPaletteColorCommand, applyPalette as applyPaletteCommand, deletePaletteColors as deletePaletteColorsCommand, gradientPaletteColors as gradientPaletteColorsCommand, gradientPaletteSlots as gradientPaletteSlotsCommand, movePaletteColor as movePaletteColorCommand, reorderPaletteColors as reorderPaletteColorsCommand, reversePaletteColors as reversePaletteColorsCommand, selectPaletteColor as selectPaletteColorCommand, selectPaletteColors as selectPaletteColorsCommand, sortPaletteColors as sortPaletteColorsCommand, updatePaletteColor as updatePaletteColorCommand } from './workspace-palette'
 import type { PaletteSortDirection, PaletteSortMode } from '@/core/palette'
-import type { AdjustmentSnapshot, AnimationFrameClipboardItem, AnimationMaskClipboardItem, AppDialog, CanvasResizePreview, DocumentSession, OutlinePreview } from './workspace-types'
+import type { AdjustmentSnapshot, AnimationFrameClipboardItem, AnimationMaskClipboardItem, AppDialog, CanvasResizePreview, DocumentSession, OutlinePreview, SelectionPivot } from './workspace-types'
 
 export type { ExportOptions, SaveAsOptions } from './document-file-service'
-export type { AdjustmentSnapshot, AppDialog, CanvasResizePreview, DialogChoice, DocumentSession, FloatingPaste, OutlinePreview } from './workspace-types'
+export type { AdjustmentSnapshot, AppDialog, CanvasResizePreview, DialogChoice, DocumentSession, FloatingPaste, OutlinePreview, SelectionPivot } from './workspace-types'
 
 export type ColorReplacementTarget = 'layer' | 'document' | 'selection' | 'layers' | 'frames' | 'cells' | 'palette'
 
@@ -138,6 +140,7 @@ interface WorkspaceState {
   setViewportSize(size: { width: number; height: number }): void
   setViewportSizeForDocument(documentId: string, size: { width: number; height: number }): void
   setSelection(selection: SelectionMask | null): void
+  setSelectionPivot(pivot: SelectionPivot | null): void
   invertSelection(): void
   toggleSelectionOutline(): void
   beginLayerTransform(): void
@@ -161,7 +164,7 @@ interface WorkspaceState {
   toggleGrid(): void
   selectPaletteColor(id: number, additive?: boolean): void
   selectPaletteColors(ids: number[], primaryId: number): void
-  addPaletteColor(color?: RgbaColor): void
+  addPaletteColor(color?: RgbaColor): number | null
   updatePaletteColor(id: number, color: RgbaColor): void
   applyPalette(colors: RgbaColor[], layout?: PaletteSlotLayout): void
   deletePaletteColor(id: number): void
@@ -173,7 +176,7 @@ interface WorkspaceState {
   gradientPaletteSlots(slotIndices: number[], sourceSlots: Array<number | null>, columns: number, byHue: boolean): void
   sortPaletteColors(mode: PaletteSortMode, direction: PaletteSortDirection): void
   mutateActive(mutator: (session: DocumentSession) => void, dirty?: boolean | 'content' | 'metadata'): void
-  commitPixelEdit(edit: PixelEdit, label: string, activity?: { stroke?: boolean; durationMs?: number }): void
+  commitPixelEdit(edit: PixelEdit, label: string, activity?: { stroke?: boolean; durationMs?: number }): HistoryEntry | null
   setTimelapseSettings(settings: Partial<Omit<TimelapseSettings, 'snapshots'>>): void
   clearTimelapse(): void
   exportTimelapse(format: TimelapseVideoFormat, options: TimelapseExportOptions): Promise<boolean>
@@ -212,6 +215,8 @@ interface WorkspaceState {
   setActiveAnimationFrameDuration(duration: number): void
   setAnimationLoop(loop: boolean): void
   addLayer(): Promise<void>
+  createBackgroundLayer(pattern: BackgroundPatternId | BackgroundPatternTile): Promise<void>
+  setLayerBackground(layerId: string, enabled: boolean): void
   createTextLayer(data: TextCelData, x: number, y: number): void
   beginTextLayerDraft(data: TextCelData, x: number, y: number): TextLayerDraftTarget | null
   updateTextLayerDraft(layerId: string, frameId: string, data: TextCelData, x?: number, y?: number): void
@@ -220,7 +225,7 @@ interface WorkspaceState {
   setTextCel(layerId: string, frameId: string, data: TextCelData, x?: number, y?: number): void
   previewTextCel(layerId: string, frameId: string, data: TextCelData, x?: number, y?: number): TextCelPreview | null
   restoreTextCelPreview(layerId: string, frameId: string, preview: TextCelPreview): void
-  convertTextLayer(layerId: string): void
+  rasterizeLayer(layerId: string): void
   duplicateActiveLayer(): void
   duplicateLayers(layerIds: string[]): string[]
   duplicateSelectedLayerRows(): { layerIds: string[]; groupIds: string[] }
@@ -272,6 +277,8 @@ interface WorkspaceState {
   setLayerOpacity(layerId: string, opacity: number): void
   setLayerProperties(layerId: string, name: string, opacity: number): void
   setLayerPropertiesWithBlend(layerId: string, name: string, opacity: number, blendMode: BlendMode, locked?: boolean, displayColor?: RgbaColor | null, description?: string): void
+  previewLayerStyles(ownerKind: 'layer' | 'group', ownerId: string, styles?: LayerStyles): void
+  setLayerStyles(ownerKind: 'layer' | 'group', ownerId: string, styles?: LayerStyles): void
   applyActiveLayerAdjustment(adjustment: ColorAdjustment): void
   captureActiveLayerAdjustmentSnapshot(): AdjustmentSnapshot | null
   previewActiveLayerAdjustment(adjustment: ColorAdjustment, baseline: AdjustmentSnapshot, selection?: SelectionMask | null): void
@@ -290,10 +297,10 @@ interface WorkspaceState {
   pasteAsNewDocument(): Promise<boolean>
   pasteLayerFromClipboard(): boolean
   pasteLayersFromClipboard(): boolean
-  beginFloatingSelectionTransform(source: SelectionTransformSource, edit: PixelEdit | null, before: SelectionMask, target: SelectionMask, copy: boolean, label: string, translationPreview?: SelectionTranslationPreview | null, transformTarget?: SelectionRect, transformAngle?: number, transformShear?: SelectionShearTransform): void
-  commitFloatingPaste(): void
+  beginFloatingSelectionTransform(source: SelectionTransformSource, edit: PixelEdit | null, before: SelectionMask, target: SelectionMask, copy: boolean, label: string, translationPreview?: SelectionTranslationPreview | null, transformTarget?: SelectionRect, transformAngle?: number, transformShear?: SelectionShearTransform, previewDeferred?: boolean): void
+  commitFloatingPaste(deselectLabel?: string): void
   cancelFloatingPaste(): void
-  updateFloatingPastePreview(edit: PixelEdit | null, target: SelectionMask, translationPreview?: SelectionTranslationPreview | null, transformTarget?: SelectionRect, transformAngle?: number, transformShear?: SelectionShearTransform): void
+  updateFloatingPastePreview(edit: PixelEdit | null, target: SelectionMask, translationPreview?: SelectionTranslationPreview | null, transformTarget?: SelectionRect, transformAngle?: number, transformShear?: SelectionShearTransform, previewDeferred?: boolean): void
   moveActiveSelection(deltaX: number, deltaY: number): void
   moveActiveSelectionWithSelectionHistory(deltaX: number, deltaY: number): void
   flipActiveSelection(axis: 'horizontal' | 'vertical'): void
@@ -334,6 +341,7 @@ interface TextLayerDraftState {
 }
 
 const textLayerDrafts = new Map<string, TextLayerDraftState>()
+const DEFERRED_PASTE_AREA_THRESHOLD = 256 * 256
 
 const invalidateTextLayerDraft = (session: DocumentSession, panelChanged = false): void => {
   const fromRevision = session.contentRevision
@@ -393,9 +401,13 @@ const markFloatingPreviewChanged = (session: DocumentSession, before: SelectionR
   }
 }
 
+const markFloatingOverlayChanged = (session: DocumentSession): void => {
+  session.revision += 1
+}
+
 const restoreFloatingPreview = (session: DocumentSession): void => {
   const pending = session.pendingPaste
-  if (!pending) return
+  if (!pending || pending.previewDeferred) return
   if (pending.translationPreview) restoreSelectionTranslationPreview(session.document, pending.translationPreview)
   else if (pending.previewEdit) revertPixelEdit(session.document, pending.previewEdit)
 }
@@ -543,8 +555,23 @@ const applyLayerCurrentFrameCellSelection = (session: DocumentSession, layerIds:
   session.animationCellSelectionAnchorKey = selectedKeys.includes(anchorKey) ? anchorKey : selectedKeys.at(-1) ?? null
 }
 
-const layerHistoryBytes = (layer: RasterLayer): number => layer.pixels.byteLength
-const groupHistoryBytes = (_group: LayerGroup): number => 96
+const clearAnimationItemSelection = (session: DocumentSession): void => {
+  session.selectedAnimationFrameIds = []
+  session.animationFrameSelectionAnchorId = null
+  session.selectedAnimationCellKeys = []
+  session.animationCellSelectionAnchorKey = null
+  session.selectedAnimationMaskCellKeys = []
+  session.animationMaskCellSelectionAnchorKey = null
+}
+
+const layerHistoryBytes = (layer: RasterLayer): number => layer.pixels.byteLength + layerStylesHistoryBytes(layer.layerStyles)
+const groupHistoryBytes = (group: LayerGroup): number => 96 + layerStylesHistoryBytes(group.layerStyles)
+
+const assignLayerStyles = (layer: RasterLayer | LayerGroup, styles: LayerStyles | undefined): void => {
+  const next = cloneLayerStyles(styles)
+  if (next) layer.layerStyles = next
+  else delete layer.layerStyles
+}
 
 const applyLayerRowSelection = (session: DocumentSession, layerIds: readonly string[], groupIds: readonly string[], focus: { kind: 'layer' | 'group'; id: string }): void => {
   session.activeLayerMaskId = null
@@ -720,6 +747,28 @@ const invalidateColorReplacementPreview = (session: DocumentSession): void => {
 
 const tr = (key: TranslationKey, params?: TranslationParams): string => translate(loadEditorPreferences().language, key, params)
 const paletteEditSynchronizationLocked = (): boolean => readStoredString('moonsprite.palette-edit-locked') !== 'false'
+const paletteColorSynchronizationEnabled = (): boolean => readStoredString('moonsprite.palette-sync-colors') === 'true'
+
+const updatePaletteColorWithSynchronization = (session: DocumentSession, id: number, color: RgbaColor): boolean => {
+  const entry = session.document.palette.find((candidate) => candidate.id === id)
+  if (!entry || colorEquals(entry.color, color)) return false
+  const sourceColor = { ...entry.color }
+  if (!paletteColorSynchronizationEnabled() || session.document.colorMode === 'indexed') {
+    updatePaletteColorCommand(session, id, color)
+    return true
+  }
+
+  const label = tr('palette.history.updated')
+  session.history.beginCompound()
+  updatePaletteColorCommand(session, id, color)
+  const result = applyColorReplacementTarget(session, 'document', sourceColor, color)
+  for (const edit of result.edits) {
+    const history = commitPixelEdit(session.document, edit, label)
+    if (history) session.history.push(history)
+  }
+  session.history.endCompound(label)
+  return true
+}
 
 const layerMaskClipboard = (mask: LayerMask | undefined): LayerMaskClipboard | undefined => mask ? {
   width: mask.width,
@@ -910,6 +959,8 @@ function layerClipboardFromDocument(document: SpriteDocument, layer: RasterLayer
     opacity: layer.opacity,
     blendMode: layer.blendMode,
     clippingMask: layer.clippingMask === true,
+    layerStyles: cloneLayerStyles(layer.layerStyles),
+    background: layer.background ? { ...layer.background } : undefined,
     displayColor: layer.displayColor ? { ...layer.displayColor } : undefined,
     description: layer.description ?? '',
     groupKey,
@@ -926,12 +977,12 @@ function applyLayerClipboardAnimationCel(document: SpriteDocument, layer: Raster
   cel.opacity = source.opacity ?? layer.opacity
   cel.text = source.text ? cloneTextCelData(source.text) : undefined
   cel.surface = layer.format === 'rgba'
-    ? { format: 'rgba', width: source.width, height: source.height, offsetX: source.offsetX, offsetY: source.offsetY, storageOriginX: source.storageOriginX, storageOriginY: source.storageOriginY, pixels: source.pixels.slice() }
+    ? { format: 'rgba', width: source.width, height: source.height, offsetX: source.offsetX, offsetY: source.offsetY, storageOriginX: source.storageOriginX, storageOriginY: source.storageOriginY, pixels: document.colorMode === 'grayscale' ? applyRelativeLuminance(source.pixels.slice()) : source.pixels.slice() }
     : {
         format: 'indexed', width: source.width, height: source.height, offsetX: source.offsetX, offsetY: source.offsetY, storageOriginX: source.storageOriginX, storageOriginY: source.storageOriginY,
         pixels: Uint32Array.from({ length: source.width * source.height }, (_, index) => {
           const offset = index * 4
-          return findOrAddPaletteColor(document, { r: source.pixels[offset], g: source.pixels[offset + 1], b: source.pixels[offset + 2], a: source.pixels[offset + 3] })
+          return paletteColorIdForCanvas(document, { r: source.pixels[offset], g: source.pixels[offset + 1], b: source.pixels[offset + 2], a: source.pixels[offset + 3] })
         })
       }
   cel.mask = layerMaskFromClipboard(source.mask, cel.id)
@@ -993,10 +1044,12 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       get().mutateActive((session) => {
         const before = encodeProject(session.document)
         const beforeSelection = session.selection ? { ...session.selection, mask: session.selection.mask?.slice() } : null
+        const sourceWidth = session.document.width
+        const sourceHeight = session.document.height
         const horizontal = offsetX ?? (anchor === 'nw' || anchor === 'w' || anchor === 'sw' ? 0 : anchor === 'ne' || anchor === 'e' || anchor === 'se' ? width - session.document.width : Math.floor((width - session.document.width) / 2))
         const vertical = offsetY ?? (anchor === 'nw' || anchor === 'n' || anchor === 'ne' ? 0 : anchor === 'sw' || anchor === 's' || anchor === 'se' ? height - session.document.height : Math.floor((height - session.document.height) / 2))
         const resized = resizeDocumentAt(session.document, width, height, horizontal, vertical, trimOutside)
-        resizeAnimationCelsAt(session.document, resized.offsetX, resized.offsetY, trimOutside)
+        resizeAnimationCelsAt(session.document, resized.offsetX, resized.offsetY, trimOutside, sourceWidth, sourceHeight)
         session.selection = shiftSelection(beforeSelection, resized.offsetX, resized.offsetY, width, height)
         session.canvasResizePreview = null
         session.lastPencilPoint = null
@@ -1017,13 +1070,14 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
   async resizeActiveImage(width, height, interpolation) {
     const current = activeSession(get())
     if (!current || !Number.isSafeInteger(width) || !Number.isSafeInteger(height) || width < 1 || height < 1) { set({ message: tr('workspace.imageSizePositive') }); return }
+    if (current.document.width === width && current.document.height === height) return
     try {
       const resource = await window.moonSprite.getResourceInfo()
       const check = checkResourceLimit(width, height, current.document.layers.length, current.document.colorMode, resource)
       if (!check.allowed) throw new Error(check.reason)
       get().mutateActive((session) => {
-        const before = encodeProject(session.document)
-        const beforeSelection = session.selection ? { ...session.selection, mask: session.selection.mask?.slice() } : null
+        const before = captureDocumentImageResizeSnapshot(session.document)
+        const beforeSelection = session.selection ? { ...session.selection } : null
         const sourceWidth = session.document.width
         const sourceHeight = session.document.height
         const scaleX = width / sourceWidth
@@ -1035,23 +1089,34 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
           const nextWidth = Math.max(1, Math.ceil((beforeSelection.x + beforeSelection.width) * scaleX) - nextX)
           const nextHeight = Math.max(1, Math.ceil((beforeSelection.y + beforeSelection.height) * scaleY) - nextY)
           const mask = beforeSelection.mask ? new Uint8Array(nextWidth * nextHeight) : undefined
-          if (mask && beforeSelection.mask) for (let y = 0; y < nextHeight; y += 1) for (let x = 0; x < nextWidth; x += 1) {
-            const sourceX = Math.floor((nextX + x + 0.5) / scaleX)
-            const sourceY = Math.floor((nextY + y + 0.5) / scaleY)
-            const localX = sourceX - beforeSelection.x
-            const localY = sourceY - beforeSelection.y
-            if (localX >= 0 && localY >= 0 && localX < beforeSelection.width && localY < beforeSelection.height && beforeSelection.mask[localY * beforeSelection.width + localX]) mask[y * nextWidth + x] = 1
+          if (mask && beforeSelection.mask) {
+            const sourceX = new Int32Array(nextWidth)
+            const sourceY = new Int32Array(nextHeight)
+            for (let x = 0; x < nextWidth; x += 1) sourceX[x] = Math.floor((nextX + x + 0.5) / scaleX) - beforeSelection.x
+            for (let y = 0; y < nextHeight; y += 1) sourceY[y] = Math.floor((nextY + y + 0.5) / scaleY) - beforeSelection.y
+            for (let y = 0; y < nextHeight; y += 1) {
+              const localY = sourceY[y]
+              if (localY < 0 || localY >= beforeSelection.height) continue
+              const sourceRow = localY * beforeSelection.width
+              const targetRow = y * nextWidth
+              for (let x = 0; x < nextWidth; x += 1) {
+                const localX = sourceX[x]
+                if (localX >= 0 && localX < beforeSelection.width && beforeSelection.mask[sourceRow + localX]) mask[targetRow + x] = 1
+              }
+            }
           }
           session.selection = { x: nextX, y: nextY, width: nextWidth, height: nextHeight, mask }
         }
-        const after = encodeProject(session.document)
-        const afterSelection = session.selection ? { ...session.selection, mask: session.selection.mask?.slice() } : null
+        const after = captureDocumentImageResizeSnapshot(session.document)
+        const afterSelection = session.selection ? { ...session.selection } : null
         session.history.push({
-          label: tr('imageResize.title'), bytes: before.byteLength + after.byteLength + (beforeSelection?.mask?.byteLength ?? 0) + (afterSelection?.mask?.byteLength ?? 0),
-          undo: () => { restoreDocumentSnapshot(session.document, before); session.selection = beforeSelection ? { ...beforeSelection, mask: beforeSelection.mask?.slice() } : null },
-          redo: () => { restoreDocumentSnapshot(session.document, after); session.selection = afterSelection ? { ...afterSelection, mask: afterSelection.mask?.slice() } : null }
+          label: tr('imageResize.title'),
+          bytes: documentImageResizeSnapshotBytes(before) + documentImageResizeSnapshotBytes(after) + (beforeSelection?.mask?.byteLength ?? 0) + (afterSelection?.mask?.byteLength ?? 0),
+          undo: () => { restoreDocumentImageResizeSnapshot(session.document, before); session.selection = beforeSelection ? { ...beforeSelection } : null },
+          redo: () => { restoreDocumentImageResizeSnapshot(session.document, after); session.selection = afterSelection ? { ...afterSelection } : null },
+          requiresAnimationSync: false
         })
-      })
+      }, 'content')
     } catch (error) {
       set({ message: error instanceof Error ? error.message : tr('workspace.imageResizeError') })
     }
@@ -1318,6 +1383,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       session.brushImageTemporary = true
       session.brushPaintMode = 'pattern-source'
       session.selection = null
+      session.selectionPivot = null
       session.tool = 'pencil'
       session.document.customBrushes = [...(session.document.customBrushes ?? []).filter((item) => item.id !== brush.id), { id: brush.id, name: brush.name, width: brush.width, height: brush.height, coverage: brush.coverage.slice(), colors: brush.colors?.slice(), sourceX: brush.sourceX, sourceY: brush.sourceY }]
       session.brushImageTemporary = false
@@ -1400,9 +1466,17 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       const previous = { ...session.primaryColor }
       const paletteId = session.paletteSelectionId
       const paletteEntry = paletteId === null ? null : session.document.palette.find((entry) => entry.id === paletteId)
-      if (paletteId !== null && paletteEntry && !paletteEditSynchronizationLocked() && colorEquals(paletteEntry.color, previous)) updatePaletteColorCommand(session, paletteId, color)
+      const editLocked = paletteEditSynchronizationLocked()
+      const paletteChanged = paletteId !== null && paletteEntry && !editLocked && colorEquals(paletteEntry.color, previous)
+        ? updatePaletteColorWithSynchronization(session, paletteId, color)
+        : false
       session.primaryColor = { ...color }
       if (session.brushImage?.intrinsicSize) session.brushImage = remapSelectionBrushColors(session.brushImage, session.primaryColor, session.secondaryColor)
+      if (paletteChanged && paletteColorSynchronizationEnabled()) {
+        touch(session, true, { kind: 'full' })
+        recordDocumentOperation(session)
+      }
+      if (!editLocked) continue
       const matching = paletteEntry && colorEquals(paletteEntry.color, color)
         ? paletteEntry
         : session.document.palette.find((entry) => session.document.paletteOrder.includes(entry.id) && colorEquals(entry.color, color))
@@ -1419,9 +1493,17 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       const previous = { ...session.secondaryColor }
       const paletteId = session.paletteSecondarySelectionId
       const paletteEntry = paletteId === null ? null : session.document.palette.find((entry) => entry.id === paletteId)
-      if (paletteId !== null && paletteEntry && !paletteEditSynchronizationLocked() && colorEquals(paletteEntry.color, previous)) updatePaletteColorCommand(session, paletteId, color)
+      const editLocked = paletteEditSynchronizationLocked()
+      const paletteChanged = paletteId !== null && paletteEntry && !editLocked && colorEquals(paletteEntry.color, previous)
+        ? updatePaletteColorWithSynchronization(session, paletteId, color)
+        : false
       session.secondaryColor = { ...color }
       if (session.brushImage?.intrinsicSize) session.brushImage = remapSelectionBrushColors(session.brushImage, session.primaryColor, session.secondaryColor)
+      if (paletteChanged && paletteColorSynchronizationEnabled()) {
+        touch(session, true, { kind: 'full' })
+        recordDocumentOperation(session)
+      }
+      if (!editLocked) continue
       const matching = paletteEntry && colorEquals(paletteEntry.color, color)
         ? paletteEntry
         : session.document.palette.find((entry) => session.document.paletteOrder.includes(entry.id) && colorEquals(entry.color, color))
@@ -1589,7 +1671,8 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     session.viewportSize = { width: Math.max(0, size.width), height: Math.max(0, size.height) }
     set({ sessions: [...state.sessions] })
   },
-  setSelection(selection) { get().mutateActive((session) => { session.selection = selection ? { ...selection, mask: selection.mask?.slice() } : null }, false) },
+  setSelection(selection) { get().mutateActive((session) => { session.selection = selection ? { ...selection, mask: selection.mask?.slice() } : null; session.selectionPivot = null }, false) },
+  setSelectionPivot(pivot) { get().mutateActive((session) => { session.selectionPivot = pivot ? { ...pivot } : null }, false) },
   invertSelection() {
     const session = activeSession(get())
     if (!session?.selection) { set({ message: tr('workspace.selectionRequired') }); return }
@@ -1698,7 +1781,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
         boxWidth: target.width,
         boxHeight: target.height
       }, target.x, target.y)
-      const surface = convertTextSurface(rendered.rgba, session.document.colorMode, session.document.palette, (color) => findOrAddPaletteColor(session.document, color, true))
+      const surface = convertTextSurface(rendered.rgba, session.document.colorMode, session.document.palette, (color) => paletteColorIdForCanvas(session.document, color))
       applyTextSurface(session.document, layer, source, cel, rendered.data, surface)
       session.textBoxTransform = { ...transform, bounds: target }
       if (timeline.activeFrameId === transform.frameId) refreshActiveAnimationFrame(session.document)
@@ -1779,9 +1862,20 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     const same = before?.x === after?.x && before?.y === after?.y && before?.width === after?.width && before?.height === after?.height && sameMask
     if (same || (!before && !after)) return
     get().mutateActive((session) => {
-      const clone = (value: SelectionMask | null): SelectionMask | null => value ? { ...value, mask: value.mask?.slice() } : null
-      session.selection = clone(after)
-      session.history.push({ label, bytes: 48 + (before?.mask?.byteLength ?? 0) + (after?.mask?.byteLength ?? 0), undo: () => { session.selection = clone(before) }, redo: () => { session.selection = clone(after) } })
+      const snapshot = (value: SelectionMask | null): SelectionMask | null => value ? { ...value } : null
+      const beforeSnapshot = snapshot(before)
+      const afterSnapshot = snapshot(after)
+      session.selection = afterSnapshot
+      session.selectionPivot = null
+      session.history.push({
+        label,
+        bytes: 48 + (before?.mask?.byteLength ?? 0) + (after?.mask?.byteLength ?? 0),
+        undo: () => { session.selection = snapshot(beforeSnapshot); session.selectionPivot = null },
+        redo: () => { session.selection = snapshot(afterSnapshot); session.selectionPivot = null },
+        documentChanged: false,
+        contentChanged: false,
+        requiresAnimationSync: false
+      })
     }, false)
   },
   togglePixelGrid() {
@@ -1803,10 +1897,14 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     if (session && session.paletteSelectionId !== null) get().setPrimaryColor(session.primaryColor)
   },
   addPaletteColor(color) {
-    get().mutateActive((session) => addPaletteColorCommand(session, color))
+    let addedId: number | null = null
+    get().mutateActive((session) => {
+      addedId = addPaletteColorCommand(session, color, paletteEditSynchronizationLocked())
+    })
+    return addedId
   },
   updatePaletteColor(id, color) {
-    get().mutateActive((session) => updatePaletteColorCommand(session, id, color))
+    get().mutateActive((session) => updatePaletteColorWithSynchronization(session, id, color))
   },
   applyPalette(colors, layout) {
     get().mutateActive((session) => applyPaletteCommand(session, colors, layout))
@@ -1852,6 +1950,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
   },
 
   commitPixelEdit(edit, label, activity) {
+    let committed: HistoryEntry | null = null
     get().mutateActive((session) => {
       if (session.document.layers.find((layer) => layer.id === edit.layerId)?.kind === 'text') {
         revertPixelEdit(session.document, edit)
@@ -1860,12 +1959,14 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       }
       const entry = commitPixelEdit(session.document, edit, label)
       if (entry) {
+        committed = entry
         session.history.push(entry)
         syncActiveAnimationLayer(session.document, edit.layerId)
         touch(session, true, entry.invalidation)
         recordDocumentOperation(session, activity)
       }
     }, false)
+    return committed
   },
 
   setTimelapseSettings(settings) {
@@ -1921,14 +2022,17 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     if (!session) return
     session.history.push(entry)
     if (session.activeLayerMaskId && !findLayerMask(session.document, session.activeLayerMaskId)) session.activeLayerMaskId = null
-    if (entry.requiresAnimationSync !== false) {
+    if (entry.documentChanged !== false && entry.requiresAnimationSync !== false) {
       if (entry.affectedLayerIds?.length) for (const layerId of entry.affectedLayerIds) syncActiveAnimationLayer(session.document, layerId)
       else syncActiveAnimationFrame(session.document)
     }
     ensureLayerSelection(session)
     persistProjectLayerPanelState(session)
-    touch(session, true, entry.invalidation)
-    recordDocumentOperation(session)
+    if (entry.documentChanged !== false) {
+      if (entry.contentChanged === false) touchMetadata(session)
+      else touch(session, true, entry.invalidation)
+      recordDocumentOperation(session, undefined, entry.contentChanged !== false)
+    }
     set({ sessions: [...state.sessions] })
   },
 
@@ -1945,13 +2049,15 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       Object.assign(session.view, view)
       if (!entry) return
       if (session.activeLayerMaskId && !findLayerMask(session.document, session.activeLayerMaskId)) session.activeLayerMaskId = null
-      if (entry.requiresAnimationSync !== false) {
+      if (entry.documentChanged !== false && entry.requiresAnimationSync !== false) {
         if (entry.affectedLayerIds?.length) for (const layerId of entry.affectedLayerIds) syncActiveAnimationLayer(session.document, layerId)
         else syncActiveAnimationFrame(session.document)
       }
-      if (entry.contentChanged === false) touchMetadata(session)
-      else touch(session, true, entry.invalidation)
-      recordDocumentOperation(session, undefined, entry.contentChanged !== false)
+      if (entry.documentChanged !== false) {
+        if (entry.contentChanged === false) touchMetadata(session)
+        else touch(session, true, entry.invalidation)
+        recordDocumentOperation(session, undefined, entry.contentChanged !== false)
+      }
     }, false)
   },
 
@@ -1968,13 +2074,15 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       Object.assign(session.view, view)
       if (!entry) return
       if (session.activeLayerMaskId && !findLayerMask(session.document, session.activeLayerMaskId)) session.activeLayerMaskId = null
-      if (entry.requiresAnimationSync !== false) {
+      if (entry.documentChanged !== false && entry.requiresAnimationSync !== false) {
         if (entry.affectedLayerIds?.length) for (const layerId of entry.affectedLayerIds) syncActiveAnimationLayer(session.document, layerId)
         else syncActiveAnimationFrame(session.document)
       }
-      if (entry.contentChanged === false) touchMetadata(session)
-      else touch(session, true, entry.invalidation)
-      recordDocumentOperation(session, undefined, entry.contentChanged !== false)
+      if (entry.documentChanged !== false) {
+        if (entry.contentChanged === false) touchMetadata(session)
+        else touch(session, true, entry.invalidation)
+        recordDocumentOperation(session, undefined, entry.contentChanged !== false)
+      }
     }, false)
   },
 
@@ -1985,6 +2093,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       session.activeLayerMaskId = null
       session.layerMaskIsolatedView = false
       session.selection = null
+      session.selectionPivot = null
       session.lastPencilPoint = null
       session.lastEraserPoint = null
       session.revision += 1
@@ -1995,8 +2104,12 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     const session = activeSession(get())
     if (!session) return
     const timeline = ensureAnimationDocument(session.document)
+    if (timeline.frames.length < 2 || Math.sign(delta) === 0) return
     const current = timeline.frames.findIndex((frame) => frame.id === timeline.activeFrameId)
-    const target = Math.max(0, Math.min(timeline.frames.length - 1, current + Math.sign(delta)))
+    const direction = Math.sign(delta)
+    const target = current < 0
+      ? (direction > 0 ? 0 : timeline.frames.length - 1)
+      : (current + direction + timeline.frames.length) % timeline.frames.length
     const frame = timeline.frames[target]
     if (!frame || frame.id === timeline.activeFrameId) return
     get().selectAnimationFrame(frame.id)
@@ -2754,6 +2867,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
         if (!timeline.loop && timeline.frames[0] && timeline.activeFrameId !== timeline.frames[0].id) {
           activateAnimationFrame(session.document, timeline.frames[0].id)
           session.selection = null
+          session.selectionPivot = null
           session.lastPencilPoint = null
           session.lastEraserPoint = null
           session.revision += 1
@@ -2769,6 +2883,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
         : completed && !timeline.loop ? timeline.frames[0]?.id : null
       if (returnFrameId && returnFrameId !== timeline.activeFrameId && activateAnimationFrame(session.document, returnFrameId)) {
         session.selection = null
+        session.selectionPivot = null
         session.lastPencilPoint = null
         session.lastEraserPoint = null
         session.revision += 1
@@ -2805,11 +2920,14 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
         if (!current.frames.some((candidate) => candidate.id === frameId)) current.frames.splice(Math.min(frameIndex, current.frames.length), 0, { ...frame })
         restoreAnimationCels(session.document, cels)
         activateAnimationFrame(session.document, frameId)
+        clearAnimationItemSelection(session)
       }
       session.history.push({ label: tr('workspace.history.addAnimationFrame'), bytes: cels.reduce((sum, cel) => sum + (cel.surface?.pixels.byteLength ?? 0), 0) + 64, undo: () => { deleteAnimationFrame(session.document, frameId); activateAnimationFrame(session.document, previousFrameId); session.activeLayerMaskId = null }, redo: () => { restore(); session.activeLayerMaskId = null } })
       session.animationPlaying = false
       session.activeLayerMaskId = null
       session.selection = null
+      session.selectionPivot = null
+      clearAnimationItemSelection(session)
     })
   },
 
@@ -2829,11 +2947,14 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
         current.groupMasks ??= []
         current.groupMasks.push(...groupMasks.filter((entry) => !current.groupMasks!.some((candidate) => candidate.mask.id === entry.mask.id)).map((entry) => cloneAnimationGroupMask(entry)))
         activateAnimationFrame(session.document, frameId)
+        clearAnimationItemSelection(session)
       }
       session.history.push({ label: tr('workspace.history.duplicateAnimationFrame'), bytes: cels.reduce((sum, cel) => sum + (cel.surface?.pixels.byteLength ?? 0), 0) + groupMasks.reduce((sum, entry) => sum + entry.mask.pixels.byteLength, 0) + 64, undo: () => { deleteAnimationFrame(session.document, frameId); activateAnimationFrame(session.document, previousFrameId); session.activeLayerMaskId = null }, redo: () => { restore(); session.activeLayerMaskId = null } })
       session.animationPlaying = false
       session.activeLayerMaskId = null
       session.selection = null
+      session.selectionPivot = null
+      clearAnimationItemSelection(session)
     })
   },
 
@@ -2859,6 +2980,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       session.animationPlaying = false
       session.activeLayerMaskId = null
       session.selection = null
+      session.selectionPivot = null
     })
   },
 
@@ -2925,6 +3047,73 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     })
   },
 
+  async createBackgroundLayer(pattern) {
+    get().commitFloatingPaste()
+    const current = activeSession(get())
+    if (!current) return
+    const documentId = current.document.id
+    try {
+      const resource = await window.moonSprite.getResourceInfo()
+      const check = checkResourceLimit(current.document.width, current.document.height, current.document.layers.length + 1, current.document.colorMode, resource)
+      if (!check.allowed) throw new Error(check.reason)
+      get().mutateActive((session) => {
+        if (session.document.id !== documentId) return
+        const document = session.document
+        const before = encodeProject(document)
+        const beforeSelection = captureLayerUi(session)
+        const layer = createLayer(tr('workspace.layer.backgroundName'), document.width, document.height, document.colorMode)
+        const presetPattern = typeof pattern === 'string' ? pattern : pattern.pattern
+        layer.background = presetPattern ? { mode: 'preset', pattern: presetPattern } : { mode: 'canvas' }
+        if (layer.format === 'rgba') layer.pixels = typeof pattern === 'string'
+          ? renderBackgroundPatternRgba(document.width, document.height, pattern)
+          : renderBackgroundTileRgba(document.width, document.height, pattern)
+        else layer.pixels = typeof pattern === 'string'
+          ? renderBackgroundPatternIndexed(document.width, document.height, pattern, (color) => findOrAddPaletteColor(document, color, true))
+          : renderBackgroundTileIndexed(document.width, document.height, pattern, (color) => findOrAddPaletteColor(document, color, true))
+        document.layers.unshift(layer)
+        const timeline = ensureAnimationDocument(document)
+        connectAnimationCels(document, timeline.cels.filter((cel) => cel.layerId === layer.id).map((cel) => cel.id))
+        refreshActiveAnimationFrame(document)
+        document.activeLayerId = layer.id
+        session.selectedGroupId = null
+        session.selectedGroupIds = []
+        session.selectedLayerIds = [layer.id]
+        const after = encodeProject(document)
+        const afterSelection = captureLayerUi(session)
+        const restore = (snapshot: Uint8Array, selection: ReturnType<typeof captureLayerUi>): void => {
+          restoreDocumentSnapshot(document, snapshot)
+          session.selectedLayerIds = [...selection.selectedLayerIds]
+          session.selectedGroupId = selection.selectedGroupId
+          session.selectedGroupIds = [...selection.selectedGroupIds]
+          session.collapsedGroupIds = [...selection.collapsedGroupIds]
+        }
+        session.history.push({ label: tr('workspace.history.newBackgroundLayer'), bytes: before.byteLength + after.byteLength, undo: () => restore(before, beforeSelection), redo: () => restore(after, afterSelection) })
+      })
+    } catch (error) {
+      set({ message: error instanceof Error ? error.message : tr('workspace.canvasCreateError') })
+    }
+  },
+
+  setLayerBackground(layerId, enabled) {
+    get().commitFloatingPaste()
+    get().mutateActive((session) => {
+      const document = session.document
+      const layer = document.layers.find((candidate) => candidate.id === layerId)
+      if (!layer || layer.kind === 'text' || Boolean(layer.background) === enabled) return
+      const before = encodeProject(document)
+      if (enabled) layer.background = { mode: 'canvas' }
+      else delete layer.background
+      const after = encodeProject(document)
+      const apply = (snapshot: Uint8Array): void => restoreDocumentSnapshot(document, snapshot)
+      session.history.push({
+        label: tr(enabled ? 'workspace.history.convertToBackgroundLayer' : 'workspace.history.convertToRasterLayer'),
+        bytes: before.byteLength + after.byteLength,
+        undo: () => apply(before),
+        redo: () => apply(after)
+      })
+    })
+  },
+
   createTextLayer(raw, x, y) {
     get().commitFloatingPaste()
     get().mutateActive((session) => {
@@ -2933,7 +3122,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       const beforeSelection = captureLayerUi(session)
       const data = normalizeTextCelData({ ...raw, originX: Math.trunc(x), originY: Math.trunc(y), transforms: raw.transforms ?? [] }, session.primaryColor)
       const rendered = rasterizeText(data, x, y)
-      const surface = convertTextSurface(rendered.rgba, document.colorMode, document.palette, (color) => findOrAddPaletteColor(document, color, true))
+      const surface = convertTextSurface(rendered.rgba, document.colorMode, document.palette, (color) => paletteColorIdForCanvas(document, color))
       const layer = createSparseLayer(data.text.split('\n')[0].trim().slice(0, 32) || tr('workspace.layer.textName'), document.colorMode)
       layer.kind = 'text'
       layer.width = surface.width
@@ -2993,7 +3182,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       const data = normalizeTextCelData({ ...raw, originX: Math.trunc(x), originY: Math.trunc(y), transforms: raw.transforms ?? [] }, session.primaryColor)
       if (!data.text.length) return
       const rendered = rasterizeText(data, x, y)
-      const surface = convertTextSurface(rendered.rgba, document.colorMode, document.palette, (color) => findOrAddPaletteColor(document, color, true))
+      const surface = convertTextSurface(rendered.rgba, document.colorMode, document.palette, (color) => paletteColorIdForCanvas(document, color))
       const layer = createSparseLayer(data.text.split('\n')[0].trim().slice(0, 32) || tr('workspace.layer.textName'), document.colorMode)
       layer.kind = 'text'
       layer.width = surface.width
@@ -3041,7 +3230,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       const offsetX = Math.trunc(x ?? source.surface?.offsetX ?? normalized.originX ?? layer.offsetX)
       const offsetY = Math.trunc(y ?? source.surface?.offsetY ?? normalized.originY ?? layer.offsetY)
       const rendered = renderTextAtCurrentSurface(document, { ...normalized, originX: normalized.originX ?? offsetX, originY: normalized.originY ?? offsetY }, offsetX, offsetY)
-      const surface = convertTextSurface(rendered.rgba, document.colorMode, document.palette, (color) => findOrAddPaletteColor(document, color, true))
+      const surface = convertTextSurface(rendered.rgba, document.colorMode, document.palette, (color) => paletteColorIdForCanvas(document, color))
       applyTextSurface(document, layer, source, cel, rendered.data, surface)
       layer.name = normalized.text.split('\n')[0].trim().slice(0, 32) || tr('workspace.layer.textName')
       if (timeline.activeFrameId === frameId) refreshActiveAnimationFrame(document)
@@ -3102,7 +3291,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       const offsetX = Math.trunc(x ?? source.surface?.offsetX ?? normalized.originX ?? layer.offsetX)
       const offsetY = Math.trunc(y ?? source.surface?.offsetY ?? normalized.originY ?? layer.offsetY)
       const rendered = renderTextAtCurrentSurface(document, { ...normalized, originX: normalized.originX ?? offsetX, originY: normalized.originY ?? offsetY }, offsetX, offsetY)
-      const surface = convertTextSurface(rendered.rgba, document.colorMode, document.palette, (color) => findOrAddPaletteColor(document, color, true))
+      const surface = convertTextSurface(rendered.rgba, document.colorMode, document.palette, (color) => paletteColorIdForCanvas(document, color))
       applyTextSurface(document, layer, source, cel, rendered.data, surface)
       if (timeline.activeFrameId === frameId) refreshActiveAnimationFrame(document)
       const after = encodeProject(document)
@@ -3137,7 +3326,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       const offsetX = Math.trunc(x ?? activeSource.surface?.offsetX ?? normalized.originX ?? activeLayer.offsetX)
       const offsetY = Math.trunc(y ?? activeSource.surface?.offsetY ?? normalized.originY ?? activeLayer.offsetY)
       const rendered = renderTextAtCurrentSurface(document, { ...normalized, originX: normalized.originX ?? offsetX, originY: normalized.originY ?? offsetY }, offsetX, offsetY)
-      const surface = convertTextSurface(rendered.rgba, document.colorMode, document.palette, (color) => findOrAddPaletteColor(document, color, true))
+      const surface = convertTextSurface(rendered.rgba, document.colorMode, document.palette, (color) => paletteColorIdForCanvas(document, color))
       activeSource.text = cloneTextCelData(rendered.data)
       activeSource.surface = surface
       if (activeCel !== activeSource) {
@@ -3177,14 +3366,64 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     }, false)
   },
 
-  convertTextLayer(layerId) {
+  rasterizeLayer(layerId) {
     get().mutateActive((session) => {
       const document = session.document
-      const layer = document.layers.find((candidate) => candidate.id === layerId && candidate.kind === 'text')
-      if (!layer) return
+      const layer = document.layers.find((candidate) => candidate.id === layerId)
+      if (!layer || (layer.kind !== 'text' && !hasEnabledLayerStyles(layer.layerStyles))) return
+      syncActiveAnimationFrame(document)
       const before = encodeProject(document)
+      const timeline = ensureAnimationDocument(document)
+      if (hasEnabledLayerStyles(layer.layerStyles)) {
+        const rasterizedByFrameId = new Map<string, AnimationCelSurface>()
+        for (const frame of timeline.frames) {
+          const preview = cloneDocumentForAnimationFrame(document, frame.id)
+          const previewLayer = preview.layers.find((candidate) => candidate.id === layerId)
+          const cel = timeline.cels.find((candidate) => candidate.layerId === layerId && candidate.frameId === frame.id)
+          if (!previewLayer || !cel) continue
+          preview.layers = [previewLayer]
+          preview.groups = []
+          preview.activeLayerId = previewLayer.id
+          previewLayer.visible = true
+          previewLayer.opacity = 1
+          previewLayer.blendMode = 'normal'
+          previewLayer.groupId = null
+          delete previewLayer.clippingMask
+          const sourceBounds = layerContentBounds(preview, previewLayer) ?? { x: previewLayer.offsetX, y: previewLayer.offsetY, width: 1, height: 1 }
+          const styledBounds = layerStyleOutputBounds(sourceBounds, previewLayer.layerStyles) ?? sourceBounds
+          const x = Math.floor(styledBounds.x)
+          const y = Math.floor(styledBounds.y)
+          const right = Math.ceil(styledBounds.x + styledBounds.width)
+          const bottom = Math.ceil(styledBounds.y + styledBounds.height)
+          const width = Math.max(1, right - x)
+          const height = Math.max(1, bottom - y)
+          const rgba = compositeRegion(preview, x, y, width, height)
+          const surface: AnimationCelSurface = layer.format === 'rgba'
+            ? { format: 'rgba', width, height, offsetX: x, offsetY: y, pixels: document.colorMode === 'grayscale' ? applyRelativeLuminance(rgba) : rgba }
+            : {
+                format: 'indexed', width, height, offsetX: x, offsetY: y,
+                pixels: Uint32Array.from({ length: width * height }, (_, index) => {
+                  const offset = index * 4
+                  return paletteColorIdForCanvas(document, { r: rgba[offset], g: rgba[offset + 1], b: rgba[offset + 2], a: rgba[offset + 3] })
+                })
+              }
+          rasterizedByFrameId.set(frame.id, surface)
+        }
+        for (const frame of timeline.frames) {
+          const cel = timeline.cels.find((candidate) => candidate.layerId === layerId && candidate.frameId === frame.id)
+          const surface = rasterizedByFrameId.get(frame.id)
+          if (!cel || !surface) continue
+          delete cel.linkedCelId
+          cel.surface = surface
+          delete cel.mask
+          delete cel.text
+        }
+      } else {
+        for (const cel of timeline.cels) if (cel.layerId === layerId) delete cel.text
+      }
       delete layer.kind
-      for (const cel of ensureAnimationDocument(document).cels) if (cel.layerId === layerId) delete cel.text
+      delete layer.layerStyles
+      refreshActiveAnimationFrame(document)
       const after = encodeProject(document)
       session.history.push({ label: tr('workspace.history.convertText'), bytes: before.byteLength + after.byteLength, undo: () => restoreDocumentSnapshot(document, before), redo: () => restoreDocumentSnapshot(document, after) })
     })
@@ -3289,6 +3528,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
         name: `${group.name} ${tr('canvas.history.copySuffix')}`,
         parentGroupId: group.parentGroupId && groupIdMap.has(group.parentGroupId) ? groupIdMap.get(group.parentGroupId)! : group.parentGroupId ?? null,
         panelOrder: typeof group.panelOrder === 'number' ? group.panelOrder + 0.01 : group.panelOrder,
+        layerStyles: cloneLayerStyles(group.layerStyles),
         displayColor: group.displayColor ? { ...group.displayColor } : undefined
       }))
       const timeline = ensureAnimationDocument(document)
@@ -3304,7 +3544,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       const sourceLayers = document.layers.filter((layer) => allLayerIds.has(layer.id))
       const layers = sourceLayers.map((source): RasterLayer => {
         const id = createId('layer')
-        const common = { ...source, id, name: `${source.name} ${tr('canvas.history.copySuffix')}`, groupId: source.groupId && groupIdMap.has(source.groupId) ? groupIdMap.get(source.groupId)! : source.groupId, displayColor: source.displayColor ? { ...source.displayColor } : undefined }
+        const common = { ...source, id, name: `${source.name} ${tr('canvas.history.copySuffix')}`, groupId: source.groupId && groupIdMap.has(source.groupId) ? groupIdMap.get(source.groupId)! : source.groupId, layerStyles: cloneLayerStyles(source.layerStyles), background: source.background ? { ...source.background } : undefined, displayColor: source.displayColor ? { ...source.displayColor } : undefined }
         return source.format === 'rgba'
           ? { ...common, format: 'rgba', pixels: new Uint8ClampedArray(source.pixels) }
           : { ...common, format: 'indexed', pixels: new Uint32Array(source.pixels) }
@@ -4249,6 +4489,53 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       session.history.push({ label: tr('workspace.history.layerProperties'), bytes: 40 + before.name.length + after.name.length, undo: () => Object.assign(layer, before), redo: () => Object.assign(layer, after), contentChanged, affectedLayerIds: contentChanged ? [layer.id] : undefined, requiresAnimationSync: contentChanged })
     }, contentChanged ? 'content' : 'metadata')
   },
+
+  previewLayerStyles(ownerKind, ownerId, styles) {
+    const current = activeSession(get())
+    const currentOwner = ownerKind === 'layer'
+      ? current?.document.layers.find((layer) => layer.id === ownerId)
+      : current?.document.groups.find((group) => group.id === ownerId)
+    if (!current || !currentOwner || layerStylesEqual(currentOwner.layerStyles, styles)) return
+    get().mutateActive((session) => {
+      const owner = ownerKind === 'layer'
+        ? session.document.layers.find((candidate) => candidate.id === ownerId)
+        : session.document.groups.find((candidate) => candidate.id === ownerId)
+      if (!owner || layerStylesEqual(owner.layerStyles, styles)) return
+      assignLayerStyles(owner, styles)
+      const fromRevision = session.contentRevision
+      session.revision += 1
+      session.contentRevision += 1
+      session.layersPanelRevision += 1
+      session.contentInvalidation = { kind: 'full', fromRevision, revision: session.contentRevision }
+    }, false)
+  },
+
+  setLayerStyles(ownerKind, ownerId, styles) {
+    const current = activeSession(get())
+    const currentOwner = ownerKind === 'layer'
+      ? current?.document.layers.find((layer) => layer.id === ownerId)
+      : current?.document.groups.find((group) => group.id === ownerId)
+    if (!current || !currentOwner || layerStylesEqual(currentOwner.layerStyles, styles)) return
+    get().mutateActive((session) => {
+      const owner = ownerKind === 'layer'
+        ? session.document.layers.find((candidate) => candidate.id === ownerId)
+        : session.document.groups.find((candidate) => candidate.id === ownerId)
+      if (!owner) return
+      const before = cloneLayerStyles(owner.layerStyles)
+      const after = cloneLayerStyles(styles)
+      if (layerStylesEqual(before, after)) return
+      assignLayerStyles(owner, after)
+      session.history.push({
+        label: tr('workspace.history.layerStyles'),
+        bytes: layerStylesHistoryBytes(before) + layerStylesHistoryBytes(after),
+        undo: () => assignLayerStyles(owner, before),
+        redo: () => assignLayerStyles(owner, after),
+        contentChanged: true,
+        requiresAnimationSync: false,
+        invalidation: { kind: 'full' }
+      })
+    }, 'content')
+  },
   applyActiveLayerAdjustment(adjustment) {
     get().mutateActive((session) => {
       const labels: Record<ColorAdjustment['kind'], string> = {
@@ -4400,6 +4687,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
         opacity: group.opacity,
         blendMode: group.blendMode,
         clippingMask: group.clippingMask === true,
+        layerStyles: cloneLayerStyles(group.layerStyles),
         cumulativeBlend: group.cumulativeBlend === true,
         displayColor: group.displayColor ? { ...group.displayColor } : undefined,
         description: group.description ?? '',
@@ -4458,6 +4746,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
         opacity: group.opacity,
         blendMode: group.blendMode,
         clippingMask: group.clippingMask === true,
+        layerStyles: cloneLayerStyles(group.layerStyles),
         cumulativeBlend: group.cumulativeBlend === true
       }})
       const layers = clipboard.layers.map((source) => {
@@ -4470,13 +4759,15 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
         layer.opacity = source.opacity
         layer.blendMode = source.blendMode
         if (source.clippingMask === true) layer.clippingMask = true
+        assignLayerStyles(layer, source.layerStyles)
+        if (source.background) layer.background = { ...source.background }
         layer.description = source.description ?? ''
         if (source.displayColor) layer.displayColor = { ...source.displayColor }
         layer.groupId = source.groupKey ? groupIdByKey.get(source.groupKey) ?? targetGroupId : targetGroupId
-        if (layer.format === 'rgba') layer.pixels.set(source.pixels)
+        if (layer.format === 'rgba') layer.pixels.set(document.colorMode === 'grayscale' ? applyRelativeLuminance(source.pixels.slice()) : source.pixels)
         else for (let index = 0; index < source.width * source.height; index += 1) {
           const offset = index * 4
-          layer.pixels[index] = findOrAddPaletteColor(document, { r: source.pixels[offset], g: source.pixels[offset + 1], b: source.pixels[offset + 2], a: source.pixels[offset + 3] })
+          layer.pixels[index] = paletteColorIdForCanvas(document, { r: source.pixels[offset], g: source.pixels[offset + 1], b: source.pixels[offset + 2], a: source.pixels[offset + 3] })
         }
         return layer
       })
@@ -4508,7 +4799,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       session.history.beginCompound()
       session.history.push({
         label: layers.length === 1 && groups.length === 0 ? tr('workspace.history.pasteLayer') : tr('workspace.history.pasteCollection'),
-        bytes: layers.reduce((sum, layer) => sum + layer.pixels.byteLength, 0) + animationCels.reduce((sum, cel) => sum + (cel.surface?.pixels.byteLength ?? 0) + (cel.mask?.pixels.byteLength ?? 0), 0) + groups.length * 96 + appendedFrames.length * 32,
+        bytes: layers.reduce((sum, layer) => sum + layerHistoryBytes(layer), 0) + animationCels.reduce((sum, cel) => sum + (cel.surface?.pixels.byteLength ?? 0) + (cel.mask?.pixels.byteLength ?? 0), 0) + groups.reduce((sum, group) => sum + groupHistoryBytes(group), 0) + appendedFrames.length * 32,
         undo: () => {
           const currentTimeline = ensureAnimationDocument(document)
           currentTimeline.cels = currentTimeline.cels.filter((cel) => !pastedIds.includes(cel.layerId) && !appendedFrameIds.has(cel.frameId))
@@ -4597,6 +4888,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       if (layer.kind === 'text') { set({ message: tr('workspace.text.incompatibleCel') }); return }
       if (isLayerEffectivelyLocked(document, layer)) { set({ message: tr('workspace.clipboard.layerLocked') }); return }
       const beforeSelection = cloneSelectionMask(session.selection)
+      const beforeSelectionPivot = session.selectionPivot ? { ...session.selectionPivot } : null
       // Keep the entire clipboard image, even when it is larger than the
       // document. The floating selection can then be moved until any part of
       // it reaches the canvas instead of losing off-canvas pixels on paste.
@@ -4614,9 +4906,12 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       })
       const width = clipboard.width
       const height = clipboard.height
-      const pastedMask = clipboard.mask.slice()
-      const values = layer.format === 'rgba' ? clipboard.pixels.slice() : new Uint32Array(width * height)
-      if (isLayerMask(layer)) {
+      const pastedMask = clipboard.mask
+      const convertsRgbaValues = layer.format === 'rgba' && (isLayerMask(layer) || document.colorMode === 'grayscale')
+      const values = layer.format === 'rgba'
+        ? convertsRgbaValues ? clipboard.pixels.slice() : clipboard.pixels
+        : new Uint32Array(width * height)
+      if (convertsRgbaValues) {
         for (let offset = 0; offset < values.length; offset += 1) {
           const color = unpackColor(values[offset])
           values[offset] = packColor(relativeLuminanceColor(color))
@@ -4624,16 +4919,21 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       }
       let pasted = 0
       if (layer.format === 'rgba') {
-        for (const selected of pastedMask) pasted += selected
+        if (pastedMask) for (const selected of pastedMask) pasted += selected
+        else pasted = width * height
       } else {
-        for (let offset = 0; offset < pastedMask.length; offset += 1) {
-          if (pastedMask[offset] !== 1) continue
-          values[offset] = findOrAddPaletteColor(document, unpackColor(clipboard.pixels[offset]))
+        for (let offset = 0; offset < width * height; offset += 1) {
+          if (pastedMask && pastedMask[offset] !== 1) continue
+          values[offset] = paletteColorIdForCanvas(document, unpackColor(clipboard.pixels[offset]))
           pasted += 1
         }
       }
       if (pasted === 0) { set({ message: tr('workspace.clipboard.outside') }); return }
-      const target: SelectionMask = { x, y, width, height, mask: pastedMask }
+      // A fully selected rectangle already carries its mask implicitly. Avoid
+      // cloning a multi-megabyte all-ones mask into each floating-paste state.
+      const target: SelectionMask = !pastedMask || pasted === width * height
+        ? { x, y, width, height }
+        : { x, y, width, height, mask: pastedMask }
       const source: SelectionTransformSource = {
         selection: cloneSelectionMask(target)!,
         values,
@@ -4643,16 +4943,21 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
         selectedOffsets: new Uint32Array(0),
         opaqueOffsets: new Uint32Array(0),
         opaqueIndices: new Uint32Array(0),
-        opaqueValues: new Uint32Array(0)
+        opaqueValues: new Uint32Array(0),
+        origin: 'clipboard'
       }
-      const edit = applySelectionTransform(document, source, target, 0, true, undefined, undefined, undefined, layer) ?? beginPixelEdit(layer.id)
+      const previewDeferred = width * height > DEFERRED_PASTE_AREA_THRESHOLD
+      const edit = previewDeferred
+        ? null
+        : applySelectionTranslationCommit(document, source, target, true, layer) ?? beginPixelEdit(layer.id)
       session.selection = cloneSelectionMask(target)
-      session.pendingPaste = { layerId: layer.id, beforeSelection, source, target: cloneSelectionMask(target)!, transformTarget: { x: target.x, y: target.y, width: target.width, height: target.height }, transformAngle: 0, previewEdit: edit, translationPreview: null, copy: true, label: tr('workspace.history.pasteToLayer') }
+      session.pendingPaste = { layerId: layer.id, beforeSelection, beforeSelectionPivot, source, target: cloneSelectionMask(target)!, transformTarget: { x: target.x, y: target.y, width: target.width, height: target.height }, transformAngle: 0, previewEdit: edit, translationPreview: null, previewDeferred, copy: true, label: tr('workspace.history.pasteToLayer') }
+      session.selectionPivot = null
       // A paste remains floating until confirmed, so its first drag should move
       // the pasted pixels instead of beginning a new pencil stroke.
       session.tool = 'selection'
-      session.revision += 1
-      session.contentRevision += 1
+      if (previewDeferred) markFloatingOverlayChanged(session)
+      else markFloatingPreviewChanged(session, target, target)
       set({ message: tr('workspace.clipboard.pastedPixels', { count: pasted }) })
     }, false)
   },
@@ -4679,8 +4984,8 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       const layer = createLayer(tr('layers.pasteLayer'), clipboard.width, clipboard.height, document.colorMode)
       layer.offsetX = placement.x
       layer.offsetY = placement.y
-      for (let index = 0; index < clipboard.mask.length; index += 1) {
-        if (clipboard.mask[index] !== 1) continue
+      for (let index = 0; index < clipboard.width * clipboard.height; index += 1) {
+        if (clipboard.mask && clipboard.mask[index] !== 1) continue
         writeLayerColor(document, layer, index, unpackColor(clipboard.pixels[index]))
       }
       const insertionIndex = document.layers.length
@@ -4716,8 +5021,8 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     if (!clipboard) { set({ message: tr('workspace.clipboard.noImage') }); return false }
     const document = createDocument(tr('document.pastedImage'), clipboard.width, clipboard.height, 'rgba')
     const layer = getActiveLayer(document)
-    for (let index = 0; index < clipboard.mask.length; index += 1) {
-      if (clipboard.mask[index] === 1) writeLayerColor(document, layer, index, unpackColor(clipboard.pixels[index]))
+    for (let index = 0; index < clipboard.width * clipboard.height; index += 1) {
+      if (!clipboard.mask || clipboard.mask[index] === 1) writeLayerColor(document, layer, index, unpackColor(clipboard.pixels[index]))
     }
     document.dirty = true
     get().addSession(document)
@@ -4725,12 +5030,13 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     return true
   },
 
-  updateFloatingPastePreview(edit, target, translationPreview = null, transformTarget, transformAngle, transformShear) {
+  updateFloatingPastePreview(edit, target, translationPreview = null, transformTarget, transformAngle, transformShear, previewDeferred = false) {
     get().mutateActive((session) => {
       if (!session.pendingPaste) return
       const previousTarget = session.pendingPaste.target
       session.pendingPaste.previewEdit = edit
       session.pendingPaste.translationPreview = translationPreview
+      session.pendingPaste.previewDeferred = previewDeferred
       session.pendingPaste.target = cloneSelectionMask(target)!
       if (transformTarget) session.pendingPaste.transformTarget = { ...transformTarget }
       else if ((session.pendingPaste.transformAngle ?? 0) % 360 === 0 && !session.pendingPaste.transformShear) {
@@ -4739,16 +5045,18 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       if (transformAngle !== undefined) session.pendingPaste.transformAngle = transformAngle
       if (transformShear !== undefined) session.pendingPaste.transformShear = { ...transformShear }
       session.selection = cloneSelectionMask(target)
-      markFloatingPreviewChanged(session, previousTarget, target)
+      if (previewDeferred) markFloatingOverlayChanged(session)
+      else markFloatingPreviewChanged(session, previousTarget, target)
     }, false)
   },
 
-  beginFloatingSelectionTransform(source, edit, before, target, copy, label, translationPreview = null, transformTarget, transformAngle = 0, transformShear) {
+  beginFloatingSelectionTransform(source, edit, before, target, copy, label, translationPreview = null, transformTarget, transformAngle = 0, transformShear, previewDeferred = false) {
     get().mutateActive((session) => {
       const layer = getActiveLayer(session.document)
       session.pendingPaste = {
         layerId: layer.id,
         beforeSelection: cloneSelectionMask(before),
+        beforeSelectionPivot: session.selectionPivot ? { ...session.selectionPivot } : null,
         source,
         target: cloneSelectionMask(target)!,
         transformTarget: transformTarget ? { ...transformTarget } : { x: target.x, y: target.y, width: target.width, height: target.height },
@@ -4756,24 +5064,35 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
         transformShear: transformShear ? { ...transformShear } : undefined,
         previewEdit: edit,
         translationPreview,
+        previewDeferred,
         copy,
         label
       }
       session.selection = cloneSelectionMask(target)
-      markFloatingPreviewChanged(session, before, target)
+      if (previewDeferred) markFloatingOverlayChanged(session)
+      else markFloatingPreviewChanged(session, before, target)
     }, false)
   },
 
-  commitFloatingPaste() {
+  commitFloatingPaste(deselectLabel) {
     const current = activeSession(get())
     if (!current?.pendingPaste) return
-    const activeLayerForCommit = current.document.layers.find((layer) => layer.id === current.pendingPaste?.layerId)
-    const documentChanged = activeLayerForCommit?.kind === 'text' || Boolean(current.pendingPaste.previewEdit || current.pendingPaste.translationPreview?.count)
     get().mutateActive((session) => {
       const pending = session.pendingPaste
       if (!pending) return
-      const edit = pending.previewEdit ?? (pending.translationPreview ? selectionTranslationPreviewEdit(session.document, pending.translationPreview) : null)
       const activeLayer = session.document.layers.find((layer) => layer.id === pending.layerId)
+      const transformTarget = pending.transformTarget ?? { x: pending.target.x, y: pending.target.y, width: pending.target.width, height: pending.target.height }
+      const simpleTranslation = (pending.transformAngle ?? 0) % 360 === 0
+        && !pending.transformShear
+        && transformTarget.width === pending.source.selection.width
+        && transformTarget.height === pending.source.selection.height
+        && !transformTarget.flipHorizontal
+        && !transformTarget.flipVertical
+      const edit = pending.previewDeferred && activeLayer && activeLayer.kind !== 'text'
+        ? simpleTranslation
+          ? applySelectionTranslationCommit(session.document, pending.source, transformTarget, pending.copy, activeLayer)
+          : applySelectionTransform(session.document, pending.source, transformTarget, pending.transformAngle ?? 0, pending.copy, pending.transformShear, undefined, undefined, activeLayer)
+        : pending.previewEdit ?? (pending.translationPreview ? selectionTranslationPreviewEdit(session.document, pending.translationPreview) : null)
       const timeline = ensureAnimationDocument(session.document)
       const activeCel = activeLayer?.kind === 'text' ? timeline.cels.find((cel) => cel.layerId === activeLayer.id && cel.frameId === timeline.activeFrameId) : null
       const textSource = activeCel ? resolveAnimationCel(timeline, activeCel) ?? activeCel : null
@@ -4781,14 +5100,17 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       const beforeText = textSource?.text ? cloneTextCelData(textSource.text) : null
       const beforeTextSurface = activeLayer?.kind === 'text' && textSource?.surface ? cloneAnimationCelSurface(textSource.surface) : null
       const pixelEntry = activeLayer?.kind === 'text' ? null : edit ? commitPixelEdit(session.document, edit, pending.label) : null
-      const beforeSelection = cloneSelectionMask(pending.beforeSelection)
-      const afterSelection = cloneSelectionMask(pending.target)
-      const sameMask = beforeSelection?.mask === afterSelection?.mask
-        || (beforeSelection?.mask?.length === afterSelection?.mask?.length && beforeSelection?.mask?.every((value, index) => value === afterSelection?.mask?.[index]))
-      const selectionChanged = beforeSelection?.x !== afterSelection?.x || beforeSelection?.y !== afterSelection?.y
-        || beforeSelection?.width !== afterSelection?.width || beforeSelection?.height !== afterSelection?.height || !sameMask
+      const selectionSnapshot = (value: SelectionMask | null): SelectionMask | null => value ? { ...value } : null
+      const beforeSelection = selectionSnapshot(pending.beforeSelection)
+      const afterSelection = selectionSnapshot(pending.target)!
+      const selectionGeometryChanged = beforeSelection?.x !== afterSelection.x || beforeSelection?.y !== afterSelection.y
+        || beforeSelection?.width !== afterSelection.width || beforeSelection?.height !== afterSelection.height
+      const sameMask = selectionGeometryChanged || beforeSelection?.mask === afterSelection.mask
+        || (beforeSelection?.mask?.length === afterSelection.mask?.length && beforeSelection?.mask?.every((value, index) => value === afterSelection.mask?.[index]))
+      const selectionChanged = selectionGeometryChanged || !sameMask
       session.pendingPaste = null
-      session.selection = afterSelection
+      session.selection = deselectLabel ? null : afterSelection
+      if (deselectLabel) session.selectionPivot = null
       let textHistory: { before: TextCelData; after: TextCelData; restore: (value: TextCelData) => void } | null = null
       if (activeLayer?.kind === 'text' && textSource?.text && (edit || selectionChanged)) {
         const sourceTarget = { x: pending.source.selection.x, y: pending.source.selection.y, width: pending.source.selection.width, height: pending.source.selection.height }
@@ -4803,7 +5125,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
           ...(pending.transformShear ? { shear: { ...pending.transformShear } } : {})
         }]
         const rendered = rasterizeText(nextText, nextText.originX ?? sourceRect.x, nextText.originY ?? sourceRect.y)
-        const surface = convertTextSurface(rendered.rgba, session.document.colorMode, session.document.palette, (color) => findOrAddPaletteColor(session.document, color, true))
+        const surface = convertTextSurface(rendered.rgba, session.document.colorMode, session.document.palette, (color) => paletteColorIdForCanvas(session.document, color))
         applyTextSurface(session.document, activeLayer, textSource, activeCel!, rendered.data, surface)
         refreshActiveAnimationFrame(session.document)
         const afterText = cloneTextCelData(nextText)
@@ -4821,16 +5143,33 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       if (pixelEntry) session.history.push({
         ...pixelEntry,
         bytes: pixelEntry.bytes + (beforeSelection?.mask?.byteLength ?? 0) + (afterSelection?.mask?.byteLength ?? 0) + 64,
-        undo: () => { pixelEntry.undo(); session.selection = cloneSelectionMask(beforeSelection) },
-        redo: () => { pixelEntry.redo(); session.selection = cloneSelectionMask(afterSelection) }
+        undo: () => { pixelEntry.undo(); session.selection = selectionSnapshot(beforeSelection); session.selectionPivot = null },
+        redo: () => { pixelEntry.redo(); session.selection = selectionSnapshot(afterSelection); session.selectionPivot = null }
       })
       else if (selectionChanged || textHistory) session.history.push({
         label: pending.label,
         bytes: 48 + (beforeSelection?.mask?.byteLength ?? 0) + (afterSelection?.mask?.byteLength ?? 0),
-        undo: () => { textHistory?.restore(textHistory.before); session.selection = cloneSelectionMask(beforeSelection) },
-        redo: () => { textHistory?.restore(textHistory.after); session.selection = cloneSelectionMask(afterSelection) }
+        undo: () => { textHistory?.restore(textHistory.before); session.selection = selectionSnapshot(beforeSelection); session.selectionPivot = null },
+        redo: () => { textHistory?.restore(textHistory.after); session.selection = selectionSnapshot(afterSelection); session.selectionPivot = null }
       })
-    }, documentChanged)
+      if (deselectLabel) session.history.push({
+        label: deselectLabel,
+        bytes: 48 + (afterSelection.mask?.byteLength ?? 0),
+        undo: () => { session.selection = selectionSnapshot(afterSelection); session.selectionPivot = null },
+        redo: () => { session.selection = null; session.selectionPivot = null },
+        documentChanged: false,
+        contentChanged: false,
+        requiresAnimationSync: false
+      })
+      if (pixelEntry) {
+        syncActiveAnimationLayer(session.document, pending.layerId)
+        touch(session, true, pixelEntry.invalidation)
+        recordDocumentOperation(session)
+      } else if (textHistory) {
+        touch(session, true)
+        recordDocumentOperation(session)
+      }
+    }, false)
   },
 
   cancelFloatingPaste() {
@@ -4841,8 +5180,10 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       if (!pending) return
       restoreFloatingPreview(session)
       session.selection = cloneSelectionMask(pending.beforeSelection)
+      session.selectionPivot = pending.beforeSelectionPivot ? { ...pending.beforeSelectionPivot } : null
       session.pendingPaste = null
-      markFloatingPreviewChanged(session, pending.target, pending.beforeSelection ?? pending.target)
+      if (pending.previewDeferred) markFloatingOverlayChanged(session)
+      else markFloatingPreviewChanged(session, pending.target, pending.beforeSelection ?? pending.target)
     }, false)
   },
 
@@ -4887,6 +5228,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
         pending.target = cloneSelectionMask(nextSelection)!
         pending.transformTarget = nextTransformTarget
         session.selection = cloneSelectionMask(nextSelection)
+        if (session.selectionPivot) session.selectionPivot = { x: session.selectionPivot.x + actualX, y: session.selectionPivot.y + actualY }
         markFloatingPreviewChanged(session, previousTarget, nextSelection)
         return
       }
@@ -4898,6 +5240,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       session.pendingPaste = {
         layerId: layer.id,
         beforeSelection: cloneSelectionMask(currentSelection),
+        beforeSelectionPivot: session.selectionPivot ? { ...session.selectionPivot } : null,
         source,
         target: cloneSelectionMask(nextSelection)!,
         transformTarget: { x: nextSelection.x, y: nextSelection.y, width: nextSelection.width, height: nextSelection.height },
@@ -4908,6 +5251,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
         label: tr('workspace.history.moveSelectionContent')
       }
       session.selection = cloneSelectionMask(nextSelection)
+      if (session.selectionPivot) session.selectionPivot = { x: session.selectionPivot.x + actualX, y: session.selectionPivot.y + actualY }
       markFloatingPreviewChanged(session, currentSelection, nextSelection)
     }, false)
   },
@@ -4917,7 +5261,14 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       if (session.pendingPaste) {
         const pending = session.pendingPaste
         const previousTarget = pending.target
-        restoreFloatingPreview(session)
+        const previewDeferred = Boolean(pending.previewDeferred)
+        if (previewDeferred) {
+          // Deferred previews normally leave the document untouched. Also
+          // clean up an already-materialized preview from an older runtime so
+          // it cannot become part of the stable background after hot reload.
+          if (pending.translationPreview) restoreSelectionTranslationPreview(session.document, pending.translationPreview)
+          else if (pending.previewEdit) revertPixelEdit(session.document, pending.previewEdit)
+        } else restoreFloatingPreview(session)
         pending.source = flipSelectionTransformSource(pending.source, axis)
         const transformTarget = pending.transformTarget ?? { x: pending.target.x, y: pending.target.y, width: pending.target.width, height: pending.target.height }
         const angle = pending.transformAngle ?? 0
@@ -4928,9 +5279,13 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
         session.selection = cloneSelectionMask(transformed)
         pending.previewEdit = null
         pending.translationPreview = null
-        const preview = applySelectionTransform(session.document, pending.source, transformTarget, angle, pending.copy, shear, undefined, undefined, activePaintLayer(session))
-        if (preview) pending.previewEdit = preview
-        markFloatingPreviewChanged(session, previousTarget, transformed)
+        pending.previewDeferred = previewDeferred
+        if (previewDeferred) markFloatingOverlayChanged(session)
+        else {
+          const preview = applySelectionTransform(session.document, pending.source, transformTarget, angle, pending.copy, shear, undefined, undefined, activePaintLayer(session))
+          if (preview) pending.previewEdit = preview
+          markFloatingPreviewChanged(session, previousTarget, transformed)
+        }
         return
       }
       const layer = activePaintLayer(session)
@@ -4980,7 +5335,15 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
         session.history.push({ ...entry, bytes: entry.bytes + 64 + (before.mask?.byteLength ?? 0) + (after.mask?.byteLength ?? 0), undo: () => { entry.undo(); session.selection = cloneSelectionMask(before) }, redo: () => { entry.redo(); session.selection = cloneSelectionMask(after) } })
         touch(session)
       } else if (selectionChanged) {
-        session.history.push({ label, bytes: 48 + (before.mask?.byteLength ?? 0) + (after.mask?.byteLength ?? 0), undo: () => { session.selection = cloneSelectionMask(before) }, redo: () => { session.selection = cloneSelectionMask(after) } })
+        session.history.push({
+          label,
+          bytes: 48 + (before.mask?.byteLength ?? 0) + (after.mask?.byteLength ?? 0),
+          undo: () => { session.selection = cloneSelectionMask(before) },
+          redo: () => { session.selection = cloneSelectionMask(after) },
+          documentChanged: false,
+          contentChanged: false,
+          requiresAnimationSync: false
+        })
       }
     }, false)
   },
@@ -4991,7 +5354,10 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       const edit = moveSelection(session.document, session.selection, deltaX, deltaY, false, activePaintLayer(session))
       const entry = edit && commitPixelEdit(session.document, edit, tr('workspace.history.moveSelection'))
       if (entry) session.history.push(entry)
-      if (entry) session.selection = { ...session.selection, x: session.selection.x + deltaX, y: session.selection.y + deltaY }
+      if (entry) {
+        session.selection = { ...session.selection, x: session.selection.x + deltaX, y: session.selection.y + deltaY }
+        if (session.selectionPivot) session.selectionPivot = { x: session.selectionPivot.x + deltaX, y: session.selectionPivot.y + deltaY }
+      }
     })
   },
 
@@ -5023,7 +5389,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     session = get().sessions.find((item) => item.document.id === documentId) ?? null
     if (!session) return false
     persistProjectLayerPanelState(session)
-    if (!saveAs && session.document.filePath && !session.document.dirty) {
+    if (!saveAs && !session.document.dirty && (session.document.filePath || directSourceImageSaveTarget(session.document))) {
       set({ message: tr('workspace.save.done') })
       return true
     }
@@ -5053,7 +5419,8 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       if (!result) { endSaveProgress(false); return false }
       const saved = get().sessions.find((item) => item.document.id === documentId)
       if (!saved) { endSaveProgress(false); return false }
-      saved.document.filePath = result.filePath
+      if (result.setDocumentFilePath) saved.document.filePath = result.filePath
+      else saved.document.sourceFilePath = result.filePath
       saved.document.name = fileNameFromPath(result.filePath)
       persistProjectLayerPanelState(saved)
       const fullySaved = saved.contentRevision === result.revision
@@ -5149,7 +5516,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
 
   async restoreRecoveries() {
     try {
-      const recoveries = await recoveryService.list(window.moonSprite)
+      const recoveries = await recoveryService.list(window.moonSprite, loadEditorPreferences().recoveryRetentionDays)
       set({ recoveryRecords: recoveries })
     } catch {
       set({ recoveryRecords: [], message: tr('workspace.recovery.readError') })

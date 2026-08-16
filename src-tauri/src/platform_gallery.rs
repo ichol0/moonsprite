@@ -27,6 +27,17 @@ const BUILTIN_EXAMPLE_FILE_NAME: &str = "示例.moonsprite";
 const BUILTIN_EXAMPLE: &[u8] = include_bytes!("../resources/示例.moonsprite");
 const BUILTIN_EXAMPLE_MARKER_VERSION: &str = "3";
 const BUILTIN_EXAMPLE_DELETED: &str = "deleted";
+const HOME_FOLDER_FILE_EXTENSIONS: &[&str] = &[
+    "moonsprite",
+    "ase",
+    "aseprite",
+    "png",
+    "jpg",
+    "jpeg",
+    "webp",
+    "bmp",
+    "gif",
+];
 
 fn app_data_dir(app: &AppHandle) -> Result<PathBuf, String> {
     app.path().app_data_dir().map_err(|error| error.to_string())
@@ -60,21 +71,29 @@ pub(crate) fn ensure_builtin_example(app: AppHandle) -> Result<Option<String>, S
     Ok(Some(example_path.to_string_lossy().to_string()))
 }
 
-#[tauri::command]
-pub(crate) fn list_gallery_projects() -> Result<GalleryListing, String> {
-    let directory = gallery_dir()?;
+fn path_has_extension(path: &Path, extensions: &[&str]) -> bool {
+    path.extension()
+        .and_then(|value| value.to_str())
+        .map(|value| {
+            extensions
+                .iter()
+                .any(|extension| value.eq_ignore_ascii_case(extension))
+        })
+        .unwrap_or(false)
+}
+
+fn list_projects_in_directory(
+    directory: &Path,
+    extensions: &[&str],
+    include_extension: bool,
+    label: &str,
+) -> Result<Vec<GalleryProject>, String> {
     let mut projects = Vec::new();
-    for entry in fs::read_dir(&directory).map_err(|error| format!("无法读取图库：{error}"))?
+    for entry in fs::read_dir(directory).map_err(|error| format!("无法读取{label}：{error}"))?
     {
-        let entry = entry.map_err(|error| format!("无法读取图库项目：{error}"))?;
+        let entry = entry.map_err(|error| format!("无法读取{label}项目：{error}"))?;
         let path = entry.path();
-        if !path.is_file()
-            || path
-                .extension()
-                .and_then(|value| value.to_str())
-                .map(|value| !value.eq_ignore_ascii_case("moonsprite"))
-                .unwrap_or(true)
-        {
+        if !path.is_file() || !path_has_extension(&path, extensions) {
             continue;
         }
         let metadata = entry
@@ -86,11 +105,13 @@ pub(crate) fn list_gallery_projects() -> Result<GalleryListing, String> {
             .and_then(|value| value.duration_since(std::time::UNIX_EPOCH).ok())
             .map(|value| value.as_millis().min(u64::MAX as u128) as u64)
             .unwrap_or_default();
-        let file_name = path
-            .file_stem()
-            .and_then(|value| value.to_str())
-            .unwrap_or("未命名工程")
-            .to_string();
+        let file_name = if include_extension {
+            path.file_name().and_then(|value| value.to_str())
+        } else {
+            path.file_stem().and_then(|value| value.to_str())
+        }
+        .unwrap_or("未命名工程")
+        .to_string();
         projects.push(GalleryProject {
             file_path: path.to_string_lossy().to_string(),
             file_name,
@@ -103,6 +124,27 @@ pub(crate) fn list_gallery_projects() -> Result<GalleryListing, String> {
             .cmp(&left.modified_at)
             .then_with(|| left.file_name.cmp(&right.file_name))
     });
+    Ok(projects)
+}
+
+#[tauri::command]
+pub(crate) fn list_gallery_projects() -> Result<GalleryListing, String> {
+    let directory = gallery_dir()?;
+    let projects = list_projects_in_directory(&directory, &["moonsprite"], false, "图库")?;
+    Ok(GalleryListing {
+        directory_path: directory.to_string_lossy().to_string(),
+        projects,
+    })
+}
+
+#[tauri::command]
+pub(crate) fn list_folder_projects(directory_path: String) -> Result<GalleryListing, String> {
+    let directory = PathBuf::from(directory_path.trim());
+    if !directory.is_dir() {
+        return Err("所选文件夹不存在或无法访问。".to_string());
+    }
+    let projects =
+        list_projects_in_directory(&directory, HOME_FOLDER_FILE_EXTENSIONS, true, "文件夹")?;
     Ok(GalleryListing {
         directory_path: directory.to_string_lossy().to_string(),
         projects,
@@ -137,6 +179,10 @@ pub(crate) fn delete_gallery_project(app: AppHandle, file_name: String) -> Resul
 #[tauri::command]
 pub(crate) fn open_gallery_folder() -> Result<(), String> {
     let directory = gallery_dir()?;
+    launch_directory(&directory, "图库")
+}
+
+fn launch_directory(directory: &Path, label: &str) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     let mut command = std::process::Command::new("explorer.exe");
     #[cfg(target_os = "macos")]
@@ -144,10 +190,19 @@ pub(crate) fn open_gallery_folder() -> Result<(), String> {
     #[cfg(all(unix, not(target_os = "macos")))]
     let mut command = std::process::Command::new("xdg-open");
     command
-        .arg(&directory)
+        .arg(directory)
         .spawn()
-        .map_err(|error| format!("无法打开图库文件夹：{error}"))?;
+        .map_err(|error| format!("无法打开{label}文件夹：{error}"))?;
     Ok(())
+}
+
+#[tauri::command]
+pub(crate) fn open_directory(directory_path: String) -> Result<(), String> {
+    let directory = PathBuf::from(directory_path.trim());
+    if !directory.is_dir() {
+        return Err("所选文件夹不存在或无法访问。".to_string());
+    }
+    launch_directory(&directory, "所选")
 }
 
 #[tauri::command]
@@ -159,17 +214,7 @@ pub(crate) fn open_project_in_folder(file_path: String) -> Result<(), String> {
     let directory = path
         .parent()
         .ok_or_else(|| "无法确定工程文件所在文件夹。".to_string())?;
-    #[cfg(target_os = "windows")]
-    let mut command = std::process::Command::new("explorer.exe");
-    #[cfg(target_os = "macos")]
-    let mut command = std::process::Command::new("open");
-    #[cfg(all(unix, not(target_os = "macos")))]
-    let mut command = std::process::Command::new("xdg-open");
-    command
-        .arg(&directory)
-        .spawn()
-        .map_err(|error| format!("无法打开工程文件夹：{error}"))?;
-    Ok(())
+    launch_directory(directory, "工程")
 }
 
 #[tauri::command]
@@ -192,4 +237,42 @@ pub(crate) fn open_external_url(url: String) -> Result<(), String> {
         .spawn()
         .map_err(|error| format!("无法打开作者链接：{error}"))?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::list_folder_projects;
+    use std::{
+        fs,
+        time::{SystemTime, UNIX_EPOCH},
+    };
+
+    #[test]
+    fn lists_supported_home_folder_files_without_recursing() {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!("moonsprite-home-folder-{stamp}"));
+        fs::create_dir_all(directory.join("nested")).unwrap();
+        fs::write(directory.join("sprite.png"), [1]).unwrap();
+        fs::write(directory.join("project.moonsprite"), [2]).unwrap();
+        fs::write(directory.join("animation.ASEPRITE"), [3]).unwrap();
+        fs::write(directory.join("notes.txt"), [4]).unwrap();
+        fs::write(directory.join("nested").join("ignored.png"), [5]).unwrap();
+
+        let listing = list_folder_projects(directory.to_string_lossy().to_string()).unwrap();
+        let mut names = listing
+            .projects
+            .into_iter()
+            .map(|project| project.file_name)
+            .collect::<Vec<_>>();
+        names.sort();
+
+        assert_eq!(
+            names,
+            vec!["animation.ASEPRITE", "project.moonsprite", "sprite.png"]
+        );
+        fs::remove_dir_all(directory).unwrap();
+    }
 }

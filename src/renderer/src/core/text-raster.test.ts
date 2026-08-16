@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { applyTextStyleRun, cloneTextCelData, normalizeTextCelData, rasterizeText, reconcileTextStyleRuns, textActualLineBaselines, textGlyphPositions, textLineAdvance, textLineWidth, textPixelAdvance, textPixelCoverage, textVisibleGlyphPositions, translateTextCelData } from './text-raster'
+import { applyTextStyleRun, cloneTextCelData, DEFAULT_TEXT_FONT_FAMILY, DEFAULT_TEXT_FONT_SIZE, normalizeTextCelData, rasterizeText, reconcileTextStyleRuns, TEXT_FONT_FAMILIES, textActualLineBaselines, textFontDefaultSize, textGlyphPositions, textLineAdvance, textLineWidth, textPixelAdvance, textPixelCoverage, textVisibleGlyphPositions, translateTextCelData } from './text-raster'
 
 class MockTextCanvasContext {
   font = ''
@@ -32,8 +32,23 @@ describe('text raster helpers', () => {
 
   it('normalizes persisted text settings to bounded values', () => {
     expect(normalizeTextCelData({ text: 'Moon', fontFamily: '', fontSize: 0, lineSpacing: -999, letterSpacing: 999, antialias: 'smooth', color: { r: 300, g: -2, b: 80, a: 128 } })).toMatchObject({
-      text: 'Moon', fontFamily: 'Noto Sans SC', fontSize: 1, lineSpacing: -256, letterSpacing: 256, spacingMode: 'font', antialias: 'smooth', color: { r: 255, g: 0, b: 80, a: 128 }
+      text: 'Moon', fontFamily: DEFAULT_TEXT_FONT_FAMILY, fontSize: 1, lineSpacing: -256, letterSpacing: 256, spacingMode: 'font', antialias: 'smooth', color: { r: 255, g: 0, b: 80, a: 128 }
     })
+  })
+
+  it('uses the bundled native pixel font defaults for new text', () => {
+    expect(normalizeTextCelData({ text: 'Moon' })).toMatchObject({
+      fontFamily: DEFAULT_TEXT_FONT_FAMILY,
+      fontSize: DEFAULT_TEXT_FONT_SIZE,
+      antialias: 'pixel'
+    })
+  })
+
+  it('keeps only the supported bundled pixel fonts and their native defaults', () => {
+    expect(TEXT_FONT_FAMILIES).toEqual(['Fusion Pixel 10px Prop Zh_hans', 'Silkscreen', 'Tiny5', 'Noto Sans SC'])
+    expect(textFontDefaultSize('Fusion Pixel 10px Prop Zh_hans')).toBe(10)
+    expect(textFontDefaultSize('Silkscreen')).toBe(8)
+    expect(textFontDefaultSize('Tiny5')).toBe(8)
   })
 
   it('keeps line layout deterministic', () => {

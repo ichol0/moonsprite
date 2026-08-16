@@ -1,17 +1,25 @@
 import type { AnimationCelSurface, ColorMode, PaletteEntry, RgbaColor, TextCelData, TextCelTransform, TextSpacingMode, TextStyleRun } from '@shared/types'
-import { packColor } from './raster'
+import { applyRelativeLuminance, packColor } from './raster'
 import { transformRgbaSelectionSurface } from './tools'
 
-export const DEFAULT_TEXT_FONT_FAMILY = 'Noto Sans SC'
-export const DEFAULT_TEXT_FONT_SIZE = 16
+export const DEFAULT_TEXT_FONT_FAMILY = 'Fusion Pixel 10px Prop Zh_hans'
+export const DEFAULT_TEXT_FONT_SIZE = 10
+export const DEFAULT_TEXT_CONTENT = 'TEXT'
 
 export const TEXT_FONT_FAMILIES = [
-  'Noto Sans SC',
-  'Microsoft YaHei UI',
-  'Arial',
-  'Georgia',
-  'Consolas'
+  DEFAULT_TEXT_FONT_FAMILY,
+  'Silkscreen',
+  'Tiny5',
+  'Noto Sans SC'
 ] as const
+
+const TEXT_FONT_DEFAULT_SIZE_BY_FAMILY: Readonly<Record<string, number>> = {
+  [DEFAULT_TEXT_FONT_FAMILY]: 10,
+  Silkscreen: 8,
+  Tiny5: 8
+}
+
+export const textFontDefaultSize = (family: string): number | undefined => TEXT_FONT_DEFAULT_SIZE_BY_FAMILY[family]
 
 const finiteOr = (value: unknown, fallback: number): number => {
   const number = Number(value)
@@ -475,6 +483,10 @@ export const convertTextSurface = (
   findOrAdd: (color: RgbaColor) => number
 ): AnimationCelSurface => {
   if (mode === 'rgba') return surface
+  if (mode === 'grayscale') {
+    if (surface.format !== 'rgba') return surface
+    return { ...surface, pixels: applyRelativeLuminance(surface.pixels.slice()) }
+  }
   if (surface.format !== 'rgba') return surface
   const pixels = new Uint32Array(surface.width * surface.height)
   const ids = new Map<number, number>()

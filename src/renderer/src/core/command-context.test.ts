@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { resolveCopyCommand, resolveDeleteCommand, shouldHandleGlobalSelectionEnter, shouldTriggerDeleteCommand } from './command-context'
+import { resolveCopyCommand, resolveDeleteCommand, shouldHandleAnimationPlaybackShortcut, shouldHandleGlobalSelectionEnter, shouldTriggerDeleteCommand } from './command-context'
 
 describe('command context', () => {
   it('routes Delete to the last active editor surface', () => {
@@ -25,5 +25,26 @@ describe('command context', () => {
     expect(shouldHandleGlobalSelectionEnter(true, true)).toBe(false)
     expect(shouldHandleGlobalSelectionEnter(false, true)).toBe(true)
     expect(shouldHandleGlobalSelectionEnter(false, false)).toBe(false)
+  })
+
+  it('uses animation playback as an Enter fallback only when no editor surface owns the key', () => {
+    const available = {
+      defaultPrevented: false,
+      repeat: false,
+      hasSession: true,
+      frameCount: 2,
+      homeOpen: false,
+      timelineHidden: false,
+      hasSelection: false,
+      hasTextBoxTransform: false,
+      isInteractiveTarget: false,
+      hasBlockingSurface: false
+    }
+    expect(shouldHandleAnimationPlaybackShortcut(available)).toBe(true)
+    expect(shouldHandleAnimationPlaybackShortcut({ ...available, hasSelection: true })).toBe(false)
+    expect(shouldHandleAnimationPlaybackShortcut({ ...available, hasTextBoxTransform: true })).toBe(false)
+    expect(shouldHandleAnimationPlaybackShortcut({ ...available, isInteractiveTarget: true })).toBe(false)
+    expect(shouldHandleAnimationPlaybackShortcut({ ...available, hasBlockingSurface: true })).toBe(false)
+    expect(shouldHandleAnimationPlaybackShortcut({ ...available, defaultPrevented: true })).toBe(false)
   })
 })

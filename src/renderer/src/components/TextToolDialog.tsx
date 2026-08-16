@@ -10,9 +10,10 @@ import { NumberInput } from './NumberInput'
 import { PixelUtilityIcon } from './PixelUtilityIcon'
 import { TextAreaInput } from './TextAreaInput'
 import { ThemedSelect } from './ThemedSelect'
+import { Tooltip } from './Tooltip'
 import { useI18n } from './I18nProvider'
-import { DEFAULT_TEXT_FONT_FAMILY, DEFAULT_TEXT_FONT_SIZE, TEXT_FONT_FAMILIES, applyTextStyleRun, normalizeTextCelData, reconcileTextStyleRuns } from '@/core/text-raster'
-import { deleteTextFont, importSystemTextFont, importTextFont, loadSystemFontCatalog, loadTextFontCatalog, type TextFontOption } from '@/platform/font-service'
+import { DEFAULT_TEXT_CONTENT, DEFAULT_TEXT_FONT_FAMILY, DEFAULT_TEXT_FONT_SIZE, TEXT_FONT_FAMILIES, applyTextStyleRun, normalizeTextCelData, reconcileTextStyleRuns, textFontDefaultSize } from '@/core/text-raster'
+import { deleteTextFont, importSystemTextFont, importTextFont, loadLastTextFontSize, loadSystemFontCatalog, loadTextFontCatalog, recordLastTextFontSize, recordTextFontUsage, type TextFontOption } from '@/platform/font-service'
 
 export function TextToolDialog({ initial, editing, box, onClose, onChange, onPreview, onSubmit }: {
   initial?: Partial<TextCelData>
@@ -24,8 +25,15 @@ export function TextToolDialog({ initial, editing, box, onClose, onChange, onPre
   onSubmit: (value: TextCelData) => void
 }) {
   const { t } = useI18n()
-  const [value, setValue] = useState<TextCelData>(() => normalizeTextCelData(initial ?? {
-    text: '', fontFamily: DEFAULT_TEXT_FONT_FAMILY, fontSize: DEFAULT_TEXT_FONT_SIZE, lineSpacing: 0, letterSpacing: 0, antialias: 'pixel'
+  const [value, setValue] = useState<TextCelData>(() => normalizeTextCelData(editing ? initial : {
+    fontFamily: DEFAULT_TEXT_FONT_FAMILY,
+    fontSize: loadLastTextFontSize() ?? DEFAULT_TEXT_FONT_SIZE,
+    lineSpacing: 1,
+    letterSpacing: 1,
+    spacingMode: 'actual',
+    antialias: 'pixel',
+    ...initial,
+    text: initial?.text || DEFAULT_TEXT_CONTENT
   }))
   const [previewEnabled, setPreviewEnabled] = useState(true)
   const [fonts, setFonts] = useState<TextFontOption[]>(() => TEXT_FONT_FAMILIES.map((family) => ({ family, source: 'built-in' })))
@@ -48,10 +56,17 @@ export function TextToolDialog({ initial, editing, box, onClose, onChange, onPre
     { value: 'smooth' as const, label: t('textTool.smooth') }
   ] }], [t])
   const spacingModeGroups = useMemo(() => [{ label: t('textTool.spacingMode'), options: [
-    { value: 'font' as const, label: t('textTool.fontSpacing'), description: t('textTool.fontSpacingDescription') },
-    { value: 'actual' as const, label: t('textTool.actualSpacing'), description: t('textTool.actualSpacingDescription') }
+    { value: 'actual' as const, label: t('textTool.actualSpacing'), description: t('textTool.actualSpacingDescription') },
+    { value: 'font' as const, label: t('textTool.fontSpacing'), description: t('textTool.fontSpacingDescription') }
   ] }], [t])
   const systemFontGroups = useMemo(() => [{ label: t('textTool.systemFonts'), options: systemFonts.map((font) => ({ value: font.family, label: font.family })) }], [systemFonts, t])
+  const builtInFontDescription = (family: string): string | undefined => {
+    if (family === 'Fusion Pixel 10px Prop Zh_hans') return t('textTool.fontDescription.fusionPixel')
+    if (family === 'Silkscreen') return t('textTool.fontDescription.silkscreen')
+    if (family === 'Tiny5') return t('textTool.fontDescription.tiny5')
+    if (family === 'Noto Sans SC') return t('textTool.fontDescription.notoSansSc')
+    return undefined
+  }
   useEffect(() => {
     onChange?.(normalizeTextCelData(value))
   }, [onChange, value])
@@ -84,7 +99,11 @@ export function TextToolDialog({ initial, editing, box, onClose, onChange, onPre
       const font = await action()
       if (!font) return
       setFonts((current) => [font, ...current.filter((item) => item.family.toLocaleLowerCase() !== font.family.toLocaleLowerCase())])
-      setValue((current) => ({ ...current, fontFamily: font.family }))
+      setValue((current) => {
+        const fontSize = textFontDefaultSize(font.family) ?? current.fontSize
+        recordLastTextFontSize(fontSize)
+        return { ...current, fontFamily: font.family, fontSize }
+      })
       setFontMessage(t(font.source === 'imported' ? 'textTool.fontImported' : 'textTool.fontSelected', { name: font.family }))
     } catch {
       setFontMessage(t('textTool.fontLoadFailed'))
@@ -98,6 +117,13 @@ export function TextToolDialog({ initial, editing, box, onClose, onChange, onPre
     void addFont(() => importSystemTextFont(font))
   }
   const selectedFont = fonts.find((font) => font.family === value.fontFamily)
+  const selectFont = (font: TextFontOption): void => {
+    setValue((current) => {
+      const fontSize = textFontDefaultSize(font.family) ?? current.fontSize
+      recordLastTextFontSize(fontSize)
+      return { ...current, fontFamily: font.family, fontSize }
+    })
+  }
   const hasTextSelection = selection.end > selection.start
   const styleAt = (index: number): Required<Pick<TextStyleRun, 'fontSize' | 'lineSpacing' | 'letterSpacing' | 'color'>> => {
     const resolvedIndex = index >= value.text.length && value.text.length > 0 ? value.text.length - 1 : index
@@ -189,13 +215,26 @@ export function TextToolDialog({ initial, editing, box, onClose, onChange, onPre
     }
   }
   return <div className="modal-backdrop" role="presentation" onPointerDown={(event) => { if (event.target === event.currentTarget) onClose() }}>
-    <ModalShell as="form" storageKey="text-tool" defaultWidth={780} defaultHeight={520} minWidth={680} minHeight={450} maxWidth={980} maxHeight={760} className="text-tool-modal" onSubmit={(event) => { event.preventDefault(); if (value.text.length > 0) onSubmit(normalizeTextCelData(value)) }}>
+    <ModalShell as="form" storageKey="text-tool" defaultWidth={780} defaultHeight={520} minWidth={680} minHeight={450} maxWidth={980} maxHeight={760} className="text-tool-modal" onSubmit={(event) => {
+      event.preventDefault()
+      if (value.text.length === 0) return
+      onSubmit(normalizeTextCelData(value))
+      recordTextFontUsage(value.fontFamily)
+    }}>
       <DialogHeader eyebrow="TEXT" title={t(editing ? 'textTool.editTitle' : 'textTool.createTitle')} closeLabel={t('common.close')} onClose={onClose} />
       <div className="text-tool-body">
         <aside className="text-tool-font-panel" aria-label={t('textTool.font')}>
           <div className="text-tool-font-heading">{t('textTool.font')}</div>
           <div className="text-tool-font-list component-scrollbar" role="listbox" aria-label={t('textTool.font')}>
-            {fonts.map((font) => <button type="button" role="option" aria-selected={font.family === value.fontFamily} className={font.family === value.fontFamily ? 'selected' : ''} key={`${font.source}:${font.family}`} style={{ fontFamily: `"${font.family.replaceAll('"', '')}"` }} onClick={() => setValue({ ...value, fontFamily: font.family })}><span>{font.family}</span>{font.source !== 'built-in' && <small>{t(font.source === 'imported' ? 'textTool.importedFont' : 'textTool.localFont')}</small>}</button>)}
+            {fonts.map((font) => {
+              const description = font.source === 'built-in' ? builtInFontDescription(font.family) : undefined
+              return <button type="button" role="option" aria-selected={font.family === value.fontFamily} className={font.family === value.fontFamily ? 'selected' : ''} key={`${font.source}:${font.family}`} style={{ fontFamily: `"${font.family.replaceAll('"', '')}"` }} onClick={() => selectFont(font)}>
+                {description
+                  ? <Tooltip className="text-tool-font-title-tooltip" content={<><strong>{font.family}</strong><span>{description}</span></>}><span>{font.family}</span></Tooltip>
+                  : <span>{font.family}</span>}
+                {font.source !== 'built-in' && <small>{t(font.source === 'imported' ? 'textTool.importedFont' : 'textTool.localFont')}</small>}
+              </button>
+            })}
           </div>
           <div className="text-tool-font-actions">
             {systemFonts.length > 0 ? <ThemedSelect value={systemFonts[0].family} groups={systemFontGroups} label={t('textTool.importFont')} onChange={useSystemFont} popoverWidth={420} popoverClassName="text-tool-system-font-popover" showCheck={false} showOptionTooltips={false} searchable searchPlaceholder={t('textTool.searchFonts')} renderSelected={() => <span className="text-tool-font-action-copy"><PixelUtilityIcon kind="import" />{t('textTool.importFont')}</span>} renderOption={(option) => <strong style={{ fontFamily: `"${option.value.replaceAll('"', '')}"` }}>{option.label}</strong>} /> : <button type="button" className="quiet-button" disabled><PixelUtilityIcon kind="import" />{t('textTool.importFont')}</button>}
@@ -213,7 +252,7 @@ export function TextToolDialog({ initial, editing, box, onClose, onChange, onPre
             window.queueMicrotask(syncSelectionMirror)
           }} />{!textAreaFocused && hasTextSelection && <div className="text-tool-selection-mirror" aria-hidden="true" style={{ width: selectionMirror.width, height: selectionMirror.height, '--text-selection-scroll-x': `${selectionMirror.scrollLeft}px`, '--text-selection-scroll-y': `${selectionMirror.scrollTop}px` } as CSSProperties}><div><span>{value.text.slice(0, selection.start)}</span><mark>{value.text.slice(selection.start, selection.end)}</mark><span>{value.text.slice(selection.end)}</span></div></div>}</div></FormField>
           <div className="text-tool-number-grid">
-            <FormField label={t('textTool.fontSize')}><NumberInput min={1} max={512} suffix="px" value={selectionValues('fontSize')} onValueChange={(fontSize) => updateRangeStyle({ fontSize })} /></FormField>
+            <FormField label={t('textTool.fontSize')}><NumberInput min={1} max={512} suffix="px" value={selectionValues('fontSize')} onValueChange={(fontSize) => { recordLastTextFontSize(fontSize); updateRangeStyle({ fontSize }) }} /></FormField>
             <FormField label={t('textTool.lineSpacing')}><NumberInput min={-256} max={512} suffix="px" value={selectionValues('lineSpacing')} onValueChange={(lineSpacing) => updateRangeStyle({ lineSpacing })} /></FormField>
             <FormField label={t('textTool.letterSpacing')}><NumberInput min={-64} max={256} suffix="px" value={selectionValues('letterSpacing')} onValueChange={(letterSpacing) => updateRangeStyle({ letterSpacing })} /></FormField>
             <FormField label={t('textTool.spacingMode')}><ThemedSelect<TextSpacingMode> value={value.spacingMode} groups={spacingModeGroups} label={t('textTool.spacingMode')} onChange={updateSpacingMode} /></FormField>

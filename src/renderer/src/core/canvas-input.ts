@@ -1,17 +1,45 @@
-import type { RasterLayer, RgbaColor, SelectionMask, SelectionMode, SelectionRect, ShapeRatio, SpriteDocument, ToolId } from '@shared/types'
+import type { MoveKind, RasterLayer, RgbaColor, SelectionMask, SelectionMode, SelectionRect, ShapeRatio, SpriteDocument, ToolId } from '@shared/types'
 import { revertPixelEdit, type PixelEdit } from './history'
 import { restoreSelectionTranslationPreview, type BrushGradientSample, type SelectionTransformSource, type SelectionTranslationPreview } from './tools'
-import { inverseTransformedSelectionPoint, rasterLinePoints, selectionBoundarySegments, selectionContains, type SelectionShearTransform } from './selection'
+import { combineSelection, inverseTransformedSelectionPoint, rasterLinePoints, rectSelection, remapTransformedSelectionPoint, selectionBoundarySegments, selectionContains, transformedSelectionPivotPreset, type SelectionShearTransform } from './selection'
 import { balancedStairLinePoints } from './pixel-line'
-import { modifierShortcutMatches } from './shortcuts'
+import { modifierShortcutHeld } from './shortcuts'
 
 const selectionHitBoundaryCache = new WeakMap<SelectionMask, Int32Array>()
 
 export const shouldUseTemporaryMoveTool = (
   tool: ToolId,
   event: Pick<KeyboardEvent, 'ctrlKey' | 'metaKey' | 'altKey' | 'shiftKey'>,
-  shortcut: string
-): boolean => !['move', 'selection', 'shape', 'rotate'].includes(tool) && modifierShortcutMatches(event, shortcut)
+  shortcut: string,
+  moveKind: MoveKind = 'move'
+): boolean => (tool !== 'move' || moveKind !== 'move') && modifierShortcutHeld(event, shortcut)
+
+export const brushLineConnectionOverridesTemporaryMove = (
+  tool: ToolId,
+  event: Pick<KeyboardEvent, 'ctrlKey' | 'metaKey' | 'altKey' | 'shiftKey'>,
+  shortcut: string,
+  hasAnchor: boolean
+): boolean => hasAnchor
+  && (tool === 'pencil' || tool === 'eraser')
+  && modifierShortcutHeld(event, shortcut)
+
+export const selectionInteractionOverridesTemporaryMove = (tool: ToolId, hit: SelectionHit, addingToSelection = false): boolean =>
+  tool === 'selection' && (hit !== 'outside' || addingToSelection)
+
+export const shouldUseTemporaryMoveForCanvasInteraction = (
+  tool: ToolId,
+  event: Pick<KeyboardEvent, 'ctrlKey' | 'metaKey' | 'altKey' | 'shiftKey'>,
+  shortcut: string,
+  moveKind: MoveKind,
+  hit: SelectionHit,
+  addingToSelection = false
+): boolean => shouldUseTemporaryMoveTool(tool, event, shortcut, moveKind)
+  && !selectionInteractionOverridesTemporaryMove(tool, hit, addingToSelection)
+
+export const temporaryMoveSuppressesToolPreview = (
+  temporaryMoveActive: boolean,
+  brushSizeAdjustmentPreviewActive = false
+): boolean => temporaryMoveActive && !brushSizeAdjustmentPreviewActive
 
 const cachedSelectionBoundarySegments = (selection: SelectionMask): Int32Array => {
   const cached = selectionHitBoundaryCache.get(selection)
@@ -119,6 +147,37 @@ export type SelectionHit = 'inside' | 'edge' | 'outside' | SelectionRotationHand
 export const SELECTION_RESIZE_HIT_RADIUS = 12
 export const SELECTION_CORNER_RESIZE_HIT_RADIUS = 18
 export const SELECTION_CORNER_OUTWARD_RESIZE_HIT_RADIUS = 5
+export const SELECTION_PIVOT_HIT_RADIUS = 10
+
+export const selectionPivotHit = (
+  pivot: CanvasPoint,
+  point: CanvasPoint,
+  radius = SELECTION_PIVOT_HIT_RADIUS
+): boolean => Math.abs(point.x - pivot.x) <= radius && Math.abs(point.y - pivot.y) <= radius
+
+const roundedDocumentPixelDelta = (value: number): number => Math.sign(value) * Math.round(Math.abs(value))
+
+export const selectionPivotAtDragPoint = (
+  pivotStart: CanvasPoint,
+  pointerStart: CanvasPoint,
+  pointer: CanvasPoint
+): CanvasPoint => ({
+  x: pivotStart.x + roundedDocumentPixelDelta(pointer.x - pointerStart.x),
+  y: pivotStart.y + roundedDocumentPixelDelta(pointer.y - pointerStart.y)
+})
+
+export const selectionPivotAfterResize = (
+  sourceTarget: SelectionRect,
+  destinationTarget: SelectionRect,
+  pivot: CanvasPoint,
+  options: { angle?: number; shear?: SelectionShearTransform; fromCenter?: boolean; custom?: boolean } = {}
+): CanvasPoint => {
+  const angle = options.angle ?? 0
+  if (options.fromCenter) return { ...pivot }
+  return options.custom
+    ? remapTransformedSelectionPoint(sourceTarget, destinationTarget, pivot, angle, options.shear)
+    : transformedSelectionPivotPreset(destinationTarget, 'center', angle, options.shear)
+}
 
 export const selectionResizeHit = (
   box: { x: number; y: number; width: number; height: number },
@@ -169,7 +228,7 @@ export const selectionResizeHit = (
 }
 
 export interface CanvasDragState {
-  kind: 'draw' | 'airbrush' | 'shape' | 'freeform-shape' | 'polygon-shape' | 'line-shape' | 'curve-shape' | 'gradient' | 'marquee' | 'lasso' | 'polygon-lasso' | 'magic-preview' | 'sample-color' | 'move-content' | 'move-selection' | 'transform-content' | 'rotate-content' | 'shear-content' | 'move-layer' | 'create-text-box' | 'transform-text-box' | 'create-slice' | 'move-slice' | 'resize-slice' | 'brush-size' | 'canvas-resize' | 'canvas-move' | 'zoom-drag' | 'rotate-view' | 'pan'
+  kind: 'draw' | 'airbrush' | 'shape' | 'freeform-shape' | 'polygon-shape' | 'line-shape' | 'curve-shape' | 'gradient' | 'marquee' | 'lasso' | 'polygon-lasso' | 'magic-preview' | 'sample-color' | 'move-content' | 'move-selection' | 'move-selection-pivot' | 'transform-content' | 'rotate-content' | 'shear-content' | 'move-layer' | 'create-text-box' | 'transform-text-box' | 'create-slice' | 'move-slice' | 'resize-slice' | 'brush-size' | 'canvas-resize' | 'canvas-move' | 'zoom-drag' | 'rotate-view' | 'pan'
   start: CanvasPoint
   last: CanvasPoint
   edit?: PixelEdit
@@ -178,8 +237,10 @@ export interface CanvasDragState {
   startPan?: CanvasPoint
   handle?: SelectionHandle
   shearHandle?: SelectionShearHandle
+  shearAmount?: number
   angle?: number
   selectionSource?: SelectionTransformSource
+  selectionSourceCacheKey?: SelectionMask
   previewEdit?: PixelEdit | null
   copy?: boolean
   startClient?: CanvasPoint
@@ -204,17 +265,30 @@ export interface CanvasDragState {
   previewTarget?: SelectionRect
   previewAngle?: number
   previewShear?: SelectionShearTransform
+  selectionPivotStart?: CanvasPoint
+  previewPivot?: CanvasPoint
+  selectionPivotCustom?: boolean
   transformStartTarget?: SelectionRect
   transformStartShear?: SelectionShearTransform
   transformOffset?: CanvasPoint
   transformMoveStart?: { pointer: CanvasPoint; offset: CanvasPoint }
   marqueeBounds?: SelectionRect
   marqueeAngle?: number
+  marqueeModifierMode?: MarqueeModifierMode
   marqueeRotationStart?: { pointer: CanvasPoint; lastPointer: CanvasPoint; angle: number; bounds: SelectionRect }
   marqueeResizeStart?: { pointer: CanvasPoint; bounds: SelectionRect; fromCenter: boolean }
+  marqueeTemporaryCenterRestore?: MarqueeTemporaryCenterRestore
   marqueeDirection?: { x: -1 | 1; y: -1 | 1 }
   marqueePreviewSelection?: SelectionMask | null
+  quickSelectCell?: SelectionRect
+  selectionCommitStart?: SelectionMask | null
   previewPending?: boolean
+  selectionPreparationPending?: boolean
+  deferredSelectionPreview?: boolean
+  deferredSelectionRestoreTarget?: SelectionRect
+  deferredSelectionRestoreAngle?: number
+  deferredSelectionRestoreShear?: SelectionShearTransform
+  deferredSelectionWasMaterialized?: boolean
   translationPreview?: SelectionTranslationPreview | null
   layerId?: string
   layerOffset?: CanvasPoint
@@ -250,12 +324,68 @@ export interface CanvasDragState {
   axisLock?: 'x' | 'y'
   sampleSecondary?: boolean
   temporarySampling?: boolean
+  sampledColor?: RgbaColor
   moved?: boolean
   startedAt?: number
   nextAirbrushAt?: number
   resumeDrag?: CanvasDragState
   /** Raw pointer endpoint retained while a gradient is direction-constrained. */
   rawLast?: CanvasPoint
+}
+
+export const sampledForegroundColorToAdd = (drag: Pick<CanvasDragState, 'kind' | 'sampleSecondary' | 'sampledColor'>, shortcutHeld: boolean): RgbaColor | null =>
+  shortcutHeld && drag.kind === 'sample-color' && !drag.sampleSecondary && drag.sampledColor ? { ...drag.sampledColor } : null
+
+export const paletteSamplingShortcutStartsPrimarySample = (shortcutHeld: boolean, button: number): boolean =>
+  shortcutHeld && button === 0
+
+export interface CachedSelectionTransformSource {
+  document: SpriteDocument
+  contentRevision: number
+  layerId: string
+  selection: SelectionMask
+  source: SelectionTransformSource
+}
+
+export const cachedSelectionTransformSource = (
+  cached: CachedSelectionTransformSource | null | undefined,
+  document: SpriteDocument,
+  contentRevision: number,
+  layerId: string,
+  selection: SelectionMask | null | undefined
+): SelectionTransformSource | null => cached
+  && cached.document === document
+  && cached.contentRevision === contentRevision
+  && cached.layerId === layerId
+  && cached.selection === selection
+  ? cached.source
+  : null
+
+export const deferredSelectionCommitInvalidationRects = (
+  drag: Pick<CanvasDragState, 'selectionSource' | 'selectionStart' | 'previewSelection'>
+): SelectionRect[] => [
+  drag.selectionSource?.selection,
+  drag.selectionStart,
+  drag.previewSelection
+].filter((selection): selection is SelectionRect => Boolean(selection))
+
+export type MarqueeModifierMode = 'rotate' | 'resize'
+
+export interface MarqueeTemporaryCenterRestore {
+  bounds: SelectionRect
+  direction?: { x: -1 | 1; y: -1 | 1 }
+  fromCenter: boolean
+}
+
+export const resolveMarqueeModifierMode = (
+  modifiers: { fromCenter: boolean; rotate: boolean },
+  preferredMode?: MarqueeModifierMode
+): MarqueeModifierMode | null => {
+  if (preferredMode === 'rotate' && modifiers.rotate) return 'rotate'
+  if (preferredMode === 'resize' && modifiers.fromCenter) return 'resize'
+  if (modifiers.rotate) return 'rotate'
+  if (modifiers.fromCenter) return 'resize'
+  return null
 }
 
 export const revertCancelledCanvasDragPixelChanges = (document: SpriteDocument, drag: CanvasDragState): boolean => {
@@ -277,6 +407,24 @@ export const selectionGestureMoved = (start: CanvasPoint | undefined, end: Canva
 
 const selectionCreationKinds = new Set<CanvasDragState['kind']>(['marquee', 'lasso', 'polygon-lasso'])
 const selectionPreviewKinds = new Set<CanvasDragState['kind']>(['magic-preview', 'move-selection', 'move-content', 'transform-content', 'rotate-content', 'shear-content'])
+const selectionContentTransformKinds = new Set<CanvasDragState['kind']>(['move-content', 'transform-content', 'rotate-content', 'shear-content'])
+
+export type SelectionContentTransformKind = 'move-content' | 'transform-content' | 'rotate-content' | 'shear-content'
+
+export const selectionTransformDeferredPreviewEnabled = (
+  kind: SelectionContentTransformKind,
+  supported: boolean,
+  angle = 0,
+  shear?: SelectionShearTransform
+): boolean => supported && (kind !== 'transform-content' || (angle % 360 === 0 && !shear))
+
+export const deferredSelectionPreviewOwner = (
+  drag: Pick<CanvasDragState, 'kind' | 'selectionPreparationPending' | 'deferredSelectionPreview' | 'selectionSource' | 'previewTarget'> | null | undefined,
+  pendingDeferred: boolean
+): 'active' | 'pending' | null => {
+  if (!drag || !selectionContentTransformKinds.has(drag.kind) || drag.selectionPreparationPending) return pendingDeferred ? 'pending' : null
+  return drag.deferredSelectionPreview && drag.selectionSource && drag.previewTarget ? 'active' : null
+}
 
 export const canvasGestureForPreview = (drag: CanvasDragState | null | undefined): CanvasDragState | null =>
   drag?.kind === 'pan' && drag.resumeDrag?.kind === 'polygon-lasso' ? drag.resumeDrag : drag ?? null
@@ -287,6 +435,7 @@ export const selectionOverlayMaskForDrag = (
 ): SelectionMask | null => {
   const previewDrag = canvasGestureForPreview(drag)
   if (!previewDrag) return currentSelection
+  if (previewDrag.kind === 'marquee' && previewDrag.quickSelectCell) return null
   if (selectionCreationKinds.has(previewDrag.kind)) return previewDrag.selectionStart ?? null
   if (selectionPreviewKinds.has(previewDrag.kind)) return previewDrag.previewSelection ?? currentSelection
   return currentSelection
@@ -356,6 +505,63 @@ export const finalizeMarqueeSelection = (
   moved: boolean,
   mode: SelectionMode
 ): SelectionMask | null => moved ? preview : mode === 'replace' ? null : before
+
+export const quickSelectCellSelection = (
+  before: SelectionMask | null,
+  cell: SelectionRect,
+  mode: SelectionMode
+): SelectionMask | null => combineSelection(before, rectSelection(cell.x, cell.y, cell.width, cell.height), mode)
+
+export const quickSelectCellDragBounds = (
+  startCell: SelectionRect,
+  currentCell: SelectionRect
+): SelectionRect => {
+  const x = Math.min(startCell.x, currentCell.x)
+  const y = Math.min(startCell.y, currentCell.y)
+  const right = Math.max(startCell.x + startCell.width, currentCell.x + currentCell.width)
+  const bottom = Math.max(startCell.y + startCell.height, currentCell.y + currentCell.height)
+  return { x, y, width: right - x, height: bottom - y }
+}
+
+export interface QuickSelectionPress {
+  clientX: number
+  clientY: number
+  pointerId: number
+  timeStamp: number
+}
+
+export const isQuickSelectionSecondPress = (
+  previous: QuickSelectionPress | null | undefined,
+  current: QuickSelectionPress,
+  eventDetail: number
+): boolean => {
+  if (eventDetail >= 2) return true
+  if (!previous || previous.pointerId !== current.pointerId) return false
+  const elapsed = current.timeStamp - previous.timeStamp
+  if (elapsed < 0 || elapsed > 500) return false
+  const distanceX = current.clientX - previous.clientX
+  const distanceY = current.clientY - previous.clientY
+  return distanceX * distanceX + distanceY * distanceY <= 36
+}
+
+export const marqueeSelectionCommit = (
+  drag: Pick<CanvasDragState, 'selectionStart' | 'selectionMode' | 'previewSelection' | 'quickSelectCell' | 'selectionCommitStart'>,
+  currentSelection: SelectionMask | null,
+  moved: boolean,
+  fallbackMode: SelectionMode
+): { before: SelectionMask | null; after: SelectionMask | null } => {
+  if (drag.quickSelectCell) {
+    return {
+      before: drag.selectionCommitStart ?? null,
+      after: drag.previewSelection ?? drag.selectionStart ?? null
+    }
+  }
+  const before = drag.selectionStart ?? null
+  return {
+    before,
+    after: finalizeMarqueeSelection(before, drag.previewSelection ?? currentSelection, moved, drag.selectionMode ?? fallbackMode)
+  }
+}
 
 export interface CanvasPointerState {
   point: CanvasPoint
@@ -446,6 +652,21 @@ export const steppedCanvasZoom = (zoom: number, zoomIn: boolean): number => {
   if (zoomIn) return CANVAS_ZOOM_LEVELS.find((level) => level > zoom + epsilon) ?? 64
   for (let index = CANVAS_ZOOM_LEVELS.length - 1; index >= 0; index -= 1) if (CANVAS_ZOOM_LEVELS[index] < zoom - epsilon) return CANVAS_ZOOM_LEVELS[index]
   return 0.0625
+}
+
+export const normalizeCanvasWheelDelta = (event: {
+  deltaX?: number
+  deltaY?: number
+  deltaMode?: number
+  wheelDelta?: number
+}): number => {
+  const deltaY = Number.isFinite(event.deltaY) ? event.deltaY! : 0
+  const deltaX = Number.isFinite(event.deltaX) ? event.deltaX! : 0
+  const legacyDelta = Number.isFinite(event.wheelDelta) ? -event.wheelDelta! : 0
+  const rawDelta = deltaY !== 0 ? deltaY : deltaX !== 0 ? deltaX : legacyDelta
+  if (rawDelta === 0) return 0
+  const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? 800 : 1
+  return rawDelta * unit
 }
 
 export const wheelCanvasZoom = (zoom: number, deltaY: number, mode: 'smooth' | 'stepped'): number =>
@@ -667,6 +888,53 @@ export const createMarqueeResizeStart = (
   fromCenter
 })
 
+export const centerMarqueeBoundsAtCreationPoint = (
+  bounds: SelectionRect,
+  creationPoint: CanvasPoint
+): SelectionRect => {
+  return {
+    ...bounds,
+    x: creationPoint.x - Math.floor(bounds.width / 2),
+    y: creationPoint.y - Math.floor(bounds.height / 2)
+  }
+}
+
+export const beginTemporaryCenteredMarqueeResize = (
+  bounds: SelectionRect,
+  creationPoint: CanvasPoint,
+  pointer: CanvasPoint,
+  direction?: { x: -1 | 1; y: -1 | 1 },
+  restoreFromCenter = true
+): {
+  bounds: SelectionRect
+  resizeStart: { pointer: CanvasPoint; bounds: SelectionRect; fromCenter: boolean }
+  restore: MarqueeTemporaryCenterRestore
+} => {
+  const centeredBounds = centerMarqueeBoundsAtCreationPoint(bounds, creationPoint)
+  return {
+    bounds: centeredBounds,
+    resizeStart: createMarqueeResizeStart(centeredBounds, pointer),
+    restore: {
+      bounds: { ...bounds },
+      direction: direction ? { ...direction } : undefined,
+      fromCenter: restoreFromCenter
+    }
+  }
+}
+
+export const restoreTemporaryCenteredMarqueeResize = (
+  restore: MarqueeTemporaryCenterRestore,
+  pointer: CanvasPoint
+): {
+  bounds: SelectionRect
+  resizeStart: { pointer: CanvasPoint; bounds: SelectionRect; fromCenter: boolean }
+  direction?: { x: -1 | 1; y: -1 | 1 }
+} => ({
+  bounds: { ...restore.bounds },
+  resizeStart: createMarqueeResizeStart(restore.bounds, pointer, restore.fromCenter),
+  direction: restore.direction ? { ...restore.direction } : undefined
+})
+
 export const resizeRotatedMarqueeBounds = (
   start: SelectionRect,
   pointerDelta: CanvasPoint,
@@ -726,10 +994,11 @@ export const selectionRotationAngle = (
   selection: SelectionRect,
   start: CanvasPoint,
   point: CanvasPoint,
-  snap = false
+  snap = false,
+  pivot?: CanvasPoint
 ): number => {
-  const centerX = selection.x + selection.width / 2
-  const centerY = selection.y + selection.height / 2
+  const centerX = pivot?.x ?? selection.x + selection.width / 2
+  const centerY = pivot?.y ?? selection.y + selection.height / 2
   const startAngle = Math.atan2(start.y - centerY, start.x - centerX)
   const rawAngle = (Math.atan2(point.y - centerY, point.x - centerX) - startAngle) * 180 / Math.PI
   return snapSelectionRotation(rawAngle, snap)
@@ -738,8 +1007,10 @@ export const selectionRotationAngle = (
 export const selectionMarqueeUsesConstraint = (
   modifiers: { ctrlKey: boolean; metaKey?: boolean; shiftKey: boolean },
   hasSelection: boolean,
-  mode: SelectionMode
+  mode: SelectionMode,
+  afterRotation = false
 ): boolean => {
+  if (afterRotation && (modifiers.ctrlKey || modifiers.metaKey) && !modifiers.shiftKey) return false
   if (modifiers.ctrlKey || modifiers.metaKey) return true
   return modifiers.shiftKey && (!hasSelection || mode !== 'add')
 }
@@ -967,7 +1238,8 @@ export const resizeTransformedSelectionBounds = (
   handle: SelectionHandle,
   proportional = false,
   integerScale = false,
-  fromCenter = false
+  fromCenter = false,
+  pivot?: CanvasPoint
 ): SelectionRect => {
   const radians = angle * Math.PI / 180
   const cosine = Math.cos(radians)
@@ -975,6 +1247,77 @@ export const resizeTransformedSelectionBounds = (
   const localDelta = {
     x: pointerDelta.x * cosine + pointerDelta.y * sine,
     y: -pointerDelta.x * sine + pointerDelta.y * cosine
+  }
+  const handlePoint = {
+    x: handle.includes('w') ? 0 : handle.includes('e') ? start.width : start.width / 2,
+    y: handle.includes('n') ? 0 : handle.includes('s') ? start.height : start.height / 2
+  }
+  if (fromCenter && pivot) {
+    const startCenter = { x: start.x + start.width / 2, y: start.y + start.height / 2 }
+    const pivotOffset = { x: pivot.x - startCenter.x, y: pivot.y - startCenter.y }
+    const localPivot = {
+      x: start.width / 2 + pivotOffset.x * cosine + pivotOffset.y * sine,
+      y: start.height / 2 - pivotOffset.x * sine + pivotOffset.y * cosine
+    }
+    const horizontalHandle = handle.includes('w') || handle.includes('e')
+    const verticalHandle = handle.includes('n') || handle.includes('s')
+    const axisScale = (handleCoordinate: number, delta: number, pivotCoordinate: number, affected: boolean): number => {
+      if (!affected) return 1
+      const startDistance = handleCoordinate - pivotCoordinate
+      return Math.abs(startDistance) < 1e-9 ? 1 : (handleCoordinate + delta - pivotCoordinate) / startDistance
+    }
+    const rawScaleX = axisScale(handlePoint.x, localDelta.x, localPivot.x, horizontalHandle)
+    const rawScaleY = axisScale(handlePoint.y, localDelta.y, localPivot.y, verticalHandle)
+    const scaleSign = (value: number): number => value < 0 ? -1 : 1
+    let width: number
+    let height: number
+    let signX = scaleSign(rawScaleX)
+    let signY = scaleSign(rawScaleY)
+    if (proportional) {
+      const widthDriven = horizontalHandle && !verticalHandle
+        ? true
+        : verticalHandle && !horizontalHandle
+          ? false
+          : Math.abs(rawScaleX) >= Math.abs(rawScaleY)
+      let magnitude = Math.abs(widthDriven ? rawScaleX : rawScaleY)
+      if (integerScale) magnitude = Math.max(1, Math.round(magnitude))
+      width = integerScale ? start.width * magnitude : Math.max(1, Math.round(start.width * magnitude))
+      height = integerScale ? start.height * magnitude : Math.max(1, Math.round(start.height * magnitude))
+      if (!horizontalHandle) signX = 1
+      if (!verticalHandle) signY = 1
+    } else {
+      const widthMagnitude = integerScale && horizontalHandle ? Math.max(1, Math.round(Math.abs(rawScaleX))) : Math.abs(rawScaleX)
+      const heightMagnitude = integerScale && verticalHandle ? Math.max(1, Math.round(Math.abs(rawScaleY))) : Math.abs(rawScaleY)
+      width = horizontalHandle ? Math.max(1, Math.round(start.width * widthMagnitude)) : start.width
+      height = verticalHandle ? Math.max(1, Math.round(start.height * heightMagnitude)) : start.height
+    }
+    const signedScaleX = signX * width / start.width
+    const signedScaleY = signY * height / start.height
+    const localCenterFromPivot = {
+      x: (start.width / 2 - localPivot.x) * signedScaleX,
+      y: (start.height / 2 - localPivot.y) * signedScaleY
+    }
+    const center = {
+      x: pivot.x + localCenterFromPivot.x * cosine - localCenterFromPivot.y * sine,
+      y: pivot.y + localCenterFromPivot.x * sine + localCenterFromPivot.y * cosine
+    }
+    const flipHorizontal = signX < 0 ? !Boolean(start.flipHorizontal) : Boolean(start.flipHorizontal)
+    const flipVertical = signY < 0 ? !Boolean(start.flipVertical) : Boolean(start.flipVertical)
+    const target: SelectionRect = {
+      x: center.x - width / 2,
+      y: center.y - height / 2,
+      width,
+      height,
+      ...(flipHorizontal ? { flipHorizontal: true } : {}),
+      ...(flipVertical ? { flipVertical: true } : {})
+    }
+    if (flipHorizontal) target.flipOriginX = signX < 0
+      ? target.x + target.width / 2
+      : Number.isFinite(start.flipOriginX) && start.flipOriginX! <= startCenter.x ? target.x : target.x + target.width
+    if (flipVertical) target.flipOriginY = signY < 0
+      ? target.y + target.height / 2
+      : Number.isFinite(start.flipOriginY) && start.flipOriginY! <= startCenter.y ? target.y : target.y + target.height
+    return target
   }
   const localStart: SelectionRect = {
     x: 0,
@@ -989,10 +1332,6 @@ export const resizeTransformedSelectionBounds = (
       flipVertical: true,
       flipOriginY: Number.isFinite(start.flipOriginY) && start.flipOriginY! <= start.y + start.height / 2 ? 0 : start.height
     } : {})
-  }
-  const handlePoint = {
-    x: handle.includes('w') ? 0 : handle.includes('e') ? start.width : start.width / 2,
-    y: handle.includes('n') ? 0 : handle.includes('s') ? start.height : start.height / 2
   }
   const resized = resizeSelectionBounds(
     localStart,

@@ -14,29 +14,37 @@ export const MINIMUM_BOTTOM_WIDTHS: Record<WorkspacePanelId, number> = { color: 
 
 export interface InspectorLayout {
   order: WorkspacePanelId[]
-  sizes: Record<WorkspacePanelId, number>
-  bottomWidths: Record<WorkspacePanelId, number>
+  verticalWeights: Record<WorkspacePanelId, number>
+  bottomWeights: Record<WorkspacePanelId, number>
 }
 
 const isWorkspacePanelId = (value: unknown): value is WorkspacePanelId => typeof value === 'string' && DEFAULT_INSPECTOR_ORDER.includes(value as WorkspacePanelId)
 
 export function loadInspectorLayout(storedValue = readStoredString(INSPECTOR_LAYOUT_STORAGE_KEY)): InspectorLayout {
   try {
-    const value = JSON.parse(storedValue ?? 'null') as { order?: unknown[]; sizes?: Partial<Record<WorkspacePanelId, number>>; bottomWidths?: Partial<Record<WorkspacePanelId, number>> } | null
+    const value = JSON.parse(storedValue ?? 'null') as {
+      order?: unknown[]
+      verticalWeights?: Partial<Record<WorkspacePanelId, number>>
+      bottomWeights?: Partial<Record<WorkspacePanelId, number>>
+      sizes?: Partial<Record<WorkspacePanelId, number>>
+      bottomWidths?: Partial<Record<WorkspacePanelId, number>>
+    } | null
     const storedOrder = (value?.order ?? []).filter((id, index, values): id is WorkspacePanelId => isWorkspacePanelId(id) && values.indexOf(id) === index)
     const order = [...storedOrder, ...DEFAULT_INSPECTOR_ORDER.filter((id) => !storedOrder.includes(id))]
-    const sizes = Object.fromEntries(DEFAULT_INSPECTOR_ORDER.map((id) => {
-      const stored = Number(value?.sizes?.[id])
+    const storedVerticalWeights = value?.verticalWeights ?? value?.sizes
+    const storedBottomWeights = value?.bottomWeights ?? value?.bottomWidths
+    const verticalWeights = Object.fromEntries(DEFAULT_INSPECTOR_ORDER.map((id) => {
+      const stored = Number(storedVerticalWeights?.[id])
       const migrated = id === 'color' && stored === 250 ? DEFAULT_INSPECTOR_SIZES.color : stored
       return [id, Math.max(MINIMUM_INSPECTOR_SIZES[id], migrated || DEFAULT_INSPECTOR_SIZES[id])]
     })) as Record<WorkspacePanelId, number>
-    const bottomWidths = Object.fromEntries(DEFAULT_INSPECTOR_ORDER.map((id) => {
-      const stored = Number(value?.bottomWidths?.[id])
+    const bottomWeights = Object.fromEntries(DEFAULT_INSPECTOR_ORDER.map((id) => {
+      const stored = Number(storedBottomWeights?.[id])
       return [id, Math.max(MINIMUM_BOTTOM_WIDTHS[id], stored || DEFAULT_BOTTOM_WIDTHS[id])]
     })) as Record<WorkspacePanelId, number>
-    return { order, sizes, bottomWidths }
+    return { order, verticalWeights, bottomWeights }
   } catch {
-    return { order: [...DEFAULT_INSPECTOR_ORDER], sizes: { ...DEFAULT_INSPECTOR_SIZES }, bottomWidths: { ...DEFAULT_BOTTOM_WIDTHS } }
+    return { order: [...DEFAULT_INSPECTOR_ORDER], verticalWeights: { ...DEFAULT_INSPECTOR_SIZES }, bottomWeights: { ...DEFAULT_BOTTOM_WIDTHS } }
   }
 }
 
@@ -49,7 +57,6 @@ export function moveInspectorPanel(order: WorkspacePanelId[], movingId: Workspac
   return next
 }
 
-export function verticalInspectorPanelFlex(size: number, hasFollowingPanel: boolean, fillsRemainingSpace: boolean): string {
-  if (fillsRemainingSpace || !hasFollowingPanel) return `1 1 ${size}px`
-  return `0 1 ${size + 7}px`
+export function proportionalPanelFlex(weight: number): string {
+  return `${Math.max(1, weight)} 1 0px`
 }

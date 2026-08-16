@@ -21,7 +21,7 @@ export const EditorStatusBar = memo(function EditorStatusBar({ homeOpen, resourc
 
   return <PerformanceProfiler id="EditorStatusBar"><footer className="statusbar">
     {session && !homeOpen ? <>
-      <span>{t(session.document.colorMode === 'rgba' ? 'status.rgba' : 'status.indexed')}</span>
+      <span>{t(`colorMode.${session.document.colorMode}`)}</span>
       <span>{t('status.layers', { count: session.document.layers.length })}</span>
       <span>{Math.round(session.view.zoom * 100)}%</span>
       <span>{session.selection ? t('status.selection', { width: session.selection.width, height: session.selection.height }) : t('status.noSelection')}</span>

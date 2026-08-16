@@ -1,6 +1,6 @@
 import { inflateSync, strFromU8, strToU8, unzipSync, zipSync, type Zippable } from 'fflate'
-import { BLEND_MODES, type AnimationCelSurface, type AnimationFrame, type BlendMode, type ColorMode, type LayerGroup, type LayerMask, type PaletteEntry, type ProjectBrush, type RasterLayer, type RgbaColor, type RuntimeRasterTiles, type SpriteDocument, type TextCelData, type TimelapseSettings } from '@shared/types'
-import { compositeDocument, createCompositePointSampler, createId, createNormalCompositePointSampler, getLayerStorageOrigin, getRasterContentRevision, setLayerStorageOrigin } from './document'
+import { BLEND_MODES, type AnimationCelSurface, type AnimationFrame, type BackgroundLayerSettings, type BlendMode, type ColorMode, type LayerGroup, type LayerMask, type LayerStyles, type PaletteEntry, type ProjectBrush, type RasterFormat, type RasterLayer, type RgbaColor, type RuntimeRasterTiles, type SpriteDocument, type TextCelData, type TimelapseSettings } from '@shared/types'
+import { compositeDocument, createCompositePointSampler, createId, createNormalCompositePointSampler, getLayerStorageOrigin, getRasterContentRevision, remapIndexedDocumentToVisiblePalette, setLayerStorageOrigin } from './document'
 import { createDefaultAnimationTimeline, ensureAnimationDocument, normalizeAnimationTimeline, refreshActiveAnimationFrame, syncActiveAnimationLayers } from './animation'
 import { normalizeOutlineSettings } from './outline-settings'
 import { normalizeProjectDisplaySettings, normalizeProjectStatistics, normalizeTimelapseSettings } from './project-metadata'
@@ -12,6 +12,8 @@ import { normalizeProjectLayerPanelState } from './layer-panel-state'
 import { installRuntimeRaster, rasterStorageIdentity, runtimeRasterForSurface } from './runtime-raster'
 import { normalizeDocumentSlices } from './slices'
 import { normalizeTextCelData } from './text-raster'
+import { cloneLayerStyles, normalizeLayerStyles } from './layer-styles'
+import { normalizeBackgroundLayerSettings } from './background-patterns'
 
 interface ManifestLayer {
   id: string
@@ -24,6 +26,8 @@ interface ManifestLayer {
   opacity: number
   blendMode?: BlendMode
   clippingMask?: boolean
+  layerStyles?: LayerStyles
+  background?: BackgroundLayerSettings
   groupId?: string | null
   width?: number
   height?: number
@@ -60,7 +64,7 @@ interface ManifestCel {
   frameId: string
   linkedCelId?: string | null
   opacity?: number
-  format?: ColorMode
+  format?: RasterFormat
   width?: number
   height?: number
   offsetX?: number
@@ -100,7 +104,10 @@ interface ManifestTimelapse extends Omit<TimelapseSettings, 'snapshots'> {
 
 type RasterDataEncoding = 'raw' | 'sparse-tiles-v1'
 
-export const PROJECT_SCHEMA_VERSION = 9
+export const PROJECT_SCHEMA_VERSION = 12
+const LAYER_STYLES_PROJECT_SCHEMA_VERSION = 11
+const DOCUMENT_COLOR_MODE_PROJECT_SCHEMA_VERSION = 10
+const TEXT_BOX_PROJECT_SCHEMA_VERSION = 9
 const STYLED_TEXT_PROJECT_SCHEMA_VERSION = 8
 const EDITABLE_TEXT_PROJECT_SCHEMA_VERSION = 7
 const SLICES_PROJECT_SCHEMA_VERSION = 6
@@ -147,7 +154,7 @@ interface DecodedRasterData {
   runtimeRaster?: RuntimeRasterTiles
 }
 
-const tileContainsContent = (pixels: Uint8ClampedArray | Uint32Array, format: ColorMode, width: number, startX: number, startY: number, tileWidth: number, tileHeight: number): boolean => {
+const tileContainsContent = (pixels: Uint8ClampedArray | Uint32Array, format: RasterFormat, width: number, startX: number, startY: number, tileWidth: number, tileHeight: number): boolean => {
   for (let y = 0; y < tileHeight; y += 1) {
     let index = (startY + y) * width + startX
     const end = index + tileWidth
@@ -163,7 +170,7 @@ const tileContainsContent = (pixels: Uint8ClampedArray | Uint32Array, format: Co
   return false
 }
 
-const encodeSparseRasterData = (pixels: Uint8ClampedArray | Uint32Array, format: ColorMode, width: number, height: number): EncodedRasterData => {
+const encodeSparseRasterData = (pixels: Uint8ClampedArray | Uint32Array, format: RasterFormat, width: number, height: number): EncodedRasterData => {
   const raw = toU8(pixels)
   const tiles: Array<{ x: number; y: number; width: number; height: number; data: Uint8Array }> = []
   let payloadBytes = 0
@@ -240,7 +247,7 @@ const encodeRuntimeRasterData = (runtime: RuntimeRasterTiles): EncodedRasterData
   return { data, encoding: 'sparse-tiles-v1' }
 }
 
-const decodeSparseRasterData = (data: Uint8Array, format: ColorMode, width: number, height: number): DecodedRasterData | null => {
+const decodeSparseRasterData = (data: Uint8Array, format: RasterFormat, width: number, height: number): DecodedRasterData | null => {
   if (data.byteLength < SPARSE_TILE_HEADER_BYTES) return null
   const view = new DataView(data.buffer, data.byteOffset, data.byteLength)
   if (view.getUint32(0, true) !== SPARSE_TILE_MAGIC || view.getUint16(4, true) !== SPARSE_TILE_SIZE) return null
@@ -375,7 +382,7 @@ export const compactProjectRasterStorage = (document: SpriteDocument, minimumSto
   }
 }
 
-const encodeProjectPreview = (document: SpriteDocument): Uint8Array => {
+export const encodeProjectPreview = (document: SpriteDocument): Uint8Array => {
   if (document.width <= PROJECT_PREVIEW_MAX_DIMENSION && document.height <= PROJECT_PREVIEW_MAX_DIMENSION) {
     return encodePng(compositeDocument(document), document.width, document.height).bytes
   }
@@ -409,6 +416,7 @@ const normalizeLayerGroups = (source: unknown): LayerGroup[] => {
     const candidate = value as Partial<LayerGroup>
     if (typeof candidate.id !== 'string' || !candidate.id || seen.has(candidate.id)) continue
     seen.add(candidate.id)
+    const layerStyles = normalizeLayerStyles(candidate.layerStyles)
     groups.push({
       id: candidate.id,
       name: typeof candidate.name === 'string' && candidate.name ? candidate.name : tr('core.document.group'),
@@ -421,6 +429,7 @@ const normalizeLayerGroups = (source: unknown): LayerGroup[] => {
       opacity: Number.isFinite(candidate.opacity) ? Math.max(0, Math.min(1, Number(candidate.opacity))) : 1,
       blendMode: normalizeBlendMode(candidate.blendMode),
       ...(candidate.clippingMask === true ? { clippingMask: true } : {}),
+      ...(layerStyles ? { layerStyles } : {}),
       ...(candidate.cumulativeBlend === true ? { cumulativeBlend: true } : {})
     })
   }
@@ -526,6 +535,23 @@ export interface EncodedProjectSave {
 
 const projectSaveBaselines = new WeakMap<SpriteDocument, ProjectSaveBaseline>()
 
+const rasterGeometryMatchesSurface = (raster: ProjectArchiveResource['raster'], surface: RasterLayer | AnimationCelSurface): boolean => Boolean(
+  raster
+  && raster.width === surface.width
+  && raster.height === surface.height
+  && raster.offsetX === surface.offsetX
+  && raster.offsetY === surface.offsetY
+)
+
+const rasterMetadataMatches = (left: ProjectArchiveResource['raster'], right: ProjectArchiveResource['raster']): boolean => {
+  if (!left || !right) return left === right
+  return left.width === right.width
+    && left.height === right.height
+    && left.offsetX === right.offsetX
+    && left.offsetY === right.offsetY
+    && left.dataEncoding === right.dataEncoding
+}
+
 const createProjectArchiveFiles = (document: SpriteDocument, options: ProjectEncodeOptions = {}, baseline?: ProjectSaveBaseline): ProjectArchiveBuild => {
   syncActiveAnimationLayers(document)
   const files: Record<string, Uint8Array> = {}
@@ -537,7 +563,7 @@ const createProjectArchiveFiles = (document: SpriteDocument, options: ProjectEnc
     if (existing) return existing
     const revision = getRasterContentRevision(storage)
     const previous = baseline?.resources.get(storage)
-    if (baseline?.schemaVersion === PROJECT_SCHEMA_VERSION && previous?.raster && previous.revision === revision) {
+    if (baseline?.schemaVersion === PROJECT_SCHEMA_VERSION && previous?.raster && previous.revision === revision && rasterGeometryMatchesSurface(previous.raster, surface)) {
       const result = { dataFile: previous.path, ...previous.raster }
       resources.push({ path: previous.path, resource: storage, revision, raster: previous.raster })
       dataFileByPixels.set(storage, result)
@@ -574,6 +600,8 @@ const createProjectArchiveFiles = (document: SpriteDocument, options: ProjectEnc
       opacity: layer.opacity,
       blendMode: layer.blendMode,
       ...(layer.clippingMask === true ? { clippingMask: true } : {}),
+      ...(layer.layerStyles ? { layerStyles: cloneLayerStyles(layer.layerStyles) } : {}),
+      ...(layer.background ? { background: { ...layer.background } } : {}),
       groupId: layer.groupId ?? null,
       width: encoded.width,
       height: encoded.height,
@@ -583,7 +611,7 @@ const createProjectArchiveFiles = (document: SpriteDocument, options: ProjectEnc
       dataEncoding: encoded.dataEncoding
     }
   })
-  const groups: LayerGroup[] = document.groups.map((group) => ({ ...group }))
+  const groups: LayerGroup[] = document.groups.map((group) => ({ ...group, layerStyles: cloneLayerStyles(group.layerStyles), displayColor: group.displayColor ? { ...group.displayColor } : undefined }))
   const customBrushes: ManifestProjectBrush[] = (document.customBrushes ?? []).map((brush) => {
     const dataFile = `brushes/${brush.id}.gray`
     files[dataFile] = brush.coverage
@@ -836,7 +864,7 @@ export async function encodeProjectSaveAsync(document: SpriteDocument, options: 
   const patchFiles = { ...files }
   if (baseline) for (const resource of resources) {
     const previous = baseline.resources.get(resource.resource)
-    if (!previous || previous.path !== resource.path || previous.revision !== resource.revision) continue
+    if (!previous || previous.path !== resource.path || previous.revision !== resource.revision || !rasterMetadataMatches(previous.raster, resource.raster)) continue
     delete patchFiles[resource.path]
     reusableEntries.push({ path: resource.path, crc32: previous.crc32 })
     reusableCrcs.set(resource.path, previous.crc32)
@@ -874,7 +902,7 @@ export function migrateProjectManifest(input: unknown): ProjectManifest {
   const candidate = input as { app?: unknown; schemaVersion?: unknown; document?: Record<string, unknown> }
   if (candidate.app !== 'MoonSprite' || !candidate.document) throw new Error(tr('core.project.unsupportedVersion'))
   const version = Number(candidate.schemaVersion)
-  if (![1, 2, 3, LEGACY_PROJECT_SCHEMA_VERSION, SPARSE_RASTER_PROJECT_SCHEMA_VERSION, SLICES_PROJECT_SCHEMA_VERSION, EDITABLE_TEXT_PROJECT_SCHEMA_VERSION, STYLED_TEXT_PROJECT_SCHEMA_VERSION, PROJECT_SCHEMA_VERSION].includes(version) || candidate.document.schemaVersion !== candidate.schemaVersion) throw new Error(tr('core.project.unsupportedVersion'))
+  if (![1, 2, 3, LEGACY_PROJECT_SCHEMA_VERSION, SPARSE_RASTER_PROJECT_SCHEMA_VERSION, SLICES_PROJECT_SCHEMA_VERSION, EDITABLE_TEXT_PROJECT_SCHEMA_VERSION, STYLED_TEXT_PROJECT_SCHEMA_VERSION, TEXT_BOX_PROJECT_SCHEMA_VERSION, DOCUMENT_COLOR_MODE_PROJECT_SCHEMA_VERSION, LAYER_STYLES_PROJECT_SCHEMA_VERSION, PROJECT_SCHEMA_VERSION].includes(version) || candidate.document.schemaVersion !== candidate.schemaVersion) throw new Error(tr('core.project.unsupportedVersion'))
   if (version >= SPARSE_RASTER_PROJECT_SCHEMA_VERSION) {
     const layers = Array.isArray(candidate.document.layers) ? candidate.document.layers : []
     const animation = candidate.document.animation && typeof candidate.document.animation === 'object' ? candidate.document.animation as { cels?: unknown } : null
@@ -889,8 +917,28 @@ export function migrateProjectManifest(input: unknown): ProjectManifest {
   const animation = normalizeManifestAnimation(version === 1 ? createDefaultAnimationTimeline() : candidate.document.animation)
   const legacy = version <= LEGACY_PROJECT_SCHEMA_VERSION
   const layers = Array.isArray(candidate.document.layers)
-    ? candidate.document.layers.map((layer) => legacy && layer && typeof layer === 'object' ? { ...layer, dataEncoding: 'raw' as const } : layer)
+    ? candidate.document.layers.map((layer) => {
+        if (!layer || typeof layer !== 'object') return layer
+        const next: Record<string, unknown> = { ...(layer as Record<string, unknown>), ...(legacy ? { dataEncoding: 'raw' as const } : {}) }
+        const layerStyles = version >= LAYER_STYLES_PROJECT_SCHEMA_VERSION ? normalizeLayerStyles(next.layerStyles) : undefined
+        if (layerStyles) next.layerStyles = layerStyles
+        else delete next.layerStyles
+        const background = version >= PROJECT_SCHEMA_VERSION ? normalizeBackgroundLayerSettings(next.background) : undefined
+        if (background) next.background = background
+        else delete next.background
+        return next as unknown as ManifestLayer
+      })
     : candidate.document.layers
+  const groups = Array.isArray(candidate.document.groups)
+    ? candidate.document.groups.map((group) => {
+        if (!group || typeof group !== 'object') return group
+        const next: Record<string, unknown> = { ...(group as Record<string, unknown>) }
+        const layerStyles = version >= LAYER_STYLES_PROJECT_SCHEMA_VERSION ? normalizeLayerStyles(next.layerStyles) : undefined
+        if (layerStyles) next.layerStyles = layerStyles
+        else delete next.layerStyles
+        return next as unknown as LayerGroup
+      })
+    : candidate.document.groups
   const cels = animation.cels.map((cel) => legacy && cel.dataFile ? { ...cel, dataEncoding: 'raw' as const } : cel)
   return {
     ...(candidate as Omit<ProjectManifest, 'schemaVersion' | 'document'>),
@@ -900,6 +948,7 @@ export function migrateProjectManifest(input: unknown): ProjectManifest {
       ...(candidate.document as ProjectManifest['document']),
       schemaVersion: PROJECT_SCHEMA_VERSION,
       ...(layers ? { layers: layers as ManifestLayer[] } : {}),
+      ...(groups ? { groups: groups as LayerGroup[] } : {}),
       animation: { ...animation, cels },
       slices: normalizeDocumentSlices(candidate.document.slices, Number(candidate.document.width) || 1, Number(candidate.document.height) || 1)
     }
@@ -970,6 +1019,7 @@ const rasterDataEncoding = (value: unknown): RasterDataEncoding | null => value 
 const directActiveCelDataFiles = (manifest: ProjectManifest): Map<string, RasterDataSource> => {
   const source = manifest.document
   if (source.animation.frames.length !== 1) return new Map()
+  const documentRasterFormat: RasterFormat = source.colorMode === 'indexed' ? 'indexed' : 'rgba'
   const activeFrameId = source.animation.activeFrameId
   const activeCels = new Map(source.animation.cels
     .filter((cel) => cel.frameId === activeFrameId && typeof cel.dataFile === 'string' && cel.dataFile)
@@ -977,7 +1027,7 @@ const directActiveCelDataFiles = (manifest: ProjectManifest): Map<string, Raster
   const dataFiles = new Map<string, RasterDataSource>()
   for (const layer of source.layers) {
     const cel = activeCels.get(layer.id)
-    if (!cel || cel.format !== source.colorMode) continue
+    if (!cel || cel.format !== documentRasterFormat) continue
     const layerWidth = Number.isSafeInteger(layer.width) && layer.width! > 0 ? layer.width! : source.width
     const layerHeight = Number.isSafeInteger(layer.height) && layer.height! > 0 ? layer.height! : source.height
     if (cel.width !== layerWidth || cel.height !== layerHeight) continue
@@ -1095,7 +1145,7 @@ export function readProjectGalleryMetadata(input: Uint8Array, options: ProjectGa
   if (!Number.isSafeInteger(source.width) || !Number.isSafeInteger(source.height) || source.width < 1 || source.height < 1) {
     throw new Error(tr('core.project.galleryCanvasSize'))
   }
-  if (source.colorMode !== 'rgba' && source.colorMode !== 'indexed') throw new Error(tr('core.project.galleryColorMode'))
+  if (source.colorMode !== 'rgba' && source.colorMode !== 'indexed' && source.colorMode !== 'grayscale') throw new Error(tr('core.project.galleryColorMode'))
   const preview = files['preview.png']
   if (!preview?.byteLength) {
     if (!options.generateMissingPreview) throw new Error(tr('core.project.missingPreview'))
@@ -1148,11 +1198,12 @@ export function decodeProject(input: Uint8Array, onProgress?: (value: number) =>
     throw new Error(tr('core.project.invalidCanvasSize'))
   }
   const mode = source.colorMode as ColorMode
-  if (mode !== 'rgba' && mode !== 'indexed') throw new Error(tr('core.project.unknownColorMode'))
+  if (mode !== 'rgba' && mode !== 'indexed' && mode !== 'grayscale') throw new Error(tr('core.project.unknownColorMode'))
+  const rasterFormat: RasterFormat = mode === 'indexed' ? 'indexed' : 'rgba'
   const rgbaPixelsByFile = new Map<string, Uint8ClampedArray>()
   const indexedPixelsByFile = new Map<string, Uint32Array>()
   const decodedRasterByKey = new Map<string, DecodedRasterData>()
-  const decodePixels = (dataFile: string, dataEncoding: unknown, format: ColorMode, width: number, height: number): DecodedRasterData => {
+  const decodePixels = (dataFile: string, dataEncoding: unknown, format: RasterFormat, width: number, height: number): DecodedRasterData => {
     const expectedBytes = width * height * 4
     const bytes = files[dataFile]
     const encoding = rasterDataEncoding(dataEncoding)
@@ -1233,7 +1284,9 @@ export function decodeProject(input: Uint8Array, onProgress?: (value: number) =>
     const width = Number.isSafeInteger(metadata.width) && metadata.width! > 0 ? metadata.width! : source.width
     const height = Number.isSafeInteger(metadata.height) && metadata.height! > 0 ? metadata.height! : source.height
     const activeCelSource = activeCelFiles.get(metadata.id)
-    const decoded = decodePixels(activeCelSource?.dataFile ?? metadata.dataFile, activeCelSource?.dataEncoding ?? metadata.dataEncoding, mode, width, height)
+    const decoded = decodePixels(activeCelSource?.dataFile ?? metadata.dataFile, activeCelSource?.dataEncoding ?? metadata.dataEncoding, rasterFormat, width, height)
+    const layerStyles = normalizeLayerStyles(metadata.layerStyles)
+    const background = normalizeBackgroundLayerSettings(metadata.background)
     const common = {
       id: metadata.id,
       name: metadata.name,
@@ -1243,6 +1296,8 @@ export function decodeProject(input: Uint8Array, onProgress?: (value: number) =>
       opacity: Number.isFinite(metadata.opacity) ? Math.max(0, Math.min(1, Number(metadata.opacity))) : 1,
       blendMode: normalizeBlendMode(metadata.blendMode),
       ...(metadata.clippingMask === true ? { clippingMask: true } : {}),
+      ...(layerStyles ? { layerStyles } : {}),
+      ...(background ? { background } : {}),
       ...(metadata.kind === 'text' ? { kind: 'text' as const } : {}),
       groupId: typeof metadata.groupId === 'string' ? metadata.groupId : null,
       ...(normalizeDisplayColor(metadata.displayColor) ? { displayColor: normalizeDisplayColor(metadata.displayColor)! } : {}),
@@ -1251,7 +1306,7 @@ export function decodeProject(input: Uint8Array, onProgress?: (value: number) =>
       offsetX: (Number.isFinite(metadata.offsetX) ? Math.trunc(metadata.offsetX!) : 0) + decoded.storageOffsetX,
       offsetY: (Number.isFinite(metadata.offsetY) ? Math.trunc(metadata.offsetY!) : 0) + decoded.storageOffsetY
     }
-    const layer = mode === 'rgba'
+    const layer = rasterFormat === 'rgba'
       ? { ...common, format: 'rgba' as const, pixels: decoded.pixels as Uint8ClampedArray }
       : { ...common, format: 'indexed' as const, pixels: decoded.pixels as Uint32Array }
     if (decoded.runtimeRaster) installRuntimeRaster(layer, decoded.runtimeRaster)
@@ -1383,6 +1438,7 @@ export function decodeProject(input: Uint8Array, onProgress?: (value: number) =>
   if ((manifest.sourceSchemaVersion ?? 0) < SPARSE_RASTER_PROJECT_SCHEMA_VERSION) compactProjectRasterStorage(document)
   ensureAnimationDocument(document)
   refreshActiveAnimationFrame(document)
+  remapIndexedDocumentToVisiblePalette(document)
   reportProgress(1)
   return document
 }

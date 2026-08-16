@@ -7,6 +7,7 @@ import { ColorValueControl } from '@/components/ColorValueControl'
 import { CheckboxField } from '@/components/CheckboxField'
 import { DialogHeader } from '@/components/DialogHeader'
 import { FormField } from '@/components/FormField'
+import { GradientDitherSelect } from '@/components/GradientDitherSelect'
 import { LivePreviewToggle } from '@/components/LivePreviewToggle'
 import { ModalShell } from '@/components/ModalShell'
 import { PerformanceProfiler } from '@/components/PerformanceProfiler'
@@ -21,7 +22,6 @@ import { isProceduralBrushId } from '@/core/brushes'
 import type { TranslationKey } from '@/core/localization'
 import { brushMaskOffsets, brushStampDimensions } from '@/core/tools'
 import { loadEditorPreferences, parseLineDirectionStep, saveEditorPreferences, type CheckerboardPreferences } from '@/core/file-preferences'
-import { gradientColorAt } from '@/core/gradient'
 import { autoSliceCount, autoSliceRects, MAX_AUTO_SLICES, type AutoSliceSettings } from '@/core/slices'
 import { publishSlicePreview } from '@/core/slice-preview'
 import { BRUSH_SPEED_INPUT_LIMIT, DEFAULT_PRESSURE_INPUT_RANGE, DEFAULT_SPEED_INPUT_RANGE, type BrushDynamicsCurve, type BrushDynamicsDirection, type BrushDynamicsEffect, type BrushDynamicsMapping, type BrushDynamicsSensor, type BrushDynamicsSettings } from '@/core/pressure'
@@ -30,6 +30,7 @@ import { useWorkspace } from '@/store/workspace'
 import { useBrushLibrary } from './useBrushLibrary'
 import { PixelDownIcon as ChevronDown, PixelUtilityIcon } from '@/components/PixelUtilityIcon'
 import { PixelAssetIcon, PixelShapeIcon, selectionModes, temporarySelectionModeForModifiers } from './editor-tools'
+import { SelectionPivotControls } from './SelectionPivotControls'
 import { SymmetryControls } from './SymmetryControls'
 
 function GrayscaleBrushThumbnail({ brush }: { brush: ImageBrush }) {
@@ -53,61 +54,6 @@ function GrayscaleBrushThumbnail({ brush }: { brush: ImageBrush }) {
   }, [brush])
   return <canvas ref={canvasRef} width={32} height={32} aria-hidden="true" />
 }
-
-function GradientPresetPreview({ preset }: { preset: GradientDither }) {
-  const canvasRef = useRef<HTMLCanvasElement>(null)
-  const [checkerboard, setCheckerboard] = useState<CheckerboardPreferences>(() => loadEditorPreferences().checkerboard)
-  useEffect(() => {
-    const syncPreferences = (): void => setCheckerboard(loadEditorPreferences().checkerboard)
-    window.addEventListener('moonsprite:preferences-changed', syncPreferences)
-    return () => window.removeEventListener('moonsprite:preferences-changed', syncPreferences)
-  }, [])
-  useEffect(() => {
-    const canvas = canvasRef.current
-    const context = canvas?.getContext('2d')
-    if (!canvas || !context) return
-    const width = canvas.width
-    const height = canvas.height
-    const startColor: RgbaColor = { r: 0, g: 0, b: 0, a: 255 }
-    const endColor: RgbaColor = { r: 255, g: 255, b: 255, a: 255 }
-    context.clearRect(0, 0, width, height)
-    context.fillStyle = `rgb(${checkerboard.darkColor.r} ${checkerboard.darkColor.g} ${checkerboard.darkColor.b})`
-    context.fillRect(0, 0, width, height)
-    context.fillStyle = `rgb(${checkerboard.lightColor.r} ${checkerboard.lightColor.g} ${checkerboard.lightColor.b})`
-    for (let y = 0; y < height; y += 2) for (let x = 0; x < width; x += 2) if (((x / 2) + (y / 2)) % 2 === 1) context.fillRect(x, y, 2, 2)
-    const image = context.createImageData(width, height)
-    for (let y = 0; y < height; y += 1) for (let x = 0; x < width; x += 1) {
-      const color = gradientColorAt(startColor, endColor, x, y, { x: 0, y: 0 }, { x: width - 1, y: 0 }, preset)
-      const offset = (y * width + x) * 4
-      image.data[offset] = color.r
-      image.data[offset + 1] = color.g
-      image.data[offset + 2] = color.b
-      image.data[offset + 3] = color.a
-    }
-    context.putImageData(image, 0, 0)
-  }, [checkerboard, preset])
-  return <canvas ref={canvasRef} className="gradient-preset-preview" width={104} height={16} aria-hidden="true" />
-}
-
-const brushGradientDitherGroups = (t: (key: TranslationKey) => string): Array<{ label: string; options: Array<{ value: GradientDither; label: string; description: string }> }> => [
-  {
-    label: t('toolOptions.gradientGroup.smooth'),
-    options: [{ value: 'none', label: t('toolOptions.gradientDither.none'), description: t('toolOptions.gradientDither.noneDescription') }]
-  },
-  {
-    label: t('toolOptions.gradientGroup.dither'),
-    options: [
-      { value: 'bayer-2', label: t('toolOptions.gradientDither.bayer2'), description: t('toolOptions.gradientDither.ditherDescription') },
-      { value: 'bayer-4', label: t('toolOptions.gradientDither.bayer4'), description: t('toolOptions.gradientDither.ditherDescription') },
-      { value: 'bayer-8', label: t('toolOptions.gradientDither.bayer8'), description: t('toolOptions.gradientDither.ditherDescription') },
-      { value: 'checker', label: t('toolOptions.gradientDither.checker'), description: t('toolOptions.gradientDither.ditherDescription') },
-      { value: 'diagonal', label: t('toolOptions.gradientDither.diagonalLeft'), description: t('toolOptions.gradientDither.ditherDescription') },
-      { value: 'diagonal-reverse', label: t('toolOptions.gradientDither.diagonalRight'), description: t('toolOptions.gradientDither.ditherDescription') },
-      { value: 'horizontal', label: t('toolOptions.gradientDither.horizontal'), description: t('toolOptions.gradientDither.ditherDescription') },
-      { value: 'vertical', label: t('toolOptions.gradientDither.vertical'), description: t('toolOptions.gradientDither.ditherDescription') }
-    ]
-  }
-]
 
 function GrayscaleBrushPreview({ brush, settings, color, paintMode, proceduralAntialiasStrength = 0 }: {
   brush: ImageBrush
@@ -431,8 +377,6 @@ export function BrushDynamicsSettingsPanel({ settings, tool, intrinsicSize, brus
     { value: 'direct', label: t('toolOptions.pressureDirection.direct') },
     { value: 'inverse', label: t('toolOptions.pressureDirection.inverse') }
   ]
-  const gradientDitherGroups = brushGradientDitherGroups(t)
-
   return <div className="pressure-settings-panel">
     <div className="pressure-matrix-section">
       <div className="pressure-section-title">{t('toolOptions.pressureMappingMatrix')}</div>
@@ -453,18 +397,7 @@ export function BrushDynamicsSettingsPanel({ settings, tool, intrinsicSize, brus
             <span className="pressure-gradient-strip" style={{ background: `linear-gradient(to right, rgba(${secondaryColor.r}, ${secondaryColor.g}, ${secondaryColor.b}, ${secondaryColor.a / 255}), rgba(${primaryColor.r}, ${primaryColor.g}, ${primaryColor.b}, ${primaryColor.a / 255}))` }} />
             <span className="pressure-gradient-swatch" title={t('toolOptions.pressureForegroundColor')} style={{ background: `rgba(${primaryColor.r}, ${primaryColor.g}, ${primaryColor.b}, ${primaryColor.a / 255})` }} />
           </div>
-          <FormField className="pressure-gradient-dither-select" layout="inline" label={t('toolOptions.pressureGradientDither')}><ThemedSelect<GradientDither>
-            value={settings.gradientDither}
-            groups={gradientDitherGroups}
-            label={t('toolOptions.pressureGradientDither')}
-            density="compact"
-            onChange={onGradientDitherChange}
-            showCheck={false}
-            showOptionTooltips={false}
-            popoverClassName="gradient-dither-popover pressure-gradient-dither-popover"
-            popoverWidth={340}
-            renderOption={(option) => <span className="gradient-option-content"><strong>{option.label}</strong><GradientPresetPreview preset={option.value} /></span>}
-          /></FormField>
+          <FormField className="pressure-gradient-dither-select" layout="inline" label={t('toolOptions.pressureGradientDither')}><GradientDitherSelect value={settings.gradientDither} label={t('toolOptions.pressureGradientDither')} density="compact" onChange={onGradientDitherChange} popoverClassName="pressure-gradient-dither-popover" /></FormField>
         </div>}
         <div className="pressure-detail-section pressure-detail-group">
           <span className="pressure-detail-label">{t('toolOptions.pressureOutputRange')}</span>
@@ -683,7 +616,6 @@ export const EditorToolOptions = memo(function EditorToolOptions({ onOpenColorRe
       { value: 'paint' as const, label: t('toolOptions.brushMode.paint'), description: t('toolOptions.brushMode.paintDescription') }
     ]
   }]
-  const gradientDitherGroups = brushGradientDitherGroups(t)
   const selectedSliceIds = session.selectedSliceIds?.length ? session.selectedSliceIds : session.selectedSliceId ? [session.selectedSliceId] : []
   const selectedSlice = selectedSliceIds.length === 1 ? session.document.slices?.find((slice) => slice.id === selectedSliceIds[0]) ?? null : null
   const openSliceProperties = (): void => {
@@ -807,6 +739,15 @@ export const EditorToolOptions = memo(function EditorToolOptions({ onOpenColorRe
     </>}
     {session.tool === 'selection' && <>
       <div className="selection-mode-control" aria-label={t('toolOptions.selectionMode')}>{selectionModeItems.map((mode) => <button key={mode.id} title={mode.label} aria-label={mode.label} className={`icon-button ${(temporarySelectionMode ?? session.selectionMode) === mode.id ? 'selected' : ''}`} onClick={() => workspace.setSelectionMode(mode.id)}><PixelAssetIcon src={mode.icon} /></button>)}</div>
+      <SelectionPivotControls
+        target={session.pendingPaste?.transformTarget ?? session.selection}
+        angle={session.pendingPaste?.transformAngle ?? 0}
+        shear={session.pendingPaste?.transformShear}
+        pivot={session.selectionPivot ?? null}
+        visible={session.view.showSelectionPivot !== false}
+        onPivotChange={workspace.setSelectionPivot}
+        onVisibleChange={(showSelectionPivot) => workspace.setView({ showSelectionPivot })}
+      />
       {session.selectionKind === 'magic' && <><ToleranceControl value={session.wandTolerance} open={toleranceFlyoutOpen === 'wand'} label={t('toolOptions.tolerance')} inputLabel={t('toolOptions.magicWandTolerance')} sliderLabel={t('toolOptions.magicWandToleranceSlider')} onOpen={() => setToleranceFlyoutOpen('wand')} onChange={workspace.setWandTolerance} /><CheckboxField className="tool-checkbox" aria-label={t('toolOptions.contiguousSelection')} checked={session.wandContiguous} label={t('toolOptions.contiguous')} onChange={workspace.setWandContiguous} /></>}
     </>}
     {session.tool === 'shape' && (session.shapeKind === 'rectangle' || session.shapeKind === 'rectangle-outline' || session.shapeKind === 'ellipse' || session.shapeKind === 'ellipse-outline') && <div className="shape-ratio-control"><CheckboxField className="tool-checkbox" checked={session.shapeRatio !== null} label={t('toolOptions.fixedRatio')} onChange={(checked) => workspace.setShapeRatio(checked ? { width: 1, height: 1 } : null)} />{session.shapeRatio !== null && <div className="shape-ratio-inputs"><NumberInput aria-label={t('toolOptions.shapeWidthRatio')} density="compact" min={0.1} max={100} step={0.1} value={session.shapeRatio.width} onValueChange={(width) => workspace.setShapeRatio({ ...session.shapeRatio!, width })} /><span>:</span><NumberInput aria-label={t('toolOptions.shapeHeightRatio')} density="compact" min={0.1} max={100} step={0.1} value={session.shapeRatio.height} onValueChange={(height) => workspace.setShapeRatio({ ...session.shapeRatio!, height })} /><button type="button" className="icon-button shape-ratio-swap" title={t('toolOptions.swapRatio')} aria-label={t('toolOptions.swapRatio')} onClick={() => workspace.setShapeRatio({ width: session.shapeRatio!.height, height: session.shapeRatio!.width })}><ArrowLeftRight size={13} /></button></div>}</div>}
@@ -815,18 +756,7 @@ export const EditorToolOptions = memo(function EditorToolOptions({ onOpenColorRe
     {session.tool === 'fill' && fillKind === 'gradient' && <>
       <ToleranceControl value={session.gradientTolerance} open={toleranceFlyoutOpen === 'gradient'} label={t('toolOptions.tolerance')} inputLabel={t('toolOptions.gradientTolerance')} sliderLabel={t('toolOptions.gradientToleranceSlider')} onOpen={() => setToleranceFlyoutOpen('gradient')} onChange={workspace.setGradientTolerance} />
       <CheckboxField className="tool-checkbox" aria-label={t('toolOptions.contiguousGradient')} checked={session.gradientContiguous} label={t('toolOptions.contiguous')} onChange={workspace.setGradientContiguous} />
-      <span className="gradient-dither-select"><ThemedSelect<GradientDither>
-        value={gradientDither}
-        groups={gradientDitherGroups}
-        label={t('toolOptions.gradientDither')}
-        density="compact"
-        onChange={workspace.setGradientDither}
-        showCheck={false}
-        showOptionTooltips={false}
-        popoverClassName="gradient-dither-popover"
-        popoverWidth={340}
-        renderOption={(option) => <span className="gradient-option-content"><strong>{option.label}</strong><GradientPresetPreview preset={option.value} /></span>}
-      /></span>
+      <GradientDitherSelect className="gradient-dither-select" value={gradientDither} density="compact" onChange={workspace.setGradientDither} />
     </>}
     {supportsSymmetry && <SymmetryControls key={session.tool} axes={session.symmetryAxes} onAxisToggle={workspace.setSymmetryAxis} onResetCenter={workspace.resetSymmetryCenter} />}
     {session.tool === 'move' && session.moveKind === 'move' && <CheckboxField className="tool-checkbox" checked={session.moveAutoSelect} label={t('toolOptions.autoSelectLayer')} onChange={workspace.setMoveAutoSelect} />}

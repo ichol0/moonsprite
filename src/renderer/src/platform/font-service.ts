@@ -2,6 +2,9 @@ import type { StoredFont } from '@shared/types'
 import { TEXT_FONT_FAMILIES } from '@/core/text-raster'
 
 const loadedFonts = new Map<string, FontFace>()
+const BUILTIN_FONT_ID_PREFIX = 'moonsprite-builtin-'
+const FONT_USAGE_STORAGE_KEY = 'moonsprite:text-font-usage:v1'
+const TEXT_FONT_SIZE_STORAGE_KEY = 'moonsprite:text-font-size:v1'
 
 export interface TextFontOption {
   id?: string
@@ -24,7 +27,7 @@ const registerFont = async (font: StoredFont): Promise<void> => {
 const asOption = (font: StoredFont): TextFontOption => ({
   id: font.id,
   family: font.family,
-  source: font.imported ? 'imported' : 'local',
+  source: font.id.startsWith(BUILTIN_FONT_ID_PREFIX) ? 'built-in' : font.imported ? 'imported' : 'local',
   filePath: font.filePath
 })
 
@@ -38,13 +41,51 @@ const uniqueOptions = (options: TextFontOption[]): TextFontOption[] => {
   })
 }
 
+const fontUsageKey = (family: string): string => family.trim().toLocaleLowerCase()
+
+const readFontUsage = (): Record<string, number> => {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(FONT_USAGE_STORAGE_KEY) ?? '{}') as Record<string, unknown>
+    return Object.fromEntries(Object.entries(parsed).flatMap(([family, count]) => typeof count === 'number' && Number.isFinite(count) && count > 0
+      ? [[family, Math.floor(count)]]
+      : []))
+  } catch {
+    return {}
+  }
+}
+
+export const sortTextFontsByUsage = (fonts: readonly TextFontOption[]): TextFontOption[] => {
+  const usage = readFontUsage()
+  const builtInOrder = new Map<string, number>(TEXT_FONT_FAMILIES.map((family, index) => [fontUsageKey(family), index]))
+  return fonts.map((font, index) => ({ font, index, count: usage[fontUsageKey(font.family)] ?? 0, builtInRank: builtInOrder.get(fontUsageKey(font.family)) ?? Number.MAX_SAFE_INTEGER }))
+    .sort((left, right) => right.count - left.count || left.builtInRank - right.builtInRank || left.index - right.index)
+    .map(({ font }) => font)
+}
+
+export const recordTextFontUsage = (family: string): void => {
+  const usage = readFontUsage()
+  const key = fontUsageKey(family)
+  usage[key] = (usage[key] ?? 0) + 1
+  localStorage.setItem(FONT_USAGE_STORAGE_KEY, JSON.stringify(usage))
+}
+
+export const loadLastTextFontSize = (): number | undefined => {
+  const value = Number(localStorage.getItem(TEXT_FONT_SIZE_STORAGE_KEY))
+  return Number.isFinite(value) && value >= 1 && value <= 512 ? Math.round(value) : undefined
+}
+
+export const recordLastTextFontSize = (fontSize: number): void => {
+  if (!Number.isFinite(fontSize)) return
+  localStorage.setItem(TEXT_FONT_SIZE_STORAGE_KEY, String(Math.max(1, Math.min(512, Math.round(fontSize)))))
+}
+
 export async function loadTextFontCatalog(): Promise<TextFontOption[]> {
   const imported = typeof window.moonSprite?.listFonts === 'function' ? (await window.moonSprite.listFonts()).fonts : []
   await Promise.allSettled(imported.map(registerFont))
-  return uniqueOptions([
+  return sortTextFontsByUsage(uniqueOptions([
     ...imported.map(asOption),
     ...TEXT_FONT_FAMILIES.map((family) => ({ family, source: 'built-in' as const }))
-  ])
+  ]))
 }
 
 export async function loadSystemFontCatalog(): Promise<TextFontOption[]> {

@@ -1,8 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { createDocument } from './document'
-import { decodeDocumentFile, decodeDocumentFileAsync, encodeDocumentForPath, fileExtension, fileNameFromPath, joinDirectoryPath, normalizeSaveDialogPath, sanitizeFileStem, saveImageDialogFormat, saveImageKindForPath, shouldDecodeDocumentInWorker } from './document-files'
+import { createDocument, createLayer } from './document'
+import { decodeDocumentFile, decodeDocumentFileAsync, directSourceImageSaveTarget, encodeDocumentForPath, encodeDocumentForSourceImage, fileExtension, fileNameFromPath, joinDirectoryPath, normalizeSaveDialogPath, sanitizeFileStem, saveImageDialogFormat, saveImageKindForPath, shouldDecodeDocumentInWorker, sourceRasterImageKindForPath } from './document-files'
 import { decodeProject, encodeProject } from './project-format'
 import { initialDocumentComposite, initialDocumentCompositePending } from './initial-document-composite'
+import { addBlankAnimationFrame } from './animation'
 
 describe('document file rules', () => {
   afterEach(() => vi.unstubAllGlobals())
@@ -12,6 +13,7 @@ describe('document file rules', () => {
     expect(fileExtension('/gallery/sprite.ASEPRITE')).toBe('aseprite')
     expect(sanitizeFileStem('8*8.aseprite', 'untitled')).toBe('8_8')
     expect(sanitizeFileStem('walk.gif', 'untitled')).toBe('walk')
+    expect(sanitizeFileStem('tiles.bmp', 'untitled')).toBe('tiles')
   })
 
   it('keeps save dialog formats and suffixes consistent', () => {
@@ -19,6 +21,39 @@ describe('document file rules', () => {
     expect(saveImageKindForPath('sprite.jpeg')).toBe('jpeg')
     expect(normalizeSaveDialogPath('sprite.png', 'aseprite')).toBe('sprite.aseprite')
     expect(normalizeSaveDialogPath('sprite.ase', 'aseprite')).toBe('sprite.ase')
+  })
+
+  it('recognizes every imported raster format and only permits flat source-image saves', () => {
+    expect(sourceRasterImageKindForPath('sprite.png')).toBe('png-auto')
+    expect(sourceRasterImageKindForPath('sprite.jpeg')).toBe('jpeg')
+    expect(sourceRasterImageKindForPath('sprite.webp')).toBe('webp')
+    expect(sourceRasterImageKindForPath('sprite.bmp')).toBe('bmp')
+    expect(sourceRasterImageKindForPath('sprite.gif')).toBe('gif')
+
+    const flat = createDocument('sprite.png', 2, 2, 'rgba')
+    flat.sourceFilePath = 'D:/imports/sprite.png'
+    expect(directSourceImageSaveTarget(flat)).toEqual({ filePath: 'D:/imports/sprite.png', format: 'png-auto' })
+
+    const layered = createDocument('layered.png', 2, 2, 'rgba')
+    layered.sourceFilePath = 'D:/imports/layered.png'
+    layered.layers.push(createLayer('Layer 2', 2, 2, 'rgba'))
+    expect(directSourceImageSaveTarget(layered)).toBeNull()
+
+    const animated = createDocument('animated.gif', 2, 2, 'rgba')
+    animated.sourceFilePath = 'D:/imports/animated.gif'
+    addBlankAnimationFrame(animated)
+    expect(directSourceImageSaveTarget(animated)).toBeNull()
+  })
+
+  it('encodes BMP and GIF source-image saves without changing their extensions', async () => {
+    const document = createDocument('sprite', 1, 1, 'rgba')
+    document.layers[0].pixels.set([255, 0, 0, 255])
+
+    const bmp = await encodeDocumentForSourceImage(document, 'bmp')
+    const gif = await encodeDocumentForSourceImage(document, 'gif')
+
+    expect(String.fromCharCode(...bmp.subarray(0, 2))).toBe('BM')
+    expect(new TextDecoder().decode(gif.subarray(0, 6))).toBe('GIF89a')
   })
 
   it('joins default directories without changing their platform separator style', () => {

@@ -1,4 +1,4 @@
-import type { RgbaColor } from '@shared/types'
+import type { PaletteEntry, RgbaColor } from '@shared/types'
 import { colorEquals } from './raster'
 
 export type PaletteSwatchSize = 'tiny' | 'small' | 'medium' | 'large' | 'huge'
@@ -19,6 +19,14 @@ export const paletteOrderFromSlots = (slots: readonly (number | null)[]): number
     if (id === null || seen.has(id)) return []
     seen.add(id)
     return [id]
+  })
+}
+
+export const visiblePaletteColors = (palette: readonly PaletteEntry[], paletteOrder: readonly number[]): RgbaColor[] => {
+  const entriesById = new Map(palette.map((entry) => [entry.id, entry]))
+  return paletteOrder.flatMap((id) => {
+    const entry = entriesById.get(id)
+    return entry ? [entry.color] : []
   })
 }
 

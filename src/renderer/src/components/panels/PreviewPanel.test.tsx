@@ -5,8 +5,11 @@ import { useWorkspace } from '@/store/workspace'
 import { PreviewPanel } from './PreviewPanel'
 
 class MockResizeObserver {
+  static created = 0
+  static disconnected = 0
+  constructor() { MockResizeObserver.created += 1 }
   observe() {}
-  disconnect() {}
+  disconnect() { MockResizeObserver.disconnected += 1 }
 }
 
 class MockOffscreenCanvas {
@@ -18,6 +21,8 @@ class MockOffscreenCanvas {
 
 beforeEach(() => {
   MockOffscreenCanvas.instances = []
+  MockResizeObserver.created = 0
+  MockResizeObserver.disconnected = 0
   useWorkspace.setState({ sessions: [], activeId: null, message: null, dialog: null })
   vi.stubGlobal('ResizeObserver', MockResizeObserver)
   vi.stubGlobal('OffscreenCanvas', MockOffscreenCanvas)
@@ -50,6 +55,7 @@ describe('PreviewPanel animation controls', () => {
     const { rerender } = render(<PreviewPanel session={session} onClose={vi.fn()} docked />)
     const exactSurface = MockOffscreenCanvas.instances.find((canvas) => canvas.width === 512 && canvas.height === 256)
     expect(exactSurface).toBeDefined()
+    expect(context.imageSmoothingEnabled).toBe(false)
 
     const nextSession = {
       ...session,
@@ -60,6 +66,8 @@ describe('PreviewPanel animation controls', () => {
 
     expect(MockOffscreenCanvas.instances.filter((canvas) => canvas.width === 512 && canvas.height === 256)).toHaveLength(1)
     expect(exactSurface!.context.putImageData).toHaveBeenLastCalledWith(expect.objectContaining({ width: 2, height: 3 }), 5, 6)
+    expect(MockResizeObserver.created).toBe(1)
+    expect(MockResizeObserver.disconnected).toBe(0)
   })
 
   it('keeps preview playback independent from canvas playback', () => {

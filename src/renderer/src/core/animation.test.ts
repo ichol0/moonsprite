@@ -351,4 +351,28 @@ describe('animation timeline boundary', () => {
     expect(resizedSecondCel.surface?.pixels[3]).toBe(0)
     expect(resizedSecondCel.surface?.pixels[7]).toBe(255)
   })
+
+  it('tiles background pixels on active and inactive animation frames when the canvas expands', () => {
+    const document = createDocument('animated background resize', 2, 1, 'rgba')
+    const layer = getActiveLayer(document)
+    layer.background = { mode: 'canvas' }
+    const firstFrame = ensureAnimationDocument(document).activeFrameId
+    writeLayerColor(document, layer, 0, { r: 255, g: 0, b: 0, a: 255 })
+    writeLayerColor(document, layer, 1, { r: 0, g: 0, b: 255, a: 255 })
+    syncActiveAnimationFrame(document)
+    const secondFrame = addBlankAnimationFrame(document)
+    ensureLayerCoversCanvas(document, layer)
+    writeLayerColor(document, layer, 0, { r: 0, g: 255, b: 0, a: 255 })
+    writeLayerColor(document, layer, 1, { r: 255, g: 255, b: 0, a: 255 })
+    syncActiveAnimationFrame(document)
+    activateAnimationFrame(document, firstFrame)
+
+    const resized = resizeDocumentAt(document, 5, 1, 1, 0)
+    resizeAnimationCelsAt(document, resized.offsetX, resized.offsetY, false, 2, 1)
+
+    expect(Array.from(getActiveLayer(document).pixels.filter((_, index) => index % 4 === 0))).toEqual([0, 255, 0, 255, 0])
+    activateAnimationFrame(document, secondFrame)
+    expect(Array.from(getActiveLayer(document).pixels.filter((_, index) => index % 4 === 0))).toEqual([255, 0, 255, 0, 255])
+    expect(Array.from(getActiveLayer(document).pixels.filter((_, index) => index % 4 === 1))).toEqual([255, 255, 255, 255, 255])
+  })
 })

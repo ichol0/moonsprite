@@ -1,9 +1,9 @@
 {
   "name": "moonsprite",
-  "version": "0.1.0-dev.4",
-  "description": "An original, open-source pixel art workstation for Windows.",
+  "version": "0.1.0-dev.5",
+  "description": "An original, source-available pixel art workstation for Windows.",
   "author": "MoonSprite contributors",
-  "license": "MIT",
+  "license": "SEE LICENSE IN LICENSE",
   "scripts": {
     "dev": "tauri dev --config src-tauri/tauri.dev.conf.json",
     "dev:web": "vite --config vite.config.ts",

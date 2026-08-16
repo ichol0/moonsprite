@@ -2,6 +2,8 @@ import type { AnimationCel, AnimationCelSurface, AnimationFrame, AnimationGroupM
 import { animationMaskAt, createId, getLayerStorageOrigin, resolveAnimationMask, setLayerStorageOrigin } from './document'
 import { assignRasterStorage, installRuntimeRaster, rasterStorageIdentity, runtimeRasterVisibleBounds, readSurfacePackedLocal } from './runtime-raster'
 import { normalizeTextCelData, translateTextCelData } from './text-raster'
+import { cloneLayerStyles } from './layer-styles'
+import { tileBackgroundSurfaceToCanvas } from './background-patterns'
 
 export const DEFAULT_FRAME_DURATION = 100
 export const MAX_ANIMATION_FRAME_DURATION = 60_000
@@ -439,15 +441,28 @@ const cropAnimationCelSurface = (surface: AnimationCelSurface, canvasWidth: numb
 }
 
 /** 将画布坐标偏移同步到所有动画 cel，不改变 cel 在画布中的世界位置。 */
-export const resizeAnimationCelsAt = (document: SpriteDocument, offsetX: number, offsetY: number, trimOutside = false): void => {
+export const resizeAnimationCelsAt = (
+  document: SpriteDocument,
+  offsetX: number,
+  offsetY: number,
+  trimOutside = false,
+  sourceCanvasWidth = document.width,
+  sourceCanvasHeight = document.height
+): void => {
   const timeline = ensureAnimationDocument(document)
   const horizontal = Math.trunc(offsetX)
   const vertical = Math.trunc(offsetY)
+  const expanding = document.width > sourceCanvasWidth || document.height > sourceCanvasHeight
+  const backgroundLayerIds = new Set(document.layers.filter((layer) => layer.background).map((layer) => layer.id))
   const resized = new Set<AnimationCelSurface>()
   for (const cel of timeline.cels) {
     const source = resolveAnimationCel(timeline, cel)
     if (cel.frameId === timeline.activeFrameId || !source?.surface || resized.has(source.surface)) continue
     resized.add(source.surface)
+    if (expanding && backgroundLayerIds.has(cel.layerId)) {
+      tileBackgroundSurfaceToCanvas(source.surface, sourceCanvasWidth, sourceCanvasHeight, document.width, document.height, horizontal, vertical)
+      continue
+    }
     source.surface.offsetX += horizontal
     source.surface.offsetY += vertical
     if (trimOutside) cropAnimationCelSurface(source.surface, document.width, document.height)
@@ -466,8 +481,8 @@ export const cloneAnimationCel = (cel: AnimationCel): AnimationCel => ({
 export const cloneDocumentForAnimationFrame = (document: SpriteDocument, frameId: string): SpriteDocument => {
   const layers = document.layers.map((layer) => {
     const clone = layer.format === 'rgba'
-      ? { ...layer, pixels: new Uint8ClampedArray(4) } as RasterLayer
-      : { ...layer, pixels: new Uint32Array(1) } as RasterLayer
+      ? { ...layer, layerStyles: cloneLayerStyles(layer.layerStyles), background: layer.background ? { ...layer.background } : undefined, pixels: new Uint8ClampedArray(4) } as RasterLayer
+      : { ...layer, layerStyles: cloneLayerStyles(layer.layerStyles), background: layer.background ? { ...layer.background } : undefined, pixels: new Uint32Array(1) } as RasterLayer
     assignRasterStorage(clone, layer)
     setLayerStorageOrigin(clone, getLayerStorageOrigin(layer))
     return clone
@@ -475,7 +490,7 @@ export const cloneDocumentForAnimationFrame = (document: SpriteDocument, frameId
   const preview: SpriteDocument = {
     ...document,
     layers,
-    groups: document.groups.map((group) => ({ ...group })),
+    groups: document.groups.map((group) => ({ ...group, layerStyles: cloneLayerStyles(group.layerStyles), displayColor: group.displayColor ? { ...group.displayColor } : undefined })),
     palette: document.palette.map((entry) => ({ ...entry, color: { ...entry.color } })),
     paletteOrder: [...document.paletteOrder],
     paletteSlots: document.paletteSlots ? [...document.paletteSlots] : undefined,
@@ -947,4 +962,28 @@ export const animationLayerAtFrame = (document: SpriteDocument, layerId: string,
   const timeline = ensureAnimationDocument(document)
   const lookup = createAnimationCelLookup(timeline)
   return layerFromAnimationCel(layer, lookup.resolve(lookup.at(layerId, frameId)))
+}
+
+/** Updates cel geometry without copying or materializing its raster storage. */
+export const setAnimationLayerOffsetsAtFrame = (document: SpriteDocument, layerId: string, frameId: string, offsetX: number, offsetY: number): void => {
+  const layer = document.layers.find((candidate) => candidate.id === layerId)
+  const timeline = document.animation
+  if (!timeline) {
+    if (layer) {
+      layer.offsetX = offsetX
+      layer.offsetY = offsetY
+    }
+    return
+  }
+  const cel = animationCelAt(timeline, layerId, frameId)
+  const source = cel ? resolveAnimationCel(timeline, cel) ?? cel : null
+  if (source?.surface) {
+    source.surface.offsetX = offsetX
+    source.surface.offsetY = offsetY
+    if (cel && cel !== source) cel.surface = source.surface
+  }
+  if (layer && timeline.activeFrameId === frameId) {
+    layer.offsetX = offsetX
+    layer.offsetY = offsetY
+  }
 }

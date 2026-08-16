@@ -4,7 +4,7 @@ import { PixelUtilityIcon } from '@/components/PixelUtilityIcon'
 import { Tooltip } from '@/components/Tooltip'
 import { useI18n } from '@/components/I18nProvider'
 import { toolRailRenderKey } from '@/core/app-render-keys'
-import { shouldUseTemporaryMoveTool } from '@/core/canvas-input'
+import { brushLineConnectionOverridesTemporaryMove, shouldUseTemporaryMoveTool } from '@/core/canvas-input'
 import { loadShortcuts } from '@/core/shortcuts'
 import { useWorkspace } from '@/store/workspace'
 import { isToolAvailableForSession } from '@/store/workspace-session'
@@ -41,7 +41,13 @@ export const EditorToolRail = memo(function EditorToolRail({ side, onGripPointer
       if (!['Alt', 'Control', 'Meta', 'Shift'].includes(event.key)) return
       const current = useWorkspace.getState()
       const active = current.sessions.find((item) => item.document.id === current.activeId)
-      setTemporaryMoveSelected(Boolean(active && shouldUseTemporaryMoveTool(active.tool, event, shortcuts.temporaryMove ?? '')))
+      const lineConnectionHasPriority = Boolean(active && brushLineConnectionOverridesTemporaryMove(
+        active.tool,
+        event,
+        shortcuts.lineConnectionMode ?? '',
+        Boolean(active.tool === 'eraser' ? active.lastEraserPoint : active.tool === 'pencil' ? active.lastPencilPoint : null)
+      ))
+      setTemporaryMoveSelected(Boolean(active && !lineConnectionHasPriority && shouldUseTemporaryMoveTool(active.tool, event, shortcuts.temporaryMove ?? '', active.moveKind)))
     }
     const clearTemporaryMove = (): void => setTemporaryMoveSelected(false)
     window.addEventListener('keydown', updateTemporaryMove)
@@ -54,7 +60,7 @@ export const EditorToolRail = memo(function EditorToolRail({ side, onGripPointer
       window.removeEventListener('blur', clearTemporaryMove)
       document.removeEventListener('visibilitychange', clearTemporaryMove)
     }
-  }, [shortcuts.temporaryMove])
+  }, [shortcuts.lineConnectionMode, shortcuts.temporaryMove])
 
   useEffect(() => {
     const closeOutside = (event: PointerEvent): void => {
@@ -110,7 +116,7 @@ export const EditorToolRail = memo(function EditorToolRail({ side, onGripPointer
     </span>
     <button className="tool-rail-grip" type="button" aria-label={t('tools.moveToolbar')} title={t('tools.moveToolbarHint')} onPointerDown={onGripPointerDown}><PixelUtilityIcon kind="move" /></button>
     {tools.map((tool) => {
-      const presentation = activeToolPresentation(tool.id, session.selectionKind, session.shapeKind, locale, fillKind, session.lineKind, session.moveKind)
+      const presentation = activeToolPresentation(tool.id, session.selectionKind, session.shapeKind, locale, fillKind, session.lineKind, temporaryMoveSelected && tool.id === 'move' ? 'move' : session.moveKind)
       const shortcut = shortcuts[presentation.shortcutId] ?? ''
       const toolAvailable = isToolAvailableForSession(session, tool.id)
       const openToolFlyout = (): void => {

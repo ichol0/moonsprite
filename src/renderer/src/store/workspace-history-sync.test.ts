@@ -10,6 +10,34 @@ beforeEach(() => {
 })
 
 describe('targeted pixel history synchronization', () => {
+  it('undoes and redoes deselection without invalidating document content', () => {
+    const document = createDocument('selection history', 4, 3, 'rgba')
+    useWorkspace.getState().addSession(document)
+    const selection = { x: 0, y: 0, width: 4, height: 3, mask: Uint8Array.from([1, 1, 1, 1, 1, 0, 0, 1, 1, 1, 1, 1]) }
+    useWorkspace.getState().setSelection(selection)
+    const before = useWorkspace.getState().sessions[0]
+    const mask = before.selection?.mask
+    const revision = before.revision
+    const contentRevision = before.contentRevision
+    document.dirty = false
+
+    useWorkspace.getState().commitSelectionChange(before.selection, null, 'deselect')
+    useWorkspace.getState().undo()
+    let session = useWorkspace.getState().sessions[0]
+    expect(session.selection).toEqual(selection)
+    expect(session.selection?.mask).toBe(mask)
+    expect(session.revision).toBe(revision)
+    expect(session.contentRevision).toBe(contentRevision)
+    expect(document.dirty).toBe(false)
+
+    useWorkspace.getState().redo()
+    session = useWorkspace.getState().sessions[0]
+    expect(session.selection).toBeNull()
+    expect(session.revision).toBe(revision)
+    expect(session.contentRevision).toBe(contentRevision)
+    expect(document.dirty).toBe(false)
+  })
+
   it('keeps unrelated animation cel surfaces untouched during undo and redo', () => {
     const document = createDocument('targeted pixel history sync', 2, 1, 'rgba')
     const editedLayer = getActiveLayer(document)

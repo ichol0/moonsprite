@@ -8,7 +8,6 @@ import type { DockDragProps } from '@/components/workspace-panel-types'
 import { cloneDocumentForAnimationFrame, ensureAnimationDocument, nextAnimationFrameId } from '@/core/animation'
 import { anchoredPreviewPan, followPreviewPosition, previewCheckerCellSize } from '@/core/preview-geometry'
 import { steppedCanvasZoom } from '@/core/canvas-input'
-import { pixelSamplingMode } from '@/core/pixel-display'
 import { loadEditorPreferences, type CheckerboardPreferences } from '@/core/file-preferences'
 import { registerViewPreviewListener } from '@/core/view-preview-lifecycle'
 import { useWorkspace, type DocumentSession } from '@/store/workspace'
@@ -262,8 +261,7 @@ export function PreviewPanel({ session, onClose, docked = false, onDockDragStart
           context.fillRect(originX + column * checkerCell, originY + row * checkerCell, checkerCell, checkerCell)
         }
       }
-      context.imageSmoothingEnabled = pixelSamplingMode(scale) === 'smooth'
-      if (context.imageSmoothingEnabled) context.imageSmoothingQuality = 'high'
+      context.imageSmoothingEnabled = false
       const fromX = Math.max(0, Math.floor((0 - originX) / scale))
       const fromY = Math.max(0, Math.floor((0 - originY) / scale))
       const toX = Math.min(session.document.width, Math.ceil((displayWidth - originX) / scale))
@@ -290,13 +288,18 @@ export function PreviewPanel({ session, onClose, docked = false, onDockDragStart
     }
     drawRef.current = draw
     draw()
-    const observer = new ResizeObserver(draw)
+  }, [session.document, session.contentRevision, previewFrameId, showRelativeLuminance, checkerboard, canvasSurround, rotationIndicatorPosition, zoom, pan, followViewport, initialCompositeReady])
+
+  useEffect(() => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+    const observer = new ResizeObserver(() => drawRef.current())
     observer.observe(canvas)
     return () => {
       observer.disconnect()
-      if (drawRef.current === draw) drawRef.current = () => {}
+      drawRef.current = () => {}
     }
-  }, [session.document, session.contentRevision, previewFrameId, showRelativeLuminance, checkerboard, canvasSurround, rotationIndicatorPosition, zoom, pan, followViewport, initialCompositeReady])
+  }, [session.document.id])
 
   useEffect(() => () => {
     if (panFrameRef.current !== null) window.cancelAnimationFrame(panFrameRef.current)

@@ -14,7 +14,7 @@ export function SaveProgressOverlay(): ReactElement | null {
 
   return createPortal(
     <div className={`modal-backdrop save-progress-backdrop simulated-progress-backdrop ${complete ? 'is-complete' : 'is-running'}`} role="presentation">
-      <section className={`modal save-progress-modal simulated-progress-modal save-simulated-progress-modal ${complete ? 'is-complete' : ''}`} role="dialog" aria-modal="true" aria-live="polite" aria-labelledby="save-simulated-progress-title">
+      <section className={`modal save-progress-modal simulated-progress-modal save-simulated-progress-modal ${!saveAs ? 'save-progress-notice-position' : ''} ${complete ? 'is-complete' : ''}`} role="dialog" aria-modal="true" aria-live="polite" aria-labelledby="save-simulated-progress-title">
         <header>
           <div className="save-progress-heading">
             <span className="save-progress-icon" aria-hidden="true"><span className="save-progress-animation" /></span>

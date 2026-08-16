@@ -6,6 +6,9 @@ import { browserRasterImageExtensions, decodeBrowserRasterImage } from './raster
 import { currentAppLocale } from './localization'
 import { canPrepareInitialDocumentComposite, registerInitialDocumentComposite, registerPendingInitialDocumentComposite } from './initial-document-composite'
 import { rehydrateRuntimeRasterDocument } from './runtime-raster'
+import { exportAnimationGif } from './gif'
+import { compositeDocument } from './document'
+import { encodeBmp } from './bmp'
 
 export type SaveImageDialogFormat = 'png' | 'jpeg' | 'webp' | 'ase' | 'aseprite'
 
@@ -26,7 +29,7 @@ export function joinDirectoryPath(directory: string, fileName: string): string {
 
 export function sanitizeFileStem(name: string, fallback: string): string {
   const stem = name
-    .replace(/\.(moonsprite|aseprite|ase|png|jpe?g|webp|svg|gif)$/i, '')
+    .replace(/\.(moonsprite|aseprite|ase|png|jpe?g|webp|bmp|svg|gif)$/i, '')
     .replace(/[\\/:*?"<>|]/g, '_')
     .trim()
   return stem || fallback
@@ -59,6 +62,51 @@ export function saveImageKindForPath(filePath: string): SaveImageKind | null {
   return null
 }
 
+export type SourceRasterImageKind = 'png-auto' | 'jpeg' | 'webp' | 'bmp' | 'gif'
+
+export interface DirectSourceImageSaveTarget {
+  filePath: string
+  format: SourceRasterImageKind
+}
+
+export function sourceRasterImageKindForPath(filePath: string): SourceRasterImageKind | null {
+  const suffix = fileExtension(filePath)
+  if (suffix === 'png') return 'png-auto'
+  if (suffix === 'jpg' || suffix === 'jpeg') return 'jpeg'
+  if (suffix === 'webp') return 'webp'
+  if (suffix === 'bmp') return 'bmp'
+  if (suffix === 'gif') return 'gif'
+  return null
+}
+
+function hasImageIncompatibleDocumentStructure(document: SpriteDocument): boolean {
+  if (document.layers.length !== 1 || document.groups.length > 0) return true
+  if ((document.customBrushes?.length ?? 0) > 0 || (document.slices?.length ?? 0) > 0 || (document.timelapse?.snapshots?.length ?? 0) > 0) return true
+  const layer = document.layers[0]
+  if (layer.kind === 'text' || layer.groupId || layer.clippingMask || layer.layerStyles || layer.background) return true
+  const timeline = document.animation
+  if (!timeline) return false
+  if (timeline.frames.length !== 1 || timeline.cels.length !== 1 || (timeline.groupMasks?.length ?? 0) > 0) return true
+  const frame = timeline.frames[0]
+  const cel = timeline.cels[0]
+  return cel.layerId !== layer.id || cel.frameId !== frame.id || Boolean(cel.linkedCelId || cel.text || cel.mask)
+}
+
+export function directSourceImageSaveTarget(document: SpriteDocument): DirectSourceImageSaveTarget | null {
+  if (document.filePath || !document.sourceFilePath || hasImageIncompatibleDocumentStructure(document)) return null
+  const format = sourceRasterImageKindForPath(document.sourceFilePath)
+  return format ? { filePath: document.sourceFilePath, format } : null
+}
+
+export async function encodeDocumentForSourceImage(document: SpriteDocument, format: SourceRasterImageKind, onProgress?: (value: number) => void): Promise<Uint8Array> {
+  let bytes: Uint8Array
+  if (format === 'bmp') bytes = encodeBmp(compositeDocument(document), document.width, document.height)
+  else if (format === 'gif') bytes = exportAnimationGif(document, { scalePercent: 100, frameStart: 1, frameEnd: 1, direction: 'forward' }).bytes
+  else bytes = (await exportDocumentImage(document, 100, format)).bytes
+  onProgress?.(1)
+  return bytes
+}
+
 export function normalizeSaveDialogPath(filePath: string, format: SaveImageKind): string {
   const extension = saveImageExtension(format)
   const accepted = format === 'jpeg'
@@ -67,8 +115,8 @@ export function normalizeSaveDialogPath(filePath: string, format: SaveImageKind)
       ? /\.(ase|aseprite)$/i.test(filePath)
       : filePath.toLowerCase().endsWith(`.${extension}`)
   if (accepted) return filePath
-  return /\.(moonsprite|png|jpg|jpeg|webp|svg|gif|ase|aseprite)$/i.test(filePath)
-    ? filePath.replace(/\.(moonsprite|png|jpg|jpeg|webp|svg|gif|ase|aseprite)$/i, `.${extension}`)
+  return /\.(moonsprite|png|jpg|jpeg|webp|bmp|svg|gif|ase|aseprite)$/i.test(filePath)
+    ? filePath.replace(/\.(moonsprite|png|jpg|jpeg|webp|bmp|svg|gif|ase|aseprite)$/i, `.${extension}`)
     : `${filePath}.${extension}`
 }
 

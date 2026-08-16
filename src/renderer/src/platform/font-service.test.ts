@@ -1,9 +1,10 @@
 import type { MoonSpriteApi, StoredFont } from '@shared/types'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { deleteTextFont, importSystemTextFont, importTextFont, loadSystemFontCatalog, loadTextFontCatalog, resetTextFontServiceForTests } from './font-service'
+import { deleteTextFont, importSystemTextFont, importTextFont, loadLastTextFontSize, loadSystemFontCatalog, loadTextFontCatalog, recordLastTextFontSize, recordTextFontUsage, resetTextFontServiceForTests, sortTextFontsByUsage } from './font-service'
 
 const systemFont: StoredFont = { id: 'system:Moon Local', family: 'Moon Local', filePath: 'C:/Windows/Fonts/moon.ttf', imported: false }
 const importedFont: StoredFont = { id: 'moon.ttf', family: 'Moon Imported', filePath: 'Font/moon.ttf', imported: true }
+const bundledFont: StoredFont = { id: 'moonsprite-builtin-silkscreen-regular.ttf', family: 'Silkscreen', filePath: 'Font/moonsprite-builtin-silkscreen-regular.ttf', imported: true }
 
 beforeEach(() => {
   localStorage.clear()
@@ -47,6 +48,39 @@ describe('font service', () => {
     } as unknown as MoonSpriteApi
 
     expect(await loadTextFontCatalog()).toContainEqual(expect.objectContaining({ family: 'Arial', source: 'imported' }))
+  })
+
+  it('exposes seeded fonts as built-in choices', async () => {
+    window.moonSprite = {
+      listFonts: vi.fn(async () => ({ directoryPath: 'Font', fonts: [bundledFont] })),
+      readBinary: vi.fn(async () => new Uint8Array([1, 2, 3]))
+    } as unknown as MoonSpriteApi
+
+    expect(await loadTextFontCatalog()).toContainEqual(expect.objectContaining({ family: 'Silkscreen', source: 'built-in' }))
+  })
+
+  it('sorts frequently selected fonts first and persists the counts', () => {
+    const fonts = [
+      { family: 'Fusion Pixel 10px Prop Zh_hans', source: 'built-in' as const },
+      { family: 'Silkscreen', source: 'built-in' as const },
+      { family: 'Tiny5', source: 'built-in' as const }
+    ]
+    recordTextFontUsage('Tiny5')
+    recordTextFontUsage('Tiny5')
+    recordTextFontUsage('Silkscreen')
+
+    expect(sortTextFontsByUsage(fonts).map((font) => font.family)).toEqual([
+      'Tiny5',
+      'Silkscreen',
+      'Fusion Pixel 10px Prop Zh_hans'
+    ])
+  })
+
+  it('persists the last text size within supported bounds', () => {
+    recordLastTextFontSize(19.4)
+    expect(loadLastTextFontSize()).toBe(19)
+    recordLastTextFontSize(999)
+    expect(loadLastTextFontSize()).toBe(512)
   })
 
   it('copies a selected system font into the persistent font library', async () => {

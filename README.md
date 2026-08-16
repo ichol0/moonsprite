@@ -1,6 +1,6 @@
 # MoonSprite
 
-MoonSprite 是面向 Windows 的原创开源像素画工作台，使用 Tauri 2、React、TypeScript、Zustand 和 Canvas 构建。项目采用 MIT License，与 Aseprite 无隶属关系，也不使用其源码、品牌或视觉资产。
+MoonSprite 是面向 Windows 的原创源码可见像素画工作台，使用 Tauri 2、React、TypeScript、Zustand 和 Canvas 构建。项目与 Aseprite 无隶属关系，也不使用其源码、品牌或视觉资产。
 
 当前界面渠道标识为 `DEV`；构建系统继续使用合法的内部 SemVer `0.1.0`。
 
@@ -50,6 +50,13 @@ pnpm build
 - `src-tauri/resources/`：随应用发布的内置资源。
 
 运行时用户目录不会提交到仓库。内置示例工程位于 `src-tauri/resources/示例.moonsprite`。
+
+## 许可
+
+- 当前源码使用 [MoonSprite Source-Available License 1.0](LICENSE)：允许查看、修改、个人编译与源码形式再分发，但未经书面授权不得分发编译后的 MoonSprite。
+- Steam 及其他授权渠道的官方二进制使用 [MoonSprite Official Binary EULA](EULA.md)，允许个人与商业创作，按用户席位授权。
+- 已经以 MIT License 发布的历史版本继续保留原有权利，见 [LICENSE-MIT](LICENSE-MIT)。
+- 第三方字体与依赖遵循各自许可，见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
 
 ## 维护入口
 

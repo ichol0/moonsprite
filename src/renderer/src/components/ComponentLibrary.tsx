@@ -1,11 +1,12 @@
 import { useMemo, useState, type ReactElement } from 'react'
 import { CheckCircle2, FileText, Layers2, Palette, Search } from 'lucide-react'
-import type { RgbaColor } from '@shared/types'
+import type { GradientDither, OutlineDirections, OutlineKernel, OutlinePosition, RgbaColor } from '@shared/types'
 import { ColorPicker, type ColorPickerConfig } from './ColorPicker'
 import { ColorValueControl } from './ColorValueControl'
 import { DeleteIconButton } from './DeleteIconButton'
 import { DialogHeader } from './DialogHeader'
 import { FormField } from './FormField'
+import { GradientDitherSelect } from './GradientDitherSelect'
 import { ModalShell } from './ModalShell'
 import { NumberInput } from './NumberInput'
 import { TextInput } from './TextInput'
@@ -21,10 +22,12 @@ import { SegmentedControl } from './SegmentedControl'
 import { SettingsSectionHeader } from './SettingsSectionHeader'
 import { SettingsNavigation } from './SettingsNavigation'
 import { LivePreviewToggle } from './LivePreviewToggle'
+import { OutlineStrokeControls } from './OutlineStrokeControls'
 import { BrushDynamicsSettingsPanel } from './app/EditorToolOptions'
 import { FILL_KIND_ICONS, SELECTION_KIND_ICONS, fillKindDefinitions, lineKindDefinitions, normalEditorToolIconFor, selectionKindDefinitions, shapeKindDefinitions, toolDefinitions } from './app/editor-tools'
 import { CURSOR_ICON_LIBRARY } from '@/platform/cursor-theme'
 import { translate, type AppLocale, type TranslationKey, type TranslationParams } from '@/core/localization'
+import { outlineDirectionsForKernel } from '@/core/outline-settings'
 import type { BrushDynamicsEffect, BrushDynamicsMapping, BrushDynamicsSettings } from '@/core/pressure'
 
 type ComponentCategory = 'all' | 'controls' | 'forms' | 'panels' | 'dialogs' | 'editor'
@@ -58,12 +61,17 @@ const pixelIconNames: Partial<Record<PixelUtilityIconKind, string>> = {
   newFolder: '新建文件夹', ungroupFolder: '解组文件夹', plus: '加', minus: '减', close: '叉', up: '上', down: '下',
   left: '左', right: '右', onion: '洋葱皮', more: '更多', moreLines: '更多（横线）', paletteLocal: '选择本地色板',
   paletteCenter: '居中', restore: '恢复', undo: '撤销', redo: '重做', workspace: '工作区', copy: '复制',
-  mergeDown: '向下合并', mergeVisible: '合并可见图层', clippingMask: '剪贴蒙版', layerMask: '图层蒙版', folder: '文件夹', folderOpen: '展开文件夹', move: '移动',
+  mergeDown: '向下合并', mergeVisible: '合并可见图层', clippingMask: '剪贴蒙版', layerMask: '图层蒙版', layerStyle: '图层样式', folder: '文件夹', folderOpen: '展开文件夹', move: '移动',
   save: '保存', export: '导出', image: '图像', roadmapPlanned: '未完成', roadmapCompleted: '完成',
   info: '信息', canvasCenter: '居中', canvasTop: '上', canvasBottom: '下', canvasLeft: '左', canvasRight: '右',
   canvasTopLeft: '左上', canvasTopRight: '右上', canvasBottomLeft: '左下', canvasBottomRight: '右下',
   checkboxUnchecked: '复选框未选中', checkboxChecked: '复选框选中', pin: '置顶', clearRecords: '清除记录',
-  refresh: '刷新', extractColors: '提取颜色', follow: '跟随', check: '选择'
+  refresh: '刷新', extractColors: '提取颜色', follow: '跟随', check: '选择',
+  selectionFlipHorizontal: '水平镜像选中', selectionFlipVertical: '垂直镜像选中',
+  canvasMirrorHorizontal: '水平镜像画布', canvasMirrorVertical: '垂直镜像画布',
+  invertSelection: '反选', selectAll: '全选', deselect: '取消选择', selectionOutline: '选区边框',
+  resetView: '重置视图', deleteSelection: '删除选区内容', rotateClockwise90: '顺时针旋转 90°',
+  rotateCounterClockwise90: '逆时针旋转 90°', grid: '网格'
 }
 
 const pixelIconNameOverrides: Partial<Record<PixelUtilityIconKind, string>> = { link: '连接', paste: '粘贴' }
@@ -120,10 +128,12 @@ export const COMPONENT_LIBRARY_ENTRIES: ComponentLibraryEntry[] = [
   { id: 'text-input', name: '文本输入', category: 'forms', description: '用于名称、搜索和短文本内容的统一单行输入。', source: 'TextInput', tags: ['文本', '输入'] },
   { id: 'text-area-input', name: '多行文本输入', category: 'forms', description: '用于描述和备注的固定尺寸多行输入，不允许用户拖动改变大小。', source: 'TextAreaInput', tags: ['文本', '描述', '输入'] },
   { id: 'themed-select', name: '主题下拉', category: 'forms', description: '带分组、选中标记和键盘导航的下拉菜单。', source: 'ThemedSelect', tags: ['下拉', '分组'] },
+  { id: 'gradient-dither-select', name: '渐变抖动选择', category: 'forms', description: '渐变工具和图层样式共用的平滑、Bayer 与方向抖动选择器。', source: 'GradientDitherSelect', tags: ['下拉', '模式', '颜色'] },
   { id: 'form-field', name: '表单字段', category: 'forms', description: '统一标签、控件、说明和悬浮描述的字段布局。', source: 'FormField', tags: ['设置', '输入', '描述'] },
   { id: 'settings-navigation', name: '设置导航', category: 'forms', description: '首选项、快捷键等设置窗口共用的分区导航。', source: 'SettingsNavigation', tags: ['设置', '布局', '选中'] },
   { id: 'settings-section-header', name: '设置分组标题', category: 'forms', description: '统一设置分组标题和右侧操作按钮的对齐与间距。', source: 'SettingsSectionHeader', tags: ['设置', '操作', '布局'] },
   { id: 'range', name: '滑块', category: 'forms', description: '适用于尺寸、不透明度、强度等连续数值。', source: 'RangeField', tags: ['数值', '实时'] },
+  { id: 'outline-stroke-controls', name: '描边设置', category: 'forms', description: '描边宽度、位置、快捷形状与八方向像素开关的统一设置组件。', source: 'OutlineStrokeControls', tags: ['设置', '数值', '模式'] },
   { id: 'checkbox', name: '复选框', category: 'forms', description: '用于可以同时启用的独立选项。', source: 'CheckboxField / PixelCheckbox', tags: ['设置', '复选'] },
   { id: 'switch', name: '开关', category: 'forms', description: '用于明确的开启与关闭状态。', source: 'PreferenceToggle', tags: ['设置', '开关'] },
   { id: 'live-preview-toggle', name: '实时预览开关', category: 'forms', description: '调整类弹窗用于开启或关闭实时预览的统一开关。', source: 'LivePreviewToggle', tags: ['实时', '开关', '弹窗'] },
@@ -235,6 +245,19 @@ function RangePreview({ locale }: { locale: AppLocale }) {
   return <div className="component-preview-stack"><RangeField label={componentText(locale, 'componentLibrary.preview.brushSize')} min={1} max={128} suffix="px" value={value} onChange={setValue} /><RangeField density="compact" label={componentText(locale, 'componentLibrary.preview.brushSize')} min={1} max={128} suffix="px" value={value} onChange={setValue} /><RangeField disabled label={componentText(locale, 'componentLibrary.preview.disabled')} min={1} max={128} suffix="px" value={value} onChange={setValue} /></div>
 }
 
+function OutlineStrokeControlsPreview() {
+  const [thickness, setThickness] = useState(3)
+  const [position, setPosition] = useState<OutlinePosition>('outside')
+  const [kernel, setKernel] = useState<OutlineKernel>('round')
+  const [directions, setDirections] = useState<OutlineDirections>(() => outlineDirectionsForKernel('round'))
+  return <div className="component-outline-controls-preview"><OutlineStrokeControls thickness={thickness} position={position} positions={['outside', 'inside', 'both']} kernel={kernel} directions={directions} onThicknessChange={setThickness} onPositionChange={setPosition} onPatternChange={(nextKernel, nextDirections) => { setKernel(nextKernel); setDirections(nextDirections) }} /></div>
+}
+
+function GradientDitherSelectPreview() {
+  const [value, setValue] = useState<GradientDither>('bayer-4')
+  return <div className="component-gradient-dither-preview"><GradientDitherSelect value={value} onChange={setValue} /></div>
+}
+
 function CheckboxPreview({ locale }: { locale: AppLocale }) {
   const [checked, setChecked] = useState(true)
   return <div className="component-preview-stack"><CheckboxField className="tool-checkbox component-preview-checkbox" checked={checked} label={componentText(locale, 'componentLibrary.preview.perfectPixels')} onChange={setChecked} /><CheckboxField className="tool-checkbox component-preview-checkbox" checked={false} disabled label={componentText(locale, 'componentLibrary.preview.disabled')} onChange={() => undefined} /></div>
@@ -261,7 +284,7 @@ function PanelHeaderPreview({ locale }: { locale: AppLocale }) {
 function PixelUtilityIconPreview() {
   const [locked, setLocked] = useState(true)
   const [visible, setVisible] = useState(true)
-    const kinds = ['properties', 'delete', 'newFolder', 'ungroupFolder', 'plus', 'minus', 'close', 'up', 'down', 'left', 'right', 'onion', 'more', 'moreLines', 'paletteLocal', 'paletteCenter', 'restore', 'undo', 'redo', 'workspace', 'copy', 'link', 'paste', 'mergeDown', 'mergeVisible', 'clippingMask', 'layerMask', 'folder', 'folderOpen', 'move', 'save', 'export', 'image', 'roadmapPlanned', 'roadmapCompleted', 'info', 'canvasCenter', 'canvasTop', 'canvasBottom', 'canvasLeft', 'canvasRight', 'canvasTopLeft', 'canvasTopRight', 'canvasBottomLeft', 'canvasBottomRight', 'checkboxUnchecked', 'checkboxChecked', 'pin', 'clearRecords', 'refresh', 'extractColors', 'follow', 'check'] as const
+    const kinds = ['properties', 'delete', 'newFolder', 'ungroupFolder', 'plus', 'minus', 'close', 'up', 'down', 'left', 'right', 'onion', 'more', 'moreLines', 'paletteLocal', 'paletteCenter', 'restore', 'undo', 'redo', 'workspace', 'copy', 'link', 'paste', 'mergeDown', 'mergeVisible', 'clippingMask', 'layerMask', 'layerStyle', 'folder', 'folderOpen', 'move', 'save', 'export', 'image', 'roadmapPlanned', 'roadmapCompleted', 'info', 'canvasCenter', 'canvasTop', 'canvasBottom', 'canvasLeft', 'canvasRight', 'canvasTopLeft', 'canvasTopRight', 'canvasBottomLeft', 'canvasBottomRight', 'checkboxUnchecked', 'checkboxChecked', 'pin', 'clearRecords', 'refresh', 'extractColors', 'follow', 'check', 'selectionFlipHorizontal', 'selectionFlipVertical', 'canvasMirrorHorizontal', 'canvasMirrorVertical', 'invertSelection', 'selectAll', 'deselect', 'selectionOutline', 'resetView', 'deleteSelection', 'rotateClockwise90', 'rotateCounterClockwise90', 'grid'] as const
   return <div className="component-preview-row"><button type="button" title={pixelIconTitle(locked ? 'lock' : 'unlock')} className={locked ? 'icon-button selected' : 'icon-button'} aria-label={pixelIconTitle(locked ? 'lock' : 'unlock')} aria-pressed={locked} onClick={() => setLocked((value) => !value)}><PixelUtilityIcon kind={locked ? 'lock' : 'unlock'} /></button><button type="button" title={pixelIconTitle(visible ? 'eye' : 'eyeOff')} className={visible ? 'icon-button selected' : 'icon-button'} aria-label={pixelIconTitle(visible ? 'eye' : 'eyeOff')} aria-pressed={visible} onClick={() => setVisible((value) => !value)}><PixelUtilityIcon kind={visible ? 'eye' : 'eyeOff'} /></button>{kinds.map((kind) => <button key={kind} type="button" className="icon-button" title={pixelIconTitle(kind)} aria-label={pixelIconTitle(kind)}><PixelUtilityIcon kind={kind} /></button>)}<button type="button" className="icon-button" title={pixelIconTitle('lock')} aria-label={pixelIconTitle('lock')} disabled><PixelUtilityIcon kind="lock" /></button></div>
 }
 
@@ -384,7 +407,7 @@ function ColorPickerPreview({ locale }: { locale: AppLocale }) {
 function ColorValuePreview({ locale }: { locale: AppLocale }) {
   const [color, setColor] = useState(initialColor)
   const [transparentColor, setTransparentColor] = useState<RgbaColor>({ r: 155, g: 155, b: 159, a: 0 })
-  return <div className="component-color-value-preview"><ColorValueControl color={color} density="compact" onChange={setColor} label={componentText(locale, 'componentLibrary.preview.colorValue')} roleLabel={componentText(locale, 'componentLibrary.preview.foreground')} fillWithColor /><ColorValueControl color={color} density="regular" onChange={setColor} label={componentText(locale, 'componentLibrary.preview.colorValue')} roleLabel={componentText(locale, 'componentLibrary.preview.foreground')} fillWithColor /><ColorValueControl color={transparentColor} density="emphasized" onChange={setTransparentColor} label={componentText(locale, 'componentLibrary.preview.colorValue')} roleLabel={componentText(locale, 'componentLibrary.preview.background')} fillWithColor /></div>
+  return <div className="component-color-value-preview"><ColorValueControl color={color} density="compact" onChange={setColor} label={componentText(locale, 'componentLibrary.preview.colorValue')} roleLabel={componentText(locale, 'componentLibrary.preview.foreground')} fillWithColor /><ColorValueControl color={color} density="regular" onChange={setColor} label={componentText(locale, 'componentLibrary.preview.colorValue')} roleLabel={componentText(locale, 'componentLibrary.preview.foreground')} fillWithColor /><ColorValueControl color={transparentColor} density="emphasized" onChange={setTransparentColor} label={componentText(locale, 'componentLibrary.preview.colorValue')} roleLabel={componentText(locale, 'componentLibrary.preview.background')} fillWithColor /><ColorValueControl color={color} density="regular" disabled onChange={setColor} label={componentText(locale, 'componentLibrary.preview.disabled')} fillWithColor /></div>
 }
 
 function DockPreview({ locale }: { locale: AppLocale }) {
@@ -404,10 +427,12 @@ const previewRenderers: Record<string, (props: { locale: AppLocale }) => ReactEl
   'text-input': TextInputPreview,
   'text-area-input': TextAreaInputPreview,
   'themed-select': SelectPreview,
+  'gradient-dither-select': GradientDitherSelectPreview,
   'form-field': FormFieldPreview,
   'settings-navigation': SettingsNavigationPreview,
   'settings-section-header': SettingsSectionHeaderPreview,
   range: RangePreview,
+  'outline-stroke-controls': OutlineStrokeControlsPreview,
   checkbox: CheckboxPreview,
   switch: SwitchPreview,
   'live-preview-toggle': LivePreviewTogglePreview,
@@ -449,7 +474,7 @@ export function ComponentLibrary({ onClose }: { onClose: () => void }) {
         <aside className="component-library-sidebar">
           <label className="component-library-search"><Search size={14} /><TextInput density="compact" value={query} placeholder={componentText(locale, 'componentLibrary.search')} aria-label={componentText(locale, 'componentLibrary.search')} onChange={(event) => setQuery(event.target.value)} /></label>
           <nav aria-label={componentText(locale, 'componentLibrary.categories')}>{(Object.keys(categoryLabels) as ComponentCategory[]).map((item) => <button key={item} type="button" className={category === item ? 'selected' : ''} onClick={() => setCategory(item)}><span>{componentText(locale, categoryLabels[item])}</span><small>{item === 'all' ? COMPONENT_LIBRARY_ENTRIES.length : COMPONENT_LIBRARY_ENTRIES.filter((entry) => entry.category === item).length}</small></button>)}</nav>
-          <div className="component-library-entry-list">{filteredEntries.map((entry) => { const localized = localizedEntries.find((item) => item.id === entry.id) ?? entry; return <button key={entry.id} type="button" className={entry.id === selectedId ? 'selected' : ''} onClick={() => setSelectedId(entry.id)}><span><strong>{localized.name}</strong><small>{componentText(locale, categoryLabels[entry.category])}</small></span><ChevronRight size={14} /></button> })}{filteredEntries.length === 0 && <p className="component-library-empty">{componentText(locale, 'componentLibrary.noMatch')}</p>}</div>
+          <div className="component-library-entry-list component-scrollbar">{filteredEntries.map((entry) => { const localized = localizedEntries.find((item) => item.id === entry.id) ?? entry; return <button key={entry.id} type="button" className={entry.id === selectedId ? 'selected' : ''} onClick={() => setSelectedId(entry.id)}><span><strong>{localized.name}</strong><small>{componentText(locale, categoryLabels[entry.category])}</small></span><ChevronRight size={14} /></button> })}{filteredEntries.length === 0 && <p className="component-library-empty">{componentText(locale, 'componentLibrary.noMatch')}</p>}</div>
         </aside>
         <main className="component-library-main">
           <div className="component-library-main-heading"><div><span className="eyebrow">{componentText(locale, 'componentLibrary.eyebrow')}</span><h3>{selectedEntry.name}</h3></div><span className="component-library-id">{selectedEntry.id}</span></div>

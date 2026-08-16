@@ -1,4 +1,5 @@
-export type ColorMode = 'rgba' | 'indexed'
+export type ColorMode = 'rgba' | 'indexed' | 'grayscale'
+export type RasterFormat = 'rgba' | 'indexed'
 export type ImageResizeInterpolation = 'nearest' | 'smooth'
 export type ToolId = 'pencil' | 'airbrush' | 'eraser' | 'fill' | 'eyedropper' | 'selection' | 'shape' | 'line' | 'text' | 'move' | 'hand' | 'zoom' | 'rotate'
 export type MoveKind = 'move' | 'slice'
@@ -81,6 +82,18 @@ export interface StoredFont {
 export interface FontListing {
   directoryPath: string
   fonts: StoredFont[]
+}
+
+export interface StoredBackgroundPreset {
+  id: string
+  name: string
+  filePath: string
+  builtIn: boolean
+}
+
+export interface BackgroundPresetListing {
+  directoryPath: string
+  presets: StoredBackgroundPreset[]
 }
 export type ShapeKind = 'rectangle' | 'ellipse' | 'rectangle-outline' | 'ellipse-outline' | 'freeform' | 'polygon'
 export type LineKind = 'line' | 'curve'
@@ -180,7 +193,7 @@ export interface PaletteEntry {
 
 export interface RuntimeRasterTiles {
   kind: 'sparse-tiles-v1'
-  format: ColorMode
+  format: RasterFormat
   width: number
   height: number
   tileSize: number
@@ -189,6 +202,61 @@ export interface RuntimeRasterTiles {
   tileOffsets: Int32Array
   /** Exact visible bounds for immutable RGBA tiles; null means fully transparent. */
   visibleBounds?: { x: number; y: number; width: number; height: number } | null
+}
+
+export interface LayerStyleStroke {
+  enabled: boolean
+  color: RgbaColor
+  size: number
+  position: OutlinePosition
+  kernel: OutlineKernel
+  directions: OutlineDirections
+  smartHue: boolean
+  smartHueDarkness: number
+}
+
+export interface LayerStyleShadow {
+  enabled: boolean
+  color: RgbaColor
+  offsetX: number
+  offsetY: number
+  blur: number
+  smartShadow: boolean
+  smartShadowDarkness: number
+}
+
+export interface LayerStyleInnerGlow {
+  enabled: boolean
+  color: RgbaColor
+  size: number
+}
+
+export interface LayerStyleColorOverlay {
+  enabled: boolean
+  color: RgbaColor
+}
+
+export interface LayerStyleGradientOverlay {
+  enabled: boolean
+  from: RgbaColor
+  to: RgbaColor
+  angle: number
+  dither: GradientDither
+}
+
+export interface LayerStyles {
+  stroke: LayerStyleStroke
+  shadow: LayerStyleShadow
+  innerGlow: LayerStyleInnerGlow
+  colorOverlay: LayerStyleColorOverlay
+  gradientOverlay: LayerStyleGradientOverlay
+}
+
+export type BackgroundPatternId = 'solid' | 'grid' | 'stripes' | 'diamond' | 'diamond-nested' | 'circles'
+
+export interface BackgroundLayerSettings {
+  mode: 'preset' | 'canvas'
+  pattern?: BackgroundPatternId
 }
 
 export interface RgbaLayer {
@@ -206,6 +274,10 @@ export interface RgbaLayer {
   blendMode: BlendMode
   /** Restricts this layer to the visible alpha of its immediate lower sibling. */
   clippingMask?: boolean
+  /** Non-destructive effects evaluated from the active cel surface during compositing. */
+  layerStyles?: LayerStyles
+  /** Treats this layer as editable canvas wallpaper with resize-time tiling. */
+  background?: BackgroundLayerSettings
   groupId?: string | null
   /** Local bitmap dimensions. They may differ from the visible canvas after moving/resizing. */
   width: number
@@ -233,6 +305,10 @@ export interface IndexedLayer {
   blendMode: BlendMode
   /** Restricts this layer to the visible alpha of its immediate lower sibling. */
   clippingMask?: boolean
+  /** Non-destructive effects evaluated from the active cel surface during compositing. */
+  layerStyles?: LayerStyles
+  /** Treats this layer as editable canvas wallpaper with resize-time tiling. */
+  background?: BackgroundLayerSettings
   groupId?: string | null
   width: number
   height: number
@@ -274,6 +350,8 @@ export interface LayerGroup {
   blendMode: BlendMode
   /** Restricts this group to the visible alpha of its immediate lower sibling. */
   clippingMask?: boolean
+  /** Non-destructive effects evaluated from the composited group contents. */
+  layerStyles?: LayerStyles
   /** Re-applies the group blend mode after its children have composited against the external backdrop. */
   cumulativeBlend?: boolean
 }
@@ -383,7 +461,7 @@ export interface DocumentSlice {
 }
 
 export interface SpriteDocument {
-  schemaVersion: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9
+  schemaVersion: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12
   id: string
   name: string
   width: number
@@ -474,6 +552,12 @@ export interface ViewState {
   relativeLuminance: boolean
   /** View-only selection outline visibility. The selection itself remains active. */
   showSelectionOutline?: boolean
+  /** View-only transform pivot visibility. The configured pivot still affects transforms while hidden. */
+  showSelectionPivot?: boolean
+  /** Quick Command Bar center as a normalized horizontal position in its owning canvas. */
+  quickCommandBarPositionX?: number
+  /** Whether this project keeps its Quick Command Bar expanded while it owns canvas focus. */
+  quickCommandBarExpanded?: boolean
 }
 
 export interface GridSettings {
@@ -556,6 +640,10 @@ export interface WorkspaceLayout {
   inspectorWidth: number
   leftDockWidth: number
   bottomDockHeight: number
+  /** Preferred dock proportions within the editor layout. Pixel fields remain for older workspaces. */
+  inspectorWidthRatio?: number
+  leftDockWidthRatio?: number
+  bottomDockHeightRatio?: number
   toolRailSide: ToolRailSide
   previewOpen: boolean
   inspectorLayout: string | null
@@ -595,7 +683,7 @@ export interface ProjectPreview {
   preview: Uint8Array
   width: number
   height: number
-  colorMode: 'rgba' | 'indexed'
+  colorMode: ColorMode
 }
 
 export interface BinaryReadProgress {
@@ -640,13 +728,17 @@ export interface MoonSpriteApi {
   importFont(): Promise<StoredFont | null>
   importSystemFont(id: string): Promise<StoredFont>
   deleteFont(id: string): Promise<void>
-  listRecoveries(): Promise<RecoveryRecord[]>
+  listBackgroundPresets(): Promise<BackgroundPresetListing>
+  openBackgroundPresetFolder(): Promise<void>
+  listRecoveries(retentionDays: number): Promise<RecoveryRecord[]>
   readRecovery(id: string): Promise<Uint8Array>
   writeRecovery(id: string, name: string, data: Uint8Array): Promise<void>
   deleteRecovery(id: string): Promise<void>
   listGalleryProjects(): Promise<GalleryListing>
+  listFolderProjects(directoryPath: string): Promise<GalleryListing>
   deleteGalleryProject(fileName: string): Promise<void>
   openGalleryFolder(): Promise<void>
+  openDirectory(directoryPath: string): Promise<void>
   ensureBuiltinExample(): Promise<string | null>
   openProjectInFolder(filePath: string): Promise<void>
   openExternalUrl(url: string): Promise<void>

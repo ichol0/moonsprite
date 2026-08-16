@@ -82,4 +82,23 @@ describe('EditorToolRail', () => {
     expect(pencil).toHaveClass('selected')
     expect(move).not.toHaveClass('selected')
   })
+
+  it('keeps Move selected when another modifier is pressed after Ctrl', () => {
+    useWorkspace.getState().setTool('move')
+    useWorkspace.getState().setMoveKind('slice')
+    render(<EditorToolRail side="left" onGripPointerDown={vi.fn()} />)
+    const labels = Object.fromEntries(toolDefinitions('zh-CN').map((tool) => [tool.id, tool.label]))
+    const sliceLabel = activeToolPresentation('move', 'rectangle', 'rectangle', 'zh-CN', 'bucket', 'line', 'slice').label
+    const slice = screen.getByRole('button', { name: sliceLabel })
+
+    fireEvent.keyDown(window, { key: 'Control', ctrlKey: true })
+    const move = screen.getByRole('button', { name: labels.move })
+    expect(move).toHaveClass('selected')
+    fireEvent.keyDown(window, { key: 'Alt', ctrlKey: true, altKey: true })
+    expect(move).toHaveClass('selected')
+    fireEvent.keyUp(window, { key: 'Alt', ctrlKey: true, altKey: false })
+    expect(move).toHaveClass('selected')
+    fireEvent.keyUp(window, { key: 'Control', ctrlKey: false })
+    expect(screen.getByRole('button', { name: sliceLabel })).toHaveClass('selected')
+  })
 })

@@ -10,6 +10,15 @@ import { NumberInput } from './NumberInput'
 import { SegmentedControl } from './SegmentedControl'
 import { TextInput } from './TextInput'
 import { PreferenceToggle } from './PreferenceToggle'
+import rgbaModeIcon from '@/assets/pixel-icons/color-mode-rgba.svg'
+import indexedModeIcon from '@/assets/pixel-icons/color-mode-indexed.svg'
+import grayscaleModeIcon from '@/assets/pixel-icons/color-mode-grayscale.svg'
+import recordDrawingIcon from '@/assets/pixel-icons/record-drawing.svg'
+
+const colorModeLabel = (icon: string, width: number, height: number, label: string) => <span className="new-document-color-mode-label">
+  <img className="new-document-color-mode-icon" src={icon} width={width} height={height} alt="" aria-hidden="true" draggable={false} />
+  <span>{label}</span>
+</span>
 
 export function getWindowsFileNameError(value: string, locale: AppLocale = DEFAULT_APP_LOCALE): string | null {
   const name = value
@@ -73,8 +82,12 @@ export function NewDocumentDialog({ open, presets = DEFAULT_DOCUMENT_SIZE_PRESET
           <FormField label={t('common.height')}><NumberInput aria-label={t('newDocument.heightAria')} min={1} value={height} onValueChange={setHeight} /></FormField>
         </div>
         <div className="new-document-presets" aria-label={t('newDocument.presetsAria')}>{presets.map((preset) => <button type="button" key={`${preset.width}x${preset.height}`} className={width === preset.width && height === preset.height ? 'selected' : ''} onClick={() => { setWidth(preset.width); setHeight(preset.height) }}>{preset.width}x{preset.height}</button>)}</div>
-        <FormField label={t('newDocument.colorMode')}><SegmentedControl className="new-document-mode-control" label={t('newDocument.colorMode')} value={mode} options={[{ value: 'rgba', label: t('newDocument.rgba') }, { value: 'indexed', label: t('newDocument.indexed') }]} onChange={setMode} /></FormField>
-        <PreferenceToggle className="new-document-recording-toggle" checked={recordDrawing} label={t('newDocument.recordDrawing')} tooltip={t('newDocument.recordDrawingHint')} onChange={setRecordDrawing} />
+        <FormField label={t('newDocument.colorMode')}><SegmentedControl className="new-document-mode-control" label={t('newDocument.colorMode')} value={mode} options={[
+          { value: 'rgba', label: colorModeLabel(rgbaModeIcon, 32, 16, t('colorMode.rgba')), description: t('colorMode.rgbaDescription') },
+          { value: 'indexed', label: colorModeLabel(indexedModeIcon, 32, 14, t('colorMode.indexed')), description: t('colorMode.indexedDescription') },
+          { value: 'grayscale', label: colorModeLabel(grayscaleModeIcon, 28, 14, t('colorMode.grayscale')), description: t('colorMode.grayscaleDescription') }
+        ]} onChange={setMode} /></FormField>
+        <PreferenceToggle className="new-document-recording-toggle" copyClassName="new-document-recording-label" checked={recordDrawing} label={<><img className="new-document-recording-icon" src={recordDrawingIcon} width={32} height={14} alt="" aria-hidden="true" draggable={false} /><span>{t('newDocument.recordDrawing')}</span></>} tooltip={t('newDocument.recordDrawingHint')} onChange={setRecordDrawing} />
         <p className="modal-note">{t('newDocument.note')}</p>
       </div>
       <footer><button type="button" className="quiet-button" onClick={onClose}>{t('common.cancel')}</button><button className="primary-button" type="submit">{t('newDocument.create')}</button></footer>

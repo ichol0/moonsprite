@@ -32,6 +32,31 @@ const initial = {
 }
 
 describe('TextToolDialog', () => {
+  it('starts new text with TEXT, actual spacing, and the Fusion Pixel native size', async () => {
+    installApi()
+    const onChange = vi.fn()
+    render(<TextToolDialog editing={false} initial={{ color: initial.color }} onChange={onChange} onClose={vi.fn()} onPreview={vi.fn()} onSubmit={vi.fn()} />)
+
+    expect(screen.getByRole('textbox')).toHaveValue('TEXT')
+    await waitFor(() => expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({
+      text: 'TEXT',
+      fontFamily: 'Fusion Pixel 10px Prop Zh_hans',
+      fontSize: 10,
+      spacingMode: 'actual',
+      lineSpacing: 1,
+      letterSpacing: 1
+    })))
+  })
+
+  it('shows language and font details when hovering a built-in font title', async () => {
+    installApi()
+    render(<TextToolDialog editing={false} initial={{ color: initial.color }} onClose={vi.fn()} onPreview={vi.fn()} onSubmit={vi.fn()} />)
+
+    fireEvent.pointerEnter(screen.getByText('Tiny5'))
+    expect(await screen.findByRole('tooltip')).toHaveTextContent('拉丁、希腊和西里尔字母')
+    expect(screen.getByRole('tooltip')).toHaveTextContent('8px')
+  })
+
   it('uses a compact text field and previews by default', async () => {
     installApi()
     const onPreview = vi.fn()
@@ -80,12 +105,43 @@ describe('TextToolDialog', () => {
     installApi()
     render(<TextToolDialog editing initial={initial} onClose={vi.fn()} onPreview={vi.fn()} onSubmit={vi.fn()} />)
 
-    expect(screen.getByRole('option', { name: 'Consolas' })).toHaveAttribute('aria-selected', 'true')
+    expect(await screen.findByRole('option', { name: /Consolas/ })).toHaveAttribute('aria-selected', 'true')
     await waitFor(() => expect(screen.getByRole('button', { name: '导入' })).toHaveAttribute('aria-haspopup', 'listbox'))
     fireEvent.click(screen.getByRole('button', { name: '导入' }))
     fireEvent.click(await screen.findByRole('option', { name: 'Arial System' }))
     await waitFor(() => expect(screen.getByRole('option', { name: /Arial System/ })).toHaveAttribute('aria-selected', 'true'))
     expect(screen.getByRole('button', { name: /删除字体：Arial System/ })).toBeInTheDocument()
+  })
+
+  it('counts font usage only after submitting and reorders on the next dialog', async () => {
+    installApi()
+    const first = render(<TextToolDialog editing={false} initial={{ color: initial.color }} onClose={vi.fn()} onPreview={vi.fn()} onSubmit={vi.fn()} />)
+
+    fireEvent.click(screen.getByRole('option', { name: 'Tiny5' }))
+    expect(screen.getAllByRole('spinbutton')[0]).toHaveValue('8')
+    expect(screen.getAllByRole('option')[0]).toHaveAccessibleName('Fusion Pixel 10px Prop Zh_hans')
+
+    first.unmount()
+    const second = render(<TextToolDialog editing={false} initial={{ color: initial.color }} onClose={vi.fn()} onPreview={vi.fn()} onSubmit={vi.fn()} />)
+    await waitFor(() => expect(screen.getAllByRole('option')[0]).toHaveAccessibleName('Fusion Pixel 10px Prop Zh_hans'))
+
+    fireEvent.click(screen.getByRole('option', { name: 'Tiny5' }))
+    fireEvent.submit(second.container.querySelector('form')!)
+    second.unmount()
+    render(<TextToolDialog editing={false} initial={{ color: initial.color }} onClose={vi.fn()} onPreview={vi.fn()} onSubmit={vi.fn()} />)
+    await waitFor(() => expect(screen.getAllByRole('option')[0]).toHaveAccessibleName('Tiny5'))
+  })
+
+  it('restores the last manually selected text size for the next new text', () => {
+    installApi()
+    const first = render(<TextToolDialog editing={false} initial={{ color: initial.color }} onClose={vi.fn()} onPreview={vi.fn()} onSubmit={vi.fn()} />)
+    const size = screen.getAllByRole('spinbutton')[0]
+    fireEvent.change(size, { target: { value: '18' } })
+    fireEvent.blur(size)
+
+    first.unmount()
+    render(<TextToolDialog editing={false} initial={{ color: initial.color }} onClose={vi.fn()} onPreview={vi.fn()} onSubmit={vi.fn()} />)
+    expect(screen.getAllByRole('spinbutton')[0]).toHaveValue('18')
   })
 
   it('opens the local font file selector from the select button', async () => {

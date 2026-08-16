@@ -1,4 +1,4 @@
-import type { AnimationCelSurface, ColorMode, RasterLayer, RuntimeRasterTiles, SpriteDocument } from '@shared/types'
+import type { AnimationCelSurface, RasterFormat, RasterLayer, RuntimeRasterTiles, SpriteDocument } from '@shared/types'
 
 type RasterSurface = RasterLayer | AnimationCelSurface
 type RasterPixels = Uint8ClampedArray | Uint32Array
@@ -18,7 +18,7 @@ const rgbaVisibleBounds = new WeakMap<RuntimeRasterTiles, RuntimeRasterVisibleBo
 const indexedVisibleBounds = new WeakMap<RuntimeRasterTiles, WeakMap<object, RuntimeRasterVisibleBounds | null>>()
 const nonZeroIndexedPixels = new Set<number>()
 
-const blankPixels = (format: ColorMode): RasterPixels => format === 'rgba' ? new Uint8ClampedArray(4) : new Uint32Array(1)
+const blankPixels = (format: RasterFormat): RasterPixels => format === 'rgba' ? new Uint8ClampedArray(4) : new Uint32Array(1)
 
 const materializeRuntimeRaster = (runtime: RuntimeRasterTiles): RasterPixels => {
   const cached = materializedByRuntime.get(runtime)
@@ -164,6 +164,80 @@ export const readSurfacePackedLocal = (surface: RasterSurface, x: number, y: num
   if (surface.format === 'indexed') return surface.pixels[index]
   const offset = index * 4
   return (surface.pixels[offset] | (surface.pixels[offset + 1] << 8) | (surface.pixels[offset + 2] << 16) | (surface.pixels[offset + 3] << 24)) >>> 0
+}
+
+export const readSurfacePackedRegion = (surface: RasterSurface, x: number, y: number, width: number, height: number): Uint32Array => {
+  const output = new Uint32Array(Math.max(0, width * height))
+  if (width <= 0 || height <= 0) return output
+  const left = Math.max(0, x)
+  const top = Math.max(0, y)
+  const right = Math.min(surface.width, x + width)
+  const bottom = Math.min(surface.height, y + height)
+  if (right <= left || bottom <= top) return output
+
+  const runtime = lazyRuntimeRasterForSurface(surface)
+  if (runtime) {
+    const columns = Math.ceil(runtime.width / runtime.tileSize)
+    const fromTileX = Math.floor(left / runtime.tileSize)
+    const toTileX = Math.floor((right - 1) / runtime.tileSize)
+    const fromTileY = Math.floor(top / runtime.tileSize)
+    const toTileY = Math.floor((bottom - 1) / runtime.tileSize)
+    for (let tileY = fromTileY; tileY <= toTileY; tileY += 1) for (let tileX = fromTileX; tileX <= toTileX; tileX += 1) {
+      const encodedOffset = runtime.tileOffsets[tileY * columns + tileX]
+      if (encodedOffset === 0) continue
+      const tileLeft = tileX * runtime.tileSize
+      const tileTop = tileY * runtime.tileSize
+      const tileWidth = Math.min(runtime.tileSize, runtime.width - tileLeft)
+      const copyLeft = Math.max(left, tileLeft)
+      const copyTop = Math.max(top, tileTop)
+      const copyRight = Math.min(right, tileLeft + tileWidth)
+      const copyBottom = Math.min(bottom, tileTop + Math.min(runtime.tileSize, runtime.height - tileTop))
+      for (let sourceY = copyTop; sourceY < copyBottom; sourceY += 1) {
+        let sourceOffset = encodedOffset - 1 + ((sourceY - tileTop) * tileWidth + copyLeft - tileLeft) * 4
+        let targetOffset = (sourceY - y) * width + copyLeft - x
+        const copyWidth = copyRight - copyLeft
+        const absoluteByteOffset = runtime.data.byteOffset + sourceOffset
+        if (absoluteByteOffset % 4 === 0) {
+          output.set(new Uint32Array(runtime.data.buffer as ArrayBuffer, absoluteByteOffset, copyWidth), targetOffset)
+          continue
+        }
+        for (let sourceX = copyLeft; sourceX < copyRight; sourceX += 1) {
+          output[targetOffset] = (runtime.data[sourceOffset] | (runtime.data[sourceOffset + 1] << 8) | (runtime.data[sourceOffset + 2] << 16) | (runtime.data[sourceOffset + 3] << 24)) >>> 0
+          sourceOffset += 4
+          targetOffset += 1
+        }
+      }
+    }
+    return output
+  }
+
+  if (surface.format === 'indexed') {
+    for (let sourceY = top; sourceY < bottom; sourceY += 1) {
+      const sourceOffset = sourceY * surface.width + left
+      output.set(surface.pixels.subarray(sourceOffset, sourceOffset + right - left), (sourceY - y) * width + left - x)
+    }
+    return output
+  }
+
+  if (surface.pixels.byteOffset % 4 === 0) {
+    const words = new Uint32Array(surface.pixels.buffer as ArrayBuffer, surface.pixels.byteOffset, surface.pixels.byteLength / 4)
+    for (let sourceY = top; sourceY < bottom; sourceY += 1) {
+      const sourceOffset = sourceY * surface.width + left
+      output.set(words.subarray(sourceOffset, sourceOffset + right - left), (sourceY - y) * width + left - x)
+    }
+    return output
+  }
+
+  for (let sourceY = top; sourceY < bottom; sourceY += 1) {
+    let sourceOffset = (sourceY * surface.width + left) * 4
+    let targetOffset = (sourceY - y) * width + left - x
+    for (let sourceX = left; sourceX < right; sourceX += 1) {
+      output[targetOffset] = (surface.pixels[sourceOffset] | (surface.pixels[sourceOffset + 1] << 8) | (surface.pixels[sourceOffset + 2] << 16) | (surface.pixels[sourceOffset + 3] << 24)) >>> 0
+      sourceOffset += 4
+      targetOffset += 1
+    }
+  }
+  return output
 }
 
 export const runtimeTileHasVisiblePixels = (surface: RasterSurface, tileX: number, tileY: number, opaquePaletteIds?: ReadonlySet<number>): boolean | null => {

@@ -63,7 +63,7 @@ h1, h2, h3, p, figure { margin: 0; }
 .hero::after { content: ""; position: absolute; inset: auto 0 0; height: 180px; background: linear-gradient(transparent, var(--hero-deep)); pointer-events: none; }
 .hero-copy { position: relative; z-index: 2; max-width: 820px; margin: 0 auto; }
 .hero-brand { display: flex; align-items: center; justify-content: center; gap: 17px; }
-.hero-brand img { width: 62px; height: 62px; image-rendering: pixelated; }
+.hero-brand img { width: 70px; height: 70px; image-rendering: pixelated; }
 .hero h1 { font-size: clamp(52px, 7vw, 82px); line-height: 1; font-weight: 720; }
 .hero-subtitle { margin-top: 18px; color: white; font-size: clamp(22px, 3vw, 34px); line-height: 1.2; font-weight: 520; }
 .hero-description { max-width: 680px; margin: 16px auto 0; color: #c9d5e4; font-size: 15px; line-height: 1.7; }
@@ -126,7 +126,7 @@ h1, h2, h3, p, figure { margin: 0; }
 .faq-list details p { max-width: 680px; padding: 0 34px 24px 0; color: var(--soft); font-size: 13px; line-height: 1.75; }
 
 .final-cta { padding: 62px 0; background: var(--hero); border-block: 1px solid #395477; }
-.final-cta .content-wrap { display: grid; grid-template-columns: 48px 1fr auto; gap: 24px; align-items: center; }
+.final-cta .content-wrap { display: grid; grid-template-columns: 42px 1fr auto; gap: 24px; align-items: center; }
 .final-cta img { image-rendering: pixelated; }
 .final-cta h2 { font-size: clamp(30px, 4vw, 46px); line-height: 1.08; font-weight: 620; }
 .final-cta p { max-width: 650px; margin-top: 10px; color: #becce0; font-size: 13px; line-height: 1.65; }
@@ -194,8 +194,8 @@ h1, h2, h3, p, figure { margin: 0; }
   .feature-media img { max-height: 320px; }
   .faq { padding: 78px 0; }
   .faq-layout { grid-template-columns: 1fr; gap: 38px; }
-  .final-cta .content-wrap { grid-template-columns: 40px 1fr; }
-  .final-cta img { width: 40px; height: 40px; }
+  .final-cta .content-wrap { grid-template-columns: 42px 1fr; }
+  .final-cta img { width: 42px; height: 42px; }
   .final-actions { grid-column: 1 / -1; width: 100%; margin-top: 12px; }
   .site-footer .content-wrap { grid-template-columns: 1fr auto; }
   .site-footer p { grid-column: 1 / -1; grid-row: 2; }

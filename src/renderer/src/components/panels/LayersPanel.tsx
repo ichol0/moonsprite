@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
-import { Clock3, FilePlus2, Layers2 } from 'lucide-react'
+import { Layers2 } from 'lucide-react'
 import type { AnimationCel, AnimationCelSurface, BlendMode, LayerGroup, LayerMask, PaletteEntry, RasterLayer, RgbaColor } from '@shared/types'
 import { FloatingDockPreview, PanelResizeHandles, useFloatingPanel } from '@/components/floating-panel'
 import { ColorValueControl } from '@/components/ColorValueControl'
@@ -31,6 +31,9 @@ import { PixelUtilityIcon, type PixelUtilityIconKind } from '@/components/PixelU
 import { CheckboxField } from '@/components/CheckboxField'
 import { ANIMATION_CELL_OPERATION_FINISHED_EVENT, LAYER_PANEL_REVEAL_EVENT, type AnimationCellOperationFinishedDetail, type LayerPanelRevealDetail } from '@/components/layer-panel-reveal'
 import { rasterStorageIdentity } from '@/core/runtime-raster'
+import { LayerStyleDialog } from '@/components/LayerStyleDialog'
+import { hasEnabledLayerStyles } from '@/core/layer-styles'
+import { BackgroundLayerDialog } from '@/components/BackgroundLayerDialog'
 
 interface LayerFormTarget { id: string; kind: 'layer' | 'group' }
 type BatchProperty = 'name' | 'opacity' | 'blendMode' | 'cumulativeBlend' | 'displayColor' | 'description'
@@ -66,11 +69,13 @@ type AnimationPointerDrag =
   | { kind: 'mask'; sourceAnchorKey: string; cellKeys: string[]; preserveSelection: boolean; startX: number; startY: number; moved: boolean; canMove: boolean; pendingSelection: boolean; longPressed: boolean; longPressTimer: number | null; lastSelectionTarget: string }
 type AnimationGestureSelection = { kind: 'frame'; ids: string[] } | { kind: 'cel' | 'mask'; keys: string[] }
 type LayerTreeNode = LayerPanelNode & ({ kind: 'layer'; layer: RasterLayer } | { kind: 'group'; group: LayerGroup })
+
 const defaultLayerDisplayColor: RgbaColor = { r: 41, g: 121, b: 255, a: 255 }
 const layerLabelWidthKey = 'moonsprite.layers.label-width'
 const layerDensityKey = 'moonsprite.layers.display-density'
 const layerLabelWidthLimits = { min: 140, max: 2_000 }
 const layerDensityOrder: LayerDisplayDensity[] = ['compact', 'normal', 'detailed', 'expanded', 'large', 'huge']
+const defaultLayerDensity: LayerDisplayDensity = 'compact'
 const layerDensityLabelKeys = {
   compact: 'layers.density.compact',
   normal: 'layers.density.normal',
@@ -83,10 +88,25 @@ const clampLayerLabelWidth = (value: number): number => Math.max(layerLabelWidth
 const loadLayerLabelWidth = (): number => clampLayerLabelWidth(Number(localStorage.getItem(layerLabelWidthKey)) || 190)
 const loadLayerDensity = (): LayerDisplayDensity => {
   const value = localStorage.getItem(layerDensityKey)
-  return layerDensityOrder.includes(value as LayerDisplayDensity) ? value as LayerDisplayDensity : 'normal'
+  return layerDensityOrder.includes(value as LayerDisplayDensity) ? value as LayerDisplayDensity : defaultLayerDensity
 }
 const celContentCache = new WeakMap<object, Map<string, { revision: number; value: boolean }>>()
 const celThumbnailCache = new WeakMap<object, Map<string, { revision: number; pixels: Uint8ClampedArray }>>()
+const scheduleThumbnailRender = (render: () => void): (() => void) => {
+  let timeoutId: number | null = null
+  if (typeof window.requestAnimationFrame !== 'function') {
+    timeoutId = window.setTimeout(render, 0)
+    return () => { if (timeoutId !== null) window.clearTimeout(timeoutId) }
+  }
+  let frameId: number | null = window.requestAnimationFrame(() => {
+    frameId = null
+    timeoutId = window.setTimeout(render, 0)
+  })
+  return () => {
+    if (frameId !== null) window.cancelAnimationFrame(frameId)
+    if (timeoutId !== null) window.clearTimeout(timeoutId)
+  }
+}
 const paletteVisibilityKey = (palette: readonly PaletteEntry[]): string => palette.map((entry) => `${entry.id}:${entry.color.a}`).join(',')
 const paletteRenderKey = (palette: readonly PaletteEntry[]): string => palette.map((entry) => `${entry.id}:${entry.color.r},${entry.color.g},${entry.color.b},${entry.color.a}`).join('|')
 const cachedCelHasContent = (cel: AnimationCel | null, palette: readonly PaletteEntry[], revision = 0): boolean => {
@@ -108,27 +128,29 @@ function CelThumbnail({ cel, palette, revision, documentWidth, documentHeight, t
     const canvas = ref.current
     const surface = cel.surface
     if (!canvas || !surface) return
-    if (typeof navigator !== 'undefined' && /jsdom/i.test(navigator.userAgent)) return
-    try {
-      const context = canvas.getContext('2d')
-      if (!context) return
-      const key = `${documentWidth}:${documentHeight}:${canvas.width}:${surface.width}:${surface.height}:${surface.offsetX}:${surface.offsetY}:${cel.opacity ?? 1}:${surface.format === 'rgba' ? 'rgba' : paletteRenderKey(palette)}`
-      const storage = rasterStorageIdentity(surface)
-      const entries = celThumbnailCache.get(storage) ?? new Map<string, { revision: number; pixels: Uint8ClampedArray }>()
-      const cached = entries.get(key)
-      const pixels = cached && (revision === 0 || cached.revision === revision)
-        ? cached.pixels
-        : renderAnimationCelThumbnailPixels(documentWidth, documentHeight, canvas.width, surface, palette, cel.opacity ?? 1)
-      if (!cached || pixels !== cached.pixels) {
-        entries.set(key, { revision, pixels })
-        celThumbnailCache.set(storage, entries)
+    return scheduleThumbnailRender(() => {
+      if (typeof navigator !== 'undefined' && /jsdom/i.test(navigator.userAgent)) return
+      try {
+        const context = canvas.getContext('2d')
+        if (!context) return
+        const key = `${documentWidth}:${documentHeight}:${canvas.width}:${surface.width}:${surface.height}:${surface.offsetX}:${surface.offsetY}:${cel.opacity ?? 1}:${surface.format === 'rgba' ? 'rgba' : paletteRenderKey(palette)}`
+        const storage = rasterStorageIdentity(surface)
+        const entries = celThumbnailCache.get(storage) ?? new Map<string, { revision: number; pixels: Uint8ClampedArray }>()
+        const cached = entries.get(key)
+        const pixels = cached && (revision === 0 || cached.revision === revision)
+          ? cached.pixels
+          : renderAnimationCelThumbnailPixels(documentWidth, documentHeight, canvas.width, surface, palette, cel.opacity ?? 1)
+        if (!cached || pixels !== cached.pixels) {
+          entries.set(key, { revision, pixels })
+          celThumbnailCache.set(storage, entries)
+        }
+        const image = context.createImageData(canvas.width, canvas.height)
+        image.data.set(pixels)
+        context.putImageData(image, 0, 0)
+      } catch {
+        // Canvas rendering is unavailable in a few test and recovery environments.
       }
-      const image = context.createImageData(canvas.width, canvas.height)
-      image.data.set(pixels)
-      context.putImageData(image, 0, 0)
-    } catch {
-      // Canvas rendering is unavailable in a few test and recovery environments.
-    }
+    })
   }, [cel, palette, revision, documentWidth, documentHeight, thumbnailSize])
   return <span className="cel-thumbnail" aria-hidden="true"><canvas ref={ref} width={thumbnailSize} height={thumbnailSize} /></span>
 }
@@ -137,17 +159,19 @@ function LayerMaskThumbnail({ mask, revision, documentWidth, documentHeight, thu
   useEffect(() => {
     const canvas = ref.current
     if (!canvas) return
-    if (typeof navigator !== 'undefined' && /jsdom/i.test(navigator.userAgent)) return
-    try {
-      const context = canvas.getContext('2d')
-      if (!context) return
-      const pixels = renderLayerMaskThumbnailPixels(documentWidth, documentHeight, canvas.width, canvas.height, mask)
-      const image = context.createImageData(canvas.width, canvas.height)
-      image.data.set(pixels)
-      context.putImageData(image, 0, 0)
-    } catch {
-      // Canvas rendering is unavailable in a few test and recovery environments.
-    }
+    return scheduleThumbnailRender(() => {
+      if (typeof navigator !== 'undefined' && /jsdom/i.test(navigator.userAgent)) return
+      try {
+        const context = canvas.getContext('2d')
+        if (!context) return
+        const pixels = renderLayerMaskThumbnailPixels(documentWidth, documentHeight, canvas.width, canvas.height, mask)
+        const image = context.createImageData(canvas.width, canvas.height)
+        image.data.set(pixels)
+        context.putImageData(image, 0, 0)
+      } catch {
+        // Canvas rendering is unavailable in a few test and recovery environments.
+      }
+    })
   }, [mask, revision, documentWidth, documentHeight, thumbnailSize])
   return <canvas className="layer-mask-thumbnail" ref={ref} width={thumbnailSize} height={thumbnailSize} aria-hidden="true" />
 }
@@ -309,6 +333,8 @@ export function LayersPanel({ session, docked = false, sideDocked = false, onDoc
   const animationFrameDropTargetRef = useRef<{ frameId: string; insertAfter: boolean } | null>(null)
   const [animationFrameDropTarget, setAnimationFrameDropTarget] = useState<{ frameId: string; insertAfter: boolean } | null>(null)
   const [contextMenu, setContextMenu] = useState<LayerContextMenu | null>(null)
+  const [backgroundLayerDialogOpen, setBackgroundLayerDialogOpen] = useState(false)
+  const [layerStyleTarget, setLayerStyleTarget] = useState<LayerFormTarget | null>(null)
   const [animationMenu, setAnimationMenu] = useState<AnimationContextMenu | null>(null)
   const animationMenuRef = useRef<HTMLDivElement>(null)
   const [animationMenuPosition, setAnimationMenuPosition] = useState({ left: 8, top: 8 })
@@ -481,7 +507,7 @@ export function LayersPanel({ session, docked = false, sideDocked = false, onDoc
     setLayerSettingsOpen(false)
   }
   const resetLayerSettings = (): void => applyLayerSettings({
-    density: 'normal',
+    density: defaultLayerDensity,
     timelineHidden: false,
     onionSkin: {
       ...DEFAULT_ONION_SKIN_PREFERENCES,
@@ -1137,6 +1163,7 @@ export function LayersPanel({ session, docked = false, sideDocked = false, onDoc
          setCelProperties(null)
         setLayerSettingsOpen(false)
         setAnimationMenu(null)
+        setBackgroundLayerDialogOpen(false)
       }
     }
     window.addEventListener('moonsprite:close-dialog', close)
@@ -1736,9 +1763,13 @@ export function LayersPanel({ session, docked = false, sideDocked = false, onDoc
     store.clearAnimationSelection()
     if (kind === 'layer' && (wasEditingLayerMask || session.selectedGroupId || !session.selectedLayerIds.includes(id))) store.selectLayer(id)
     if (kind === 'group' && (wasEditingLayerMask || !session.selectedGroupIds.includes(id))) store.selectGroup(id)
-    setContextMenu({ kind, id, x: Math.min(event.clientX, window.innerWidth - 232), y: Math.min(event.clientY, window.innerHeight - 360) })
+    setContextMenu({ kind, id, x: Math.max(8, Math.min(event.clientX, window.innerWidth - 232)), y: Math.max(8, Math.min(event.clientY, window.innerHeight - 440)) })
   }
   const closeContextMenu = (): void => setContextMenu(null)
+  const openBackgroundLayerDialog = (): void => {
+    setBackgroundLayerDialogOpen(true)
+    closeContextMenu()
+  }
   const duplicateContextSelection = (): void => {
     store.duplicateSelectedLayerRows()
     closeContextMenu()
@@ -1764,11 +1795,17 @@ export function LayersPanel({ session, docked = false, sideDocked = false, onDoc
     }
     closeContextMenu()
   }
+  const openLayerStyles = (): void => {
+    if (!contextMenu) return
+    setLayerStyleTarget({ kind: contextMenu.kind, id: contextMenu.id })
+    closeContextMenu()
+  }
   const contextMenuClippingMaskEnabled = contextMenu?.kind === 'layer'
     ? session.document.layers.find((layer) => layer.id === contextMenu.id)?.clippingMask === true
     : contextMenu?.kind === 'group'
       ? session.document.groups.find((group) => group.id === contextMenu.id)?.clippingMask === true
       : false
+  const contextMenuLayer = contextMenu?.kind === 'layer' ? session.document.layers.find((layer) => layer.id === contextMenu.id) ?? null : null
   const clippingMaskTooltip = <><strong>{t('layers.clippingMask')}</strong><span>{t('layers.clippingMaskDescription')}</span><small>{t('layers.clippingMaskUsage')}</small></>
   const layerMaskTooltip = <><strong>{t('core.document.layerMask')}</strong><span>{t('layers.layerMaskDescription')}</span><small>{t('layers.layerMaskUsage')}</small></>
   const emptyLayerMaskCelTooltip = <><strong>{t('core.document.layerMask')}</strong><span>{t('layers.layerMaskEmptyCel')}</span></>
@@ -1788,6 +1825,13 @@ export function LayersPanel({ session, docked = false, sideDocked = false, onDoc
     }
     return { hasContent, canCreate }
   })()
+  const layerStyleOwner = layerStyleTarget?.kind === 'layer'
+    ? session.document.layers.find((layer) => layer.id === layerStyleTarget.id) ?? null
+    : layerStyleTarget?.kind === 'group'
+      ? session.document.groups.find((group) => group.id === layerStyleTarget.id) ?? null
+      : null
+  const layerStyleIndicatorTooltip = <><strong>{t('layers.layerStyle')}</strong><span>{t('layers.layerStyleIndicatorDescription')}</span></>
+  const layerStyleIndicator = (target: LayerFormTarget): ReactNode => <Tooltip className="layer-status-icon-tooltip" content={layerStyleIndicatorTooltip}><span className="layer-style-indicator" role="button" tabIndex={0} aria-label={t('layers.openLayerStyle')} onPointerDown={(event) => { event.preventDefault(); event.stopPropagation() }} onDoubleClick={(event) => event.stopPropagation()} onClick={(event) => { event.preventDefault(); event.stopPropagation(); setLayerStyleTarget(target) }} onKeyDown={(event) => { if (event.key !== 'Enter' && event.key !== ' ') return; event.preventDefault(); event.stopPropagation(); setLayerStyleTarget(target) }}><PixelUtilityIcon kind="layerStyle" /></span></Tooltip>
   const toggleContextClippingMask = (): void => {
     if (!contextMenu) return
     store.setClippingMask(contextMenu.kind, contextMenu.id, !contextMenuClippingMaskEnabled)
@@ -1875,7 +1919,8 @@ export function LayersPanel({ session, docked = false, sideDocked = false, onDoc
             ? <span className={`layer-drop-indicator ${dropTarget.insertAfter === false ? 'below' : 'above'}`} style={{ left: `${8 + node.depth * 14}px` }} aria-hidden="true"><i /><b /><i /></span>
             : null
         const displayColor = effectiveDisplayColor(node.group, 'group')
-        return <button key={node.group.id} data-group-id={node.group.id} className={`layer-row group-row ${node.group.clippingMask === true ? 'clipping-mask' : ''} ${session.selectedGroupIds.includes(node.group.id) ? 'selected' : ''} ${draggingGroupId === node.group.id ? 'dragging' : ''} ${groupInsideTarget ? 'group-drop-target' : ''}`} style={{ '--layer-depth': node.depth } as React.CSSProperties} onPointerDown={(event) => beginGroupDrag(event, node.group.id)} onDoubleClick={() => editGroup(node.group)}>{groupIndicator}{displayColor && <span className="layer-color-stripe" style={{ backgroundColor: `rgba(${displayColor.r}, ${displayColor.g}, ${displayColor.b}, ${displayColor.a / 255})` }} aria-hidden="true" />}<span className="layer-visibility" role="button" tabIndex={-1} aria-label={t(node.group.visible ? 'layers.hideGroup' : 'layers.showGroup')} onPointerDown={(event) => beginLayerPanelToggle(event, { control: 'visibility', ownerKind: 'group', id: node.group.id }, node.group.visible)} onPointerEnter={(event) => continueLayerPanelToggle(event, { control: 'visibility', ownerKind: 'group', id: node.group.id })} onPointerUp={endLayerPanelToggle} onDoubleClick={(event) => event.stopPropagation()} onClick={finishLayerPanelToggleClick}>{node.group.visible ? <PixelUtilityIcon kind="eye" /> : <PixelUtilityIcon kind="eyeOff" />}</span><span className={`layer-lock-toggle ${node.group.locked || lockingAncestor ? 'locked' : ''}`} role="button" tabIndex={-1} title={lockingAncestor ? t('layers.lockedByGroup', { name: lockingAncestor.name }) : undefined} aria-label={lockingAncestor ? t('layers.lockedByGroup', { name: lockingAncestor.name }) : t(node.group.locked ? 'layers.unlockGroup' : 'layers.lockGroup')} aria-disabled={Boolean(lockingAncestor)} aria-pressed={node.group.locked || Boolean(lockingAncestor)} onPointerDown={(event) => beginLayerPanelToggle(event, { control: 'lock', ownerKind: 'group', id: node.group.id }, node.group.locked, lockingAncestor?.name)} onPointerEnter={(event) => continueLayerPanelToggle(event, { control: 'lock', ownerKind: 'group', id: node.group.id })} onPointerUp={endLayerPanelToggle} onDoubleClick={(event) => event.stopPropagation()} onClick={finishLayerPanelToggleClick}>{node.group.locked || lockingAncestor ? <PixelUtilityIcon kind="lock" /> : <PixelUtilityIcon kind="unlock" />}</span><span className="group-folder" role="button" tabIndex={-1} aria-label={t(collapsed ? 'layers.expandGroup' : 'layers.collapseGroup')} title={t(collapsed ? 'layers.expandGroup' : 'layers.collapseGroup')} onPointerDown={(event) => event.stopPropagation()} onDoubleClick={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); store.toggleGroupCollapsed(node.group.id) }}>{collapsed ? <PixelUtilityIcon kind="folder" /> : <PixelUtilityIcon kind="folderOpen" />}</span><Tooltip className="layer-name" content={node.group.description?.trim()}><span>{node.group.name}</span><small>{blendOptions.find((option) => option.value === node.group.blendMode)?.label} · {Math.round(node.group.opacity * 100)}%</small></Tooltip>{node.group.clippingMask === true && <Tooltip className="layer-status-icon-tooltip" content={clippingMaskTooltip}><span className="layer-clipping-mask-indicator" aria-hidden="true"><PixelUtilityIcon kind="clippingMask" /></span></Tooltip>}</button>
+        const groupHasLayerStyles = hasEnabledLayerStyles(node.group.layerStyles)
+        return <button key={node.group.id} data-group-id={node.group.id} className={`layer-row group-row ${node.group.clippingMask === true ? 'clipping-mask' : ''} ${groupHasLayerStyles ? 'has-layer-style' : ''} ${session.selectedGroupIds.includes(node.group.id) ? 'selected' : ''} ${draggingGroupId === node.group.id ? 'dragging' : ''} ${groupInsideTarget ? 'group-drop-target' : ''}`} style={{ '--layer-depth': node.depth } as React.CSSProperties} onPointerDown={(event) => beginGroupDrag(event, node.group.id)} onDoubleClick={() => editGroup(node.group)}>{groupIndicator}{displayColor && <span className="layer-color-stripe" style={{ backgroundColor: `rgba(${displayColor.r}, ${displayColor.g}, ${displayColor.b}, ${displayColor.a / 255})` }} aria-hidden="true" />}<span className="layer-visibility" role="button" tabIndex={-1} aria-label={t(node.group.visible ? 'layers.hideGroup' : 'layers.showGroup')} onPointerDown={(event) => beginLayerPanelToggle(event, { control: 'visibility', ownerKind: 'group', id: node.group.id }, node.group.visible)} onPointerEnter={(event) => continueLayerPanelToggle(event, { control: 'visibility', ownerKind: 'group', id: node.group.id })} onPointerUp={endLayerPanelToggle} onDoubleClick={(event) => event.stopPropagation()} onClick={finishLayerPanelToggleClick}>{node.group.visible ? <PixelUtilityIcon kind="eye" /> : <PixelUtilityIcon kind="eyeOff" />}</span><span className={`layer-lock-toggle ${node.group.locked || lockingAncestor ? 'locked' : ''}`} role="button" tabIndex={-1} title={lockingAncestor ? t('layers.lockedByGroup', { name: lockingAncestor.name }) : undefined} aria-label={lockingAncestor ? t('layers.lockedByGroup', { name: lockingAncestor.name }) : t(node.group.locked ? 'layers.unlockGroup' : 'layers.lockGroup')} aria-disabled={Boolean(lockingAncestor)} aria-pressed={node.group.locked || Boolean(lockingAncestor)} onPointerDown={(event) => beginLayerPanelToggle(event, { control: 'lock', ownerKind: 'group', id: node.group.id }, node.group.locked, lockingAncestor?.name)} onPointerEnter={(event) => continueLayerPanelToggle(event, { control: 'lock', ownerKind: 'group', id: node.group.id })} onPointerUp={endLayerPanelToggle} onDoubleClick={(event) => event.stopPropagation()} onClick={finishLayerPanelToggleClick}>{node.group.locked || lockingAncestor ? <PixelUtilityIcon kind="lock" /> : <PixelUtilityIcon kind="unlock" />}</span><span className="group-folder" role="button" tabIndex={-1} aria-label={t(collapsed ? 'layers.expandGroup' : 'layers.collapseGroup')} title={t(collapsed ? 'layers.expandGroup' : 'layers.collapseGroup')} onPointerDown={(event) => event.stopPropagation()} onDoubleClick={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); store.toggleGroupCollapsed(node.group.id) }}>{collapsed ? <PixelUtilityIcon kind="folder" /> : <PixelUtilityIcon kind="folderOpen" />}</span><Tooltip className="layer-name" content={node.group.description?.trim()}><span>{node.group.name}</span><small>{blendOptions.find((option) => option.value === node.group.blendMode)?.label} · {Math.round(node.group.opacity * 100)}%</small></Tooltip>{node.group.clippingMask === true && <Tooltip className="layer-status-icon-tooltip" content={clippingMaskTooltip}><span className="layer-clipping-mask-indicator" aria-hidden="true"><PixelUtilityIcon kind="clippingMask" /></span></Tooltip>}{groupHasLayerStyles && layerStyleIndicator({ kind: 'group', id: node.group.id })}</button>
       }
       const selected = session.selectedLayerIds.includes(node.layer.id) && !session.selectedGroupId
       const rowVisuallySelected = selected && !suppressCellSelectionGuides
@@ -1884,14 +1929,15 @@ export function LayersPanel({ session, docked = false, sideDocked = false, onDoc
       const indicator = dropTarget?.kind === 'layer' && dropTarget.id === node.layer.id
         ? <span className={`layer-drop-indicator ${dropTarget.insertAfter ? 'above' : 'below'}`} style={{ left: `${8 + node.depth * 14}px` }} aria-hidden="true"><i /><b /><i /></span>
         : null
-      return <button key={node.layer.id} data-layer-id={node.layer.id} className={`layer-row ${node.layer.kind === 'text' ? 'text-layer' : ''} ${node.layer.clippingMask === true ? 'clipping-mask' : ''} ${node.depth > 0 ? 'group-member' : ''} ${rowVisuallySelected ? 'selected' : ''} ${draggingIds.includes(node.layer.id) ? 'dragging' : ''}`} style={{ '--layer-depth': node.depth } as React.CSSProperties} onPointerDown={(event) => beginLayerDrag(event, node.layer.id)} onDoubleClick={() => {
+      const layerHasLayerStyles = hasEnabledLayerStyles(node.layer.layerStyles)
+      return <button key={node.layer.id} data-layer-id={node.layer.id} className={`layer-row ${node.layer.kind === 'text' ? 'text-layer' : ''} ${node.layer.background ? 'background-layer' : ''} ${node.layer.clippingMask === true ? 'clipping-mask' : ''} ${layerHasLayerStyles ? 'has-layer-style' : ''} ${node.depth > 0 ? 'group-member' : ''} ${rowVisuallySelected ? 'selected' : ''} ${draggingIds.includes(node.layer.id) ? 'dragging' : ''}`} style={{ '--layer-depth': node.depth } as React.CSSProperties} onPointerDown={(event) => beginLayerDrag(event, node.layer.id)} onDoubleClick={() => {
         if (node.layer.kind === 'text') {
           const cel = celLookup.resolve(celLookup.at(node.layer.id, timeline.activeFrameId))
           openTextToolDialog({ documentId: session.document.id, layerId: node.layer.id, frameId: timeline.activeFrameId, x: cel?.surface?.offsetX ?? node.layer.offsetX, y: cel?.surface?.offsetY ?? node.layer.offsetY })
           return
         }
         editLayer(node.layer)
-      }}>{indicator}{displayColor && <span className="layer-color-stripe" style={{ backgroundColor: `rgba(${displayColor.r}, ${displayColor.g}, ${displayColor.b}, ${displayColor.a / 255})` }} aria-hidden="true" />}<span className="layer-visibility" role="button" tabIndex={-1} aria-label={t(node.layer.visible ? 'layers.hideLayer' : 'layers.showLayer')} onPointerDown={(event) => beginLayerPanelToggle(event, { control: 'visibility', ownerKind: 'layer', id: node.layer.id }, node.layer.visible)} onPointerEnter={(event) => continueLayerPanelToggle(event, { control: 'visibility', ownerKind: 'layer', id: node.layer.id })} onPointerUp={endLayerPanelToggle} onDoubleClick={(event) => event.stopPropagation()} onClick={finishLayerPanelToggleClick}>{node.layer.visible ? <PixelUtilityIcon kind="eye" /> : <PixelUtilityIcon kind="eyeOff" />}</span><span className={`layer-lock-toggle ${node.layer.locked || lockingGroup ? 'locked' : ''}`} role="button" tabIndex={-1} title={lockingGroup ? t('layers.lockedByGroup', { name: lockingGroup.name }) : undefined} aria-label={lockingGroup ? t('layers.lockedByGroup', { name: lockingGroup.name }) : t(node.layer.locked ? 'layers.unlockLayer' : 'layers.lockLayer')} aria-disabled={Boolean(lockingGroup)} aria-pressed={node.layer.locked || Boolean(lockingGroup)} onPointerDown={(event) => beginLayerPanelToggle(event, { control: 'lock', ownerKind: 'layer', id: node.layer.id }, node.layer.locked, lockingGroup?.name)} onPointerEnter={(event) => continueLayerPanelToggle(event, { control: 'lock', ownerKind: 'layer', id: node.layer.id })} onPointerUp={endLayerPanelToggle} onDoubleClick={(event) => event.stopPropagation()} onClick={finishLayerPanelToggleClick}>{node.layer.locked || lockingGroup ? <PixelUtilityIcon kind="lock" /> : <PixelUtilityIcon kind="unlock" />}</span><Tooltip className="layer-name" content={node.layer.description?.trim()}><span>{node.layer.name}</span><small>{blendOptions.find((option) => option.value === node.layer.blendMode)?.label} · {Math.round(node.layer.opacity * 100)}%</small></Tooltip>{node.layer.kind === 'text' && <Tooltip className="layer-status-icon-tooltip" content={t('layers.textLayerHint')}><span className="layer-text-indicator" aria-hidden="true"><PixelUtilityIcon kind="text" /></span></Tooltip>}{node.layer.clippingMask === true && <Tooltip className="layer-status-icon-tooltip" content={clippingMaskTooltip}><span className="layer-clipping-mask-indicator" aria-hidden="true"><PixelUtilityIcon kind="clippingMask" /></span></Tooltip>}</button>
+      }}>{indicator}{displayColor && <span className="layer-color-stripe" style={{ backgroundColor: `rgba(${displayColor.r}, ${displayColor.g}, ${displayColor.b}, ${displayColor.a / 255})` }} aria-hidden="true" />}<span className="layer-visibility" role="button" tabIndex={-1} aria-label={t(node.layer.visible ? 'layers.hideLayer' : 'layers.showLayer')} onPointerDown={(event) => beginLayerPanelToggle(event, { control: 'visibility', ownerKind: 'layer', id: node.layer.id }, node.layer.visible)} onPointerEnter={(event) => continueLayerPanelToggle(event, { control: 'visibility', ownerKind: 'layer', id: node.layer.id })} onPointerUp={endLayerPanelToggle} onDoubleClick={(event) => event.stopPropagation()} onClick={finishLayerPanelToggleClick}>{node.layer.visible ? <PixelUtilityIcon kind="eye" /> : <PixelUtilityIcon kind="eyeOff" />}</span><span className={`layer-lock-toggle ${node.layer.locked || lockingGroup ? 'locked' : ''}`} role="button" tabIndex={-1} title={lockingGroup ? t('layers.lockedByGroup', { name: lockingGroup.name }) : undefined} aria-label={lockingGroup ? t('layers.lockedByGroup', { name: lockingGroup.name }) : t(node.layer.locked ? 'layers.unlockLayer' : 'layers.lockLayer')} aria-disabled={Boolean(lockingGroup)} aria-pressed={node.layer.locked || Boolean(lockingGroup)} onPointerDown={(event) => beginLayerPanelToggle(event, { control: 'lock', ownerKind: 'layer', id: node.layer.id }, node.layer.locked, lockingGroup?.name)} onPointerEnter={(event) => continueLayerPanelToggle(event, { control: 'lock', ownerKind: 'layer', id: node.layer.id })} onPointerUp={endLayerPanelToggle} onDoubleClick={(event) => event.stopPropagation()} onClick={finishLayerPanelToggleClick}>{node.layer.locked || lockingGroup ? <PixelUtilityIcon kind="lock" /> : <PixelUtilityIcon kind="unlock" />}</span><Tooltip className="layer-name" content={node.layer.description?.trim()}><span>{node.layer.name}</span><small>{blendOptions.find((option) => option.value === node.layer.blendMode)?.label} · {Math.round(node.layer.opacity * 100)}%</small></Tooltip>{node.layer.kind === 'text' && <Tooltip className="layer-status-icon-tooltip" content={t('layers.textLayerHint')}><span className="layer-text-indicator" aria-hidden="true"><PixelUtilityIcon kind="text" /></span></Tooltip>}{node.layer.background && <Tooltip className="layer-status-icon-tooltip" content={t('layers.backgroundDescription')}><span className="layer-background-indicator" aria-hidden="true"><PixelUtilityIcon kind="image" /></span></Tooltip>}{node.layer.clippingMask === true && <Tooltip className="layer-status-icon-tooltip" content={clippingMaskTooltip}><span className="layer-clipping-mask-indicator" aria-hidden="true"><PixelUtilityIcon kind="clippingMask" /></span></Tooltip>}{layerHasLayerStyles && layerStyleIndicator({ kind: 'layer', id: node.layer.id })}</button>
     })}</div><div className="layer-animation-grid" style={{ gridTemplateRows: displayRowGridTemplate }}>{selectedAnimationLayerRows.map((row) => <span key={`selected-layer-row-${row}`} data-animation-selected-layer-row className="animation-selected-layer-row" style={{ '--animation-row-index': row, '--animation-row-top': displayRowTop(row), '--animation-row-height': displayRowSpanHeight(row, 1) } as CSSProperties} aria-hidden="true" />)}{showLinkedCelVisuals && linkedCelBlocks.map((block) => <span key={block.key} data-linked-cel-block data-frame-index={block.start} data-frame-span={block.span} className={`animation-linked-cel-block ${block.selected ? 'selected' : ''} ${block.layerSelected ? 'layer-selected' : ''}`} style={{ '--animation-row-index': block.row, '--animation-row-top': displayRowTop(block.row), '--animation-row-height': displayRowSpanHeight(block.row, 1), '--animation-frame-index': block.start, '--animation-frame-span': block.span } as CSSProperties} aria-hidden="true" />)}{showLinkedCelVisuals && linkedCelConnectors.map((connector) => <span key={connector.key} data-linked-cel-connector data-start-frame-index={connector.start} data-end-frame-index={connector.end} className={`animation-linked-cel-connector ${connector.selected ? 'selected' : ''} ${connector.layerSelected ? 'layer-selected' : ''}`} style={{ '--animation-row-index': connector.row, '--animation-row-top': displayRowTop(connector.row), '--animation-row-height': displayRowSpanHeight(connector.row, 1), '--animation-link-start': connector.start, '--animation-link-end': connector.end } as CSSProperties} aria-hidden="true" />)}{!session.animationPlaying && selectedFrameRanges.map((range) => <span key={`${range.start}-${range.span}`} data-animation-frame-selection={timeline.frames.slice(range.start, range.start + range.span).map((frame) => frame.id).join(' ')} className="animation-frame-selection-column" style={{ '--animation-frame-index': range.start, '--animation-frame-span': range.span } as CSSProperties} aria-hidden="true" />)}{!session.animationPlaying && shouldShowAnimationCellSelectionOutline && selectedCelPositions.length > 0 && <span data-animation-cel-selection className="animation-cel-selection-box" style={{ '--animation-frame-index': selectedCelColumn, '--animation-frame-span': selectedCelColumnSpan, '--animation-row-index': selectedCelRow, '--animation-row-span': selectedCelRowSpan, '--animation-row-top': displayRowTop(selectedCelRow), '--animation-row-height': displayRowSpanHeight(selectedCelRow, selectedCelRowSpan) } as CSSProperties} aria-hidden="true" />}{animationFrameDropTarget && timeline.frames.findIndex((frame) => frame.id === animationFrameDropTarget.frameId) >= 0 && <span className="animation-frame-drop-line" style={{ '--animation-frame-drop-index': timeline.frames.findIndex((frame) => frame.id === animationFrameDropTarget.frameId) + (animationFrameDropTarget.insertAfter ? 1 : 0) } as CSSProperties} aria-hidden="true" />}{timeline.frames.map((frame, index) => {
       const frameActive = frame.id === timeline.activeFrameId && !suppressCellSelectionGuides
       const frameSelected = !session.animationPlaying && selectedFrameIndexSet.has(index)
@@ -1951,11 +1997,18 @@ export function LayersPanel({ session, docked = false, sideDocked = false, onDoc
       }} onContextMenu={(event) => openCelMenu(event, node.layer.id, frame.id)}>{normalCelMarker}</button>
     }))}</div>{dropTarget?.kind === 'edge' && <div className={`layer-edge-drop-indicator ${dropTarget.edge}`} style={{ top: dropTarget.offset ?? 0 }} aria-hidden="true"><i /><b /><i /></div>}{dragGhost && <div className="layer-drag-ghost" style={{ top: dragGhost.y }}>{dragGhostItems.slice(0, 4).map((item) => <span key={`${item.kind}-${item.id}`}>{item.kind === 'group' ? <PixelUtilityIcon kind="folder" /> : <Layers2 size={13} />}<b>{item.name}</b></span>)}{hiddenDragGhostCount > 0 && <small>+{hiddenDragGhostCount}</small>}</div>}</div>
     {contextMenu && <div className="layer-context-menu" style={{ left: contextMenu.x, top: contextMenu.y }} role="menu" onPointerDown={(event) => event.stopPropagation()}>
-      <LayerContextMenuItem icon="plus" label={t('layers.new')} shortcut={shortcutHint('newLayer')} onClick={() => { void store.addLayer(); closeContextMenu() }} />
-      <LayerContextMenuItem icon="newFolder" label={t('layers.newGroup')} shortcut={shortcutHint('createLayerGroup')} onClick={() => { store.createLayerGroup(); closeContextMenu() }} />
+      <div className={`menu-submenu layer-new-submenu ${contextMenu.x + 440 > window.innerWidth - 8 ? 'open-left' : ''}`}>
+        <button type="button" className="menu-submenu-trigger" aria-haspopup="menu"><span className="layer-context-icon"><PixelUtilityIcon kind="plus" /></span><span className="menu-submenu-label">{t('layers.create')}</span><span className="menu-submenu-arrow" aria-hidden="true"><PixelUtilityIcon kind="right" /></span></button>
+        <div className="context-menu menu-popover menu-submenu-popover" role="menu" aria-label={t('layers.create')}>
+          <LayerContextMenuItem icon="plus" label={t('layers.new')} shortcut={shortcutHint('newLayer')} onClick={() => { void store.addLayer(); closeContextMenu() }} />
+          <LayerContextMenuItem icon="newFolder" label={t('layers.newGroup')} shortcut={shortcutHint('createLayerGroup')} onClick={() => { store.createLayerGroup(); closeContextMenu() }} />
+          <LayerContextMenuItem icon="image" label={t('layers.newBackground')} onClick={openBackgroundLayerDialog} />
+        </div>
+      </div>
       <LayerContextMenuItem icon="copy" label={t('layers.duplicate')} shortcut={shortcutHint('duplicateLayer')} onClick={duplicateContextSelection} />
+      {contextMenu.kind === 'layer' && contextMenuLayer && <Tooltip className="layer-menu-tooltip" content={<><strong>{t(contextMenuLayer.background ? 'layers.convertToRaster' : 'layers.convertToBackground')}</strong><span>{t('layers.backgroundDescription')}</span></>}><LayerContextMenuItem icon="image" label={t(contextMenuLayer.background ? 'layers.convertToRaster' : 'layers.convertToBackground')} disabled={contextMenuLayer.kind === 'text'} onClick={() => { store.setLayerBackground(contextMenu.id, !contextMenuLayer.background); closeContextMenu() }} /></Tooltip>}
       {contextMenu.kind === 'layer' && <LayerContextMenuItem icon="mergeDown" label={t(session.selectedLayerIds.length > 1 ? 'app.menu.layer.mergeSelected' : 'app.menu.layer.mergeDown')} shortcut={shortcutHint(session.selectedLayerIds.length > 1 ? 'mergeSelectedLayers' : 'mergeLayerDown')} onClick={() => { session.selectedLayerIds.length > 1 ? store.mergeSelectedLayers() : store.mergeActiveLayerDown(); closeContextMenu() }} />}
-      {contextMenu.kind === 'layer' && session.document.layers.find((layer) => layer.id === contextMenu.id)?.kind === 'text' && <LayerContextMenuItem icon="image" label={t('layers.convertTextLayer')} onClick={() => { store.convertTextLayer(contextMenu.id); closeContextMenu() }} />}
+      {contextMenu.kind === 'layer' && contextMenuLayer && (contextMenuLayer.kind === 'text' || hasEnabledLayerStyles(contextMenuLayer.layerStyles)) && <Tooltip className="layer-menu-tooltip" content={<><strong>{t('layers.rasterizeLayer')}</strong><span>{t('layers.rasterizeLayerDescription')}</span></>}><LayerContextMenuItem icon="image" label={t('layers.rasterizeLayer')} onClick={() => { store.rasterizeLayer(contextMenu.id); closeContextMenu() }} /></Tooltip>}
       {contextMenu.kind === 'group' && <>
         <LayerContextMenuItem icon="folderOpen" label={t('layers.expandCollapseGroup')} onClick={() => { store.toggleGroupCollapsed(contextMenu.id); closeContextMenu() }} />
         <LayerContextMenuItem icon="mergeDown" label={t('app.menu.layer.mergeGroup')} shortcut={shortcutHint('mergeLayerGroup')} onClick={() => { store.mergeSelectedGroup(); closeContextMenu() }} />
@@ -1967,19 +2020,21 @@ export function LayersPanel({ session, docked = false, sideDocked = false, onDoc
       {contextMenu.kind === 'layer' && <Tooltip className="layer-menu-tooltip" content={contextMenuLayerMaskStatus.hasContent ? layerMaskTooltip : emptyLayerMaskCelTooltip}><LayerContextMenuItem icon="layerMask" label={t('layers.createLayerMask')} disabled={!contextMenuLayerMaskStatus.canCreate} onClick={() => { store.createLayerMasksForLayer(contextMenu.id); closeContextMenu() }} /></Tooltip>}
       {contextMenu.kind === 'group' && <Tooltip className="layer-menu-tooltip" content={layerMaskTooltip}><LayerContextMenuItem icon="layerMask" label={t(contextMenuGroupMask ? 'layers.deleteLayerGroupMask' : 'layers.createLayerGroupMask')} onClick={() => { if (contextMenuGroupMask) store.deleteGroupMask(contextMenu.id, timeline.activeFrameId); else store.createGroupMask(contextMenu.id, timeline.activeFrameId); closeContextMenu() }} /></Tooltip>}
       <span className="context-menu-divider" role="separator" />
+      <LayerContextMenuItem icon="layerStyle" label={t('layers.layerStyle')} onClick={openLayerStyles} />
       <LayerContextMenuItem icon="properties" label={t('layers.properties')} onClick={openProperties} />
       <LayerContextMenuItem icon="delete" label={t('common.delete')} shortcut={shortcutHint('deleteLayer')} onClick={deleteContextSelection} danger />
     </div>}
+    {backgroundLayerDialogOpen && <BackgroundLayerDialog onClose={() => setBackgroundLayerDialogOpen(false)} onCreate={(pattern) => store.createBackgroundLayer(pattern)} />}
     {animationMenu?.kind === 'playback' && <AnimationPlaybackMenu session={session} x={animationMenu.x} y={animationMenu.y} onClose={() => setAnimationMenu(null)} />}
     {animationMenu && animationMenu.kind !== 'playback' && createPortal(<div ref={animationMenuRef} className="context-menu animation-context-menu" role="menu" aria-label={t(animationMenu.kind === 'frame' ? 'timeline.frameMenu' : 'timeline.celMenu')} style={animationMenuPosition} onPointerDown={(event) => event.stopPropagation()} onContextMenu={(event) => event.preventDefault()}>
       {animationMenu.kind === 'frame' ? <>
-        <button className="context-menu-item" type="button" role="menuitem" onClick={openFrameProperties}><Clock3 size={15} /><span>{t('timeline.frameProperties')}</span></button>
+        <button className="context-menu-item" type="button" role="menuitem" onClick={openFrameProperties}><PixelUtilityIcon kind="info" /><span>{t('timeline.frameProperties')}</span></button>
         <span className="context-menu-divider" />
         <button className="context-menu-item" type="button" role="menuitem" onClick={() => { store.copySelectedAnimationFrames(); setAnimationMenu(null) }}><PixelUtilityIcon kind="copy" /><span>{t('timeline.copyFrame')}</span>{shortcutHint('copy')}</button>
         <button className="context-menu-item" type="button" role="menuitem" disabled={!session.animationFrameClipboard.length} onClick={() => { store.pasteAnimationFrames(); setAnimationMenu(null) }}><PixelUtilityIcon kind="paste" /><span>{t('timeline.pasteFrame')}</span>{shortcutHint('paste')}</button>
         <span className="context-menu-divider" />
         <button className="context-menu-item" type="button" role="menuitem" onClick={() => useFrameMenuTarget(() => store.duplicateAnimationFrame())}><PixelUtilityIcon kind="copy" /><span>{t('timeline.addFrame')}</span>{shortcutHint('addAnimationFrame')}</button>
-        <button className="context-menu-item" type="button" role="menuitem" onClick={() => useFrameMenuTarget(() => store.addAnimationFrame())}><FilePlus2 size={15} /><span>{t('timeline.addBlankFrame')}</span>{shortcutHint('addBlankAnimationFrame')}</button>
+        <button className="context-menu-item" type="button" role="menuitem" onClick={() => useFrameMenuTarget(() => store.addAnimationFrame())}><PixelUtilityIcon kind="paste" /><span>{t('timeline.addBlankFrame')}</span>{shortcutHint('addBlankAnimationFrame')}</button>
         <button className="context-menu-item danger" type="button" role="menuitem" disabled={timeline.frames.length <= 1} onClick={() => useFrameMenuTarget(() => store.deleteSelectedAnimationItems())}><PixelUtilityIcon kind="delete" /><span>{t('timeline.deleteFrame')}</span>{shortcutHint('deleteAnimationFrame', 'deleteLayer')}</button>
       </> : animationMenu.kind === 'mask' ? <>
         <Tooltip className="layer-menu-tooltip" content={animationMenuLayerMaskCreationBlocked ? emptyLayerMaskCelTooltip : layerMaskTooltip}><button className="context-menu-item" type="button" role="menuitem" disabled={animationMenuLayerMaskCreationBlocked} onClick={() => { if (animationMenuOwnerKind === 'layer') { if (animationMenuMask) store.deleteSelectedLayerMasks(); else store.createLayerMask(animationMenuCel?.id ?? animationMenu.layerId, animationMenu.frameId) } else if (animationMenuOwnerKind === 'group') { if (animationMenuGroupMask) store.deleteGroupMask(animationMenu.layerId, animationMenu.frameId); else store.createGroupMask(animationMenu.layerId, animationMenu.frameId) } setAnimationMenu(null) }}><PixelUtilityIcon kind="layerMask" /><span>{t(animationMenuOwnerKind === 'layer' ? (animationMenuMask ? 'layers.deleteLayerMask' : 'layers.createLayerMask') : (animationMenuGroupMask ? 'layers.deleteLayerGroupMask' : 'layers.createLayerGroupMask'))}</span></button></Tooltip>
@@ -2029,7 +2084,7 @@ export function LayersPanel({ session, docked = false, sideDocked = false, onDoc
     </div>}
     {form && <div className="modal-backdrop" role="presentation" onPointerDown={(event) => { if (event.target === event.currentTarget) closeProperties() }}>
       <ModalShell as="form" storageKey="layer-properties-v2" defaultWidth={380} defaultHeight={470} minWidth={340} minHeight={400} maxWidth={520} maxHeight={700} className="layer-modal" onSubmit={(event) => { event.preventDefault(); closeProperties() }} onKeyDown={(event) => {
-        if (event.key !== 'Enter' || event.nativeEvent.isComposing || (event.target as HTMLElement).tagName === 'TEXTAREA') return
+        if (event.defaultPrevented || event.key !== 'Enter' || event.nativeEvent.isComposing || (event.target as HTMLElement).tagName === 'TEXTAREA') return
         event.preventDefault()
         event.stopPropagation()
         closeProperties()
@@ -2045,6 +2100,7 @@ export function LayersPanel({ session, docked = false, sideDocked = false, onDoc
         </div>
       </ModalShell>
     </div>}
+    {layerStyleTarget && layerStyleOwner && <LayerStyleDialog key={`${layerStyleTarget.kind}:${layerStyleTarget.id}`} ownerKind={layerStyleTarget.kind} owner={layerStyleOwner} onClose={() => setLayerStyleTarget(null)} />}
     {floating.style && <PanelResizeHandles onResize={floating.startResize} />}
   </section>
   <FloatingDockPreview style={floating.dockPreview} />

@@ -1,9 +1,10 @@
 [package]
 name = "moonsprite"
-version = "0.1.0-dev.4"
-description = "An original, open-source pixel art workstation for Windows."
+version = "0.1.0-dev.5"
+description = "An original, source-available pixel art workstation for Windows."
 authors = ["MoonSprite contributors"]
 edition = "2021"
+license-file = "../LICENSE"
 
 [lib]
 name = "moonsprite_lib"
@@ -13,7 +14,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = ["devtools"] }
+tauri = { version = "2", features = ["devtools", "image-png"] }
 tauri-plugin-single-instance = "2"
 rfd = "0.15"
 serde = { version = "1", features = ["derive"] }

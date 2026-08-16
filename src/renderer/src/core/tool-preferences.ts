@@ -201,7 +201,8 @@ export function loadToolSettings(storage?: Storage): PersistedToolSettings {
         horizontal: storedSymmetryAxes?.horizontal === true,
         vertical: storedSymmetryAxes?.vertical === true,
         diagonalUp: storedSymmetryAxes?.diagonalUp === true,
-        diagonalDown: storedSymmetryAxes?.diagonalDown === true || storedSymmetryAxes?.diagonal === true
+        diagonalDown: storedSymmetryAxes?.diagonalDown === true || storedSymmetryAxes?.diagonal === true,
+        rotational: storedSymmetryAxes?.rotational === true
       }
     }
   } catch {

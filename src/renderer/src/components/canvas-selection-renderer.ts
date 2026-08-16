@@ -6,6 +6,12 @@ import { unrotatedViewportBounds, viewCanvasOrigin } from '@/core/view-geometry'
 
 export type RasterContext2D = CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D
 
+const SELECTION_OUTLINE_WIDTH_CSS = 1
+const SELECTION_SOLID_OUTLINE_WIDTH_CSS = 1
+const SELECTION_DASH_LENGTH_CSS = 6
+const SELECTION_DASH_CYCLE_CSS = SELECTION_DASH_LENGTH_CSS * 2
+const SELECTION_DASH_STEP_MS = 160
+
 export interface SelectionScreenBox {
   x: number
   y: number
@@ -18,7 +24,10 @@ export interface SelectionBoundaryCache {
   height: number
   mask?: Uint8Array
   segments: Int32Array
-  screenPaths: Map<string, Path2D>
+  screenPaths: Map<string, {
+    outline: Path2D
+    dashGroups: Array<{ offset: number; path: Path2D }>
+  }>
 }
 
 export function selectionScreenBox(
@@ -81,7 +90,7 @@ export function drawSelectionOutline({
   showHandles = true,
   handlePoints
 }: DrawSelectionOptions): SelectionBoundaryCache {
-  const phase = Math.floor(performance.now() / 180) % 8
+  const phase = Math.floor(performance.now() / SELECTION_DASH_STEP_MS) % SELECTION_DASH_CYCLE_CSS
   let nextCache = cache
   if (!nextCache || nextCache.width !== selection.width || nextCache.height !== selection.height || nextCache.mask !== selection.mask) {
     const segments = selectionBoundarySegments(selection)
@@ -96,9 +105,10 @@ export function drawSelectionOutline({
   const visibleBottom = Math.min(selection.height, Math.ceil((viewport.bottom - box.y) / zoom) + 1)
   const zoomKey = zoom.toFixed(6)
   const pathKey = `${zoomKey}:${visibleLeft}:${visibleTop}:${visibleRight}:${visibleBottom}`
-  let screenPath = nextCache.screenPaths.get(pathKey)
-  if (!screenPath) {
-    screenPath = new Path2D()
+  let screenPaths = nextCache.screenPaths.get(pathKey)
+  if (!screenPaths) {
+    const outline = new Path2D()
+    const dashGroups = new Map<number, Path2D>()
     for (let index = 0; index < nextCache.segments.length; index += 4) {
       const x1 = nextCache.segments[index]
       const y1 = nextCache.segments[index + 1]
@@ -114,26 +124,51 @@ export function drawSelectionOutline({
       const screenX2 = Math.round(clippedX2 * zoom)
       const screenY2 = Math.round(clippedY2 * zoom)
       if (screenX1 === screenX2 && screenY1 === screenY2) continue
-      screenPath.moveTo(screenX1, screenY1)
-      screenPath.lineTo(screenX2, screenY2)
+      outline.moveTo(screenX1, screenY1)
+      outline.lineTo(screenX2, screenY2)
+      const axisStart = screenY1 === screenY2 ? Math.min(screenX1, screenX2) : Math.min(screenY1, screenY2)
+      const dashOffset = ((axisStart % SELECTION_DASH_CYCLE_CSS) + SELECTION_DASH_CYCLE_CSS) % SELECTION_DASH_CYCLE_CSS
+      let dashPath = dashGroups.get(dashOffset)
+      if (!dashPath) {
+        dashPath = new Path2D()
+        dashGroups.set(dashOffset, dashPath)
+      }
+      dashPath.moveTo(screenX1, screenY1)
+      dashPath.lineTo(screenX2, screenY2)
     }
-    nextCache.screenPaths.set(pathKey, screenPath)
+    screenPaths = {
+      outline,
+      dashGroups: [...dashGroups.entries()].map(([offset, path]) => ({ offset, path }))
+    }
+    nextCache.screenPaths.set(pathKey, screenPaths)
     if (nextCache.screenPaths.size > 16) nextCache.screenPaths.delete(nextCache.screenPaths.keys().next().value!)
   }
 
   if (showOutline) {
     context.save()
-    context.translate(Math.round(box.x) + 0.5, Math.round(box.y) + 0.5)
-    context.lineWidth = 1
     context.lineCap = 'butt'
     context.lineJoin = 'miter'
-    context.setLineDash([4, 4])
-    context.lineDashOffset = -phase
-    context.strokeStyle = outlineDark
-    context.stroke(screenPath)
-    context.lineDashOffset = -(phase + 4)
-    context.strokeStyle = outlineLight
-    context.stroke(screenPath)
+    if (outlineDark === outlineLight) {
+      context.translate(Math.round(box.x) + 0.5, Math.round(box.y) + 0.5)
+      context.lineWidth = SELECTION_SOLID_OUTLINE_WIDTH_CSS
+      context.setLineDash([])
+      context.lineDashOffset = 0
+      context.strokeStyle = outlineLight
+      context.stroke(screenPaths.outline)
+    } else {
+      context.translate(Math.round(box.x) + 0.5, Math.round(box.y) + 0.5)
+      context.lineWidth = SELECTION_OUTLINE_WIDTH_CSS
+      context.setLineDash([])
+      context.lineDashOffset = 0
+      context.strokeStyle = outlineLight
+      context.stroke(screenPaths.outline)
+      context.setLineDash([SELECTION_DASH_LENGTH_CSS, SELECTION_DASH_LENGTH_CSS])
+      context.strokeStyle = outlineDark
+      for (const group of screenPaths.dashGroups) {
+        context.lineDashOffset = -(phase + group.offset)
+        context.stroke(group.path)
+      }
+    }
     context.restore()
   }
   if (!showHandles) return nextCache
@@ -145,10 +180,12 @@ export function drawSelectionOutline({
   ]
   const renderedHandles = handlePoints ?? handles.map(([, x, y]) => ({ x, y }))
   for (const { x, y } of renderedHandles) {
+    const centerX = Math.round(x)
+    const centerY = Math.round(y)
+    context.fillStyle = outlineDark
+    context.fillRect(centerX - 5, centerY - 5, 10, 10)
     context.fillStyle = outlineLight
-    context.fillRect(Math.round(x) - 4, Math.round(y) - 4, 8, 8)
-    context.strokeStyle = outlineDark
-    context.strokeRect(Math.round(x) - 4.5, Math.round(y) - 4.5, 9, 9)
+    context.fillRect(centerX - 3, centerY - 3, 6, 6)
   }
   return nextCache
 }

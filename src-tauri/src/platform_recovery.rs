@@ -1,8 +1,15 @@
 use serde::{Deserialize, Serialize};
-use std::{fs, path::PathBuf, sync::Mutex};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+    sync::Mutex,
+    time::{SystemTime, UNIX_EPOCH},
+};
 use tauri::{AppHandle, Manager, State};
 
 use crate::platform_storage::atomic_write;
+
+const MILLIS_PER_DAY: u128 = 86_400_000;
 
 #[derive(Default)]
 pub(crate) struct RecoveryState {
@@ -37,10 +44,76 @@ fn chrono_like_timestamp() -> u128 {
 }
 
 fn unix_timestamp_millis() -> u128 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_millis())
         .unwrap_or_default()
+}
+
+fn recovery_timestamp_millis(value: &str) -> Option<u128> {
+    let numeric = value.trim().parse::<u128>().ok()?;
+    if numeric >= 100_000_000_000_000_000 {
+        Some(numeric / 1_000_000)
+    } else if numeric >= 100_000_000_000_000 {
+        Some(numeric / 1_000)
+    } else if numeric > 0 && numeric < 100_000_000_000 {
+        Some(numeric * 1_000)
+    } else {
+        Some(numeric)
+    }
+}
+
+fn file_modified_millis(path: &Path) -> Option<u128> {
+    fs::metadata(path)
+        .ok()?
+        .modified()
+        .ok()?
+        .duration_since(UNIX_EPOCH)
+        .ok()
+        .map(|duration| duration.as_millis())
+}
+
+fn remove_if_exists(path: &Path) -> Result<(), String> {
+    match fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error.to_string()),
+    }
+}
+
+fn purge_expired_recoveries(
+    directory: &Path,
+    retention_days: u32,
+    now_millis: u128,
+) -> Result<(), String> {
+    let retention_days = retention_days.clamp(1, 365) as u128;
+    let retention_millis = retention_days.saturating_mul(MILLIS_PER_DAY);
+    for entry in fs::read_dir(directory).map_err(|error| error.to_string())? {
+        let path = entry.map_err(|error| error.to_string())?.path();
+        if path.extension().and_then(|value| value.to_str()) != Some("json") {
+            continue;
+        }
+        let Some(id) = path.file_stem().and_then(|value| value.to_str()) else {
+            continue;
+        };
+        if safe_recovery_id(id).is_err() {
+            continue;
+        }
+        let updated_at = fs::read_to_string(&path)
+            .ok()
+            .and_then(|value| serde_json::from_str::<RecoveryRecord>(&value).ok())
+            .and_then(|record| recovery_timestamp_millis(&record.updated_at))
+            .or_else(|| file_modified_millis(&path));
+        let Some(updated_at) = updated_at else {
+            continue;
+        };
+        if now_millis.saturating_sub(updated_at) <= retention_millis {
+            continue;
+        }
+        remove_if_exists(&directory.join(format!("{id}.moonsprite")))?;
+        remove_if_exists(&path)?;
+    }
+    Ok(())
 }
 
 pub(crate) fn mark_session(app: &AppHandle, clean: bool) -> Result<(), String> {
@@ -119,7 +192,11 @@ fn safe_recovery_id(id: &str) -> Result<&str, String> {
 pub(crate) fn list_recoveries(
     app: AppHandle,
     state: State<'_, RecoveryState>,
+    retention_days: u32,
 ) -> Result<Vec<RecoveryRecord>, String> {
+    let directory = recovery_dir(&app)?;
+    fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
+    purge_expired_recoveries(&directory, retention_days, unix_timestamp_millis())?;
     if !*state
         .previous_session_crashed
         .lock()
@@ -127,8 +204,6 @@ pub(crate) fn list_recoveries(
     {
         return Ok(Vec::new());
     }
-    let directory = recovery_dir(&app)?;
-    fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
     let mut records = Vec::new();
     for entry in fs::read_dir(directory).map_err(|error| error.to_string())? {
         let path = entry.map_err(|error| error.to_string())?.path();
@@ -183,4 +258,65 @@ pub(crate) fn delete_recovery(app: AppHandle, id: String) -> Result<(), String> 
     let _ = fs::remove_file(directory.join(format!("{id}.moonsprite")));
     let _ = fs::remove_file(directory.join(format!("{id}.json")));
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn temporary_recovery_directory() -> PathBuf {
+        let suffix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("test clock should be after epoch")
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "moonsprite-recovery-test-{}-{suffix}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&directory).expect("temporary recovery directory should be created");
+        directory
+    }
+
+    fn write_test_recovery(directory: &Path, id: &str, updated_at: u128) {
+        let record = RecoveryRecord {
+            id: id.to_string(),
+            name: id.to_string(),
+            updated_at: updated_at.to_string(),
+        };
+        fs::write(
+            directory.join(format!("{id}.json")),
+            serde_json::to_vec(&record).expect("record should serialize"),
+        )
+        .expect("record should be written");
+        fs::write(directory.join(format!("{id}.moonsprite")), [1, 2, 3])
+            .expect("recovery data should be written");
+    }
+
+    #[test]
+    fn parses_legacy_recovery_timestamp_units() {
+        expect_timestamp("1700000000", 1_700_000_000_000);
+        expect_timestamp("1700000000000", 1_700_000_000_000);
+        expect_timestamp("1700000000000000", 1_700_000_000_000);
+        expect_timestamp("1700000000000000000", 1_700_000_000_000);
+    }
+
+    fn expect_timestamp(value: &str, expected: u128) {
+        assert_eq!(recovery_timestamp_millis(value), Some(expected));
+    }
+
+    #[test]
+    fn purges_only_recoveries_older_than_the_retention_window() {
+        let directory = temporary_recovery_directory();
+        let now = 1_800_000_000_000_u128;
+        write_test_recovery(&directory, "expired", now - 8 * MILLIS_PER_DAY);
+        write_test_recovery(&directory, "recent", now - 6 * MILLIS_PER_DAY);
+
+        purge_expired_recoveries(&directory, 7, now).expect("cleanup should succeed");
+
+        assert!(!directory.join("expired.json").exists());
+        assert!(!directory.join("expired.moonsprite").exists());
+        assert!(directory.join("recent.json").exists());
+        assert!(directory.join("recent.moonsprite").exists());
+        fs::remove_dir_all(directory).expect("temporary recovery directory should be removed");
+    }
 }

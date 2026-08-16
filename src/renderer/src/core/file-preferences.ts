@@ -17,6 +17,7 @@ export const RELATIVE_LUMINANCE_SCOPE_KEY = 'moonsprite.preference.relative-lumi
 export const LANGUAGE_PREFERENCE_KEY = APP_LANGUAGE_PREFERENCE_KEY
 export const RECOVERY_PREFERENCE_KEY = 'moonsprite.preference.recovery'
 export const RECOVERY_MINUTES_PREFERENCE_KEY = 'moonsprite.preference.recovery-minutes'
+export const RECOVERY_RETENTION_DAYS_PREFERENCE_KEY = 'moonsprite.preference.recovery-retention-days'
 export const ZOOM_TOOL_DRAG_MODE_PREFERENCE_KEY = 'moonsprite.preference.zoom-tool-drag-mode'
 export const WHEEL_ZOOM_MODE_PREFERENCE_KEY = 'moonsprite.preference.wheel-zoom-mode'
 export const BRUSH_SHIFT_LINE_ENABLED_KEY = 'moonsprite.preference.brush-shift-line-enabled'
@@ -30,6 +31,7 @@ export const PIXEL_GRID_COLOR_PREFERENCE_KEY = 'moonsprite.preference.pixel-grid
 export const GRID_COLOR_PREFERENCE_KEY = 'moonsprite.preference.grid-color'
 export const SLICE_COLOR_PREFERENCE_KEY = 'moonsprite.preference.slice-color'
 export const TEXT_BOX_COLOR_PREFERENCE_KEY = 'moonsprite.preference.text-box-color'
+export const CANVAS_RESIZE_COLOR_PREFERENCE_KEY = 'moonsprite.preference.canvas-resize-color'
 export const SLICE_OUTLINES_VISIBLE_PREFERENCE_KEY = 'moonsprite.preference.slice-outlines-visible'
 export const WHEEL_ZOOM_ENABLED_PREFERENCE_KEY = 'moonsprite.preference.wheel-zoom-enabled'
 export const SHIFT_LINE_PREVIEW_ENABLED_PREFERENCE_KEY = 'moonsprite.preference.shift-line-preview-enabled'
@@ -49,6 +51,9 @@ export const ONION_SKIN_PREFERENCE_KEY = 'moonsprite.preference.onion-skin'
 export const TIMELINE_HIDDEN_PREFERENCE_KEY = 'moonsprite.preference.timeline-hidden'
 export const SYMMETRY_AXIS_PREFERENCE_KEY = 'moonsprite.preference.symmetry-axis'
 export const TIMELAPSE_RECORDING_ENABLED_PREFERENCE_KEY = 'moonsprite.preference.timelapse-recording-enabled'
+export const QUICK_COMMAND_BAR_ENABLED_PREFERENCE_KEY = 'moonsprite.preference.quick-command-bar-enabled'
+export const QUICK_COMMAND_BAR_TRANSLUCENT_PREFERENCE_KEY = 'moonsprite.preference.quick-command-bar-translucent'
+export const QUICK_COMMAND_PREFERENCES_KEY = 'moonsprite.preference.quick-command-items'
 export const UI_SCALE_PREFERENCE_KEY = 'moonsprite.preference.ui-scale'
 export const TOOL_ICON_SCALE_PREFERENCE_KEY = 'moonsprite.preference.tool-icon-scale'
 export { THEME_PREFERENCE_KEY }
@@ -64,6 +69,74 @@ export type ToolIconScale = 1 | 2
 export type BrushPreviewMode = 'none' | 'edge' | 'full' | 'full-edge'
 export type EyedropperMagnifierStyle = 'pixel' | 'line'
 export type CheckerSize = number
+
+export const QUICK_COMMAND_IDS = [
+  'selectionFlipHorizontal',
+  'selectionFlipVertical',
+  'canvasMirrorHorizontal',
+  'canvasMirrorVertical',
+  'invertSelection',
+  'customGrid',
+  'undo',
+  'redo',
+  'selectAll',
+  'deselect',
+  'pixelGrid',
+  'selectionOutline',
+  'relativeLuminance',
+  'resetView',
+  'fillForeground',
+  'deleteSelection',
+  'swapForegroundBackground',
+  'createBrushFromSelection',
+  'rotateViewClockwise90',
+  'rotateViewCounterClockwise90'
+] as const
+
+export type QuickCommandId = typeof QUICK_COMMAND_IDS[number]
+
+export interface QuickCommandPreference {
+  id: QuickCommandId
+  enabled: boolean
+}
+
+const DEFAULT_ENABLED_QUICK_COMMAND_IDS = new Set<QuickCommandId>([
+  'selectionFlipHorizontal',
+  'selectionFlipVertical',
+  'canvasMirrorHorizontal',
+  'canvasMirrorVertical',
+  'invertSelection',
+  'customGrid',
+  'relativeLuminance'
+])
+
+export const DEFAULT_QUICK_COMMAND_PREFERENCES: QuickCommandPreference[] = QUICK_COMMAND_IDS.map((id) => ({ id, enabled: DEFAULT_ENABLED_QUICK_COMMAND_IDS.has(id) }))
+
+const QUICK_COMMAND_ID_SET = new Set<string>(QUICK_COMMAND_IDS)
+
+export function parseQuickCommandPreferences(value: string | null): QuickCommandPreference[] {
+  const fallback = (): QuickCommandPreference[] => DEFAULT_QUICK_COMMAND_PREFERENCES.map((item) => ({ ...item }))
+  if (!value) return fallback()
+  try {
+    const parsed = JSON.parse(value) as unknown
+    if (!Array.isArray(parsed)) return fallback()
+    const seen = new Set<QuickCommandId>()
+    const preferences: QuickCommandPreference[] = []
+    for (const candidate of parsed) {
+      if (!candidate || typeof candidate !== 'object') continue
+      const id = (candidate as { id?: unknown }).id
+      if (typeof id !== 'string' || !QUICK_COMMAND_ID_SET.has(id) || seen.has(id as QuickCommandId)) continue
+      seen.add(id as QuickCommandId)
+      preferences.push({ id: id as QuickCommandId, enabled: (candidate as { enabled?: unknown }).enabled === true })
+    }
+    if (preferences.length === 0) return fallback()
+    for (const item of DEFAULT_QUICK_COMMAND_PREFERENCES) if (!seen.has(item.id)) preferences.push({ ...item, enabled: false })
+    if (!preferences.some((item) => item.enabled)) preferences[0] = { ...preferences[0], enabled: true }
+    return preferences
+  } catch {
+    return fallback()
+  }
+}
 
 export interface CheckerboardPreferences {
   size: CheckerSize
@@ -81,6 +154,7 @@ export const DEFAULT_PIXEL_GRID_COLOR: RgbaColor = { r: 69, g: 77, b: 92, a: 143
 export const DEFAULT_GRID_COLOR: RgbaColor = { r: 0, g: 0, b: 255, a: 255 }
 export const DEFAULT_SLICE_COLOR: RgbaColor = { r: 0, g: 0, b: 255, a: 255 }
 export const DEFAULT_TEXT_BOX_COLOR: RgbaColor = { r: 0, g: 0, b: 255, a: 255 }
+export const DEFAULT_CANVAS_RESIZE_COLOR: RgbaColor = { r: 0, g: 0, b: 255, a: 255 }
 
 export function parseRotationIndicatorPosition(value: string | null): RotationIndicatorPosition {
   return value === 'canvas' ? 'canvas' : 'view'
@@ -117,7 +191,7 @@ export function parseUiScale(value: string | null): UiScale {
 }
 
 export function parseToolIconScale(value: string | null): ToolIconScale {
-  return value === '1' ? 1 : 2
+  return value === '2' ? 2 : 1
 }
 
 export function parseBrushPreviewMode(value: string | null): BrushPreviewMode {
@@ -187,7 +261,16 @@ export const DEFAULT_LAYER_DISPLAY_COLOR_PRESETS: RgbaColor[] = [
   { r: 171, g: 71, b: 188, a: 255 }
 ]
 export interface ColorEditorModePreference { mode: ColorValueMode; enabled: boolean }
-export const DEFAULT_COLOR_EDITOR_MODES: ColorEditorModePreference[] = (['rgb', 'hsv', 'hsl', 'gray', 'lab', 'cmyk'] as ColorValueMode[]).map((mode) => ({ mode, enabled: true }))
+export const DEFAULT_COLOR_EDITOR_MODES: ColorEditorModePreference[] = [
+  { mode: 'hsv', enabled: true },
+  { mode: 'rgb', enabled: true },
+  { mode: 'lab', enabled: true },
+  { mode: 'gray', enabled: true },
+  { mode: 'palette', enabled: true },
+  { mode: 'hsl', enabled: false },
+  { mode: 'cmyk', enabled: false }
+]
+const LEGACY_DEFAULT_COLOR_EDITOR_MODES: ColorValueMode[] = ['rgb', 'hsv', 'hsl', 'gray', 'lab', 'cmyk']
 export interface OnionSkinPreferences {
   enabled: boolean
   previousFrames: number
@@ -218,7 +301,7 @@ export const MAX_SYMMETRY_AXIS_THICKNESS = 8
 
 export const DEFAULT_SYMMETRY_AXIS_PREFERENCES: SymmetryAxisPreferences = {
   locked: false,
-  color: { r: 41, g: 121, b: 255, a: 242 },
+  color: { r: 0, g: 0, b: 255, a: 255 },
   thickness: 1
 }
 
@@ -235,6 +318,7 @@ export interface EditorPreferences {
   exportDirectory: string
   recovery: boolean
   recoveryMinutes: number
+  recoveryRetentionDays: number
   documentSizePresets: DocumentSizePreset[]
   exportScalePresets: number[]
   rotationIndicatorPosition: RotationIndicatorPosition
@@ -250,6 +334,7 @@ export interface EditorPreferences {
   gridColor: RgbaColor
   sliceColor: RgbaColor
   textBoxColor: RgbaColor
+  canvasResizeColor: RgbaColor
   sliceOutlinesVisible: boolean
   wheelZoomEnabled: boolean
   wheelZoomMode: WheelZoomMode
@@ -270,19 +355,23 @@ export interface EditorPreferences {
   timelineHidden: boolean
   symmetryAxis: SymmetryAxisPreferences
   timelapseRecordingEnabled: boolean
+  quickCommandBarEnabled: boolean
+  quickCommandBarTranslucent: boolean
+  quickCommandPreferences: QuickCommandPreference[]
   theme: ThemePreferences
 }
 
 export const DEFAULT_EDITOR_PREFERENCES: EditorPreferences = {
   language: DEFAULT_APP_LOCALE,
   uiScale: 1,
-  toolIconScale: 2,
+  toolIconScale: 1,
   saveFormat: 'moonsprite',
   exportFormat: 'png',
   saveDirectory: '',
   exportDirectory: '',
   recovery: true,
   recoveryMinutes: 5,
+  recoveryRetentionDays: 7,
   documentSizePresets: DEFAULT_DOCUMENT_SIZE_PRESETS,
   exportScalePresets: DEFAULT_EXPORT_SCALE_PRESETS,
   rotationIndicatorPosition: 'view',
@@ -298,6 +387,7 @@ export const DEFAULT_EDITOR_PREFERENCES: EditorPreferences = {
   gridColor: DEFAULT_GRID_COLOR,
   sliceColor: DEFAULT_SLICE_COLOR,
   textBoxColor: DEFAULT_TEXT_BOX_COLOR,
+  canvasResizeColor: DEFAULT_CANVAS_RESIZE_COLOR,
   sliceOutlinesVisible: true,
   wheelZoomEnabled: true,
   wheelZoomMode: 'stepped',
@@ -318,6 +408,9 @@ export const DEFAULT_EDITOR_PREFERENCES: EditorPreferences = {
   timelineHidden: false,
   symmetryAxis: DEFAULT_SYMMETRY_AXIS_PREFERENCES,
   timelapseRecordingEnabled: false,
+  quickCommandBarEnabled: true,
+  quickCommandBarTranslucent: true,
+  quickCommandPreferences: DEFAULT_QUICK_COMMAND_PREFERENCES,
   theme: DEFAULT_THEME_PREFERENCES
 }
 
@@ -455,7 +548,10 @@ export function parseColorEditorModes(value: string | null): ColorEditorModePref
       seen.add(item.mode as ColorValueMode)
       result.push({ mode: item.mode as ColorValueMode, enabled: item.enabled !== false })
     }
-    for (const mode of supported) if (!seen.has(mode)) result.push({ mode, enabled: true })
+    const legacyDefaults = result.length === LEGACY_DEFAULT_COLOR_EDITOR_MODES.length
+      && result.every((item, index) => item.mode === LEGACY_DEFAULT_COLOR_EDITOR_MODES[index] && item.enabled)
+    if (legacyDefaults) return DEFAULT_COLOR_EDITOR_MODES.map((item) => ({ ...item }))
+    for (const item of DEFAULT_COLOR_EDITOR_MODES) if (!seen.has(item.mode)) result.push({ ...item })
     if (!result.some((item) => item.enabled)) result[0].enabled = true
     return result
   } catch {
@@ -549,6 +645,12 @@ export function parseRecoveryMinutes(value: string | null): number {
   return Number.isFinite(parsed) ? Math.max(0.5, Math.min(60, parsed)) : DEFAULT_EDITOR_PREFERENCES.recoveryMinutes
 }
 
+export function parseRecoveryRetentionDays(value: string | null): number {
+  if (!value?.trim()) return DEFAULT_EDITOR_PREFERENCES.recoveryRetentionDays
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? Math.max(1, Math.min(365, Math.round(parsed))) : DEFAULT_EDITOR_PREFERENCES.recoveryRetentionDays
+}
+
 export function loadEditorPreferences(storage?: Storage): EditorPreferences {
   if (!storage && previewPreferences) return copyPreferences(previewPreferences)
   const get = (key: string): string | null => readStoredString(key, storage)
@@ -563,6 +665,7 @@ export function loadEditorPreferences(storage?: Storage): EditorPreferences {
     exportDirectory: parseDirectoryPreference(get(EXPORT_DIRECTORY_PREFERENCE_KEY)),
     recovery: get(RECOVERY_PREFERENCE_KEY) !== 'false',
     recoveryMinutes: parseRecoveryMinutes(get(RECOVERY_MINUTES_PREFERENCE_KEY)),
+    recoveryRetentionDays: parseRecoveryRetentionDays(get(RECOVERY_RETENTION_DAYS_PREFERENCE_KEY)),
     documentSizePresets: parseDocumentSizePresets(get(NEW_DOCUMENT_SIZE_PRESETS_KEY)),
     exportScalePresets: parseExportScalePresets(get(EXPORT_SCALE_PRESETS_KEY)),
     rotationIndicatorPosition: parseRotationIndicatorPosition(get(ROTATION_INDICATOR_POSITION_KEY)),
@@ -578,6 +681,7 @@ export function loadEditorPreferences(storage?: Storage): EditorPreferences {
     gridColor: theme.grid.gridColor,
     sliceColor: parseHexColor(get(SLICE_COLOR_PREFERENCE_KEY), DEFAULT_SLICE_COLOR),
     textBoxColor: parseHexColor(get(TEXT_BOX_COLOR_PREFERENCE_KEY), DEFAULT_TEXT_BOX_COLOR),
+    canvasResizeColor: parseHexColor(get(CANVAS_RESIZE_COLOR_PREFERENCE_KEY), DEFAULT_CANVAS_RESIZE_COLOR),
     sliceOutlinesVisible: get(SLICE_OUTLINES_VISIBLE_PREFERENCE_KEY) !== 'false',
     wheelZoomEnabled: get(WHEEL_ZOOM_ENABLED_PREFERENCE_KEY) !== 'false',
     wheelZoomMode: parseWheelZoomMode(get(WHEEL_ZOOM_MODE_PREFERENCE_KEY)),
@@ -598,6 +702,9 @@ export function loadEditorPreferences(storage?: Storage): EditorPreferences {
     timelineHidden: get(TIMELINE_HIDDEN_PREFERENCE_KEY) === 'true',
     symmetryAxis: theme.symmetryAxis,
     timelapseRecordingEnabled: get(TIMELAPSE_RECORDING_ENABLED_PREFERENCE_KEY) === 'true',
+    quickCommandBarEnabled: get(QUICK_COMMAND_BAR_ENABLED_PREFERENCE_KEY) !== 'false',
+    quickCommandBarTranslucent: get(QUICK_COMMAND_BAR_TRANSLUCENT_PREFERENCE_KEY) !== 'false',
+    quickCommandPreferences: parseQuickCommandPreferences(get(QUICK_COMMAND_PREFERENCES_KEY)),
     theme: theme.theme
   }
 }
@@ -614,6 +721,7 @@ export function saveEditorPreferences(preferences: EditorPreferences, storage?: 
     [EXPORT_DIRECTORY_PREFERENCE_KEY]: parseDirectoryPreference(preferences.exportDirectory),
     [RECOVERY_PREFERENCE_KEY]: String(preferences.recovery),
     [RECOVERY_MINUTES_PREFERENCE_KEY]: String(parseRecoveryMinutes(String(preferences.recoveryMinutes))),
+    [RECOVERY_RETENTION_DAYS_PREFERENCE_KEY]: String(parseRecoveryRetentionDays(String(preferences.recoveryRetentionDays))),
     [NEW_DOCUMENT_SIZE_PRESETS_KEY]: JSON.stringify(parseDocumentSizePresets(JSON.stringify(preferences.documentSizePresets))),
     [EXPORT_SCALE_PRESETS_KEY]: JSON.stringify(parseExportScalePresets(JSON.stringify(preferences.exportScalePresets))),
     [ROTATION_INDICATOR_POSITION_KEY]: preferences.rotationIndicatorPosition,
@@ -631,6 +739,7 @@ export function saveEditorPreferences(preferences: EditorPreferences, storage?: 
     [GRID_COLOR_PREFERENCE_KEY]: colorHex(preferences.gridColor),
     [SLICE_COLOR_PREFERENCE_KEY]: colorHex(preferences.sliceColor),
     [TEXT_BOX_COLOR_PREFERENCE_KEY]: colorHex(preferences.textBoxColor),
+    [CANVAS_RESIZE_COLOR_PREFERENCE_KEY]: colorHex(preferences.canvasResizeColor),
     [SLICE_OUTLINES_VISIBLE_PREFERENCE_KEY]: String(preferences.sliceOutlinesVisible),
     [WHEEL_ZOOM_ENABLED_PREFERENCE_KEY]: String(preferences.wheelZoomEnabled),
     [WHEEL_ZOOM_MODE_PREFERENCE_KEY]: preferences.wheelZoomMode,
@@ -650,7 +759,10 @@ export function saveEditorPreferences(preferences: EditorPreferences, storage?: 
     [ONION_SKIN_PREFERENCE_KEY]: JSON.stringify(parseOnionSkinPreferences(JSON.stringify(preferences.onionSkin))),
     [TIMELINE_HIDDEN_PREFERENCE_KEY]: String(preferences.timelineHidden),
     [SYMMETRY_AXIS_PREFERENCE_KEY]: JSON.stringify(parseSymmetryAxisPreferences(JSON.stringify(preferences.symmetryAxis))),
-    [TIMELAPSE_RECORDING_ENABLED_PREFERENCE_KEY]: String(preferences.timelapseRecordingEnabled)
+    [TIMELAPSE_RECORDING_ENABLED_PREFERENCE_KEY]: String(preferences.timelapseRecordingEnabled),
+    [QUICK_COMMAND_BAR_ENABLED_PREFERENCE_KEY]: String(preferences.quickCommandBarEnabled),
+    [QUICK_COMMAND_BAR_TRANSLUCENT_PREFERENCE_KEY]: String(preferences.quickCommandBarTranslucent),
+    [QUICK_COMMAND_PREFERENCES_KEY]: JSON.stringify(parseQuickCommandPreferences(JSON.stringify(preferences.quickCommandPreferences)))
   }
   for (const [key, value] of Object.entries(values)) writeStoredString(key, value, storage)
   saveThemePreferences(theme, storage)

@@ -21,3 +21,28 @@ export const shouldTriggerDeleteCommand = (configuredShortcutMatches: boolean, k
 
 export const shouldHandleGlobalSelectionEnter = (outlineOpen: boolean, hasSelection: boolean): boolean =>
   !outlineOpen && hasSelection
+
+export interface AnimationPlaybackShortcutContext {
+  defaultPrevented: boolean
+  repeat: boolean
+  hasSession: boolean
+  frameCount: number
+  homeOpen: boolean
+  timelineHidden: boolean
+  hasSelection: boolean
+  hasTextBoxTransform: boolean
+  isInteractiveTarget: boolean
+  hasBlockingSurface: boolean
+}
+
+export const shouldHandleAnimationPlaybackShortcut = (context: AnimationPlaybackShortcutContext): boolean =>
+  !context.defaultPrevented
+  && !context.repeat
+  && context.hasSession
+  && context.frameCount > 1
+  && !context.homeOpen
+  && !context.timelineHidden
+  && !context.hasSelection
+  && !context.hasTextBoxTransform
+  && !context.isInteractiveTarget
+  && !context.hasBlockingSurface

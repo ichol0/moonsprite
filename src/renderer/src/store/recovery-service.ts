@@ -11,8 +11,8 @@ export class RecoveryService {
     return operation
   }
 
-  list(api: MoonSpriteApi): Promise<RecoveryRecord[]> {
-    return api.listRecoveries()
+  list(api: MoonSpriteApi, retentionDays: number): Promise<RecoveryRecord[]> {
+    return api.listRecoveries(retentionDays)
   }
 
   async restore(api: MoonSpriteApi, record: RecoveryRecord): Promise<SpriteDocument> {

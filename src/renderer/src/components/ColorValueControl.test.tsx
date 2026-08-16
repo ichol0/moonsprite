@@ -1,14 +1,29 @@
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { useState } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { MoonSpriteApi } from '@shared/types'
 import { ColorValueControl } from './ColorValueControl'
 import { COLOR_EDITOR_MODES_PREFERENCE_KEY } from '@/core/file-preferences'
+import { createDocument } from '@/core/document'
+import { useWorkspace } from '@/store/workspace'
+import { publishCanvasColorSample, publishCanvasColorSamplingCompleted } from './color-sampling-events'
 
-beforeEach(() => localStorage.clear())
+beforeEach(() => {
+  localStorage.clear()
+  useWorkspace.setState({ sessions: [], activeId: null, message: null, dialog: null })
+})
 afterEach(() => cleanup())
 
 describe('ColorValueControl', () => {
+  it('keeps a disabled color trigger closed', () => {
+    render(<ColorValueControl color={{ r: 41, g: 121, b: 255, a: 255 }} disabled onChange={vi.fn()} label="Color" fillWithColor />)
+    const trigger = screen.getByRole('button', { name: 'Color' })
+
+    expect(trigger).toBeDisabled()
+    fireEvent.click(trigger)
+    expect(document.querySelector('.color-editor-popover')).not.toBeInTheDocument()
+  })
+
   it('renders a mixed selection without showing a misleading hex value', () => {
     render(<ColorValueControl color={{ r: 41, g: 121, b: 255, a: 255 }} mixed onChange={vi.fn()} label="Color" fillWithColor />)
     const trigger = screen.getByRole('button', { name: 'Color' })
@@ -27,16 +42,17 @@ describe('ColorValueControl', () => {
     expect(trigger.style.getPropertyValue('--color-value-contrast')).toBe('#fff')
   })
 
-  it('opens the shared editor with RGB as the default mode', () => {
+  it('opens the shared editor with the five default modes led by HSV', () => {
     render(<ColorValueControl color={{ r: 41, g: 121, b: 255, a: 255 }} onChange={vi.fn()} label="背景颜色" roleLabel="浅色" />)
 
     fireEvent.click(screen.getByRole('button', { name: '背景颜色 浅色' }))
 
     expect(screen.getByRole('dialog', { name: '颜色编辑 浅色' })).toBeInTheDocument()
-    expect(screen.getByRole('tab', { name: 'RGB', selected: true })).toBeInTheDocument()
+    expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual(['HSV', 'RGB', 'LAB', 'GRAY', 'PLT'])
+    expect(screen.getByRole('tab', { name: 'HSV', selected: true })).toBeInTheDocument()
     expect(screen.getByLabelText('当前颜色')).toBeInTheDocument()
     expect(screen.getByRole('textbox', { name: '背景颜色 HEX' })).toHaveValue('2979FF')
-    expect(screen.getByRole('spinbutton', { name: '背景颜色 R' })).toHaveValue('41')
+    expect(screen.getByRole('spinbutton', { name: '背景颜色 H' })).toBeInTheDocument()
     expect(screen.getByRole('slider', { name: '背景颜色 A滑块' })).toHaveValue('255')
   })
 
@@ -74,6 +90,7 @@ describe('ColorValueControl', () => {
   it('records the new color preview after a slider edit is confirmed', () => {
     render(<ColorValueControl color={{ r: 41, g: 121, b: 255, a: 255 }} onChange={vi.fn()} label="Color" />)
     fireEvent.click(screen.getByRole('button', { name: 'Color' }))
+    fireEvent.click(screen.getByRole('tab', { name: 'RGB' }))
     const slider = screen.getByRole('slider', { name: /Color R/ })
     const currentSwatch = document.querySelector('.color-editor-current-swatch i') as HTMLElement
     const previousStyle = currentSwatch.style.background
@@ -154,6 +171,7 @@ describe('ColorValueControl', () => {
   })
 
   it('expands a compact editor when switching to CMYK', async () => {
+    localStorage.setItem(COLOR_EDITOR_MODES_PREFERENCE_KEY, JSON.stringify([{ mode: 'hsv', enabled: true }, { mode: 'cmyk', enabled: true }, { mode: 'rgb', enabled: false }, { mode: 'lab', enabled: false }, { mode: 'gray', enabled: false }, { mode: 'palette', enabled: false }, { mode: 'hsl', enabled: false }]))
     localStorage.setItem('moonsprite.color-editor-size.cmyk-fit', JSON.stringify({ width: 560, height: 240 }))
     render(<ColorValueControl color={{ r: 41, g: 121, b: 255, a: 255 }} onChange={vi.fn()} label="Color" storageKey="cmyk-fit" />)
     fireEvent.click(screen.getByRole('button', { name: 'Color' }))
@@ -232,17 +250,61 @@ describe('ColorValueControl', () => {
     render(<ColorValueControl color={{ r: 41, g: 121, b: 255, a: 255 }} onChange={vi.fn()} label="颜色" />)
     fireEvent.click(screen.getByRole('button', { name: '颜色' }))
 
-    expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual(['LAB', 'RGB', 'HSL', 'Gray', 'CMYK'])
+    expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual(['LAB', 'RGB', 'GRAY', 'PLT'])
     expect(screen.getByRole('tab', { name: 'LAB', selected: true })).toBeInTheDocument()
+  })
+
+  it('shows the active project palette in PLT order and applies a selected color', () => {
+    const document = createDocument('palette editor', 2, 2, 'rgba')
+    document.palette = [
+      { id: 1, name: 'Red', color: { r: 255, g: 0, b: 0, a: 255 } },
+      { id: 2, name: 'Transparent blue', color: { r: 0, g: 0, b: 255, a: 0 } }
+    ]
+    document.paletteOrder = [2, 1]
+    useWorkspace.getState().addSession(document)
+    const onChange = vi.fn()
+    render(<ColorValueControl color={{ r: 41, g: 121, b: 255, a: 255 }} onChange={onChange} label="Color" />)
+    fireEvent.click(screen.getByRole('button', { name: 'Color' }))
+    fireEvent.click(screen.getByRole('tab', { name: 'PLT' }))
+
+    const options = screen.getAllByRole('option')
+    expect(options.map((option) => option.getAttribute('aria-label'))).toEqual(['Transparent blue #0000FF00', 'Red #FF0000'])
+    fireEvent.click(screen.getByRole('option', { name: 'Red #FF0000' }))
+
+    expect(onChange).toHaveBeenLastCalledWith({ r: 255, g: 0, b: 0, a: 255 })
+    expect(screen.getByRole('option', { name: 'Red #FF0000' })).toHaveAttribute('aria-selected', 'true')
+  })
+
+  it('samples a canvas color from the editor and restores the previous tool', () => {
+    useWorkspace.getState().addSession(createDocument('color editor sampling', 2, 2, 'rgba'))
+    const onChange = vi.fn()
+    render(<ColorValueControl color={{ r: 41, g: 121, b: 255, a: 255 }} onChange={onChange} label="Color" dismissOnFocusLoss />)
+    fireEvent.click(screen.getByRole('button', { name: 'Color' }))
+    const eyedropper = screen.getByRole('button', { name: '从画布吸色' })
+
+    fireEvent.click(eyedropper)
+    expect(eyedropper).toHaveAttribute('aria-pressed', 'true')
+    expect(useWorkspace.getState().sessions[0].tool).toBe('eyedropper')
+    fireEvent.pointerDown(document.body)
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
+
+    act(() => publishCanvasColorSample({ r: 18, g: 171, b: 52, a: 128 }, false))
+    expect(onChange).toHaveBeenLastCalledWith({ r: 18, g: 171, b: 52, a: 128 })
+    expect(screen.getByRole('textbox', { name: 'Color HEX' })).toHaveValue('12AB3480')
+
+    act(() => publishCanvasColorSamplingCompleted())
+    expect(eyedropper).toHaveAttribute('aria-pressed', 'false')
+    expect(useWorkspace.getState().sessions[0].tool).toBe('pencil')
   })
 
   it('only shows the add-to-palette action for a missing color', () => {
     const add = vi.fn()
-    const { container, rerender } = render(<ColorValueControl color={{ r: 41, g: 121, b: 255, a: 255 }} onChange={vi.fn()} label="颜色" inPalette={false} onAddToPalette={add} />)
+    const { container, rerender } = render(<ColorValueControl color={{ r: 41, g: 121, b: 255, a: 255 }} onChange={vi.fn()} label="颜色" inPalette={false} onAddToPalette={add} addToPaletteShortcut="Alt+S" />)
     const button = container.querySelector<HTMLButtonElement>('.color-value-add-button')!
     const actionRow = container.querySelector('.color-value-action-row')
     expect(actionRow).toHaveClass('supports-palette-action', 'has-add-action')
     expect(button).not.toBeNull()
+    expect(button).toHaveAttribute('title', '手动加入当前颜色；快捷操作：按住 Alt+S 后点击颜色')
     fireEvent.click(button)
     expect(add).toHaveBeenCalledOnce()
 

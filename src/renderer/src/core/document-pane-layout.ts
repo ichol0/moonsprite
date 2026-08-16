@@ -5,6 +5,7 @@ export interface DocumentPanePlacement {
   documentId: string
   targetPaneId: string
   direction: DocumentPaneDirection
+  previewPaneId?: string
 }
 
 export interface DocumentPaneLeaf {
@@ -23,6 +24,11 @@ export interface DocumentPaneSplit {
 }
 
 export type DocumentPaneNode = DocumentPaneLeaf | DocumentPaneSplit
+export interface DetachedDocumentPaneWorkspace {
+  layout: DocumentPaneNode | null
+  paneOnlyDocumentIds: string[]
+  workspaceDocumentId: string | null
+}
 export interface DocumentPaneRect {
   left: number
   top: number
@@ -38,9 +44,7 @@ export interface DocumentPanePointerPoint {
 
 const MIN_RATIO = 0.1
 const MAX_RATIO = 0.9
-const MAX_DOCK_EDGE_SIZE = 80
-const DOCK_EDGE_RATIO = 0.2
-const DOCK_OUTER_SLOP = 22
+const DOCKED_PANE_SHARE = 1 / 3
 
 export const clampDocumentPaneRatio = (ratio: number): number => Math.max(MIN_RATIO, Math.min(MAX_RATIO, Number.isFinite(ratio) ? ratio : 0.5))
 
@@ -67,28 +71,17 @@ export const documentPaneDropDirection = (rect: DocumentPaneRect, clientX: numbe
   return vertical < 0 ? 'top' : 'bottom'
 }
 
+const pointInsideRect = (point: DocumentPanePointerPoint, rect: DocumentPaneRect): boolean =>
+  point.x >= rect.left && point.x <= rect.right && point.y >= rect.top && point.y <= rect.bottom
+
 export const documentPaneDockDirection = (rect: DocumentPaneRect, clientX: number, clientY: number): DocumentPaneDirection | null => {
-  const rawLeftDistance = clientX - rect.left
-  const rawRightDistance = rect.right - clientX
-  const rawTopDistance = clientY - rect.top
-  const rawBottomDistance = rect.bottom - clientY
-  if (rawLeftDistance < -DOCK_OUTER_SLOP || rawRightDistance < -DOCK_OUTER_SLOP || rawTopDistance < -DOCK_OUTER_SLOP || rawBottomDistance < -DOCK_OUTER_SLOP) return null
-  const leftDistance = Math.max(0, rawLeftDistance)
-  const rightDistance = Math.max(0, rawRightDistance)
-  const topDistance = Math.max(0, rawTopDistance)
-  const bottomDistance = Math.max(0, rawBottomDistance)
-  const horizontalEdge = Math.min(MAX_DOCK_EDGE_SIZE, rect.width * DOCK_EDGE_RATIO)
-  const verticalEdge = Math.min(MAX_DOCK_EDGE_SIZE, rect.height * DOCK_EDGE_RATIO)
-  const candidates: Array<{ direction: DocumentPaneDirection; score: number }> = []
-  // Outside a pane, negative raw distances made the farther edge win at a
-  // corner. Compare absolute distance so moving across a corner can switch
-  // from the side edge to the top/bottom edge immediately.
-  if (leftDistance <= horizontalEdge) candidates.push({ direction: 'left', score: Math.abs(rawLeftDistance) })
-  if (rightDistance <= horizontalEdge) candidates.push({ direction: 'right', score: Math.abs(rawRightDistance) })
-  if (topDistance <= verticalEdge) candidates.push({ direction: 'top', score: Math.abs(rawTopDistance) })
-  if (bottomDistance <= verticalEdge) candidates.push({ direction: 'bottom', score: Math.abs(rawBottomDistance) })
-  const verticalPriority = (direction: DocumentPaneDirection): number => direction === 'top' || direction === 'bottom' ? 0 : 1
-  return candidates.sort((a, b) => a.score - b.score || verticalPriority(a.direction) - verticalPriority(b.direction))[0]?.direction ?? null
+  if (!pointInsideRect({ x: clientX, y: clientY }, rect)) return null
+  const centerX = rect.left + rect.width / 2
+  const centerY = rect.top + rect.height / 2
+  const normalizedX = (clientX - centerX) / Math.max(1, rect.width / 2)
+  const normalizedY = (clientY - centerY) / Math.max(1, rect.height / 2)
+  if (Math.abs(normalizedX) > Math.abs(normalizedY)) return normalizedX < 0 ? 'left' : 'right'
+  return normalizedY <= 0 ? 'top' : 'bottom'
 }
 
 const segmentEntryTime = (from: DocumentPanePointerPoint, to: DocumentPanePointerPoint, rect: DocumentPaneRect): number | null => {
@@ -110,30 +103,20 @@ const segmentEntryTime = (from: DocumentPanePointerPoint, to: DocumentPanePointe
   return entry >= 0 && entry <= 1 ? entry : null
 }
 
-const documentPaneDockingStrip = (rect: DocumentPaneRect, direction: DocumentPaneDirection): DocumentPaneRect => {
-  const horizontalEdge = Math.min(MAX_DOCK_EDGE_SIZE, rect.width * DOCK_EDGE_RATIO)
-  const verticalEdge = Math.min(MAX_DOCK_EDGE_SIZE, rect.height * DOCK_EDGE_RATIO)
-  if (direction === 'left') return { left: rect.left - DOCK_OUTER_SLOP, top: rect.top - DOCK_OUTER_SLOP, right: rect.left + horizontalEdge, bottom: rect.bottom + DOCK_OUTER_SLOP, width: horizontalEdge + DOCK_OUTER_SLOP, height: rect.height + DOCK_OUTER_SLOP * 2 }
-  if (direction === 'right') return { left: rect.right - horizontalEdge, top: rect.top - DOCK_OUTER_SLOP, right: rect.right + DOCK_OUTER_SLOP, bottom: rect.bottom + DOCK_OUTER_SLOP, width: horizontalEdge + DOCK_OUTER_SLOP, height: rect.height + DOCK_OUTER_SLOP * 2 }
-  if (direction === 'top') return { left: rect.left - DOCK_OUTER_SLOP, top: rect.top - DOCK_OUTER_SLOP, right: rect.right + DOCK_OUTER_SLOP, bottom: rect.top + verticalEdge, width: rect.width + DOCK_OUTER_SLOP * 2, height: verticalEdge + DOCK_OUTER_SLOP }
-  return { left: rect.left - DOCK_OUTER_SLOP, top: rect.bottom - verticalEdge, right: rect.right + DOCK_OUTER_SLOP, bottom: rect.bottom + DOCK_OUTER_SLOP, width: rect.width + DOCK_OUTER_SLOP * 2, height: verticalEdge + DOCK_OUTER_SLOP }
-}
-
-const pointInsideRect = (point: DocumentPanePointerPoint, rect: DocumentPaneRect): boolean =>
-  point.x >= rect.left && point.x <= rect.right && point.y >= rect.top && point.y <= rect.bottom
-
 export const documentPaneDockDirectionAlongPath = (rect: DocumentPaneRect, from: DocumentPanePointerPoint, to: DocumentPanePointerPoint): DocumentPaneDirection | null => {
   const endpointDirection = documentPaneDockDirection(rect, to.x, to.y)
   if (endpointDirection) return endpointDirection
-  const directions: DocumentPaneDirection[] = ['left', 'right', 'top', 'bottom']
-  return directions
-    .map((direction) => {
-      const strip = documentPaneDockingStrip(rect, direction)
-      return { direction, time: pointInsideRect(from, strip) ? null : segmentEntryTime(from, to, strip) }
-    })
-    .filter((candidate): candidate is { direction: DocumentPaneDirection; time: number } => candidate.time !== null)
-    .sort((a, b) => a.time - b.time || (a.direction === 'top' || a.direction === 'bottom' ? -1 : 1))[0]?.direction ?? null
+  const entryTime = segmentEntryTime(from, to, rect)
+  if (entryTime === null) return null
+  const sampleTime = Math.min(1, entryTime + 0.000001)
+  return documentPaneDockDirection(
+    rect,
+    from.x + (to.x - from.x) * sampleTime,
+    from.y + (to.y - from.y) * sampleTime
+  )
 }
+
+export const documentPaneDockDirectionAlongInnerPath = documentPaneDockDirectionAlongPath
 
 export const documentPaneDropRect = (rect: DocumentPaneRect, direction: DocumentPaneDirection): DocumentPaneRect => {
   if (direction === 'left') return { ...rect, right: rect.left + rect.width / 2, width: rect.width / 2 }
@@ -153,7 +136,7 @@ export const insertDocumentPane = (node: DocumentPaneNode, targetPaneId: string,
       kind: 'split',
       id: `split:${node.id}:${documentId}:${direction}`,
       orientation: horizontal ? 'horizontal' : 'vertical',
-      ratio: 0.5,
+      ratio: newFirst ? DOCKED_PANE_SHARE : 1 - DOCKED_PANE_SHARE,
       first: newFirst ? newPane : node,
       second: newFirst ? node : newPane
     }
@@ -184,6 +167,46 @@ export const removeDocumentPane = (node: DocumentPaneNode, documentId: string): 
   return { ...node, first, second }
 }
 
+export const detachDocumentPaneWorkspace = (
+  layout: DocumentPaneNode | null,
+  documentId: string,
+  workspaceDocumentId: string | null,
+  paneOnlyDocumentIds: readonly string[],
+  availableDocumentIds: readonly string[]
+): DetachedDocumentPaneWorkspace => {
+  const available = new Set(availableDocumentIds)
+  const wasInLayout = Boolean(layout && documentPaneContains(layout, documentId))
+  const remaining = wasInLayout && layout ? removeDocumentPane(layout, documentId) : layout
+  const nextLayout = remaining?.kind === 'split' ? remaining : null
+  let nextPaneOnlyDocumentIds = paneOnlyDocumentIds.filter((id) => id !== documentId && available.has(id))
+
+  if (wasInLayout && remaining?.kind === 'leaf') {
+    nextPaneOnlyDocumentIds = nextPaneOnlyDocumentIds.filter((id) => id !== remaining.documentId)
+  }
+
+  let nextWorkspaceDocumentId = workspaceDocumentId && available.has(workspaceDocumentId)
+    ? workspaceDocumentId
+    : null
+  if (!nextWorkspaceDocumentId && wasInLayout && remaining) {
+    const promotedId = remaining.kind === 'leaf'
+      ? remaining.documentId
+      : documentPaneLeafIds(remaining).find((id) => available.has(id)) ?? null
+    if (promotedId) {
+      nextWorkspaceDocumentId = promotedId
+      nextPaneOnlyDocumentIds = nextPaneOnlyDocumentIds.filter((id) => id !== promotedId)
+    }
+  }
+  if (!nextWorkspaceDocumentId) {
+    nextWorkspaceDocumentId = availableDocumentIds.find((id) => !nextPaneOnlyDocumentIds.includes(id)) ?? null
+  }
+
+  return {
+    layout: nextLayout,
+    paneOnlyDocumentIds: nextPaneOnlyDocumentIds,
+    workspaceDocumentId: nextWorkspaceDocumentId
+  }
+}
+
 export const moveDocumentPane = (node: DocumentPaneNode, documentId: string, targetPaneId: string, direction: DocumentPaneDirection): DocumentPaneNode => {
   if (documentId === targetPaneId || !documentPaneContains(node, documentId) || !documentPaneContains(node, targetPaneId)) return node
   const remaining = removeDocumentPane(node, documentId)
@@ -191,11 +214,30 @@ export const moveDocumentPane = (node: DocumentPaneNode, documentId: string, tar
   return insertDocumentPane(remaining, targetPaneId, documentId, direction)
 }
 
+const replaceDocumentPane = (node: DocumentPaneNode, paneId: string, documentId: string): DocumentPaneNode => {
+  if (node.kind === 'leaf') return node.id === paneId ? createDocumentPaneLayout(documentId) : node
+  const first = replaceDocumentPane(node.first, paneId, documentId)
+  const second = replaceDocumentPane(node.second, paneId, documentId)
+  if (first === node.first && second === node.second) return node
+  return { ...node, first, second }
+}
+
+export const splitDocumentPaneFromTab = (node: DocumentPaneNode | null, activeDocumentId: string, placement: DocumentPanePlacement): DocumentPaneNode => {
+  const committed = node?.kind === 'split' && documentPaneContains(node, activeDocumentId) ? node : null
+  const base = committed ?? createDocumentPaneLayout(activeDocumentId)
+  if (!documentPaneContains(base, placement.documentId)) {
+    return insertDocumentPane(base, placement.targetPaneId, placement.documentId, placement.direction)
+  }
+  if (documentPaneContains(base, placement.targetPaneId)) {
+    return moveDocumentPane(base, placement.documentId, placement.targetPaneId, placement.direction)
+  }
+  if (!placement.previewPaneId || !documentPaneContains(base, placement.previewPaneId)) return base
+  const replacement = replaceDocumentPane(base, placement.previewPaneId, placement.targetPaneId)
+  return insertDocumentPane(replacement, placement.targetPaneId, placement.documentId, placement.direction)
+}
+
 export const resolveDocumentPanePreviewLayout = (node: DocumentPaneNode | null, activeDocumentId: string, placement: DocumentPanePlacement | null): DocumentPaneNode | null => {
   const committed = node?.kind === 'split' && documentPaneContains(node, activeDocumentId) ? node : null
   if (!placement) return committed
-  const base = node?.kind === 'split' && documentPaneContains(node, placement.targetPaneId)
-    ? node
-    : createDocumentPaneLayout(placement.targetPaneId)
-  return insertDocumentPane(base, placement.targetPaneId, placement.documentId, placement.direction)
+  return splitDocumentPaneFromTab(node, activeDocumentId, placement)
 }

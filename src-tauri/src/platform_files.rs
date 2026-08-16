@@ -1,7 +1,17 @@
 use crate::platform_storage::{atomic_write, atomic_write_with};
 use serde::{Deserialize, Serialize};
-use std::{collections::HashSet, fs, hash::{Hash, Hasher}, io::{Cursor, Read, Seek, Write}, path::{Path, PathBuf}, time::UNIX_EPOCH};
-use tauri::{ipc::{Channel, InvokeBody, Request, Response}, AppHandle, Manager};
+use std::{
+    collections::HashSet,
+    fs,
+    hash::{Hash, Hasher},
+    io::{Cursor, Read, Seek, Write},
+    path::{Path, PathBuf},
+    time::UNIX_EPOCH,
+};
+use tauri::{
+    ipc::{Channel, InvokeBody, Request, Response},
+    AppHandle, Manager,
+};
 
 const FILE_PATH_HEADER: &str = "x-moonsprite-file-path";
 const SOURCE_PATH_HEADER: &str = "x-moonsprite-source-path";
@@ -63,13 +73,22 @@ fn raw_request_data<'a>(request: &'a Request<'_>) -> Result<&'a [u8], String> {
     }
 }
 
-fn merge_project_archive<R: Read + Seek, W: Write + Seek>(source: R, patch: &[u8], output: W) -> Result<(), String> {
+fn merge_project_archive<R: Read + Seek, W: Write + Seek>(
+    source: R,
+    patch: &[u8],
+    output: W,
+) -> Result<(), String> {
     let mut source_archive = zip::ZipArchive::new(source).map_err(|error| error.to_string())?;
-    let mut patch_archive = zip::ZipArchive::new(Cursor::new(patch)).map_err(|error| error.to_string())?;
+    let mut patch_archive =
+        zip::ZipArchive::new(Cursor::new(patch)).map_err(|error| error.to_string())?;
     let plan = {
-        let mut entry = patch_archive.by_name(SAVE_PLAN_ENTRY).map_err(|error| error.to_string())?;
+        let mut entry = patch_archive
+            .by_name(SAVE_PLAN_ENTRY)
+            .map_err(|error| error.to_string())?;
         let mut bytes = Vec::with_capacity(entry.size().min(1024 * 1024) as usize);
-        entry.read_to_end(&mut bytes).map_err(|error| error.to_string())?;
+        entry
+            .read_to_end(&mut bytes)
+            .map_err(|error| error.to_string())?;
         serde_json::from_slice::<ProjectSavePlan>(&bytes).map_err(|error| error.to_string())?
     };
     if plan.version != 1 || plan.entries.is_empty() {
@@ -77,29 +96,43 @@ fn merge_project_archive<R: Read + Seek, W: Write + Seek>(source: R, patch: &[u8
     }
     let mut names = HashSet::new();
     for entry in &plan.entries {
-        if entry.path.is_empty() || entry.path == SAVE_PLAN_ENTRY || !names.insert(entry.path.clone()) {
+        if entry.path.is_empty()
+            || entry.path == SAVE_PLAN_ENTRY
+            || !names.insert(entry.path.clone())
+        {
             return Err("Invalid incremental save entry.".to_string());
         }
     }
     let mut writer = zip::ZipWriter::new(output);
     for index in 0..patch_archive.len() {
-        let entry = patch_archive.by_index(index).map_err(|error| error.to_string())?;
+        let entry = patch_archive
+            .by_index(index)
+            .map_err(|error| error.to_string())?;
         if entry.name() == SAVE_PLAN_ENTRY {
             continue;
         }
         if names.contains(entry.name()) {
             return Err("Incremental save entry conflicts with patch data.".to_string());
         }
-        writer.raw_copy_file(entry).map_err(|error| error.to_string())?;
+        writer
+            .raw_copy_file(entry)
+            .map_err(|error| error.to_string())?;
     }
     for reuse in plan.entries {
-        let entry = source_archive.by_name(&reuse.path).map_err(|error| error.to_string())?;
+        let entry = source_archive
+            .by_name(&reuse.path)
+            .map_err(|error| error.to_string())?;
         if entry.crc32() != reuse.crc32 {
             return Err("Incremental save source changed.".to_string());
         }
-        writer.raw_copy_file(entry).map_err(|error| error.to_string())?;
+        writer
+            .raw_copy_file(entry)
+            .map_err(|error| error.to_string())?;
     }
-    writer.finish().map(|_| ()).map_err(|error| error.to_string())
+    writer
+        .finish()
+        .map(|_| ())
+        .map_err(|error| error.to_string())
 }
 
 #[derive(Debug, Serialize)]
@@ -128,29 +161,72 @@ struct ProjectPreviewCacheMetadata {
     color_mode: String,
 }
 
-fn project_preview_cache_paths(app: &AppHandle, file_path: &str) -> Result<(PathBuf, PathBuf), String> {
+fn project_preview_cache_paths(
+    app: &AppHandle,
+    file_path: &str,
+) -> Result<(PathBuf, PathBuf), String> {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     file_path.to_lowercase().hash(&mut hasher);
-    let directory = app.path().app_cache_dir().map_err(|error| error.to_string())?.join("project-previews");
+    let directory = app
+        .path()
+        .app_cache_dir()
+        .map_err(|error| error.to_string())?
+        .join("project-previews");
     fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
     let key = format!("{:016x}", hasher.finish());
-    Ok((directory.join(format!("{key}.json")), directory.join(format!("{key}.png"))))
+    Ok((
+        directory.join(format!("{key}.json")),
+        directory.join(format!("{key}.png")),
+    ))
 }
 
 fn source_fingerprint(path: &Path) -> Result<(u64, u64), String> {
     let metadata = fs::metadata(path).map_err(|error| error.to_string())?;
-    let modified_at = metadata.modified().ok().and_then(|value| value.duration_since(UNIX_EPOCH).ok()).map(|value| value.as_millis().min(u64::MAX as u128) as u64).unwrap_or_default();
+    let modified_at = metadata
+        .modified()
+        .ok()
+        .and_then(|value| value.duration_since(UNIX_EPOCH).ok())
+        .map(|value| value.as_millis().min(u64::MAX as u128) as u64)
+        .unwrap_or_default();
     Ok((metadata.len(), modified_at))
 }
 
-fn write_project_preview_cache(app: &AppHandle, file_path: &str, preview: &[u8], width: u32, height: u32, color_mode: &str) -> Result<(), String> {
-    if preview.is_empty() || width == 0 || height == 0 || !matches!(color_mode, "rgba" | "indexed") {
+fn supports_preview_cache(path: &Path) -> bool {
+    path.extension()
+        .and_then(|value| value.to_str())
+        .is_some_and(|value| {
+            matches!(
+                value.to_ascii_lowercase().as_str(),
+                "moonsprite" | "ase" | "aseprite" | "png" | "jpg" | "jpeg" | "webp" | "bmp" | "gif"
+            )
+        })
+}
+
+fn write_project_preview_cache(
+    app: &AppHandle,
+    file_path: &str,
+    preview: &[u8],
+    width: u32,
+    height: u32,
+    color_mode: &str,
+) -> Result<(), String> {
+    if preview.is_empty()
+        || width == 0
+        || height == 0
+        || !matches!(color_mode, "rgba" | "indexed" | "grayscale")
+    {
         return Err("工程缩略图数据无效。".to_string());
     }
     let path = Path::new(file_path);
     let (source_size, source_modified_at) = source_fingerprint(path)?;
     let (cache_metadata_path, cache_preview_path) = project_preview_cache_paths(app, file_path)?;
-    let cache = ProjectPreviewCacheMetadata { source_size, source_modified_at, width, height, color_mode: color_mode.to_string() };
+    let cache = ProjectPreviewCacheMetadata {
+        source_size,
+        source_modified_at,
+        width,
+        height,
+        color_mode: color_mode.to_string(),
+    };
     let metadata = serde_json::to_vec(&cache).map_err(|error| error.to_string())?;
     atomic_write(&cache_preview_path, preview)?;
     atomic_write(&cache_metadata_path, &metadata)
@@ -162,14 +238,20 @@ pub fn file_exists(file_path: String) -> bool {
 }
 
 #[tauri::command]
-pub fn read_binary(file_path: String, on_progress: Channel<BinaryReadProgress>) -> Result<Response, String> {
+pub fn read_binary(
+    file_path: String,
+    on_progress: Channel<BinaryReadProgress>,
+) -> Result<Response, String> {
     let mut file = fs::File::open(&file_path).map_err(|error| error.to_string())?;
     let total_bytes = file.metadata().map_err(|error| error.to_string())?.len();
     let capacity = usize::try_from(total_bytes).unwrap_or(0);
     let mut output = Vec::with_capacity(capacity);
     let mut chunk = vec![0_u8; 256 * 1024];
     let mut bytes_read = 0_u64;
-    let _ = on_progress.send(BinaryReadProgress { bytes_read, total_bytes });
+    let _ = on_progress.send(BinaryReadProgress {
+        bytes_read,
+        total_bytes,
+    });
     loop {
         let count = file.read(&mut chunk).map_err(|error| error.to_string())?;
         if count == 0 {
@@ -177,7 +259,10 @@ pub fn read_binary(file_path: String, on_progress: Channel<BinaryReadProgress>) 
         }
         output.extend_from_slice(&chunk[..count]);
         bytes_read = bytes_read.saturating_add(count as u64);
-        let _ = on_progress.send(BinaryReadProgress { bytes_read, total_bytes });
+        let _ = on_progress.send(BinaryReadProgress {
+            bytes_read,
+            total_bytes,
+        });
     }
     Ok(Response::new(output))
 }
@@ -185,25 +270,35 @@ pub fn read_binary(file_path: String, on_progress: Channel<BinaryReadProgress>) 
 #[tauri::command]
 pub fn read_project_preview(app: AppHandle, file_path: String) -> Result<ProjectPreview, String> {
     let path = Path::new(&file_path);
+    if !supports_preview_cache(path) {
+        return Err("该文件类型不支持首页缩略图缓存。".to_string());
+    }
+    let (source_size, source_modified_at) = source_fingerprint(path)?;
+    let (cache_metadata_path, cache_preview_path) = project_preview_cache_paths(&app, &file_path)?;
+    if let Ok(cache_metadata_bytes) = fs::read(&cache_metadata_path) {
+        if let Ok(cache) =
+            serde_json::from_slice::<ProjectPreviewCacheMetadata>(&cache_metadata_bytes)
+        {
+            if cache.source_size == source_size && cache.source_modified_at == source_modified_at {
+                if let Ok(preview) = fs::read(&cache_preview_path) {
+                    if !preview.is_empty() {
+                        return Ok(ProjectPreview {
+                            preview,
+                            width: cache.width,
+                            height: cache.height,
+                            color_mode: cache.color_mode,
+                        });
+                    }
+                }
+            }
+        }
+    }
     if !path
         .extension()
         .and_then(|value| value.to_str())
         .is_some_and(|value| value.eq_ignore_ascii_case("moonsprite"))
     {
-        return Err("仅 MoonSprite 工程包含内嵌缩略图。".to_string());
-    }
-    let (source_size, source_modified_at) = source_fingerprint(path)?;
-    let (cache_metadata_path, cache_preview_path) = project_preview_cache_paths(&app, &file_path)?;
-    if let Ok(cache_metadata_bytes) = fs::read(&cache_metadata_path) {
-        if let Ok(cache) = serde_json::from_slice::<ProjectPreviewCacheMetadata>(&cache_metadata_bytes) {
-            if cache.source_size == source_size && cache.source_modified_at == source_modified_at {
-                if let Ok(preview) = fs::read(&cache_preview_path) {
-                    if !preview.is_empty() {
-                        return Ok(ProjectPreview { preview, width: cache.width, height: cache.height, color_mode: cache.color_mode });
-                    }
-                }
-            }
-        }
+        return Err("该文件尚未生成首页缩略图。".to_string());
     }
     let file = fs::File::open(path).map_err(|error| error.to_string())?;
     let mut archive = zip::ZipArchive::new(file).map_err(|error| error.to_string())?;
@@ -212,38 +307,63 @@ pub fn read_project_preview(app: AppHandle, file_path: String) -> Result<Project
             .by_name("manifest.json")
             .map_err(|error| format!("无法读取工程清单：{error}"))?;
         let mut bytes = Vec::with_capacity(entry.size().min(256 * 1024) as usize);
-        entry.read_to_end(&mut bytes).map_err(|error| error.to_string())?;
+        entry
+            .read_to_end(&mut bytes)
+            .map_err(|error| error.to_string())?;
         serde_json::from_slice::<serde_json::Value>(&bytes).map_err(|error| error.to_string())?
     };
     let document = manifest
         .get("document")
         .ok_or_else(|| "工程清单缺少文档信息。".to_string())?;
-    let width = document.get("width").and_then(|value| value.as_u64()).and_then(|value| u32::try_from(value).ok()).ok_or_else(|| "工程宽度无效。".to_string())?;
-    let height = document.get("height").and_then(|value| value.as_u64()).and_then(|value| u32::try_from(value).ok()).ok_or_else(|| "工程高度无效。".to_string())?;
-    let color_mode = document.get("colorMode").and_then(|value| value.as_str()).filter(|value| matches!(*value, "rgba" | "indexed")).ok_or_else(|| "工程颜色模式无效。".to_string())?.to_string();
+    let width = document
+        .get("width")
+        .and_then(|value| value.as_u64())
+        .and_then(|value| u32::try_from(value).ok())
+        .ok_or_else(|| "工程宽度无效。".to_string())?;
+    let height = document
+        .get("height")
+        .and_then(|value| value.as_u64())
+        .and_then(|value| u32::try_from(value).ok())
+        .ok_or_else(|| "工程高度无效。".to_string())?;
+    let color_mode = document
+        .get("colorMode")
+        .and_then(|value| value.as_str())
+        .filter(|value| matches!(*value, "rgba" | "indexed" | "grayscale"))
+        .ok_or_else(|| "工程颜色模式无效。".to_string())?
+        .to_string();
     let preview = {
         let mut entry = archive
             .by_name("preview.png")
             .map_err(|error| format!("无法读取工程缩略图：{error}"))?;
         let mut bytes = Vec::with_capacity(entry.size().min(4 * 1024 * 1024) as usize);
-        entry.read_to_end(&mut bytes).map_err(|error| error.to_string())?;
+        entry
+            .read_to_end(&mut bytes)
+            .map_err(|error| error.to_string())?;
         bytes
     };
     if preview.is_empty() {
         return Err("工程缩略图为空。".to_string());
     }
     let _ = write_project_preview_cache(&app, &file_path, &preview, width, height, &color_mode);
-    Ok(ProjectPreview { preview, width, height, color_mode })
+    Ok(ProjectPreview {
+        preview,
+        width,
+        height,
+        color_mode,
+    })
 }
 
 #[tauri::command]
-pub fn cache_project_preview(app: AppHandle, file_path: String, preview: Vec<u8>, width: u32, height: u32, color_mode: String) -> Result<(), String> {
-    if !Path::new(&file_path)
-        .extension()
-        .and_then(|value| value.to_str())
-        .is_some_and(|value| value.eq_ignore_ascii_case("moonsprite"))
-    {
-        return Err("仅 MoonSprite 工程支持缩略图缓存。".to_string());
+pub fn cache_project_preview(
+    app: AppHandle,
+    file_path: String,
+    preview: Vec<u8>,
+    width: u32,
+    height: u32,
+    color_mode: String,
+) -> Result<(), String> {
+    if !supports_preview_cache(Path::new(&file_path)) {
+        return Err("该文件类型不支持首页缩略图缓存。".to_string());
     }
     write_project_preview_cache(&app, &file_path, &preview, width, height, &color_mode)
 }
@@ -261,19 +381,30 @@ pub fn write_project_incremental(request: Request<'_>) -> Result<(), String> {
     let source_path = request_path(&request, SOURCE_PATH_HEADER)?;
     let patch = raw_request_data(&request)?;
     let source = fs::File::open(&source_path).map_err(|error| error.to_string())?;
-    atomic_write_with(Path::new(&file_path), |output| merge_project_archive(source, patch, output))
+    atomic_write_with(Path::new(&file_path), |output| {
+        merge_project_archive(source, patch, output)
+    })
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{decode_file_path_header, merge_project_archive, SAVE_PLAN_ENTRY};
+    use super::{
+        decode_file_path_header, merge_project_archive, supports_preview_cache, SAVE_PLAN_ENTRY,
+    };
     use std::io::{Cursor, Read, Write};
+    use std::path::Path;
     use zip::{write::SimpleFileOptions, ZipArchive, ZipWriter};
 
     fn archive(entries: &[(&str, &[u8])]) -> Vec<u8> {
         let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
         for (name, data) in entries {
-            writer.start_file(*name, SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated)).unwrap();
+            writer
+                .start_file(
+                    *name,
+                    SimpleFileOptions::default()
+                        .compression_method(zip::CompressionMethod::Deflated),
+                )
+                .unwrap();
             writer.write_all(data).unwrap();
         }
         writer.finish().unwrap().into_inner()
@@ -294,19 +425,56 @@ mod tests {
     }
 
     #[test]
+    fn accepts_every_supported_home_thumbnail_format() {
+        for file_name in [
+            "project.moonsprite",
+            "sprite.ase",
+            "sprite.aseprite",
+            "sprite.png",
+            "sprite.jpg",
+            "sprite.jpeg",
+            "sprite.webp",
+            "sprite.bmp",
+            "sprite.gif",
+        ] {
+            assert!(supports_preview_cache(Path::new(file_name)), "{file_name}");
+        }
+        assert!(!supports_preview_cache(Path::new("notes.txt")));
+    }
+
+    #[test]
     fn merges_changed_entries_with_raw_reused_blocks() {
-        let source = archive(&[("layers/a.rgba", b"unchanged pixels"), ("manifest.json", b"old")]);
-        let crc32 = ZipArchive::new(Cursor::new(&source)).unwrap().by_name("layers/a.rgba").unwrap().crc32();
-        let plan = format!(r#"{{"version":1,"entries":[{{"path":"layers/a.rgba","crc32":{crc32}}}]}}"#);
-        let patch = archive(&[("manifest.json", b"new"), (SAVE_PLAN_ENTRY, plan.as_bytes())]);
+        let source = archive(&[
+            ("layers/a.rgba", b"unchanged pixels"),
+            ("manifest.json", b"old"),
+        ]);
+        let crc32 = ZipArchive::new(Cursor::new(&source))
+            .unwrap()
+            .by_name("layers/a.rgba")
+            .unwrap()
+            .crc32();
+        let plan =
+            format!(r#"{{"version":1,"entries":[{{"path":"layers/a.rgba","crc32":{crc32}}}]}}"#);
+        let patch = archive(&[
+            ("manifest.json", b"new"),
+            (SAVE_PLAN_ENTRY, plan.as_bytes()),
+        ]);
 
         let mut merged = Cursor::new(Vec::new());
         merge_project_archive(Cursor::new(&source), &patch, &mut merged).unwrap();
         let mut output = ZipArchive::new(Cursor::new(merged.into_inner())).unwrap();
         let mut manifest = String::new();
-        output.by_name("manifest.json").unwrap().read_to_string(&mut manifest).unwrap();
+        output
+            .by_name("manifest.json")
+            .unwrap()
+            .read_to_string(&mut manifest)
+            .unwrap();
         let mut pixels = String::new();
-        output.by_name("layers/a.rgba").unwrap().read_to_string(&mut pixels).unwrap();
+        output
+            .by_name("layers/a.rgba")
+            .unwrap()
+            .read_to_string(&mut pixels)
+            .unwrap();
         assert_eq!(manifest, "new");
         assert_eq!(pixels, "unchanged pixels");
         assert!(output.by_name(SAVE_PLAN_ENTRY).is_err());
@@ -317,6 +485,8 @@ mod tests {
         let source = archive(&[("layers/a.rgba", b"changed externally")]);
         let plan = br#"{"version":1,"entries":[{"path":"layers/a.rgba","crc32":1}]}"#;
         let patch = archive(&[("manifest.json", b"new"), (SAVE_PLAN_ENTRY, plan)]);
-        assert!(merge_project_archive(Cursor::new(&source), &patch, Cursor::new(Vec::new())).is_err());
+        assert!(
+            merge_project_archive(Cursor::new(&source), &patch, Cursor::new(Vec::new())).is_err()
+        );
     }
 }

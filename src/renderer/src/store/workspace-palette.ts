@@ -1,5 +1,5 @@
 import type { PaletteSlotLayout, RgbaColor } from '@shared/types'
-import { findOrAddPaletteColor } from '@/core/document'
+import { applyIndexedPaletteRemap, findOrAddPaletteColor, remapIndexedDocumentToVisiblePalette, type IndexedPaletteRemap } from '@/core/document'
 import { colorEquals } from '@/core/raster'
 import { loadEditorPreferences } from '@/core/file-preferences'
 import { translate, type TranslationKey, type TranslationParams } from '@/core/localization'
@@ -50,10 +50,11 @@ export function selectPaletteColor(session: DocumentSession, id: number, additiv
   selectPaletteColors(session, selected, id)
 }
 
-export function addPaletteColor(session: DocumentSession, color: RgbaColor = session.primaryColor): void {
+export function addPaletteColor(session: DocumentSession, color: RgbaColor = session.primaryColor, selectAdded = true): number {
   const id = findOrAddPaletteColor(session.document, color, true)
-  session.paletteSelectionId = id
-  session.selectedPaletteIds = [id]
+  session.paletteSelectionId = selectAdded ? id : null
+  session.selectedPaletteIds = selectAdded ? [id] : []
+  return id
 }
 
 export function updatePaletteColor(session: DocumentSession, id: number, color: RgbaColor): void {
@@ -109,17 +110,19 @@ export function applyPalette(session: DocumentSession, colors: RgbaColor[], layo
     session.paletteSelectionId = primary
   }
   apply(afterOrder, afterSlots, afterColumns, afterSelected, afterPrimary)
+  const pixelRemap: IndexedPaletteRemap[] = remapIndexedDocumentToVisiblePalette(document)
+  const pixelRemapBytes = pixelRemap.reduce((total, change) => total + change.before.byteLength + change.after.byteLength, 0)
   session.history.push({
     label: tr('palette.history.changed'),
-    bytes: (beforeOrder.length + afterOrder.length + beforeSlots.length + afterSlots.length + beforeSelected.length + afterSelected.length) * 4 + 32,
-    undo: () => apply(beforeOrder, beforeSlots, beforeColumns, beforeSelected, beforePrimary),
-    redo: () => apply(afterOrder, afterSlots, afterColumns, afterSelected, afterPrimary)
+    bytes: (beforeOrder.length + afterOrder.length + beforeSlots.length + afterSlots.length + beforeSelected.length + afterSelected.length) * 4 + pixelRemapBytes + 32,
+    undo: () => { apply(beforeOrder, beforeSlots, beforeColumns, beforeSelected, beforePrimary); applyIndexedPaletteRemap(pixelRemap, 'before') },
+    redo: () => { apply(afterOrder, afterSlots, afterColumns, afterSelected, afterPrimary); applyIndexedPaletteRemap(pixelRemap, 'after') }
   })
 }
 
 export function deletePaletteColors(session: DocumentSession, ids: number[]): void {
   const document = session.document
-  const removed = new Set(ids.filter((id) => document.paletteOrder.includes(id)))
+  const removed = new Set(ids.filter((id) => document.paletteOrder.includes(id) && (document.colorMode !== 'indexed' || id !== 0)))
   if (removed.size === 0) return
   const beforeOrder = [...document.paletteOrder]
   const beforeLayout = currentPaletteLayout(session)
@@ -136,11 +139,13 @@ export function deletePaletteColors(session: DocumentSession, ids: number[]): vo
   document.paletteColumns = beforeColumns
   session.selectedPaletteIds = afterSelected
   session.paletteSelectionId = afterPrimary
+  const pixelRemap: IndexedPaletteRemap[] = remapIndexedDocumentToVisiblePalette(document)
+  const pixelRemapBytes = pixelRemap.reduce((total, change) => total + change.before.byteLength + change.after.byteLength, 0)
   session.history.push({
     label: removed.size > 1 ? tr('palette.history.deletedMany') : tr('palette.history.deleted'),
-    bytes: (beforeOrder.length + afterOrder.length + beforeSlots.length + afterSlots.length + beforeSelected.length + afterSelected.length) * 4 + 32,
-    undo: () => { document.paletteOrder = [...beforeOrder]; document.paletteSlots = [...beforeSlots]; document.paletteColumns = beforeColumns; session.selectedPaletteIds = [...beforeSelected]; session.paletteSelectionId = beforePrimary },
-    redo: () => { document.paletteOrder = [...afterOrder]; document.paletteSlots = [...afterSlots]; document.paletteColumns = beforeColumns; session.selectedPaletteIds = [...afterSelected]; session.paletteSelectionId = afterPrimary }
+    bytes: (beforeOrder.length + afterOrder.length + beforeSlots.length + afterSlots.length + beforeSelected.length + afterSelected.length) * 4 + pixelRemapBytes + 32,
+    undo: () => { document.paletteOrder = [...beforeOrder]; document.paletteSlots = [...beforeSlots]; document.paletteColumns = beforeColumns; session.selectedPaletteIds = [...beforeSelected]; session.paletteSelectionId = beforePrimary; applyIndexedPaletteRemap(pixelRemap, 'before') },
+    redo: () => { document.paletteOrder = [...afterOrder]; document.paletteSlots = [...afterSlots]; document.paletteColumns = beforeColumns; session.selectedPaletteIds = [...afterSelected]; session.paletteSelectionId = afterPrimary; applyIndexedPaletteRemap(pixelRemap, 'after') }
   })
 }
 

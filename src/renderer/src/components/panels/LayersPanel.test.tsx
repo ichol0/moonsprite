@@ -1,4 +1,4 @@
-import { act, cleanup, createEvent, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, createEvent, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createDocument, createLayer, ensureLayerCoversCanvas, getActiveLayer } from '@/core/document'
 import { animationCelAt, animationCelKey, connectAnimationCels, ensureAnimationDocument } from '@/core/animation'
@@ -7,6 +7,7 @@ import { ONION_SKIN_PREFERENCE_KEY, TIMELINE_HIDDEN_PREFERENCE_KEY } from '@/cor
 import { useWorkspace } from '@/store/workspace'
 import { finishAnimationCellOperation, revealLayerInPanel } from '@/components/layer-panel-reveal'
 import { LayersPanel } from './LayersPanel'
+import { createDefaultLayerStyles } from '@/core/layer-styles'
 
 beforeEach(() => {
   localStorage.clear()
@@ -19,6 +20,14 @@ afterEach(() => {
 })
 
 describe('LayersPanel animation', () => {
+  it('uses compact density by default', () => {
+    const document = createDocument('default compact density', 2, 2, 'rgba')
+    useWorkspace.getState().addSession(document)
+    const { container } = render(<LayersPanel session={useWorkspace.getState().sessions[0]} docked />)
+
+    expect(container.querySelector('.layers-panel')).toHaveClass('layer-density-compact')
+  })
+
   it('removes frame and layer edit buttons while docked on either side', () => {
     const document = createDocument('side dock actions', 2, 2, 'rgba')
     useWorkspace.getState().addSession(document)
@@ -223,6 +232,8 @@ describe('LayersPanel animation', () => {
 
     const panel = container.querySelector('.layers-panel') as HTMLElement
     fireEvent.wheel(panel, { ctrlKey: true, deltaY: -100 })
+    expect(panel).toHaveClass('layer-density-normal')
+    fireEvent.wheel(panel, { ctrlKey: true, deltaY: -100 })
     expect(panel).toHaveClass('layer-density-detailed')
     fireEvent.wheel(panel, { ctrlKey: true, deltaY: -100 })
     expect(panel).toHaveClass('layer-density-expanded')
@@ -252,6 +263,8 @@ describe('LayersPanel animation', () => {
 
     expect(container.querySelector('.layer-mask-thumbnail')).not.toBeInTheDocument()
     const panel = container.querySelector('.layers-panel') as HTMLElement
+    fireEvent.wheel(panel, { ctrlKey: true, deltaY: -100 })
+    expect(panel).toHaveClass('layer-density-normal')
     fireEvent.wheel(panel, { ctrlKey: true, deltaY: -100 })
 
     expect(panel).toHaveClass('layer-density-detailed')
@@ -1102,6 +1115,58 @@ describe('LayersPanel properties', () => {
     expect(layer.clippingMask).toBeUndefined()
   })
 
+  it('opens layer styles for layers and groups from their context menu or status icon', () => {
+    const document = createDocument('layer style menu', 2, 2, 'rgba')
+    const layer = getActiveLayer(document)
+    const layerStyles = createDefaultLayerStyles()
+    layerStyles.stroke.enabled = true
+    layer.layerStyles = layerStyles
+    const groupStyles = createDefaultLayerStyles()
+    groupStyles.shadow.enabled = true
+    document.groups.push({ id: 'group', name: 'Group', parentGroupId: null, visible: true, locked: false, opacity: 1, blendMode: 'normal', layerStyles: groupStyles })
+    useWorkspace.getState().addSession(document)
+    const { container } = render(<LayersPanel session={useWorkspace.getState().sessions[0]} docked />)
+
+    fireEvent.contextMenu(container.querySelector('[data-group-id="group"]')!, { clientX: 20, clientY: 20 })
+    fireEvent.click(screen.getByRole('menuitem', { name: '图层样式' }))
+    expect(screen.getByRole('dialog', { name: '图层样式' })).toHaveTextContent('Group')
+    fireEvent.click(screen.getByRole('button', { name: '关闭' }))
+
+    const layerIndicator = container.querySelector(`[data-layer-id="${layer.id}"] .layer-style-indicator`)
+    const groupIndicator = container.querySelector('[data-group-id="group"] .layer-style-indicator')
+    expect(layerIndicator).toBeInTheDocument()
+    expect(groupIndicator).toBeInTheDocument()
+    fireEvent.click(layerIndicator!)
+
+    expect(screen.getByRole('dialog', { name: '图层样式' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: `${layer.name} 图层样式` })).toBeInTheDocument()
+    expect(within(screen.getByRole('navigation', { name: '图层样式效果' })).getByRole('button', { name: '描边' })).toBeInTheDocument()
+    const dialog = screen.getByRole('dialog', { name: '图层样式' })
+    expect(dialog.querySelector('.layer-style-effect-editor > header')).not.toBeInTheDocument()
+    expect(within(dialog).getByRole('group', { name: '描边设置' })).toBeInTheDocument()
+    expect(within(dialog).getByRole('button', { name: '圆形' })).toBeInTheDocument()
+    expect(within(dialog).getByRole('button', { name: '方形' })).toBeInTheDocument()
+    expect(within(dialog).getByRole('button', { name: '水平' })).toBeInTheDocument()
+    expect(within(dialog).getByRole('button', { name: '垂直' })).toBeInTheDocument()
+    expect(within(dialog).getByLabelText('允许描边的像素方向')).toBeInTheDocument()
+    expect(within(within(dialog).getByRole('group', { name: '位置' })).getByRole('button', { name: '两侧' })).toBeInTheDocument()
+    expect(dialog.querySelector('.layer-style-effect-list')).toHaveClass('component-scrollbar')
+    expect(dialog.querySelector('.layer-style-fields')).toHaveClass('component-scrollbar')
+    expect(dialog.querySelector('.color-value-trigger')).toBeInTheDocument()
+    fireEvent.click(within(dialog).getByRole('checkbox', { name: '智能色相' }))
+    expect(dialog.querySelector('.color-value-trigger')).not.toBeInTheDocument()
+    expect(dialog.querySelector('.layer-style-smart-darkness')).toBeInTheDocument()
+    fireEvent.click(within(dialog).getByRole('button', { name: '方形' }))
+    expect(layer.layerStyles?.stroke).toMatchObject({ kernel: 'square', directions: { nw: true, n: true, ne: true, w: true, e: true, sw: true, s: true, se: true } })
+    fireEvent.click(within(screen.getByRole('navigation', { name: '图层样式效果' })).getByRole('button', { name: '阴影' }))
+    expect(dialog.querySelector('.color-value-trigger')).toBeInTheDocument()
+    fireEvent.click(within(dialog).getByRole('checkbox', { name: '智能阴影' }))
+    expect(dialog.querySelector('.color-value-trigger')).not.toBeInTheDocument()
+    expect(dialog.querySelector('.layer-style-smart-darkness')).toBeInTheDocument()
+    fireEvent.click(within(screen.getByRole('navigation', { name: '图层样式效果' })).getByRole('button', { name: '渐变叠加' }))
+    expect(within(dialog).getByRole('button', { name: '渐变抖动' })).toBeInTheDocument()
+  })
+
   it('edits a single selected group without changing its implicit descendant selection', () => {
     const document = createDocument('single group properties', 2, 2, 'rgba')
     const member = getActiveLayer(document)
@@ -1150,6 +1215,21 @@ describe('LayersPanel properties', () => {
     expect(layer.name).toBe('已确认名称')
     expect(screen.queryByDisplayValue('已确认名称')).not.toBeInTheDocument()
     expect(document.dirty).toBe(true)
+  })
+
+  it('commits a typed opacity value before Enter closes layer properties', async () => {
+    const document = createDocument('layer opacity properties', 2, 2, 'rgba')
+    const layer = getActiveLayer(document)
+    useWorkspace.getState().addSession(document)
+    render(<LayersPanel session={useWorkspace.getState().sessions[0]} docked />)
+
+    fireEvent.doubleClick(screen.getByRole('button', { name: new RegExp(layer.name) }))
+    const opacity = screen.getByRole('spinbutton', { name: '不透明度' })
+    fireEvent.change(opacity, { target: { value: '37' } })
+    fireEvent.keyDown(opacity, { key: 'Enter' })
+
+    await waitFor(() => expect(layer.opacity).toBeCloseTo(0.37))
+    expect(screen.queryByRole('heading', { name: '图层属性' })).not.toBeInTheDocument()
   })
 
   it('does not open properties when the visibility control is double-clicked', () => {

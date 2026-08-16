@@ -8,7 +8,7 @@ export const IMPORTED_PALETTE_COLOR_LIMIT = 256
 const IMPORTED_PALETTE_SAMPLE_LIMIT = 262_144
 const IMPORTED_PALETTE_EXACT_COLOR_THRESHOLD = 4096
 
-export const sortImportedPaletteColors = (colors: readonly RgbaColor[]): RgbaColor[] => sortPaletteColors(colors, 'hue')
+export const sortImportedPaletteColors = (colors: readonly RgbaColor[]): RgbaColor[] => sortPaletteColors(colors, 'luminance')
 
 const applyPaletteEntries = (document: SpriteDocument, entries: PaletteEntry[]): void => {
   document.palette = entries

@@ -1,7 +1,9 @@
 import type { RgbaColor } from '@shared/types'
 import { clampByte, hsvToRgb, rgbToHsv } from './raster'
 
-export type ColorValueMode = 'rgb' | 'hsv' | 'hsl' | 'gray' | 'lab' | 'cmyk'
+export type ColorValueMode = 'rgb' | 'hsv' | 'hsl' | 'gray' | 'lab' | 'cmyk' | 'palette'
+
+export const colorValueModeLabel = (mode: ColorValueMode): string => mode === 'palette' ? 'PLT' : mode.toUpperCase()
 
 export interface HslColor {
   h: number
@@ -18,6 +20,7 @@ export interface ColorValueField {
 }
 
 export const colorValueFields = (mode: ColorValueMode): ColorValueField[] => {
+  if (mode === 'palette') return []
   if (mode === 'rgb') return [{ key: 'r', label: 'R', min: 0, max: 255, step: 1 }, { key: 'g', label: 'G', min: 0, max: 255, step: 1 }, { key: 'b', label: 'B', min: 0, max: 255, step: 1 }, { key: 'a', label: 'A', min: 0, max: 255, step: 1 }]
   if (mode === 'hsv') return [{ key: 'h', label: 'H', min: 0, max: 360, step: 1 }, { key: 's', label: 'S', min: 0, max: 100, step: 1 }, { key: 'v', label: 'V', min: 0, max: 100, step: 1 }, { key: 'a', label: 'A', min: 0, max: 255, step: 1 }]
   if (mode === 'hsl') return [{ key: 'h', label: 'H', min: 0, max: 360, step: 1 }, { key: 's', label: 'S', min: 0, max: 100, step: 1 }, { key: 'l', label: 'L', min: 0, max: 100, step: 1 }, { key: 'a', label: 'A', min: 0, max: 255, step: 1 }]
@@ -131,6 +134,7 @@ export const hslToRgb = (hue: number, saturation: number, lightness: number, alp
 }
 
 export const colorToValues = (color: RgbaColor, mode: ColorValueMode): Record<string, number> => {
+  if (mode === 'palette') return {}
   if (mode === 'rgb') return { r: color.r, g: color.g, b: color.b, a: color.a }
   if (mode === 'gray') return { gray: Math.round(color.r * 0.2126 + color.g * 0.7152 + color.b * 0.0722), a: color.a }
   if (mode === 'hsv') {
@@ -150,6 +154,7 @@ export const colorToValues = (color: RgbaColor, mode: ColorValueMode): Record<st
 }
 
 export const colorFromValues = (mode: ColorValueMode, values: Record<string, number>, fallback: RgbaColor): RgbaColor => {
+  if (mode === 'palette') return { ...fallback }
   const alpha = clampByte(values.a ?? fallback.a)
   if (mode === 'rgb') return { r: clampByte(values.r), g: clampByte(values.g), b: clampByte(values.b), a: alpha }
   if (mode === 'gray') {
