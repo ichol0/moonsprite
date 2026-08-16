@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { canvasCursors, canvasStatusTextColor, canvasToolCursor, selectionCreationCursor, selectionCursorCornerRects, selectionPathPreviewPixelVisible, selectionPreviewPixels, selectionRotationCursorForPosition, selectionTransformDragCursor, transparencyColorAt } from './canvas-visuals'
+import { canvasCursors, canvasStatusTextColor, canvasToolCursor, selectionCornerResizeCursorForPoints, selectionCreationCursor, selectionCursorCornerRects, selectionPathPreviewPixelVisible, selectionPreviewPixels, selectionResizeCursorForDirection, selectionResizeCursorForHandle, selectionRotationCursorForPosition, selectionShearCursorForDirection, selectionTransformDragCursor, transparencyColorAt } from './canvas-visuals'
 
 describe('canvas visual rules', () => {
   it('chooses rotation cursors from the displayed corner position', () => {
@@ -12,9 +12,52 @@ describe('canvas visual rules', () => {
     expect(selectionRotationCursorForPosition({ x: 80, y: 120 }, center)).toBe('rotate-sw')
   })
 
+  it('chooses horizontal, vertical, and diagonal shear cursors from the current edge direction', () => {
+    expect(selectionShearCursorForDirection({ x: 1, y: 0 })).toBe('horizontal')
+    expect(selectionShearCursorForDirection({ x: 0, y: 1 })).toBe('vertical')
+    expect(selectionShearCursorForDirection({ x: 1, y: 1 })).toBe('nwse')
+    expect(selectionShearCursorForDirection({ x: 1, y: -1 })).toBe('nesw')
+    expect(selectionShearCursorForDirection({ x: 481, y: -210 })).toBe('nesw')
+    expect(selectionShearCursorForDirection({ x: -481, y: 210 })).toBe('nesw')
+    expect(selectionShearCursorForDirection({ x: 238, y: 359 })).toBe('nwse')
+    expect(selectionShearCursorForDirection({ x: -238, y: -359 })).toBe('nwse')
+    expect(selectionShearCursorForDirection({ x: 1, y: 10 })).toBe('vertical')
+    expect(selectionShearCursorForDirection({ x: -1, y: 10 })).toBe('vertical')
+    expect(selectionShearCursorForDirection({ x: 10, y: 1 })).toBe('horizontal')
+    expect(selectionShearCursorForDirection({ x: 10, y: -1 })).toBe('horizontal')
+  })
+
+  it('rotates selection resize cursors with the selection and displayed canvas', () => {
+    expect(selectionResizeCursorForHandle('n')).toBe('vertical')
+    expect(selectionResizeCursorForHandle('e')).toBe('horizontal')
+    expect(selectionResizeCursorForHandle('n', 0, 45)).toBe('nesw')
+    expect((['nw', 'n', 'ne', 'w', 'e', 'sw', 's', 'se'] as const).map((handle) => selectionResizeCursorForHandle(handle, 0, 90))).toEqual([
+      'nesw', 'horizontal', 'nwse', 'vertical', 'vertical', 'nwse', 'horizontal', 'nesw'
+    ])
+    expect(selectionResizeCursorForHandle('n', 45, 45)).toBe('horizontal')
+    expect(selectionResizeCursorForHandle('nw', 0, 0, true)).toBe('nesw')
+  })
+
+  it('chooses corner resize cursors from the displayed diagonal direction', () => {
+    expect(selectionResizeCursorForDirection({ x: 8, y: 8 })).toBe('nwse')
+    expect(selectionResizeCursorForDirection({ x: 8, y: -8 })).toBe('nesw')
+    expect(selectionResizeCursorForDirection({ x: 12, y: 2 })).toBe('horizontal')
+    expect(selectionResizeCursorForDirection({ x: 2, y: 12 })).toBe('vertical')
+
+    const shearedPoints = [
+      { x: 0, y: 0 }, { x: 2, y: 0 }, { x: 4, y: 0 },
+      { x: 4, y: 2 }, { x: 8, y: 2 },
+      { x: 8, y: 4 }, { x: 10, y: 4 }, { x: 12, y: 4 }
+    ]
+    expect(selectionCornerResizeCursorForPoints('nw', shearedPoints)).toBe('horizontal')
+    expect(selectionCornerResizeCursorForPoints('ne', shearedPoints)).toBe('nwse')
+    expect(selectionCornerResizeCursorForPoints('n', shearedPoints)).toBeNull()
+  })
+
   it('chooses a visible cursor from the sampled canvas color', () => {
     expect(canvasToolCursor('pencil', { r: 0, g: 0, b: 0, a: 255 })).toBe(canvasCursors.pencilWhite)
     expect(canvasToolCursor('pencil', { r: 255, g: 255, b: 255, a: 255 })).toBe(canvasCursors.pencilBlack)
+    expect(canvasToolCursor('airbrush', { r: 0, g: 0, b: 0, a: 255 })).toBe(canvasCursors.pencilWhite)
     expect(canvasToolCursor('rotate', { r: 0, g: 0, b: 0, a: 255 }, false)).toBe(canvasCursors.rotate)
   })
 

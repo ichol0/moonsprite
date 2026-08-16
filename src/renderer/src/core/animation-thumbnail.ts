@@ -1,4 +1,6 @@
 import type { AnimationCelSurface, LayerMask, PaletteEntry } from '@shared/types'
+import { rasterContentBounds } from './document'
+import { readSurfacePackedLocal } from './runtime-raster'
 
 export interface AnimationThumbnailRect { x: number; y: number; width: number; height: number }
 
@@ -52,27 +54,7 @@ export const pixelPerfectThumbnailScale = (scale: number): number => {
 export const animationCelContentBounds = (
   surface: AnimationCelSurface,
   palette: readonly PaletteEntry[] = []
-): AnimationThumbnailRect | null => {
-  const opaqueIds = surface.format === 'indexed' && palette.length > 0
-    ? new Set(palette.filter((entry) => entry.color.a > 0).map((entry) => entry.id))
-    : null
-  let minX = surface.width
-  let minY = surface.height
-  let maxX = -1
-  let maxY = -1
-  for (let y = 0; y < surface.height; y += 1) for (let x = 0; x < surface.width; x += 1) {
-    const index = y * surface.width + x
-    const visible = surface.format === 'rgba'
-      ? surface.pixels[index * 4 + 3] > 0
-      : opaqueIds ? opaqueIds.has(surface.pixels[index]) : surface.pixels[index] !== 0
-    if (!visible) continue
-    minX = Math.min(minX, x)
-    minY = Math.min(minY, y)
-    maxX = Math.max(maxX, x)
-    maxY = Math.max(maxY, y)
-  }
-  return maxX < minX || maxY < minY ? null : { x: minX, y: minY, width: maxX - minX + 1, height: maxY - minY + 1 }
-}
+): AnimationThumbnailRect | null => rasterContentBounds(surface, palette)
 
 /** Fits document-space cel geometry into a square thumbnail without cropping to painted pixels. */
 export const animationCelThumbnailLayout = (
@@ -138,7 +120,7 @@ export const renderAnimationCelThumbnailPixels = (
   const width = Math.trunc(surface.width)
   const height = Math.trunc(surface.height)
   const expectedPixels = surface.format === 'rgba' ? width * height * 4 : width * height
-  if (!Number.isSafeInteger(width) || !Number.isSafeInteger(height) || width < 1 || height < 1 || !Number.isSafeInteger(expectedPixels) || surface.pixels.length < expectedPixels) return output
+  if (!Number.isSafeInteger(width) || !Number.isSafeInteger(height) || width < 1 || height < 1 || !Number.isSafeInteger(expectedPixels)) return output
 
   const contentBounds = animationCelContentBounds(surface, palette)
   const layout = animationCelThumbnailLayout(documentWidth, documentHeight, size, surface, contentBounds)
@@ -163,14 +145,14 @@ export const renderAnimationCelThumbnailPixels = (
     let g = 0
     let b = 0
     let alpha = 0
+    const packed = readSurfacePackedLocal(surface, sourceX, sourceY)
     if (surface.format === 'rgba') {
-      const sourceIndex = (sourceY * width + sourceX) * 4
-      r = surface.pixels[sourceIndex]
-      g = surface.pixels[sourceIndex + 1]
-      b = surface.pixels[sourceIndex + 2]
-      alpha = surface.pixels[sourceIndex + 3] / 255
+      r = packed & 0xff
+      g = (packed >>> 8) & 0xff
+      b = (packed >>> 16) & 0xff
+      alpha = (packed >>> 24) / 255
     } else {
-      const color = paletteById.get(surface.pixels[sourceY * width + sourceX])
+      const color = paletteById.get(packed)
       if (color) {
         r = color.r
         g = color.g

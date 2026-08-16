@@ -7,7 +7,8 @@ import { EditorToolOptions } from './EditorToolOptions'
 import { EditorToolRail } from './EditorToolRail'
 import { useI18n } from '@/components/I18nProvider'
 import { useAnimationPlaybackClock } from '@/components/useAnimationPlaybackClock'
-import type { DocumentPaneDirection, DocumentPaneNode, DocumentPanePlacement } from '@/core/document-pane-layout'
+import type { DocumentPaneDirection, DocumentPaneNode } from '@/core/document-pane-layout'
+import type { QuickCommandSettingsTarget } from './quick-command-registry'
 
 interface EditorWorkspaceShellProps {
   editorOnly: boolean
@@ -27,21 +28,29 @@ interface EditorWorkspaceShellProps {
   setBottomDockHost: (host: HTMLElement | null) => void
   onBottomDockResize: (event: ReactPointerEvent<HTMLDivElement>) => void
   documentPaneLayout: DocumentPaneNode | null
-  documentPanePreview: DocumentPanePlacement | null
+  workspaceDocumentId: string | null
+  paneOnlyDocumentIds: readonly string[]
   onDocumentPaneLayoutChange: (layout: DocumentPaneNode | null) => void
   onDocumentPaneMove: (documentId: string, targetPaneId: string, direction: DocumentPaneDirection) => void
   onDocumentPaneReturnToTabs: (documentId: string, visibleIndex: number) => void
+  onDocumentPaneFloat: (documentId: string, anchor: { x: number; y: number }) => void
   hasRightDock: boolean
   onInspectorResize: (event: ReactPointerEvent<HTMLDivElement>) => void
   session: DocumentSession
   workspaceLayoutRevision: number
   panelVisibility: Record<WorkspacePanelId, boolean>
+  popupPanelId: WorkspacePanelId | null
+  onPopupPanelClose: () => void
   onClosePreview: () => void
   panelDocks: Record<WorkspacePanelId, PanelDock>
   onPanelDockChange: (id: WorkspacePanelId, dock: PanelDock) => void
   onPanelVisibilityChange: (id: WorkspacePanelId, visible: boolean) => void
   relativeLuminanceInPreview: boolean
   onOpenColorReplacement: () => void
+  onOpenPreferences: () => void
+  onOpenCommandSettings?: (target: QuickCommandSettingsTarget) => void
+  shortcutFor: (id: string) => string
+  onToggleMirror: (axis: 'horizontal' | 'vertical') => void
 }
 
 export const EditorWorkspaceShell = memo(function EditorWorkspaceShell({
@@ -62,21 +71,29 @@ export const EditorWorkspaceShell = memo(function EditorWorkspaceShell({
   setBottomDockHost,
   onBottomDockResize,
   documentPaneLayout,
-  documentPanePreview,
+  workspaceDocumentId,
+  paneOnlyDocumentIds,
   onDocumentPaneLayoutChange,
   onDocumentPaneMove,
   onDocumentPaneReturnToTabs,
+  onDocumentPaneFloat,
   hasRightDock,
   onInspectorResize,
   session,
   workspaceLayoutRevision,
   panelVisibility,
+  popupPanelId,
+  onPopupPanelClose,
   onClosePreview,
   panelDocks,
   onPanelDockChange,
   onPanelVisibilityChange,
   relativeLuminanceInPreview,
-  onOpenColorReplacement
+  onOpenColorReplacement,
+  onOpenPreferences,
+  onOpenCommandSettings,
+  shortcutFor,
+  onToggleMirror
 }: EditorWorkspaceShellProps) {
   const { t } = useI18n()
   useAnimationPlaybackClock(session.document.id)
@@ -86,13 +103,13 @@ export const EditorWorkspaceShell = memo(function EditorWorkspaceShell({
     {hasLeftDock && <div className="left-dock-resizer" role="separator" aria-orientation="vertical" aria-label={t('workspaceDock.resizeLeft')} onPointerDown={onLeftDockResize}><span aria-hidden="true" /></div>}
     <section ref={workAreaRef} className={`work-area ${hasBottomDock ? 'has-bottom-layers' : ''}`} style={{ '--bottom-layers-height': `${bottomDockHeight}px` } as CSSProperties}>
       <EditorToolOptions onOpenColorReplacement={onOpenColorReplacement} />
-      <EditorCanvasHost documentPaneLayout={documentPaneLayout} documentPanePreview={documentPanePreview} onDocumentPaneLayoutChange={onDocumentPaneLayoutChange} onDocumentPaneMove={onDocumentPaneMove} onDocumentPaneReturnToTabs={onDocumentPaneReturnToTabs} />
+      <EditorCanvasHost documentPaneLayout={documentPaneLayout} workspaceDocumentId={workspaceDocumentId} paneOnlyDocumentIds={paneOnlyDocumentIds} onDocumentPaneLayoutChange={onDocumentPaneLayoutChange} onDocumentPaneMove={onDocumentPaneMove} onDocumentPaneReturnToTabs={onDocumentPaneReturnToTabs} onDocumentPaneFloat={onDocumentPaneFloat} shortcutFor={shortcutFor} onToggleMirror={onToggleMirror} onOpenPreferences={onOpenPreferences} onOpenCommandSettings={onOpenCommandSettings} />
       {hasBottomDock && <div className="bottom-layers-resizer" role="separator" aria-orientation="horizontal" aria-label={t('workspaceDock.resizeBottom')} onPointerDown={onBottomDockResize}><span /></div>}
       {hasBottomDock && <div ref={setBottomDockHost} className="bottom-layers-dock" data-panel-dock-zone="bottom" />}
     </section>
     {hasRightDock && <div className="inspector-resizer" role="separator" aria-orientation="vertical" aria-label={t('workspaceDock.resizeRight')} onPointerDown={onInspectorResize}><span aria-hidden="true" /></div>}
     <aside className={`inspector ${hasRightDock ? '' : 'inspector-empty'}`} {...(hasRightDock ? { 'data-panel-dock-zone': 'right' } : {})}>
-      <InspectorPanels key={workspaceLayoutRevision} session={session} panelVisibility={panelVisibility} onClosePreview={onClosePreview} panelDocks={panelDocks} leftDockHost={leftDockHost} bottomDockHost={bottomDockHost} onPanelDockChange={onPanelDockChange} onPanelVisibilityChange={onPanelVisibilityChange} relativeLuminanceInPreview={relativeLuminanceInPreview} />
+      <InspectorPanels key={workspaceLayoutRevision} session={session} panelVisibility={panelVisibility} onClosePreview={onClosePreview} panelDocks={panelDocks} leftDockHost={leftDockHost} bottomDockHost={bottomDockHost} onPanelDockChange={onPanelDockChange} onPanelVisibilityChange={onPanelVisibilityChange} relativeLuminanceInPreview={relativeLuminanceInPreview} popupPanelId={popupPanelId} onPopupPanelClose={onPopupPanelClose} />
     </aside>
     {toolRailDockPreview && <div className={`tool-rail-dock-preview ${toolRailDockPreview}`} aria-hidden="true" />}
   </section></PerformanceProfiler>

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { DEFAULT_SHORTCUTS, GRID_SHORTCUT_MIGRATION_KEY, POLYGON_LASSO_SHORTCUT_MIGRATION_KEY, SHORTCUTS_KEY, SHORTCUT_GROUPS, SHORTCUT_LABELS, deriveShortcutConflicts, loadShortcuts, normalizeShortcut, parseShortcutJson, saveShortcuts, shortcutText } from './shortcuts'
+import { ANIMATION_PLAYBACK_SHORTCUT_MIGRATION_KEY, DEFAULT_SHORTCUTS, GRID_SHORTCUT_MIGRATION_KEY, POLYGON_LASSO_SHORTCUT_MIGRATION_KEY, POPUP_PANEL_SHORTCUT_MIGRATION_KEY, REPLACE_COLOR_SHORTCUT_MIGRATION_KEY, SHORTCUTS_KEY, SHORTCUT_GROUPS, SHORTCUT_LABELS, deriveShortcutConflicts, loadShortcuts, normalizeShortcut, parseShortcutJson, saveShortcuts, shortcutHeldByKeyParts, shortcutKeyPart, shortcutMatchesEvent, shortcutReleasedByEvent, shortcutText } from './shortcuts'
 
 describe('shortcut persistence boundary', () => {
   it('only accepts known shortcut ids and string values', () => {
@@ -46,6 +46,60 @@ describe('shortcut persistence boundary', () => {
     expect(loadShortcuts(storage)).toMatchObject({ toggleGrid: '', toggleCustomGrid: '' })
   })
 
+  it('migrates the old replace-color shortcut without overriding custom shortcuts', () => {
+    const values = new Map<string, string>()
+    const storage = {
+      getItem: (key: string) => values.get(key) ?? null,
+      setItem: (key: string, value: string) => { values.set(key, value) },
+      removeItem: (key: string) => { values.delete(key) },
+      clear: () => values.clear(),
+      key: (index: number) => [...values.keys()][index] ?? null,
+      get length() { return values.size }
+    } as Storage
+    values.set(SHORTCUTS_KEY, JSON.stringify({ replaceColor: 'Ctrl+Alt+R' }))
+
+    expect(loadShortcuts(storage).replaceColor).toBe('Ctrl+Shift+K')
+    expect(values.get(REPLACE_COLOR_SHORTCUT_MIGRATION_KEY)).toBe('done')
+    saveShortcuts({ ...DEFAULT_SHORTCUTS, replaceColor: 'Alt+K' }, storage)
+    expect(loadShortcuts(storage).replaceColor).toBe('Alt+K')
+  })
+
+  it('migrates empty popup panel shortcuts to the default number keys once', () => {
+    const values = new Map<string, string>()
+    const storage = {
+      getItem: (key: string) => values.get(key) ?? null,
+      setItem: (key: string, value: string) => { values.set(key, value) },
+      removeItem: (key: string) => { values.delete(key) },
+      clear: () => values.clear(),
+      key: (index: number) => [...values.keys()][index] ?? null,
+      get length() { return values.size }
+    } as Storage
+    values.set(SHORTCUTS_KEY, JSON.stringify({ popupColorPanel: '', popupPalettePanel: '', popupLayersPanel: '', popupPreviewPanel: 'Alt+4' }))
+
+    expect(loadShortcuts(storage)).toMatchObject({ popupColorPanel: '1', popupPalettePanel: '2', popupLayersPanel: '3', popupPreviewPanel: 'Alt+4' })
+    expect(values.get(POPUP_PANEL_SHORTCUT_MIGRATION_KEY)).toBe('done')
+    saveShortcuts({ ...DEFAULT_SHORTCUTS, popupColorPanel: '' }, storage)
+    expect(loadShortcuts(storage).popupColorPanel).toBe('')
+  })
+
+  it('migrates the old empty animation playback shortcut to Enter once', () => {
+    const values = new Map<string, string>()
+    const storage = {
+      getItem: (key: string) => values.get(key) ?? null,
+      setItem: (key: string, value: string) => { values.set(key, value) },
+      removeItem: (key: string) => { values.delete(key) },
+      clear: () => values.clear(),
+      key: (index: number) => [...values.keys()][index] ?? null,
+      get length() { return values.size }
+    } as Storage
+    values.set(SHORTCUTS_KEY, JSON.stringify({ toggleAnimationPlayback: '' }))
+
+    expect(loadShortcuts(storage).toggleAnimationPlayback).toBe('Enter')
+    expect(values.get(ANIMATION_PLAYBACK_SHORTCUT_MIGRATION_KEY)).toBe('done')
+    saveShortcuts({ ...DEFAULT_SHORTCUTS, toggleAnimationPlayback: '' }, storage)
+    expect(loadShortcuts(storage).toggleAnimationPlayback).toBe('')
+  })
+
   it('registers every configurable command in one labeled group', () => {
     const grouped = new Set(Object.values(SHORTCUT_GROUPS).flat())
     expect(grouped).toEqual(new Set(Object.keys(DEFAULT_SHORTCUTS)))
@@ -53,6 +107,8 @@ describe('shortcut persistence boundary', () => {
     expect(DEFAULT_SHORTCUTS.mirrorView).toBe('Ctrl+Shift+M')
     expect(DEFAULT_SHORTCUTS.mirrorViewVertical).toBe('Ctrl+Shift+Alt+M')
     expect(DEFAULT_SHORTCUTS.lineConnectionMode).toBe('Shift')
+    expect(DEFAULT_SHORTCUTS.temporaryMove).toBe('Ctrl')
+    expect(SHORTCUT_GROUPS.modifiers).toContain('temporaryMove')
     expect(DEFAULT_SHORTCUTS.adjustmentCurves).toBe('Ctrl+M')
     expect(DEFAULT_SHORTCUTS.adjustmentHueSaturation).toBe('Ctrl+U')
     expect(DEFAULT_SHORTCUTS.adjustmentColorBalance).toBe('')
@@ -64,9 +120,24 @@ describe('shortcut persistence boundary', () => {
     expect(DEFAULT_SHORTCUTS.toggleGrid).toBe("Ctrl+Shift+'")
     expect(DEFAULT_SHORTCUTS.toolRailLeft).toBe('')
     expect(DEFAULT_SHORTCUTS.swapForegroundBackground).toBe('X')
-    expect(DEFAULT_SHORTCUTS.replaceColor).toBe('Ctrl+Alt+R')
-    expect(SHORTCUT_GROUPS.colors).toContain('replaceColor')
+    expect(DEFAULT_SHORTCUTS.addForegroundToPalette).toBe('Alt+S')
+    expect(SHORTCUT_GROUPS.color).toContain('addForegroundToPalette')
+    expect(DEFAULT_SHORTCUTS.replaceColor).toBe('Ctrl+Shift+K')
+    expect(SHORTCUT_GROUPS.color).toContain('replaceColor')
     expect(SHORTCUT_GROUPS.selection).toContain('toggleSelectionOutline')
+    expect(SHORTCUT_GROUPS.file).toContain('exportSpriteSheet')
+    expect(SHORTCUT_GROUPS.animation).toContain('toggleAnimationPlayback')
+    expect(DEFAULT_SHORTCUTS.toggleAnimationPlayback).toBe('Enter')
+    expect(SHORTCUT_GROUPS.interface).toContain('toggleColorPanel')
+    expect(SHORTCUT_GROUPS.interface).toEqual(expect.arrayContaining(['popupColorPanel', 'popupPalettePanel', 'popupLayersPanel', 'popupPreviewPanel']))
+    expect(SHORTCUT_GROUPS.interface.slice(0, 4)).toEqual(['popupColorPanel', 'popupPalettePanel', 'popupLayersPanel', 'popupPreviewPanel'])
+    expect(DEFAULT_SHORTCUTS.popupColorPanel).toBe('1')
+    expect(DEFAULT_SHORTCUTS.popupPalettePanel).toBe('2')
+    expect(DEFAULT_SHORTCUTS.popupLayersPanel).toBe('3')
+    expect(DEFAULT_SHORTCUTS.popupPreviewPanel).toBe('4')
+    expect(SHORTCUT_GROUPS.interface).toContain('toggleTimeline')
+    expect(SHORTCUT_GROUPS.tools).toContain('tool.shape.rectangle')
+    expect(DEFAULT_SHORTCUTS.toggleTimeline).toBe('')
     expect(DEFAULT_SHORTCUTS.rotateViewClockwise90).toBe('')
     expect(DEFAULT_SHORTCUTS.rotateViewCounterClockwise90).toBe('')
     expect(SHORTCUT_LABELS.openPreferences).toBe('首选项')
@@ -79,6 +150,26 @@ describe('shortcut persistence boundary', () => {
     expect(shortcutText({ key: 'Shift', code: 'ShiftLeft', ctrlKey: false, metaKey: false, altKey: false, shiftKey: true } as KeyboardEvent)).toBe('Shift')
     expect(shortcutText({ key: 'Shift', code: 'ShiftLeft', ctrlKey: true, metaKey: false, altKey: false, shiftKey: true } as KeyboardEvent)).toBe('Ctrl+Shift')
     expect(shortcutText({ key: 'm', code: 'KeyM', ctrlKey: true, metaKey: false, altKey: true, shiftKey: true } as KeyboardEvent)).toBe('Ctrl+Alt+Shift+M')
+  })
+
+  it('tracks press and release for a held command shortcut', () => {
+    const pressed = { key: 's', code: 'KeyS', ctrlKey: false, metaKey: false, altKey: true, shiftKey: false } as KeyboardEvent
+    const releasedKey = { key: 's', code: 'KeyS', ctrlKey: false, metaKey: false, altKey: true, shiftKey: false } as KeyboardEvent
+    const releasedModifier = { key: 'Alt', code: 'AltLeft', ctrlKey: false, metaKey: false, altKey: false, shiftKey: false } as KeyboardEvent
+
+    expect(shortcutMatchesEvent(pressed, 'Alt+S')).toBe(true)
+    expect(shortcutReleasedByEvent(releasedKey, 'Alt+S')).toBe(true)
+    expect(shortcutReleasedByEvent(releasedModifier, 'Alt+S')).toBe(true)
+  })
+
+  it('keeps a command active while all of its physical keys remain held', () => {
+    const held = new Set<string>()
+    held.add(shortcutKeyPart({ key: 'Alt', code: 'AltLeft' } as KeyboardEvent))
+    held.add(shortcutKeyPart({ key: 's', code: 'KeyS' } as KeyboardEvent))
+
+    expect(shortcutHeldByKeyParts(held, 'Alt+S')).toBe(true)
+    held.delete('S')
+    expect(shortcutHeldByKeyParts(held, 'Alt+S')).toBe(false)
   })
 
   it('normalizes the quote key independently of the active Shift character', () => {

@@ -1,11 +1,12 @@
 import { describe, expect, it, vi } from 'vitest'
-import { beginAdjustmentPreviewEdit, endAdjustmentPreviewEdit, prepareAdjustmentPreviewEdit, registerAdjustmentPreviewController, renderAdjustmentPreviewEdit } from './adjustment-preview-lifecycle'
+import { beginAdjustmentPreviewEdit, endAdjustmentPreviewEdit, hasAdjustmentPreviewController, prepareAdjustmentPreviewEdit, registerAdjustmentPreviewController, renderAdjustmentPreviewEdit } from './adjustment-preview-lifecycle'
 
 describe('adjustment preview lifecycle', () => {
   it('suspends and resumes once around nested document edits', () => {
     const suspend = vi.fn()
     const resume = vi.fn()
     const unregister = registerAdjustmentPreviewController('nested-adjustment', { suspend, resume })
+    expect(hasAdjustmentPreviewController('nested-adjustment')).toBe(true)
 
     beginAdjustmentPreviewEdit('nested-adjustment')
     beginAdjustmentPreviewEdit('nested-adjustment')
@@ -17,6 +18,7 @@ describe('adjustment preview lifecycle', () => {
     expect(resume).toHaveBeenCalledOnce()
 
     unregister()
+    expect(hasAdjustmentPreviewController('nested-adjustment')).toBe(false)
   })
 
   it('prepares an unadjusted transient frame and renders the adjusted result while editing', () => {

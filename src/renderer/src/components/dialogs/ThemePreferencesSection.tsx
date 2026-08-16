@@ -1,5 +1,6 @@
 import type { CSSProperties } from 'react'
 import { useI18n } from '@/components/I18nProvider'
+import { SettingsSectionHeader } from '@/components/SettingsSectionHeader'
 import type { EditorPreferences } from '@/core/file-preferences'
 import { BUILT_IN_THEMES, resolveTheme, themeById, type ThemePreferences } from '@/core/theme'
 
@@ -16,7 +17,7 @@ export function ThemePreferencesSection({ preferences, onChange }: ThemePreferen
   const setTheme = (activeThemeId: string): void => onChange(applyThemePreferences(preferences, { activeThemeId, customThemes: [] }))
   return <div className="theme-preferences theme-preferences-expanded">
     <section className="theme-picker-section">
-      <header><strong>{t('preferences.theme.current')}</strong><span>{current.name}</span></header>
+      <SettingsSectionHeader title={t('preferences.theme.current')} actions={<span className="theme-current-name">{current.name}</span>} />
       <div className="theme-picker-grid" role="listbox" aria-label={t('preferences.theme.available')}>
         {BUILT_IN_THEMES.map((theme) => {
           const resolved = resolveTheme({ activeThemeId: theme.id, customThemes: [] })

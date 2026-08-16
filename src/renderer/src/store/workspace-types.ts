@@ -1,5 +1,6 @@
 import type {
   AnimationCel,
+  AnimationCelSurface,
   AnimationGroupMask,
   BrushPaintMode,
   BrushShape,
@@ -10,6 +11,8 @@ import type {
   ImageBrush,
   LayerMask,
   ImageBrushSettings,
+  LineKind,
+  MoveKind,
   OutlineDirections,
   OutlineKernel,
   OutlinePosition,
@@ -25,6 +28,7 @@ import type {
   ShapeRatio,
   SpriteDocument,
   ToolId,
+  TextCelData,
   ViewState
 } from '@shared/types'
 import type { ContentInvalidationHint, HistoryStack, PixelEdit } from '@/core/history'
@@ -77,9 +81,15 @@ export interface AnimationMaskClipboardItem {
   mask: LayerMask
 }
 
+export interface SelectionPivot {
+  x: number
+  y: number
+}
+
 export interface FloatingPaste {
   layerId: string
   beforeSelection: SelectionMask | null
+  beforeSelectionPivot?: SelectionPivot | null
   source: SelectionTransformSource
   target: SelectionMask
   transformTarget?: SelectionRect
@@ -87,8 +97,17 @@ export interface FloatingPaste {
   transformShear?: SelectionShearTransform
   previewEdit: PixelEdit | null
   translationPreview: SelectionTranslationPreview | null
+  previewDeferred?: boolean
   copy: boolean
   label: string
+}
+
+export interface TextBoxTransformState {
+  layerId: string
+  frameId: string
+  bounds: SelectionRect
+  originalText: TextCelData
+  originalSurface: AnimationCelSurface
 }
 
 export interface BrushProfile {
@@ -117,6 +136,9 @@ export interface DocumentSession {
   document: SpriteDocument
   history: HistoryStack
   tool: ToolId
+  moveKind: MoveKind
+  selectedSliceId: string | null
+  selectedSliceIds: string[]
   primaryColor: RgbaColor
   secondaryColor: RgbaColor
   brushSize: number
@@ -135,6 +157,8 @@ export interface DocumentSession {
   brushDynamics: BrushDynamicsSettings
   brushPressure: BrushPressureSettings
   shapeKind: ShapeKind
+  lineKind: LineKind
+  curveAnchorCount: number
   shapeRatio: ShapeRatio | null
   fillMode: FillMode
   fillKind: FillKind
@@ -144,6 +168,8 @@ export interface DocumentSession {
   gradientDither: GradientDither
   moveAutoSelect: boolean
   selection: SelectionMask | null
+  /** View-only custom transform pivot. Null uses the current transformed selection center. */
+  selectionPivot?: SelectionPivot | null
   selectionKind: SelectionKind
   selectionMode: SelectionMode
   wandTolerance: number
@@ -151,11 +177,17 @@ export interface DocumentSession {
   perfectPixels: boolean
   symmetryAxes: SymmetryAxes
   symmetryCenter: SymmetryCenter
+  airbrushParticleRadius: number
+  airbrushParticleShape: BrushShape
+  airbrushScatterRadius: number
+  airbrushDensity: number
+  airbrushIntervalMs: number
   lastPencilPoint: { x: number; y: number } | null
   lastEraserPoint: { x: number; y: number } | null
   canvasResizePreview: CanvasResizePreview | null
   outlinePreview: OutlinePreview | null
   pendingPaste: FloatingPaste | null
+  textBoxTransform: TextBoxTransformState | null
   view: ViewState
   viewportSize: { width: number; height: number }
   paletteSelectionId: number | null

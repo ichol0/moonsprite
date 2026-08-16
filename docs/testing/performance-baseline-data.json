@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
-  "acceptedAt": "2026-08-11T19:53:35.985Z",
-  "releaseLabel": "DEV.4",
-  "auditId": "2026-08-11_19-24-14-791",
+  "acceptedAt": "2026-08-16T14:08:26.361Z",
+  "releaseLabel": "DEV.5",
+  "auditId": "2026-08-16_13-51-24-452",
   "environment": {
     "platform": "win32 10.0.26200",
     "arch": "x64",
@@ -12,12 +12,12 @@
     "gpu": "AMD Radeon(TM) Graphics|30.0.13002.19003; NVIDIA GeForce RTX 3060 Laptop GPU|32.0.16.1047; OrayIddDriver Device|17.1.58.818; Todesk Virtual Display Adapter|16.44.2.509",
     "powerPlan": "6fecc5ae-f350-48a5-b669-b472cb895ccf",
     "node": "v22.14.0",
-    "browser": "C:/Program Files/Google/Chrome/Application/chrome.exe 151.0.7922.76"
+    "browser": "C:/Program Files/Google/Chrome/Application/chrome.exe 151.0.7922.138"
   },
   "sourceFingerprint": {
     "algorithm": "sha256",
-    "value": "8d0d5c0deee94dfa6cbf74606e5b458b0c311a14dbb0106e1fb198f5fd1fa6ee",
-    "files": 358
+    "value": "5de60d5f2fa1d03a0e7018d1bdb71b71f8ffc3e28187a0aec644a2731b16c034",
+    "files": 439
   },
   "metrics": [
     {
@@ -59,7 +59,7 @@
       "suiteId": "canvas-standard",
       "kind": "canvas",
       "label": "128x128 pan 主绘制 p95",
-      "value": 0.4000000059604645,
+      "value": 0.6000000014901161,
       "samples": 3,
       "noisePercent": 0,
       "budget": 4,
@@ -127,9 +127,9 @@
       "suiteId": "canvas-standard",
       "kind": "canvas",
       "label": "128x128 zoom 主绘制 p95",
-      "value": 0.7999999970197678,
+      "value": 1,
       "samples": 3,
-      "noisePercent": 0.000001862645156169851,
+      "noisePercent": 0,
       "budget": 4,
       "target": {
         "kind": "canvas",
@@ -146,7 +146,7 @@
       "label": "128x128 zoom 指针处理 p95",
       "value": 1.0999999940395355,
       "samples": 3,
-      "noisePercent": 0.0000013546510249628318,
+      "noisePercent": 0,
       "budget": 4,
       "target": {
         "kind": "canvas",
@@ -195,9 +195,9 @@
       "suiteId": "canvas-standard",
       "kind": "canvas",
       "label": "128x128 rotated-zoom 主绘制 p95",
-      "value": 0.7000000029802322,
+      "value": 1,
       "samples": 3,
-      "noisePercent": 14.285713373398298,
+      "noisePercent": 0,
       "budget": 4,
       "target": {
         "kind": "canvas",
@@ -212,9 +212,9 @@
       "suiteId": "canvas-standard",
       "kind": "canvas",
       "label": "128x128 rotated-zoom 指针处理 p95",
-      "value": 1.0999999940395355,
+      "value": 1.1000000014901161,
       "samples": 3,
-      "noisePercent": 9.090908598308719,
+      "noisePercent": 9.090909214059183,
       "budget": 4,
       "target": {
         "kind": "canvas",
@@ -263,7 +263,7 @@
       "suiteId": "canvas-standard",
       "kind": "canvas",
       "label": "128x128 draw 主绘制 p95",
-      "value": 0.4000000059604645,
+      "value": 0.6000000014901161,
       "samples": 3,
       "noisePercent": 0,
       "budget": 4,
@@ -280,9 +280,9 @@
       "suiteId": "canvas-standard",
       "kind": "canvas",
       "label": "128x128 draw 指针处理 p95",
-      "value": 0.5,
+      "value": 1.0999999940395355,
       "samples": 3,
-      "noisePercent": 19.999998807907104,
+      "noisePercent": 18.181817873942947,
       "budget": 4,
       "target": {
         "kind": "canvas",
@@ -331,9 +331,9 @@
       "suiteId": "canvas-standard",
       "kind": "canvas",
       "label": "128x128 shape 主绘制 p95",
-      "value": 0.5999999940395355,
+      "value": 0.7999999970197678,
       "samples": 3,
-      "noisePercent": 0.000002483526890312899,
+      "noisePercent": 0,
       "budget": 4,
       "target": {
         "kind": "canvas",
@@ -365,7 +365,7 @@
       "suiteId": "canvas-standard",
       "kind": "canvas",
       "label": "128x128 marquee 帧 p95",
-      "value": 3.7000000000000455,
+      "value": 3.700000000000273,
       "samples": 3,
       "noisePercent": 0,
       "budget": 16.7,
@@ -399,9 +399,9 @@
       "suiteId": "canvas-standard",
       "kind": "canvas",
       "label": "128x128 marquee 主绘制 p95",
-      "value": 0.5999999940395355,
+      "value": 0.6000000014901161,
       "samples": 3,
-      "noisePercent": 16.666665838824372,
+      "noisePercent": 0,
       "budget": 4,
       "target": {
         "kind": "canvas",
@@ -416,9 +416,9 @@
       "suiteId": "canvas-standard",
       "kind": "canvas",
       "label": "128x128 marquee 指针处理 p95",
-      "value": 0.699999988079071,
+      "value": 0.8999999985098839,
       "samples": 3,
-      "noisePercent": 0.000002128737349658989,
+      "noisePercent": 11.111111295076064,
       "budget": 4,
       "target": {
         "kind": "canvas",
@@ -450,7 +450,7 @@
       "suiteId": "canvas-standard",
       "kind": "canvas",
       "label": "128x128 bucket-fill >25 ms 比例",
-      "value": 1.25,
+      "value": 1.1627906976744187,
       "samples": 3,
       "noisePercent": 0,
       "budget": 1,
@@ -467,9 +467,9 @@
       "suiteId": "canvas-standard",
       "kind": "canvas",
       "label": "128x128 bucket-fill 主绘制 p95",
-      "value": 0.5999999940395355,
+      "value": 0.8000000044703484,
       "samples": 3,
-      "noisePercent": 33.33333416117563,
+      "noisePercent": 25.00000116415321,
       "budget": 4,
       "target": {
         "kind": "canvas",
@@ -484,9 +484,9 @@
       "suiteId": "canvas-standard",
       "kind": "canvas",
       "label": "128x128 bucket-fill 指针处理 p95",
-      "value": 1,
+      "value": 1.8999999985098839,
       "samples": 3,
-      "noisePercent": 0,
+      "noisePercent": 15.789473931875255,
       "budget": 4,
       "target": {
         "kind": "canvas",
@@ -501,7 +501,7 @@
       "suiteId": "canvas-standard",
       "kind": "canvas",
       "label": "128x128 gradient 帧 p95",
-      "value": 3.7000000000000455,
+      "value": 3.700000000000273,
       "samples": 3,
       "noisePercent": 0,
       "budget": 16.7,
@@ -518,9 +518,9 @@
       "suiteId": "canvas-standard",
       "kind": "canvas",
       "label": "128x128 gradient >25 ms 比例",
-      "value": 0,
+      "value": 0.19880715705765406,
       "samples": 3,
-      "noisePercent": 0,
+      "noisePercent": 0.39920159680638123,
       "budget": 1,
       "target": {
         "kind": "canvas",
@@ -535,9 +535,9 @@
       "suiteId": "canvas-standard",
       "kind": "canvas",
       "label": "128x128 gradient 主绘制 p95",
-      "value": 3.7999999970197678,
+      "value": 3.899999998509884,
       "samples": 3,
-      "noisePercent": 10.526315954583504,
+      "noisePercent": 2.5641024122498366,
       "budget": 4,
       "target": {
         "kind": "canvas",
@@ -552,9 +552,9 @@
       "suiteId": "canvas-standard",
       "kind": "canvas",
       "label": "128x128 gradient 指针处理 p95",
-      "value": 0.3999999910593033,
+      "value": 0.7000000029802322,
       "samples": 3,
-      "noisePercent": 0,
+      "noisePercent": 42.8571422489322,
       "budget": 4,
       "target": {
         "kind": "canvas",
@@ -603,9 +603,9 @@
       "suiteId": "canvas-standard",
       "kind": "canvas",
       "label": "512x512 pan 主绘制 p95",
-      "value": 0.4000000059604645,
+      "value": 0.6000000014901161,
       "samples": 3,
-      "noisePercent": 0,
+      "noisePercent": 0.0000012417634297366852,
       "budget": 4,
       "target": {
         "kind": "canvas",
@@ -671,7 +671,7 @@
       "suiteId": "canvas-standard",
       "kind": "canvas",
       "label": "512x512 zoom 主绘制 p95",
-      "value": 0.7000000029802322,
+      "value": 1,
       "samples": 3,
       "noisePercent": 0,
       "budget": 4,
@@ -688,9 +688,9 @@
       "suiteId": "canvas-standard",
       "kind": "canvas",
       "label": "512x512 zoom 指针处理 p95",
-      "value": 0.9000000059604645,
+      "value": 1,
       "samples": 3,
-      "noisePercent": 11.11111203093587,
+      "noisePercent": 10.000000149011612,
       "budget": 4,
       "target": {
         "kind": "canvas",
@@ -705,7 +705,7 @@
       "suiteId": "canvas-standard",
       "kind": "canvas",
       "label": "512x512 rotated-zoom 帧 p95",
-      "value": 3.7000000000000455,
+      "value": 3.700000000000273,
       "samples": 3,
       "noisePercent": 0,
       "budget": 16.7,
@@ -739,9 +739,9 @@
       "suiteId": "canvas-standard",
       "kind": "canvas",
       "label": "512x512 rotated-zoom 主绘制 p95",
-      "value": 0.7000000029802322,
+      "value": 1,
       "samples": 3,
-      "noisePercent": 0,
+      "noisePercent": 10.000000149011612,
       "budget": 4,
       "target": {
         "kind": "canvas",
@@ -756,9 +756,9 @@
       "suiteId": "canvas-standard",
       "kind": "canvas",
       "label": "512x512 rotated-zoom 指针处理 p95",
-      "value": 0.9000000059604645,
+      "value": 1.1000000014901161,
       "samples": 3,
-      "noisePercent": 0,
+      "noisePercent": 9.090909214059183,
       "budget": 4,
       "target": {
         "kind": "canvas",
@@ -807,7 +807,7 @@
       "suiteId": "canvas-standard",
       "kind": "canvas",
       "label": "512x512 draw 主绘制 p95",
-      "value": 0.5,
+      "value": 0.6000000014901161,
       "samples": 3,
       "noisePercent": 0,
       "budget": 4,
@@ -824,9 +824,9 @@
       "suiteId": "canvas-standard",
       "kind": "canvas",
       "label": "512x512 draw 指针处理 p95",
-      "value": 0.5999999940395355,
+      "value": 1.3999999985098839,
       "samples": 3,
-      "noisePercent": 0,
+      "noisePercent": 7.142857256896643,
       "budget": 4,
       "target": {
         "kind": "canvas",
@@ -841,7 +841,7 @@
       "suiteId": "canvas-standard",
       "kind": "canvas",
       "label": "512x512 shape 帧 p95",
-      "value": 3.7000000000000455,
+      "value": 3.700000000000273,
       "samples": 3,
       "noisePercent": 0,
       "budget": 16.7,
@@ -875,9 +875,9 @@
       "suiteId": "canvas-standard",
       "kind": "canvas",
       "label": "512x512 shape 主绘制 p95",
-      "value": 0.7000000029802322,
+      "value": 0.7999999970197678,
       "samples": 3,
-      "noisePercent": 0,
+      "noisePercent": 12.500000232830644,
       "budget": 4,
       "target": {
         "kind": "canvas",
@@ -892,9 +892,9 @@
       "suiteId": "canvas-standard",
       "kind": "canvas",
       "label": "512x512 shape 指针处理 p95",
-      "value": 0.5,
+      "value": 0.6000000014901161,
       "samples": 3,
-      "noisePercent": 19.999998807907104,
+      "noisePercent": 0,
       "budget": 4,
       "target": {
         "kind": "canvas",
@@ -909,7 +909,7 @@
       "suiteId": "canvas-standard",
       "kind": "canvas",
       "label": "512x512 marquee 帧 p95",
-      "value": 3.7000000000000455,
+      "value": 3.700000000000273,
       "samples": 3,
       "noisePercent": 0,
       "budget": 16.7,
@@ -943,7 +943,7 @@
       "suiteId": "canvas-standard",
       "kind": "canvas",
       "label": "512x512 marquee 主绘制 p95",
-      "value": 0.5,
+      "value": 0.6000000014901161,
       "samples": 3,
       "noisePercent": 0,
       "budget": 4,
@@ -962,7 +962,7 @@
       "label": "512x512 marquee 指针处理 p95",
       "value": 0.7000000029802322,
       "samples": 3,
-      "noisePercent": 14.285713373398298,
+      "noisePercent": 0.0000010643686521718815,
       "budget": 4,
       "target": {
         "kind": "canvas",
@@ -994,9 +994,9 @@
       "suiteId": "canvas-standard",
       "kind": "canvas",
       "label": "512x512 bucket-fill >25 ms 比例",
-      "value": 1.2658227848101267,
+      "value": 1.1904761904761905,
       "samples": 3,
-      "noisePercent": 0,
+      "noisePercent": 2.3255813953488307,
       "budget": 1,
       "target": {
         "kind": "canvas",
@@ -1011,9 +1011,9 @@
       "suiteId": "canvas-standard",
       "kind": "canvas",
       "label": "512x512 bucket-fill 主绘制 p95",
-      "value": 0.699999988079071,
+      "value": 1,
       "samples": 3,
-      "noisePercent": 14.285715806240965,
+      "noisePercent": 20.000000298023224,
       "budget": 4,
       "target": {
         "kind": "canvas",
@@ -1028,9 +1028,9 @@
       "suiteId": "canvas-standard",
       "kind": "canvas",
       "label": "512x512 bucket-fill 指针处理 p95",
-      "value": 1.2999999970197678,
+      "value": 4.800000004470348,
       "samples": 3,
-      "noisePercent": 7.692308397688105,
+      "noisePercent": 8.333333294528227,
       "budget": 4,
       "target": {
         "kind": "canvas",
@@ -1062,9 +1062,9 @@
       "suiteId": "canvas-standard",
       "kind": "canvas",
       "label": "512x512 gradient >25 ms 比例",
-      "value": 0.26595744680851063,
+      "value": 0.3875968992248062,
       "samples": 3,
-      "noisePercent": 0.26525198938992967,
+      "noisePercent": 1.7751479289940812,
       "budget": 1,
       "target": {
         "kind": "canvas",
@@ -1079,9 +1079,9 @@
       "suiteId": "canvas-standard",
       "kind": "canvas",
       "label": "512x512 gradient 主绘制 p95",
-      "value": 3.5999999940395355,
+      "value": 3.7000000029802322,
       "samples": 3,
-      "noisePercent": 5.555555233616887,
+      "noisePercent": 0,
       "budget": 4,
       "target": {
         "kind": "canvas",
@@ -1096,9 +1096,9 @@
       "suiteId": "canvas-standard",
       "kind": "canvas",
       "label": "512x512 gradient 指针处理 p95",
-      "value": 0.5,
+      "value": 0.8000000044703484,
       "samples": 3,
-      "noisePercent": 0,
+      "noisePercent": 12.49999918509275,
       "budget": 4,
       "target": {
         "kind": "canvas",
@@ -1147,7 +1147,7 @@
       "suiteId": "canvas-standard",
       "kind": "canvas",
       "label": "1024x1024 pan 主绘制 p95",
-      "value": 0.4000000059604645,
+      "value": 0.5,
       "samples": 3,
       "noisePercent": 0,
       "budget": 4,
@@ -1215,9 +1215,9 @@
       "suiteId": "canvas-standard",
       "kind": "canvas",
       "label": "1024x1024 zoom 主绘制 p95",
-      "value": 0.7999999970197678,
+      "value": 1.1999999955296516,
       "samples": 3,
-      "noisePercent": 12.499999301508065,
+      "noisePercent": 6.208817187232836e-7,
       "budget": 4,
       "target": {
         "kind": "canvas",
@@ -1232,9 +1232,9 @@
       "suiteId": "canvas-standard",
       "kind": "canvas",
       "label": "1024x1024 zoom 指针处理 p95",
-      "value": 1,
+      "value": 1.4000000059604645,
       "samples": 3,
-      "noisePercent": 19.999998807907104,
+      "noisePercent": 14.285713905582625,
       "budget": 4,
       "target": {
         "kind": "canvas",
@@ -1283,9 +1283,9 @@
       "suiteId": "canvas-standard",
       "kind": "canvas",
       "label": "1024x1024 rotated-zoom 主绘制 p95",
-      "value": 0.7000000029802322,
+      "value": 1.1999999955296516,
       "samples": 3,
-      "noisePercent": 0,
+      "noisePercent": 8.333333488553762,
       "budget": 4,
       "target": {
         "kind": "canvas",
@@ -1300,9 +1300,9 @@
       "suiteId": "canvas-standard",
       "kind": "canvas",
       "label": "1024x1024 rotated-zoom 指针处理 p95",
-      "value": 0.9000000059604645,
+      "value": 1.3999999985098839,
       "samples": 3,
-      "noisePercent": 11.111110375251304,
+      "noisePercent": 5.321843289181423e-7,
       "budget": 4,
       "target": {
         "kind": "canvas",
@@ -1317,7 +1317,7 @@
       "suiteId": "canvas-standard",
       "kind": "canvas",
       "label": "1024x1024 draw 帧 p95",
-      "value": 3.7000000000000455,
+      "value": 3.700000000000273,
       "samples": 3,
       "noisePercent": 0,
       "budget": 16.7,
@@ -1351,9 +1351,9 @@
       "suiteId": "canvas-standard",
       "kind": "canvas",
       "label": "1024x1024 draw 主绘制 p95",
-      "value": 0.5,
+      "value": 0.6000000014901161,
       "samples": 3,
-      "noisePercent": 0,
+      "noisePercent": 16.66666687362724,
       "budget": 4,
       "target": {
         "kind": "canvas",
@@ -1368,9 +1368,9 @@
       "suiteId": "canvas-standard",
       "kind": "canvas",
       "label": "1024x1024 draw 指针处理 p95",
-      "value": 0.5,
+      "value": 3.600000001490116,
       "samples": 3,
-      "noisePercent": 0,
+      "noisePercent": 13.888888883139986,
       "budget": 4,
       "target": {
         "kind": "canvas",
@@ -1385,7 +1385,7 @@
       "suiteId": "canvas-standard",
       "kind": "canvas",
       "label": "1024x1024 shape 帧 p95",
-      "value": 3.7000000000000455,
+      "value": 3.700000000000273,
       "samples": 3,
       "noisePercent": 0,
       "budget": 16.7,
@@ -1402,9 +1402,9 @@
       "suiteId": "canvas-standard",
       "kind": "canvas",
       "label": "1024x1024 shape >25 ms 比例",
-      "value": 0,
+      "value": 0.1953125,
       "samples": 3,
-      "noisePercent": 0,
+      "noisePercent": 1.7892644135188789,
       "budget": 1,
       "target": {
         "kind": "canvas",
@@ -1419,9 +1419,9 @@
       "suiteId": "canvas-standard",
       "kind": "canvas",
       "label": "1024x1024 shape 主绘制 p95",
-      "value": 0.5999999940395355,
+      "value": 0.7000000029802322,
       "samples": 3,
-      "noisePercent": 0,
+      "noisePercent": 0.0000010643686521718815,
       "budget": 4,
       "target": {
         "kind": "canvas",
@@ -1436,9 +1436,9 @@
       "suiteId": "canvas-standard",
       "kind": "canvas",
       "label": "1024x1024 shape 指针处理 p95",
-      "value": 0.4000000059604645,
+      "value": 0.7999999970197678,
       "samples": 3,
-      "noisePercent": 0.0000037252902429507637,
+      "noisePercent": 12.500000232830644,
       "budget": 4,
       "target": {
         "kind": "canvas",
@@ -1487,9 +1487,9 @@
       "suiteId": "canvas-standard",
       "kind": "canvas",
       "label": "1024x1024 marquee 主绘制 p95",
-      "value": 0.6000000089406967,
+      "value": 0.7000000029802322,
       "samples": 3,
-      "noisePercent": 0.0000024835268286338427,
+      "noisePercent": 0,
       "budget": 4,
       "target": {
         "kind": "canvas",
@@ -1504,9 +1504,9 @@
       "suiteId": "canvas-standard",
       "kind": "canvas",
       "label": "1024x1024 marquee 指针处理 p95",
-      "value": 0.800000011920929,
+      "value": 0.8999999985098839,
       "samples": 3,
-      "noisePercent": 0.0000018626451214753818,
+      "noisePercent": 11.111111295076064,
       "budget": 4,
       "target": {
         "kind": "canvas",
@@ -1538,9 +1538,9 @@
       "suiteId": "canvas-standard",
       "kind": "canvas",
       "label": "1024x1024 bucket-fill >25 ms 比例",
-      "value": 1.2658227848101267,
+      "value": 1.1764705882352942,
       "samples": 3,
-      "noisePercent": 0,
+      "noisePercent": 1.1627906976744162,
       "budget": 1,
       "target": {
         "kind": "canvas",
@@ -1555,9 +1555,9 @@
       "suiteId": "canvas-standard",
       "kind": "canvas",
       "label": "1024x1024 bucket-fill 主绘制 p95",
-      "value": 0.800000011920929,
+      "value": 0.8999999985098839,
       "samples": 3,
-      "noisePercent": 12.49999906867744,
+      "noisePercent": 11.111111295076064,
       "budget": 4,
       "target": {
         "kind": "canvas",
@@ -1572,9 +1572,9 @@
       "suiteId": "canvas-standard",
       "kind": "canvas",
       "label": "1024x1024 bucket-fill 指针处理 p95",
-      "value": 1,
+      "value": 11.299999997019768,
       "samples": 3,
-      "noisePercent": 0,
+      "noisePercent": 10.61946905572316,
       "budget": 4,
       "target": {
         "kind": "canvas",
@@ -1589,7 +1589,7 @@
       "suiteId": "canvas-standard",
       "kind": "canvas",
       "label": "1024x1024 gradient 帧 p95",
-      "value": 3.7000000000000455,
+      "value": 3.700000000000273,
       "samples": 3,
       "noisePercent": 0,
       "budget": 16.7,
@@ -1606,9 +1606,9 @@
       "suiteId": "canvas-standard",
       "kind": "canvas",
       "label": "1024x1024 gradient >25 ms 比例",
-      "value": 0.53475935828877,
+      "value": 0.39920159680638717,
       "samples": 3,
-      "noisePercent": 0.8086253369272526,
+      "noisePercent": 1.571709233791741,
       "budget": 1,
       "target": {
         "kind": "canvas",
@@ -1623,9 +1623,9 @@
       "suiteId": "canvas-standard",
       "kind": "canvas",
       "label": "1024x1024 gradient 主绘制 p95",
-      "value": 3.9000000059604645,
+      "value": 3.899999998509884,
       "samples": 3,
-      "noisePercent": 5.128204814702723,
+      "noisePercent": 7.692307809871095,
       "budget": 4,
       "target": {
         "kind": "canvas",
@@ -1640,9 +1640,9 @@
       "suiteId": "canvas-standard",
       "kind": "canvas",
       "label": "1024x1024 gradient 指针处理 p95",
-      "value": 0.4000000059604645,
+      "value": 0.5,
       "samples": 3,
-      "noisePercent": 0,
+      "noisePercent": 19.999998807907104,
       "budget": 4,
       "target": {
         "kind": "canvas",
@@ -1657,9 +1657,9 @@
       "suiteId": "canvas-profile",
       "kind": "react-root",
       "label": "512x512 pan React 提交 p95",
-      "value": 1,
+      "value": 1.6000000014901161,
       "samples": 3,
-      "noisePercent": 9.999999403953552,
+      "noisePercent": 18.750000261934474,
       "budget": 16.7,
       "target": {
         "kind": "canvas",
@@ -1674,9 +1674,9 @@
       "suiteId": "canvas-profile",
       "kind": "react-region",
       "label": "512x512 pan React MoonSprite",
-      "value": 1,
+      "value": 1.6000000014901161,
       "samples": 3,
-      "noisePercent": 9.999999403953552,
+      "noisePercent": 18.750000261934474,
       "budget": 8,
       "target": {
         "kind": "canvas",
@@ -1688,13 +1688,31 @@
       }
     },
     {
+      "id": "canvas-profile:512:pan:react-region:EditorWorkspaceShell",
+      "suiteId": "canvas-profile",
+      "kind": "react-region",
+      "label": "512x512 pan React EditorWorkspaceShell",
+      "value": 1.1000000014901161,
+      "samples": 3,
+      "noisePercent": 18.18181775079286,
+      "budget": 8,
+      "target": {
+        "kind": "canvas",
+        "suiteId": "canvas-profile",
+        "canvasSize": 512,
+        "scenario": "pan",
+        "metric": "reactRegionP95",
+        "region": "EditorWorkspaceShell"
+      }
+    },
+    {
       "id": "canvas-profile:512:pan:react-region:CanvasStage",
       "suiteId": "canvas-profile",
       "kind": "react-region",
       "label": "512x512 pan React CanvasStage",
-      "value": 0,
+      "value": 0.09999999403953552,
       "samples": 3,
-      "noisePercent": 0,
+      "noisePercent": 0.000007450581041013064,
       "budget": 8,
       "target": {
         "kind": "canvas",
@@ -1710,9 +1728,9 @@
       "suiteId": "canvas-profile",
       "kind": "react-region",
       "label": "512x512 pan React EditorCanvasHost",
-      "value": 0.09999999403953552,
+      "value": 0.29999999701976776,
       "samples": 3,
-      "noisePercent": 0,
+      "noisePercent": 0.000002483526890312899,
       "budget": 8,
       "target": {
         "kind": "canvas",
@@ -1721,114 +1739,6 @@
         "scenario": "pan",
         "metric": "reactRegionP95",
         "region": "EditorCanvasHost"
-      }
-    },
-    {
-      "id": "canvas-profile:512:pan:react-region:EditorWorkspaceShell",
-      "suiteId": "canvas-profile",
-      "kind": "react-region",
-      "label": "512x512 pan React EditorWorkspaceShell",
-      "value": 0.4000000059604645,
-      "samples": 3,
-      "noisePercent": 0,
-      "budget": 8,
-      "target": {
-        "kind": "canvas",
-        "suiteId": "canvas-profile",
-        "canvasSize": 512,
-        "scenario": "pan",
-        "metric": "reactRegionP95",
-        "region": "EditorWorkspaceShell"
-      }
-    },
-    {
-      "id": "canvas-profile:512:pan:react-region:AppMenuBar",
-      "suiteId": "canvas-profile",
-      "kind": "react-region",
-      "label": "512x512 pan React AppMenuBar",
-      "value": 0,
-      "samples": 3,
-      "noisePercent": 0,
-      "budget": 8,
-      "target": {
-        "kind": "canvas",
-        "suiteId": "canvas-profile",
-        "canvasSize": 512,
-        "scenario": "pan",
-        "metric": "reactRegionP95",
-        "region": "AppMenuBar"
-      }
-    },
-    {
-      "id": "canvas-profile:512:pan:react-region:Panel:layers",
-      "suiteId": "canvas-profile",
-      "kind": "react-region",
-      "label": "512x512 pan React Panel:layers",
-      "value": 0,
-      "samples": 3,
-      "noisePercent": 0,
-      "budget": 8,
-      "target": {
-        "kind": "canvas",
-        "suiteId": "canvas-profile",
-        "canvasSize": 512,
-        "scenario": "pan",
-        "metric": "reactRegionP95",
-        "region": "Panel:layers"
-      }
-    },
-    {
-      "id": "canvas-profile:512:pan:react-region:InspectorPanels",
-      "suiteId": "canvas-profile",
-      "kind": "react-region",
-      "label": "512x512 pan React InspectorPanels",
-      "value": 0.10000000894069672,
-      "samples": 3,
-      "noisePercent": 0.000014901159861580145,
-      "budget": 8,
-      "target": {
-        "kind": "canvas",
-        "suiteId": "canvas-profile",
-        "canvasSize": 512,
-        "scenario": "pan",
-        "metric": "reactRegionP95",
-        "region": "InspectorPanels"
-      }
-    },
-    {
-      "id": "canvas-profile:512:pan:react-region:DocumentTabs",
-      "suiteId": "canvas-profile",
-      "kind": "react-region",
-      "label": "512x512 pan React DocumentTabs",
-      "value": 0,
-      "samples": 3,
-      "noisePercent": 0,
-      "budget": 8,
-      "target": {
-        "kind": "canvas",
-        "suiteId": "canvas-profile",
-        "canvasSize": 512,
-        "scenario": "pan",
-        "metric": "reactRegionP95",
-        "region": "DocumentTabs"
-      }
-    },
-    {
-      "id": "canvas-profile:512:pan:react-region:Panel:preview",
-      "suiteId": "canvas-profile",
-      "kind": "react-region",
-      "label": "512x512 pan React Panel:preview",
-      "value": 0,
-      "samples": 3,
-      "noisePercent": 0,
-      "budget": 8,
-      "target": {
-        "kind": "canvas",
-        "suiteId": "canvas-profile",
-        "canvasSize": 512,
-        "scenario": "pan",
-        "metric": "reactRegionP95",
-        "region": "Panel:preview"
       }
     },
     {
@@ -1865,6 +1775,96 @@
         "scenario": "pan",
         "metric": "reactRegionP95",
         "region": "Panel:color"
+      }
+    },
+    {
+      "id": "canvas-profile:512:pan:react-region:Panel:layers",
+      "suiteId": "canvas-profile",
+      "kind": "react-region",
+      "label": "512x512 pan React Panel:layers",
+      "value": 0,
+      "samples": 3,
+      "noisePercent": 0,
+      "budget": 8,
+      "target": {
+        "kind": "canvas",
+        "suiteId": "canvas-profile",
+        "canvasSize": 512,
+        "scenario": "pan",
+        "metric": "reactRegionP95",
+        "region": "Panel:layers"
+      }
+    },
+    {
+      "id": "canvas-profile:512:pan:react-region:Panel:preview",
+      "suiteId": "canvas-profile",
+      "kind": "react-region",
+      "label": "512x512 pan React Panel:preview",
+      "value": 0,
+      "samples": 3,
+      "noisePercent": 0,
+      "budget": 8,
+      "target": {
+        "kind": "canvas",
+        "suiteId": "canvas-profile",
+        "canvasSize": 512,
+        "scenario": "pan",
+        "metric": "reactRegionP95",
+        "region": "Panel:preview"
+      }
+    },
+    {
+      "id": "canvas-profile:512:pan:react-region:InspectorPanels",
+      "suiteId": "canvas-profile",
+      "kind": "react-region",
+      "label": "512x512 pan React InspectorPanels",
+      "value": 0.7000000029802322,
+      "samples": 3,
+      "noisePercent": 14.285713373398298,
+      "budget": 8,
+      "target": {
+        "kind": "canvas",
+        "suiteId": "canvas-profile",
+        "canvasSize": 512,
+        "scenario": "pan",
+        "metric": "reactRegionP95",
+        "region": "InspectorPanels"
+      }
+    },
+    {
+      "id": "canvas-profile:512:pan:react-region:AppMenuBar",
+      "suiteId": "canvas-profile",
+      "kind": "react-region",
+      "label": "512x512 pan React AppMenuBar",
+      "value": 0.10000000149011612,
+      "samples": 3,
+      "noisePercent": 0,
+      "budget": 8,
+      "target": {
+        "kind": "canvas",
+        "suiteId": "canvas-profile",
+        "canvasSize": 512,
+        "scenario": "pan",
+        "metric": "reactRegionP95",
+        "region": "AppMenuBar"
+      }
+    },
+    {
+      "id": "canvas-profile:512:pan:react-region:DocumentTabs",
+      "suiteId": "canvas-profile",
+      "kind": "react-region",
+      "label": "512x512 pan React DocumentTabs",
+      "value": 0,
+      "samples": 3,
+      "noisePercent": 0,
+      "budget": 8,
+      "target": {
+        "kind": "canvas",
+        "suiteId": "canvas-profile",
+        "canvasSize": 512,
+        "scenario": "pan",
+        "metric": "reactRegionP95",
+        "region": "DocumentTabs"
       }
     },
     {
@@ -1907,9 +1907,9 @@
       "suiteId": "canvas-profile",
       "kind": "react-region",
       "label": "512x512 zoom React EditorCanvasHost",
-      "value": 0.20000000298023224,
+      "value": 0.29999999701976776,
       "samples": 3,
-      "noisePercent": 0,
+      "noisePercent": 0.000002483526890312899,
       "budget": 8,
       "target": {
         "kind": "canvas",
@@ -1925,7 +1925,7 @@
       "suiteId": "canvas-profile",
       "kind": "react-region",
       "label": "512x512 zoom React EditorWorkspaceShell",
-      "value": 0.4000000059604645,
+      "value": 0.30000000447034836,
       "samples": 3,
       "noisePercent": 0,
       "budget": 8,
@@ -1979,9 +1979,9 @@
       "suiteId": "canvas-profile",
       "kind": "react-root",
       "label": "512x512 rotated-zoom React 提交 p95",
-      "value": 0.20000000298023224,
+      "value": 0.30000000447034836,
       "samples": 3,
-      "noisePercent": 0,
+      "noisePercent": 0.0000024835268286338427,
       "budget": 16.7,
       "target": {
         "kind": "canvas",
@@ -2014,9 +2014,9 @@
       "suiteId": "canvas-profile",
       "kind": "react-region",
       "label": "512x512 rotated-zoom React EditorCanvasHost",
-      "value": 0.09999999403953552,
+      "value": 0.29999999701976776,
       "samples": 3,
-      "noisePercent": 100,
+      "noisePercent": 0.000002483526890312899,
       "budget": 8,
       "target": {
         "kind": "canvas",
@@ -2032,9 +2032,9 @@
       "suiteId": "canvas-profile",
       "kind": "react-region",
       "label": "512x512 rotated-zoom React EditorWorkspaceShell",
-      "value": 0.10000000894069672,
+      "value": 0.30000000447034836,
       "samples": 3,
-      "noisePercent": 0.000014901159861580145,
+      "noisePercent": 0,
       "budget": 8,
       "target": {
         "kind": "canvas",
@@ -2068,9 +2068,9 @@
       "suiteId": "canvas-profile",
       "kind": "react-region",
       "label": "512x512 rotated-zoom React MoonSprite",
-      "value": 0.20000000298023224,
+      "value": 0.30000000447034836,
       "samples": 3,
-      "noisePercent": 0,
+      "noisePercent": 0.0000024835268286338427,
       "budget": 8,
       "target": {
         "kind": "canvas",
@@ -2086,9 +2086,9 @@
       "suiteId": "canvas-profile",
       "kind": "react-root",
       "label": "512x512 draw React 提交 p95",
-      "value": 1.3999999910593033,
+      "value": 2.0999999940395355,
       "samples": 3,
-      "noisePercent": 0,
+      "noisePercent": 3.5478955324147304e-7,
       "budget": 16.7,
       "target": {
         "kind": "canvas",
@@ -2103,9 +2103,9 @@
       "suiteId": "canvas-profile",
       "kind": "react-region",
       "label": "512x512 draw React MoonSprite",
-      "value": 1.3999999910593033,
+      "value": 2.0999999940395355,
       "samples": 3,
-      "noisePercent": 0,
+      "noisePercent": 3.5478955324147304e-7,
       "budget": 8,
       "target": {
         "kind": "canvas",
@@ -2117,65 +2117,11 @@
       }
     },
     {
-      "id": "canvas-profile:512:draw:react-region:EditorWorkspaceShell",
-      "suiteId": "canvas-profile",
-      "kind": "react-region",
-      "label": "512x512 draw React EditorWorkspaceShell",
-      "value": 0.8999999910593033,
-      "samples": 3,
-      "noisePercent": 11.111110559216247,
-      "budget": 8,
-      "target": {
-        "kind": "canvas",
-        "suiteId": "canvas-profile",
-        "canvasSize": 512,
-        "scenario": "draw",
-        "metric": "reactRegionP95",
-        "region": "EditorWorkspaceShell"
-      }
-    },
-    {
-      "id": "canvas-profile:512:draw:react-region:AppMenuBar",
-      "suiteId": "canvas-profile",
-      "kind": "react-region",
-      "label": "512x512 draw React AppMenuBar",
-      "value": 0,
-      "samples": 3,
-      "noisePercent": 0,
-      "budget": 8,
-      "target": {
-        "kind": "canvas",
-        "suiteId": "canvas-profile",
-        "canvasSize": 512,
-        "scenario": "draw",
-        "metric": "reactRegionP95",
-        "region": "AppMenuBar"
-      }
-    },
-    {
-      "id": "canvas-profile:512:draw:react-region:EditorToolOptions",
-      "suiteId": "canvas-profile",
-      "kind": "react-region",
-      "label": "512x512 draw React EditorToolOptions",
-      "value": 0.4000000059604645,
-      "samples": 3,
-      "noisePercent": 0,
-      "budget": 8,
-      "target": {
-        "kind": "canvas",
-        "suiteId": "canvas-profile",
-        "canvasSize": 512,
-        "scenario": "draw",
-        "metric": "reactRegionP95",
-        "region": "EditorToolOptions"
-      }
-    },
-    {
       "id": "canvas-profile:512:draw:react-region:CanvasStage",
       "suiteId": "canvas-profile",
       "kind": "react-region",
       "label": "512x512 draw React CanvasStage",
-      "value": 0,
+      "value": 0.10000000149011612,
       "samples": 3,
       "noisePercent": 0,
       "budget": 8,
@@ -2193,7 +2139,7 @@
       "suiteId": "canvas-profile",
       "kind": "react-region",
       "label": "512x512 draw React EditorCanvasHost",
-      "value": 0.20000000298023224,
+      "value": 0.5,
       "samples": 3,
       "noisePercent": 0,
       "budget": 8,
@@ -2204,42 +2150,6 @@
         "scenario": "draw",
         "metric": "reactRegionP95",
         "region": "EditorCanvasHost"
-      }
-    },
-    {
-      "id": "canvas-profile:512:draw:react-region:Panel:layers",
-      "suiteId": "canvas-profile",
-      "kind": "react-region",
-      "label": "512x512 draw React Panel:layers",
-      "value": 0.20000000298023224,
-      "samples": 3,
-      "noisePercent": 0,
-      "budget": 8,
-      "target": {
-        "kind": "canvas",
-        "suiteId": "canvas-profile",
-        "canvasSize": 512,
-        "scenario": "draw",
-        "metric": "reactRegionP95",
-        "region": "Panel:layers"
-      }
-    },
-    {
-      "id": "canvas-profile:512:draw:react-region:Panel:preview",
-      "suiteId": "canvas-profile",
-      "kind": "react-region",
-      "label": "512x512 draw React Panel:preview",
-      "value": 0,
-      "samples": 3,
-      "noisePercent": 0,
-      "budget": 8,
-      "target": {
-        "kind": "canvas",
-        "suiteId": "canvas-profile",
-        "canvasSize": 512,
-        "scenario": "draw",
-        "metric": "reactRegionP95",
-        "region": "Panel:preview"
       }
     },
     {
@@ -2279,13 +2189,49 @@
       }
     },
     {
+      "id": "canvas-profile:512:draw:react-region:Panel:layers",
+      "suiteId": "canvas-profile",
+      "kind": "react-region",
+      "label": "512x512 draw React Panel:layers",
+      "value": 0.09999999403953552,
+      "samples": 3,
+      "noisePercent": 0,
+      "budget": 8,
+      "target": {
+        "kind": "canvas",
+        "suiteId": "canvas-profile",
+        "canvasSize": 512,
+        "scenario": "draw",
+        "metric": "reactRegionP95",
+        "region": "Panel:layers"
+      }
+    },
+    {
+      "id": "canvas-profile:512:draw:react-region:Panel:preview",
+      "suiteId": "canvas-profile",
+      "kind": "react-region",
+      "label": "512x512 draw React Panel:preview",
+      "value": 0,
+      "samples": 3,
+      "noisePercent": 0,
+      "budget": 8,
+      "target": {
+        "kind": "canvas",
+        "suiteId": "canvas-profile",
+        "canvasSize": 512,
+        "scenario": "draw",
+        "metric": "reactRegionP95",
+        "region": "Panel:preview"
+      }
+    },
+    {
       "id": "canvas-profile:512:draw:react-region:InspectorPanels",
       "suiteId": "canvas-profile",
       "kind": "react-region",
       "label": "512x512 draw React InspectorPanels",
-      "value": 0.6000000089406967,
+      "value": 0.6999999955296516,
       "samples": 3,
-      "noisePercent": 16.66666790843008,
+      "noisePercent": 0.000001064368663500688,
       "budget": 8,
       "target": {
         "kind": "canvas",
@@ -2294,6 +2240,60 @@
         "scenario": "draw",
         "metric": "reactRegionP95",
         "region": "InspectorPanels"
+      }
+    },
+    {
+      "id": "canvas-profile:512:draw:react-region:EditorWorkspaceShell",
+      "suiteId": "canvas-profile",
+      "kind": "react-region",
+      "label": "512x512 draw React EditorWorkspaceShell",
+      "value": 1.4000000059604645,
+      "samples": 3,
+      "noisePercent": 5.321843260859408e-7,
+      "budget": 8,
+      "target": {
+        "kind": "canvas",
+        "suiteId": "canvas-profile",
+        "canvasSize": 512,
+        "scenario": "draw",
+        "metric": "reactRegionP95",
+        "region": "EditorWorkspaceShell"
+      }
+    },
+    {
+      "id": "canvas-profile:512:draw:react-region:AppMenuBar",
+      "suiteId": "canvas-profile",
+      "kind": "react-region",
+      "label": "512x512 draw React AppMenuBar",
+      "value": 0.09999999403953552,
+      "samples": 3,
+      "noisePercent": 0.000007450581041013064,
+      "budget": 8,
+      "target": {
+        "kind": "canvas",
+        "suiteId": "canvas-profile",
+        "canvasSize": 512,
+        "scenario": "draw",
+        "metric": "reactRegionP95",
+        "region": "AppMenuBar"
+      }
+    },
+    {
+      "id": "canvas-profile:512:draw:react-region:EditorToolOptions",
+      "suiteId": "canvas-profile",
+      "kind": "react-region",
+      "label": "512x512 draw React EditorToolOptions",
+      "value": 0.3999999985098839,
+      "samples": 3,
+      "noisePercent": 25.000000465661287,
+      "budget": 8,
+      "target": {
+        "kind": "canvas",
+        "suiteId": "canvas-profile",
+        "canvasSize": 512,
+        "scenario": "draw",
+        "metric": "reactRegionP95",
+        "region": "EditorToolOptions"
       }
     },
     {
@@ -2319,9 +2319,9 @@
       "suiteId": "canvas-profile",
       "kind": "react-root",
       "label": "512x512 shape React 提交 p95",
-      "value": 1,
+      "value": 1.3000000044703484,
       "samples": 3,
-      "noisePercent": 0,
+      "noisePercent": 0.000001146243164815892,
       "budget": 16.7,
       "target": {
         "kind": "canvas",
@@ -2332,49 +2332,13 @@
       }
     },
     {
-      "id": "canvas-profile:512:shape:react-region:AppMenuBar",
-      "suiteId": "canvas-profile",
-      "kind": "react-region",
-      "label": "512x512 shape React AppMenuBar",
-      "value": 0,
-      "samples": 3,
-      "noisePercent": 0,
-      "budget": 8,
-      "target": {
-        "kind": "canvas",
-        "suiteId": "canvas-profile",
-        "canvasSize": 512,
-        "scenario": "shape",
-        "metric": "reactRegionP95",
-        "region": "AppMenuBar"
-      }
-    },
-    {
-      "id": "canvas-profile:512:shape:react-region:EditorToolOptions",
-      "suiteId": "canvas-profile",
-      "kind": "react-region",
-      "label": "512x512 shape React EditorToolOptions",
-      "value": 0.20000000298023224,
-      "samples": 3,
-      "noisePercent": 0,
-      "budget": 8,
-      "target": {
-        "kind": "canvas",
-        "suiteId": "canvas-profile",
-        "canvasSize": 512,
-        "scenario": "shape",
-        "metric": "reactRegionP95",
-        "region": "EditorToolOptions"
-      }
-    },
-    {
       "id": "canvas-profile:512:shape:react-region:CanvasStage",
       "suiteId": "canvas-profile",
       "kind": "react-region",
       "label": "512x512 shape React CanvasStage",
-      "value": 0,
+      "value": 0.09999999403953552,
       "samples": 3,
-      "noisePercent": 0,
+      "noisePercent": 0.000007450581041013064,
       "budget": 8,
       "target": {
         "kind": "canvas",
@@ -2390,9 +2354,9 @@
       "suiteId": "canvas-profile",
       "kind": "react-region",
       "label": "512x512 shape React EditorCanvasHost",
-      "value": 0.10000000894069672,
+      "value": 0.3999999985098839,
       "samples": 3,
-      "noisePercent": 0.000014901159861580145,
+      "noisePercent": 0,
       "budget": 8,
       "target": {
         "kind": "canvas",
@@ -2401,42 +2365,6 @@
         "scenario": "shape",
         "metric": "reactRegionP95",
         "region": "EditorCanvasHost"
-      }
-    },
-    {
-      "id": "canvas-profile:512:shape:react-region:Panel:layers",
-      "suiteId": "canvas-profile",
-      "kind": "react-region",
-      "label": "512x512 shape React Panel:layers",
-      "value": 0.09999999403953552,
-      "samples": 3,
-      "noisePercent": 0,
-      "budget": 8,
-      "target": {
-        "kind": "canvas",
-        "suiteId": "canvas-profile",
-        "canvasSize": 512,
-        "scenario": "shape",
-        "metric": "reactRegionP95",
-        "region": "Panel:layers"
-      }
-    },
-    {
-      "id": "canvas-profile:512:shape:react-region:Panel:preview",
-      "suiteId": "canvas-profile",
-      "kind": "react-region",
-      "label": "512x512 shape React Panel:preview",
-      "value": 0,
-      "samples": 3,
-      "noisePercent": 0,
-      "budget": 8,
-      "target": {
-        "kind": "canvas",
-        "suiteId": "canvas-profile",
-        "canvasSize": 512,
-        "scenario": "shape",
-        "metric": "reactRegionP95",
-        "region": "Panel:preview"
       }
     },
     {
@@ -2476,13 +2404,49 @@
       }
     },
     {
+      "id": "canvas-profile:512:shape:react-region:Panel:layers",
+      "suiteId": "canvas-profile",
+      "kind": "react-region",
+      "label": "512x512 shape React Panel:layers",
+      "value": 0.19999999552965164,
+      "samples": 3,
+      "noisePercent": 49.99999813735481,
+      "budget": 8,
+      "target": {
+        "kind": "canvas",
+        "suiteId": "canvas-profile",
+        "canvasSize": 512,
+        "scenario": "shape",
+        "metric": "reactRegionP95",
+        "region": "Panel:layers"
+      }
+    },
+    {
+      "id": "canvas-profile:512:shape:react-region:Panel:preview",
+      "suiteId": "canvas-profile",
+      "kind": "react-region",
+      "label": "512x512 shape React Panel:preview",
+      "value": 0,
+      "samples": 3,
+      "noisePercent": 0,
+      "budget": 8,
+      "target": {
+        "kind": "canvas",
+        "suiteId": "canvas-profile",
+        "canvasSize": 512,
+        "scenario": "shape",
+        "metric": "reactRegionP95",
+        "region": "Panel:preview"
+      }
+    },
+    {
       "id": "canvas-profile:512:shape:react-region:InspectorPanels",
       "suiteId": "canvas-profile",
       "kind": "react-region",
       "label": "512x512 shape React InspectorPanels",
-      "value": 0.4999999850988388,
+      "value": 0.5,
       "samples": 3,
-      "noisePercent": 0.0000029802323275873758,
+      "noisePercent": 20.000000298023224,
       "budget": 8,
       "target": {
         "kind": "canvas",
@@ -2498,9 +2462,9 @@
       "suiteId": "canvas-profile",
       "kind": "react-region",
       "label": "512x512 shape React EditorWorkspaceShell",
-      "value": 0.6000000089406967,
+      "value": 0.9000000059604645,
       "samples": 3,
-      "noisePercent": 0,
+      "noisePercent": 11.11111203093587,
       "budget": 8,
       "target": {
         "kind": "canvas",
@@ -2516,7 +2480,25 @@
       "suiteId": "canvas-profile",
       "kind": "react-region",
       "label": "512x512 shape React MoonSprite",
-      "value": 1,
+      "value": 1.3000000044703484,
+      "samples": 3,
+      "noisePercent": 0.000001146243164815892,
+      "budget": 8,
+      "target": {
+        "kind": "canvas",
+        "suiteId": "canvas-profile",
+        "canvasSize": 512,
+        "scenario": "shape",
+        "metric": "reactRegionP95",
+        "region": "MoonSprite"
+      }
+    },
+    {
+      "id": "canvas-profile:512:shape:react-region:AppMenuBar",
+      "suiteId": "canvas-profile",
+      "kind": "react-region",
+      "label": "512x512 shape React AppMenuBar",
+      "value": 0,
       "samples": 3,
       "noisePercent": 0,
       "budget": 8,
@@ -2526,7 +2508,25 @@
         "canvasSize": 512,
         "scenario": "shape",
         "metric": "reactRegionP95",
-        "region": "MoonSprite"
+        "region": "AppMenuBar"
+      }
+    },
+    {
+      "id": "canvas-profile:512:shape:react-region:EditorToolOptions",
+      "suiteId": "canvas-profile",
+      "kind": "react-region",
+      "label": "512x512 shape React EditorToolOptions",
+      "value": 0.19999999552965164,
+      "samples": 3,
+      "noisePercent": 0,
+      "budget": 8,
+      "target": {
+        "kind": "canvas",
+        "suiteId": "canvas-profile",
+        "canvasSize": 512,
+        "scenario": "shape",
+        "metric": "reactRegionP95",
+        "region": "EditorToolOptions"
       }
     },
     {
@@ -2552,9 +2552,9 @@
       "suiteId": "canvas-profile",
       "kind": "react-root",
       "label": "512x512 marquee React 提交 p95",
-      "value": 0.8999999910593033,
+      "value": 1.6000000014901161,
       "samples": 3,
-      "noisePercent": 11.111108903531653,
+      "noisePercent": 6.249999621650205,
       "budget": 16.7,
       "target": {
         "kind": "canvas",
@@ -2562,42 +2562,6 @@
         "canvasSize": 512,
         "scenario": "marquee",
         "metric": "reactCommitP95"
-      }
-    },
-    {
-      "id": "canvas-profile:512:marquee:react-region:AppMenuBar",
-      "suiteId": "canvas-profile",
-      "kind": "react-region",
-      "label": "512x512 marquee React AppMenuBar",
-      "value": 0.10000000894069672,
-      "samples": 3,
-      "noisePercent": 0,
-      "budget": 8,
-      "target": {
-        "kind": "canvas",
-        "suiteId": "canvas-profile",
-        "canvasSize": 512,
-        "scenario": "marquee",
-        "metric": "reactRegionP95",
-        "region": "AppMenuBar"
-      }
-    },
-    {
-      "id": "canvas-profile:512:marquee:react-region:EditorToolOptions",
-      "suiteId": "canvas-profile",
-      "kind": "react-region",
-      "label": "512x512 marquee React EditorToolOptions",
-      "value": 0.10000000894069672,
-      "samples": 3,
-      "noisePercent": 0,
-      "budget": 8,
-      "target": {
-        "kind": "canvas",
-        "suiteId": "canvas-profile",
-        "canvasSize": 512,
-        "scenario": "marquee",
-        "metric": "reactRegionP95",
-        "region": "EditorToolOptions"
       }
     },
     {
@@ -2623,9 +2587,9 @@
       "suiteId": "canvas-profile",
       "kind": "react-region",
       "label": "512x512 marquee React EditorCanvasHost",
-      "value": 0.19999998807907104,
+      "value": 0.3999999985098839,
       "samples": 3,
-      "noisePercent": 0.000007450581041013064,
+      "noisePercent": 25.000000465661287,
       "budget": 8,
       "target": {
         "kind": "canvas",
@@ -2634,132 +2598,6 @@
         "scenario": "marquee",
         "metric": "reactRegionP95",
         "region": "EditorCanvasHost"
-      }
-    },
-    {
-      "id": "canvas-profile:512:marquee:react-region:EditorWorkspaceShell",
-      "suiteId": "canvas-profile",
-      "kind": "react-region",
-      "label": "512x512 marquee React EditorWorkspaceShell",
-      "value": 0.5,
-      "samples": 3,
-      "noisePercent": 0,
-      "budget": 8,
-      "target": {
-        "kind": "canvas",
-        "suiteId": "canvas-profile",
-        "canvasSize": 512,
-        "scenario": "marquee",
-        "metric": "reactRegionP95",
-        "region": "EditorWorkspaceShell"
-      }
-    },
-    {
-      "id": "canvas-profile:512:marquee:react-region:EditorStatusBar",
-      "suiteId": "canvas-profile",
-      "kind": "react-region",
-      "label": "512x512 marquee React EditorStatusBar",
-      "value": 0,
-      "samples": 3,
-      "noisePercent": 0,
-      "budget": 8,
-      "target": {
-        "kind": "canvas",
-        "suiteId": "canvas-profile",
-        "canvasSize": 512,
-        "scenario": "marquee",
-        "metric": "reactRegionP95",
-        "region": "EditorStatusBar"
-      }
-    },
-    {
-      "id": "canvas-profile:512:marquee:react-region:MoonSprite",
-      "suiteId": "canvas-profile",
-      "kind": "react-region",
-      "label": "512x512 marquee React MoonSprite",
-      "value": 0.8999999910593033,
-      "samples": 3,
-      "noisePercent": 11.111108903531653,
-      "budget": 8,
-      "target": {
-        "kind": "canvas",
-        "suiteId": "canvas-profile",
-        "canvasSize": 512,
-        "scenario": "marquee",
-        "metric": "reactRegionP95",
-        "region": "MoonSprite"
-      }
-    },
-    {
-      "id": "canvas-profile:512:marquee:react-region:Panel:layers",
-      "suiteId": "canvas-profile",
-      "kind": "react-region",
-      "label": "512x512 marquee React Panel:layers",
-      "value": 0,
-      "samples": 3,
-      "noisePercent": 0,
-      "budget": 8,
-      "target": {
-        "kind": "canvas",
-        "suiteId": "canvas-profile",
-        "canvasSize": 512,
-        "scenario": "marquee",
-        "metric": "reactRegionP95",
-        "region": "Panel:layers"
-      }
-    },
-    {
-      "id": "canvas-profile:512:marquee:react-region:InspectorPanels",
-      "suiteId": "canvas-profile",
-      "kind": "react-region",
-      "label": "512x512 marquee React InspectorPanels",
-      "value": 0,
-      "samples": 3,
-      "noisePercent": 0,
-      "budget": 8,
-      "target": {
-        "kind": "canvas",
-        "suiteId": "canvas-profile",
-        "canvasSize": 512,
-        "scenario": "marquee",
-        "metric": "reactRegionP95",
-        "region": "InspectorPanels"
-      }
-    },
-    {
-      "id": "canvas-profile:512:marquee:react-region:DocumentTabs",
-      "suiteId": "canvas-profile",
-      "kind": "react-region",
-      "label": "512x512 marquee React DocumentTabs",
-      "value": 0,
-      "samples": 3,
-      "noisePercent": 0,
-      "budget": 8,
-      "target": {
-        "kind": "canvas",
-        "suiteId": "canvas-profile",
-        "canvasSize": 512,
-        "scenario": "marquee",
-        "metric": "reactRegionP95",
-        "region": "DocumentTabs"
-      }
-    },
-    {
-      "id": "canvas-profile:512:marquee:react-region:Panel:preview",
-      "suiteId": "canvas-profile",
-      "kind": "react-region",
-      "label": "512x512 marquee React Panel:preview",
-      "value": 0,
-      "samples": 3,
-      "noisePercent": 0,
-      "budget": 8,
-      "target": {
-        "kind": "canvas",
-        "suiteId": "canvas-profile",
-        "canvasSize": 512,
-        "scenario": "marquee",
-        "metric": "reactRegionP95",
-        "region": "Panel:preview"
       }
     },
     {
@@ -2799,13 +2637,175 @@
       }
     },
     {
+      "id": "canvas-profile:512:marquee:react-region:Panel:layers",
+      "suiteId": "canvas-profile",
+      "kind": "react-region",
+      "label": "512x512 marquee React Panel:layers",
+      "value": 0,
+      "samples": 3,
+      "noisePercent": 0,
+      "budget": 8,
+      "target": {
+        "kind": "canvas",
+        "suiteId": "canvas-profile",
+        "canvasSize": 512,
+        "scenario": "marquee",
+        "metric": "reactRegionP95",
+        "region": "Panel:layers"
+      }
+    },
+    {
+      "id": "canvas-profile:512:marquee:react-region:Panel:preview",
+      "suiteId": "canvas-profile",
+      "kind": "react-region",
+      "label": "512x512 marquee React Panel:preview",
+      "value": 0,
+      "samples": 3,
+      "noisePercent": 0,
+      "budget": 8,
+      "target": {
+        "kind": "canvas",
+        "suiteId": "canvas-profile",
+        "canvasSize": 512,
+        "scenario": "marquee",
+        "metric": "reactRegionP95",
+        "region": "Panel:preview"
+      }
+    },
+    {
+      "id": "canvas-profile:512:marquee:react-region:InspectorPanels",
+      "suiteId": "canvas-profile",
+      "kind": "react-region",
+      "label": "512x512 marquee React InspectorPanels",
+      "value": 0.5,
+      "samples": 3,
+      "noisePercent": 0,
+      "budget": 8,
+      "target": {
+        "kind": "canvas",
+        "suiteId": "canvas-profile",
+        "canvasSize": 512,
+        "scenario": "marquee",
+        "metric": "reactRegionP95",
+        "region": "InspectorPanels"
+      }
+    },
+    {
+      "id": "canvas-profile:512:marquee:react-region:EditorWorkspaceShell",
+      "suiteId": "canvas-profile",
+      "kind": "react-region",
+      "label": "512x512 marquee React EditorWorkspaceShell",
+      "value": 1,
+      "samples": 3,
+      "noisePercent": 19.999999552965164,
+      "budget": 8,
+      "target": {
+        "kind": "canvas",
+        "suiteId": "canvas-profile",
+        "canvasSize": 512,
+        "scenario": "marquee",
+        "metric": "reactRegionP95",
+        "region": "EditorWorkspaceShell"
+      }
+    },
+    {
+      "id": "canvas-profile:512:marquee:react-region:MoonSprite",
+      "suiteId": "canvas-profile",
+      "kind": "react-region",
+      "label": "512x512 marquee React MoonSprite",
+      "value": 1.6000000014901161,
+      "samples": 3,
+      "noisePercent": 6.249999621650205,
+      "budget": 8,
+      "target": {
+        "kind": "canvas",
+        "suiteId": "canvas-profile",
+        "canvasSize": 512,
+        "scenario": "marquee",
+        "metric": "reactRegionP95",
+        "region": "MoonSprite"
+      }
+    },
+    {
+      "id": "canvas-profile:512:marquee:react-region:AppMenuBar",
+      "suiteId": "canvas-profile",
+      "kind": "react-region",
+      "label": "512x512 marquee React AppMenuBar",
+      "value": 0.10000000149011612,
+      "samples": 3,
+      "noisePercent": 0,
+      "budget": 8,
+      "target": {
+        "kind": "canvas",
+        "suiteId": "canvas-profile",
+        "canvasSize": 512,
+        "scenario": "marquee",
+        "metric": "reactRegionP95",
+        "region": "AppMenuBar"
+      }
+    },
+    {
+      "id": "canvas-profile:512:marquee:react-region:EditorToolOptions",
+      "suiteId": "canvas-profile",
+      "kind": "react-region",
+      "label": "512x512 marquee React EditorToolOptions",
+      "value": 0.30000000447034836,
+      "samples": 3,
+      "noisePercent": 33.33333581686016,
+      "budget": 8,
+      "target": {
+        "kind": "canvas",
+        "suiteId": "canvas-profile",
+        "canvasSize": 512,
+        "scenario": "marquee",
+        "metric": "reactRegionP95",
+        "region": "EditorToolOptions"
+      }
+    },
+    {
+      "id": "canvas-profile:512:marquee:react-region:EditorStatusBar",
+      "suiteId": "canvas-profile",
+      "kind": "react-region",
+      "label": "512x512 marquee React EditorStatusBar",
+      "value": 0,
+      "samples": 3,
+      "noisePercent": 0,
+      "budget": 8,
+      "target": {
+        "kind": "canvas",
+        "suiteId": "canvas-profile",
+        "canvasSize": 512,
+        "scenario": "marquee",
+        "metric": "reactRegionP95",
+        "region": "EditorStatusBar"
+      }
+    },
+    {
+      "id": "canvas-profile:512:marquee:react-region:DocumentTabs",
+      "suiteId": "canvas-profile",
+      "kind": "react-region",
+      "label": "512x512 marquee React DocumentTabs",
+      "value": 0,
+      "samples": 3,
+      "noisePercent": 0,
+      "budget": 8,
+      "target": {
+        "kind": "canvas",
+        "suiteId": "canvas-profile",
+        "canvasSize": 512,
+        "scenario": "marquee",
+        "metric": "reactRegionP95",
+        "region": "DocumentTabs"
+      }
+    },
+    {
       "id": "canvas-profile:512:bucket-fill:reactCommitP95",
       "suiteId": "canvas-profile",
       "kind": "react-root",
       "label": "512x512 bucket-fill React 提交 p95",
-      "value": 1.0000000149011612,
+      "value": 1.7000000029802322,
       "samples": 3,
-      "noisePercent": 10.000000745058049,
+      "noisePercent": 0,
       "budget": 16.7,
       "target": {
         "kind": "canvas",
@@ -2816,49 +2816,13 @@
       }
     },
     {
-      "id": "canvas-profile:512:bucket-fill:react-region:AppMenuBar",
-      "suiteId": "canvas-profile",
-      "kind": "react-region",
-      "label": "512x512 bucket-fill React AppMenuBar",
-      "value": 0.10000000894069672,
-      "samples": 3,
-      "noisePercent": 0,
-      "budget": 8,
-      "target": {
-        "kind": "canvas",
-        "suiteId": "canvas-profile",
-        "canvasSize": 512,
-        "scenario": "bucket-fill",
-        "metric": "reactRegionP95",
-        "region": "AppMenuBar"
-      }
-    },
-    {
-      "id": "canvas-profile:512:bucket-fill:react-region:EditorToolOptions",
-      "suiteId": "canvas-profile",
-      "kind": "react-region",
-      "label": "512x512 bucket-fill React EditorToolOptions",
-      "value": 0.29999999701976776,
-      "samples": 3,
-      "noisePercent": 33.33333664470252,
-      "budget": 8,
-      "target": {
-        "kind": "canvas",
-        "suiteId": "canvas-profile",
-        "canvasSize": 512,
-        "scenario": "bucket-fill",
-        "metric": "reactRegionP95",
-        "region": "EditorToolOptions"
-      }
-    },
-    {
       "id": "canvas-profile:512:bucket-fill:react-region:CanvasStage",
       "suiteId": "canvas-profile",
       "kind": "react-region",
       "label": "512x512 bucket-fill React CanvasStage",
-      "value": 0,
+      "value": 0.09999999403953552,
       "samples": 3,
-      "noisePercent": 0,
+      "noisePercent": 0.000007450581041013064,
       "budget": 8,
       "target": {
         "kind": "canvas",
@@ -2874,9 +2838,9 @@
       "suiteId": "canvas-profile",
       "kind": "react-region",
       "label": "512x512 bucket-fill React EditorCanvasHost",
-      "value": 0.20000000298023224,
+      "value": 0.3999999985098839,
       "samples": 3,
-      "noisePercent": 0,
+      "noisePercent": 25.000000465661287,
       "budget": 8,
       "target": {
         "kind": "canvas",
@@ -2885,42 +2849,6 @@
         "scenario": "bucket-fill",
         "metric": "reactRegionP95",
         "region": "EditorCanvasHost"
-      }
-    },
-    {
-      "id": "canvas-profile:512:bucket-fill:react-region:Panel:layers",
-      "suiteId": "canvas-profile",
-      "kind": "react-region",
-      "label": "512x512 bucket-fill React Panel:layers",
-      "value": 0.10000000894069672,
-      "samples": 3,
-      "noisePercent": 0,
-      "budget": 8,
-      "target": {
-        "kind": "canvas",
-        "suiteId": "canvas-profile",
-        "canvasSize": 512,
-        "scenario": "bucket-fill",
-        "metric": "reactRegionP95",
-        "region": "Panel:layers"
-      }
-    },
-    {
-      "id": "canvas-profile:512:bucket-fill:react-region:Panel:preview",
-      "suiteId": "canvas-profile",
-      "kind": "react-region",
-      "label": "512x512 bucket-fill React Panel:preview",
-      "value": 0,
-      "samples": 3,
-      "noisePercent": 0,
-      "budget": 8,
-      "target": {
-        "kind": "canvas",
-        "suiteId": "canvas-profile",
-        "canvasSize": 512,
-        "scenario": "bucket-fill",
-        "metric": "reactRegionP95",
-        "region": "Panel:preview"
       }
     },
     {
@@ -2960,13 +2888,49 @@
       }
     },
     {
+      "id": "canvas-profile:512:bucket-fill:react-region:Panel:layers",
+      "suiteId": "canvas-profile",
+      "kind": "react-region",
+      "label": "512x512 bucket-fill React Panel:layers",
+      "value": 0.09999999403953552,
+      "samples": 3,
+      "noisePercent": 0.000007450581041013064,
+      "budget": 8,
+      "target": {
+        "kind": "canvas",
+        "suiteId": "canvas-profile",
+        "canvasSize": 512,
+        "scenario": "bucket-fill",
+        "metric": "reactRegionP95",
+        "region": "Panel:layers"
+      }
+    },
+    {
+      "id": "canvas-profile:512:bucket-fill:react-region:Panel:preview",
+      "suiteId": "canvas-profile",
+      "kind": "react-region",
+      "label": "512x512 bucket-fill React Panel:preview",
+      "value": 0,
+      "samples": 3,
+      "noisePercent": 0,
+      "budget": 8,
+      "target": {
+        "kind": "canvas",
+        "suiteId": "canvas-profile",
+        "canvasSize": 512,
+        "scenario": "bucket-fill",
+        "metric": "reactRegionP95",
+        "region": "Panel:preview"
+      }
+    },
+    {
       "id": "canvas-profile:512:bucket-fill:react-region:InspectorPanels",
       "suiteId": "canvas-profile",
       "kind": "react-region",
       "label": "512x512 bucket-fill React InspectorPanels",
-      "value": 0.5,
+      "value": 0.6000000014901161,
       "samples": 3,
-      "noisePercent": 19.999998807907104,
+      "noisePercent": 16.66666687362724,
       "budget": 8,
       "target": {
         "kind": "canvas",
@@ -2982,9 +2946,9 @@
       "suiteId": "canvas-profile",
       "kind": "react-region",
       "label": "512x512 bucket-fill React EditorWorkspaceShell",
-      "value": 0.699999988079071,
+      "value": 1.3999999985098839,
       "samples": 3,
-      "noisePercent": 0.000002128737349658989,
+      "noisePercent": 7.142857256896643,
       "budget": 8,
       "target": {
         "kind": "canvas",
@@ -3000,9 +2964,9 @@
       "suiteId": "canvas-profile",
       "kind": "react-region",
       "label": "512x512 bucket-fill React MoonSprite",
-      "value": 1.0000000149011612,
+      "value": 1.7000000029802322,
       "samples": 3,
-      "noisePercent": 10.000000745058049,
+      "noisePercent": 0,
       "budget": 8,
       "target": {
         "kind": "canvas",
@@ -3011,6 +2975,42 @@
         "scenario": "bucket-fill",
         "metric": "reactRegionP95",
         "region": "MoonSprite"
+      }
+    },
+    {
+      "id": "canvas-profile:512:bucket-fill:react-region:AppMenuBar",
+      "suiteId": "canvas-profile",
+      "kind": "react-region",
+      "label": "512x512 bucket-fill React AppMenuBar",
+      "value": 0.10000000149011612,
+      "samples": 3,
+      "noisePercent": 99.99999254941952,
+      "budget": 8,
+      "target": {
+        "kind": "canvas",
+        "suiteId": "canvas-profile",
+        "canvasSize": 512,
+        "scenario": "bucket-fill",
+        "metric": "reactRegionP95",
+        "region": "AppMenuBar"
+      }
+    },
+    {
+      "id": "canvas-profile:512:bucket-fill:react-region:EditorToolOptions",
+      "suiteId": "canvas-profile",
+      "kind": "react-region",
+      "label": "512x512 bucket-fill React EditorToolOptions",
+      "value": 0.3999999985098839,
+      "samples": 3,
+      "noisePercent": 50.000000931322575,
+      "budget": 8,
+      "target": {
+        "kind": "canvas",
+        "suiteId": "canvas-profile",
+        "canvasSize": 512,
+        "scenario": "bucket-fill",
+        "metric": "reactRegionP95",
+        "region": "EditorToolOptions"
       }
     },
     {
@@ -3036,9 +3036,9 @@
       "suiteId": "canvas-profile",
       "kind": "react-root",
       "label": "512x512 gradient React 提交 p95",
-      "value": 1.1000000089406967,
+      "value": 1.7000000029802322,
       "samples": 3,
-      "noisePercent": 0,
+      "noisePercent": 11.76470559876683,
       "budget": 16.7,
       "target": {
         "kind": "canvas",
@@ -3049,47 +3049,11 @@
       }
     },
     {
-      "id": "canvas-profile:512:gradient:react-region:AppMenuBar",
-      "suiteId": "canvas-profile",
-      "kind": "react-region",
-      "label": "512x512 gradient React AppMenuBar",
-      "value": 0.09999999403953552,
-      "samples": 3,
-      "noisePercent": 0.000014901162082026128,
-      "budget": 8,
-      "target": {
-        "kind": "canvas",
-        "suiteId": "canvas-profile",
-        "canvasSize": 512,
-        "scenario": "gradient",
-        "metric": "reactRegionP95",
-        "region": "AppMenuBar"
-      }
-    },
-    {
-      "id": "canvas-profile:512:gradient:react-region:EditorToolOptions",
-      "suiteId": "canvas-profile",
-      "kind": "react-region",
-      "label": "512x512 gradient React EditorToolOptions",
-      "value": 0.09999999403953552,
-      "samples": 3,
-      "noisePercent": 0,
-      "budget": 8,
-      "target": {
-        "kind": "canvas",
-        "suiteId": "canvas-profile",
-        "canvasSize": 512,
-        "scenario": "gradient",
-        "metric": "reactRegionP95",
-        "region": "EditorToolOptions"
-      }
-    },
-    {
       "id": "canvas-profile:512:gradient:react-region:CanvasStage",
       "suiteId": "canvas-profile",
       "kind": "react-region",
       "label": "512x512 gradient React CanvasStage",
-      "value": 0,
+      "value": 0.10000000149011612,
       "samples": 3,
       "noisePercent": 0,
       "budget": 8,
@@ -3107,9 +3071,9 @@
       "suiteId": "canvas-profile",
       "kind": "react-region",
       "label": "512x512 gradient React EditorCanvasHost",
-      "value": 0.10000000894069672,
+      "value": 0.4000000059604645,
       "samples": 3,
-      "noisePercent": 0.000014901159861580145,
+      "noisePercent": 25.00000186264512,
       "budget": 8,
       "target": {
         "kind": "canvas",
@@ -3118,42 +3082,6 @@
         "scenario": "gradient",
         "metric": "reactRegionP95",
         "region": "EditorCanvasHost"
-      }
-    },
-    {
-      "id": "canvas-profile:512:gradient:react-region:Panel:layers",
-      "suiteId": "canvas-profile",
-      "kind": "react-region",
-      "label": "512x512 gradient React Panel:layers",
-      "value": 0.09999999403953552,
-      "samples": 3,
-      "noisePercent": 0,
-      "budget": 8,
-      "target": {
-        "kind": "canvas",
-        "suiteId": "canvas-profile",
-        "canvasSize": 512,
-        "scenario": "gradient",
-        "metric": "reactRegionP95",
-        "region": "Panel:layers"
-      }
-    },
-    {
-      "id": "canvas-profile:512:gradient:react-region:Panel:preview",
-      "suiteId": "canvas-profile",
-      "kind": "react-region",
-      "label": "512x512 gradient React Panel:preview",
-      "value": 0,
-      "samples": 3,
-      "noisePercent": 0,
-      "budget": 8,
-      "target": {
-        "kind": "canvas",
-        "suiteId": "canvas-profile",
-        "canvasSize": 512,
-        "scenario": "gradient",
-        "metric": "reactRegionP95",
-        "region": "Panel:preview"
       }
     },
     {
@@ -3193,13 +3121,49 @@
       }
     },
     {
+      "id": "canvas-profile:512:gradient:react-region:Panel:layers",
+      "suiteId": "canvas-profile",
+      "kind": "react-region",
+      "label": "512x512 gradient React Panel:layers",
+      "value": 0.10000000149011612,
+      "samples": 3,
+      "noisePercent": 0,
+      "budget": 8,
+      "target": {
+        "kind": "canvas",
+        "suiteId": "canvas-profile",
+        "canvasSize": 512,
+        "scenario": "gradient",
+        "metric": "reactRegionP95",
+        "region": "Panel:layers"
+      }
+    },
+    {
+      "id": "canvas-profile:512:gradient:react-region:Panel:preview",
+      "suiteId": "canvas-profile",
+      "kind": "react-region",
+      "label": "512x512 gradient React Panel:preview",
+      "value": 0,
+      "samples": 3,
+      "noisePercent": 0,
+      "budget": 8,
+      "target": {
+        "kind": "canvas",
+        "suiteId": "canvas-profile",
+        "canvasSize": 512,
+        "scenario": "gradient",
+        "metric": "reactRegionP95",
+        "region": "Panel:preview"
+      }
+    },
+    {
       "id": "canvas-profile:512:gradient:react-region:InspectorPanels",
       "suiteId": "canvas-profile",
       "kind": "react-region",
       "label": "512x512 gradient React InspectorPanels",
-      "value": 0.29999999701976776,
+      "value": 0.5999999940395355,
       "samples": 3,
-      "noisePercent": 33.333331677648744,
+      "noisePercent": 16.666665838824372,
       "budget": 8,
       "target": {
         "kind": "canvas",
@@ -3215,9 +3179,9 @@
       "suiteId": "canvas-profile",
       "kind": "react-region",
       "label": "512x512 gradient React EditorWorkspaceShell",
-      "value": 0.5999999940395355,
+      "value": 1.3000000044703484,
       "samples": 3,
-      "noisePercent": 0.000002483526890312899,
+      "noisePercent": 7.6923072073586605,
       "budget": 8,
       "target": {
         "kind": "canvas",
@@ -3233,7 +3197,25 @@
       "suiteId": "canvas-profile",
       "kind": "react-region",
       "label": "512x512 gradient React MoonSprite",
-      "value": 1.1000000089406967,
+      "value": 1.7000000029802322,
+      "samples": 3,
+      "noisePercent": 11.76470559876683,
+      "budget": 8,
+      "target": {
+        "kind": "canvas",
+        "suiteId": "canvas-profile",
+        "canvasSize": 512,
+        "scenario": "gradient",
+        "metric": "reactRegionP95",
+        "region": "MoonSprite"
+      }
+    },
+    {
+      "id": "canvas-profile:512:gradient:react-region:AppMenuBar",
+      "suiteId": "canvas-profile",
+      "kind": "react-region",
+      "label": "512x512 gradient React AppMenuBar",
+      "value": 0.10000000149011612,
       "samples": 3,
       "noisePercent": 0,
       "budget": 8,
@@ -3243,7 +3225,25 @@
         "canvasSize": 512,
         "scenario": "gradient",
         "metric": "reactRegionP95",
-        "region": "MoonSprite"
+        "region": "AppMenuBar"
+      }
+    },
+    {
+      "id": "canvas-profile:512:gradient:react-region:EditorToolOptions",
+      "suiteId": "canvas-profile",
+      "kind": "react-region",
+      "label": "512x512 gradient React EditorToolOptions",
+      "value": 0.09999999403953552,
+      "samples": 3,
+      "noisePercent": 100,
+      "budget": 8,
+      "target": {
+        "kind": "canvas",
+        "suiteId": "canvas-profile",
+        "canvasSize": 512,
+        "scenario": "gradient",
+        "metric": "reactRegionP95",
+        "region": "EditorToolOptions"
       }
     },
     {
@@ -3269,9 +3269,9 @@
       "suiteId": "canvas-profile",
       "kind": "react-root",
       "label": "1024x1024 pan React 提交 p95",
-      "value": 1.1000000089406967,
+      "value": 1.3999999985098839,
       "samples": 3,
-      "noisePercent": 9.090908475158633,
+      "noisePercent": 0,
       "budget": 16.7,
       "target": {
         "kind": "canvas",
@@ -3286,9 +3286,9 @@
       "suiteId": "canvas-profile",
       "kind": "react-region",
       "label": "1024x1024 pan React MoonSprite",
-      "value": 1.1000000089406967,
+      "value": 1.3999999985098839,
       "samples": 3,
-      "noisePercent": 9.090908475158633,
+      "noisePercent": 0,
       "budget": 8,
       "target": {
         "kind": "canvas",
@@ -3297,6 +3297,24 @@
         "scenario": "pan",
         "metric": "reactRegionP95",
         "region": "MoonSprite"
+      }
+    },
+    {
+      "id": "canvas-profile:1024:pan:react-region:EditorWorkspaceShell",
+      "suiteId": "canvas-profile",
+      "kind": "react-region",
+      "label": "1024x1024 pan React EditorWorkspaceShell",
+      "value": 0.8999999985098839,
+      "samples": 3,
+      "noisePercent": 11.111111295076064,
+      "budget": 8,
+      "target": {
+        "kind": "canvas",
+        "suiteId": "canvas-profile",
+        "canvasSize": 1024,
+        "scenario": "pan",
+        "metric": "reactRegionP95",
+        "region": "EditorWorkspaceShell"
       }
     },
     {
@@ -3324,7 +3342,7 @@
       "label": "1024x1024 pan React EditorCanvasHost",
       "value": 0.20000000298023224,
       "samples": 3,
-      "noisePercent": 0,
+      "noisePercent": 0.0000037252902429507637,
       "budget": 8,
       "target": {
         "kind": "canvas",
@@ -3333,114 +3351,6 @@
         "scenario": "pan",
         "metric": "reactRegionP95",
         "region": "EditorCanvasHost"
-      }
-    },
-    {
-      "id": "canvas-profile:1024:pan:react-region:EditorWorkspaceShell",
-      "suiteId": "canvas-profile",
-      "kind": "react-region",
-      "label": "1024x1024 pan React EditorWorkspaceShell",
-      "value": 0.5,
-      "samples": 3,
-      "noisePercent": 19.999998807907104,
-      "budget": 8,
-      "target": {
-        "kind": "canvas",
-        "suiteId": "canvas-profile",
-        "canvasSize": 1024,
-        "scenario": "pan",
-        "metric": "reactRegionP95",
-        "region": "EditorWorkspaceShell"
-      }
-    },
-    {
-      "id": "canvas-profile:1024:pan:react-region:AppMenuBar",
-      "suiteId": "canvas-profile",
-      "kind": "react-region",
-      "label": "1024x1024 pan React AppMenuBar",
-      "value": 0.09999999403953552,
-      "samples": 3,
-      "noisePercent": 0,
-      "budget": 8,
-      "target": {
-        "kind": "canvas",
-        "suiteId": "canvas-profile",
-        "canvasSize": 1024,
-        "scenario": "pan",
-        "metric": "reactRegionP95",
-        "region": "AppMenuBar"
-      }
-    },
-    {
-      "id": "canvas-profile:1024:pan:react-region:Panel:layers",
-      "suiteId": "canvas-profile",
-      "kind": "react-region",
-      "label": "1024x1024 pan React Panel:layers",
-      "value": 0,
-      "samples": 3,
-      "noisePercent": 0,
-      "budget": 8,
-      "target": {
-        "kind": "canvas",
-        "suiteId": "canvas-profile",
-        "canvasSize": 1024,
-        "scenario": "pan",
-        "metric": "reactRegionP95",
-        "region": "Panel:layers"
-      }
-    },
-    {
-      "id": "canvas-profile:1024:pan:react-region:InspectorPanels",
-      "suiteId": "canvas-profile",
-      "kind": "react-region",
-      "label": "1024x1024 pan React InspectorPanels",
-      "value": 0.09999999403953552,
-      "samples": 3,
-      "noisePercent": 0,
-      "budget": 8,
-      "target": {
-        "kind": "canvas",
-        "suiteId": "canvas-profile",
-        "canvasSize": 1024,
-        "scenario": "pan",
-        "metric": "reactRegionP95",
-        "region": "InspectorPanels"
-      }
-    },
-    {
-      "id": "canvas-profile:1024:pan:react-region:DocumentTabs",
-      "suiteId": "canvas-profile",
-      "kind": "react-region",
-      "label": "1024x1024 pan React DocumentTabs",
-      "value": 0,
-      "samples": 3,
-      "noisePercent": 0,
-      "budget": 8,
-      "target": {
-        "kind": "canvas",
-        "suiteId": "canvas-profile",
-        "canvasSize": 1024,
-        "scenario": "pan",
-        "metric": "reactRegionP95",
-        "region": "DocumentTabs"
-      }
-    },
-    {
-      "id": "canvas-profile:1024:pan:react-region:Panel:preview",
-      "suiteId": "canvas-profile",
-      "kind": "react-region",
-      "label": "1024x1024 pan React Panel:preview",
-      "value": 0,
-      "samples": 3,
-      "noisePercent": 0,
-      "budget": 8,
-      "target": {
-        "kind": "canvas",
-        "suiteId": "canvas-profile",
-        "canvasSize": 1024,
-        "scenario": "pan",
-        "metric": "reactRegionP95",
-        "region": "Panel:preview"
       }
     },
     {
@@ -3480,13 +3390,103 @@
       }
     },
     {
+      "id": "canvas-profile:1024:pan:react-region:Panel:layers",
+      "suiteId": "canvas-profile",
+      "kind": "react-region",
+      "label": "1024x1024 pan React Panel:layers",
+      "value": 0,
+      "samples": 3,
+      "noisePercent": 0,
+      "budget": 8,
+      "target": {
+        "kind": "canvas",
+        "suiteId": "canvas-profile",
+        "canvasSize": 1024,
+        "scenario": "pan",
+        "metric": "reactRegionP95",
+        "region": "Panel:layers"
+      }
+    },
+    {
+      "id": "canvas-profile:1024:pan:react-region:Panel:preview",
+      "suiteId": "canvas-profile",
+      "kind": "react-region",
+      "label": "1024x1024 pan React Panel:preview",
+      "value": 0,
+      "samples": 3,
+      "noisePercent": 0,
+      "budget": 8,
+      "target": {
+        "kind": "canvas",
+        "suiteId": "canvas-profile",
+        "canvasSize": 1024,
+        "scenario": "pan",
+        "metric": "reactRegionP95",
+        "region": "Panel:preview"
+      }
+    },
+    {
+      "id": "canvas-profile:1024:pan:react-region:InspectorPanels",
+      "suiteId": "canvas-profile",
+      "kind": "react-region",
+      "label": "1024x1024 pan React InspectorPanels",
+      "value": 0.5,
+      "samples": 3,
+      "noisePercent": 0,
+      "budget": 8,
+      "target": {
+        "kind": "canvas",
+        "suiteId": "canvas-profile",
+        "canvasSize": 1024,
+        "scenario": "pan",
+        "metric": "reactRegionP95",
+        "region": "InspectorPanels"
+      }
+    },
+    {
+      "id": "canvas-profile:1024:pan:react-region:AppMenuBar",
+      "suiteId": "canvas-profile",
+      "kind": "react-region",
+      "label": "1024x1024 pan React AppMenuBar",
+      "value": 0.10000000149011612,
+      "samples": 3,
+      "noisePercent": 0,
+      "budget": 8,
+      "target": {
+        "kind": "canvas",
+        "suiteId": "canvas-profile",
+        "canvasSize": 1024,
+        "scenario": "pan",
+        "metric": "reactRegionP95",
+        "region": "AppMenuBar"
+      }
+    },
+    {
+      "id": "canvas-profile:1024:pan:react-region:DocumentTabs",
+      "suiteId": "canvas-profile",
+      "kind": "react-region",
+      "label": "1024x1024 pan React DocumentTabs",
+      "value": 0,
+      "samples": 3,
+      "noisePercent": 0,
+      "budget": 8,
+      "target": {
+        "kind": "canvas",
+        "suiteId": "canvas-profile",
+        "canvasSize": 1024,
+        "scenario": "pan",
+        "metric": "reactRegionP95",
+        "region": "DocumentTabs"
+      }
+    },
+    {
       "id": "canvas-profile:1024:zoom:reactCommitP95",
       "suiteId": "canvas-profile",
       "kind": "react-root",
       "label": "1024x1024 zoom React 提交 p95",
       "value": 0.5,
       "samples": 3,
-      "noisePercent": 20.000001788139343,
+      "noisePercent": 19.999998807907104,
       "budget": 16.7,
       "target": {
         "kind": "canvas",
@@ -3521,7 +3521,7 @@
       "label": "1024x1024 zoom React EditorCanvasHost",
       "value": 0.20000000298023224,
       "samples": 3,
-      "noisePercent": 0,
+      "noisePercent": 49.99999627470976,
       "budget": 8,
       "target": {
         "kind": "canvas",
@@ -3537,9 +3537,9 @@
       "suiteId": "canvas-profile",
       "kind": "react-region",
       "label": "1024x1024 zoom React EditorWorkspaceShell",
-      "value": 0.3999999910593033,
+      "value": 0.29999999701976776,
       "samples": 3,
-      "noisePercent": 24.999999068677404,
+      "noisePercent": 33.33333416117563,
       "budget": 8,
       "target": {
         "kind": "canvas",
@@ -3575,7 +3575,7 @@
       "label": "1024x1024 zoom React MoonSprite",
       "value": 0.5,
       "samples": 3,
-      "noisePercent": 20.000001788139343,
+      "noisePercent": 19.999998807907104,
       "budget": 8,
       "target": {
         "kind": "canvas",
@@ -3591,9 +3591,9 @@
       "suiteId": "canvas-profile",
       "kind": "react-root",
       "label": "1024x1024 rotated-zoom React 提交 p95",
-      "value": 0.4000000059604645,
+      "value": 0.30000000447034836,
       "samples": 3,
-      "noisePercent": 25.00000186264512,
+      "noisePercent": 33.3333308498065,
       "budget": 16.7,
       "target": {
         "kind": "canvas",
@@ -3626,9 +3626,9 @@
       "suiteId": "canvas-profile",
       "kind": "react-region",
       "label": "1024x1024 rotated-zoom React EditorCanvasHost",
-      "value": 0.10000000894069672,
+      "value": 0.10000000149011612,
       "samples": 3,
-      "noisePercent": 100,
+      "noisePercent": 0,
       "budget": 8,
       "target": {
         "kind": "canvas",
@@ -3662,9 +3662,9 @@
       "suiteId": "canvas-profile",
       "kind": "react-region",
       "label": "1024x1024 rotated-zoom React EditorStatusBar",
-      "value": 0.10000000894069672,
+      "value": 0.10000000149011612,
       "samples": 3,
-      "noisePercent": 0.000014901159861580145,
+      "noisePercent": 0,
       "budget": 8,
       "target": {
         "kind": "canvas",
@@ -3680,9 +3680,9 @@
       "suiteId": "canvas-profile",
       "kind": "react-region",
       "label": "1024x1024 rotated-zoom React MoonSprite",
-      "value": 0.4000000059604645,
+      "value": 0.30000000447034836,
       "samples": 3,
-      "noisePercent": 25.00000186264512,
+      "noisePercent": 33.3333308498065,
       "budget": 8,
       "target": {
         "kind": "canvas",
@@ -3698,9 +3698,9 @@
       "suiteId": "canvas-profile",
       "kind": "react-root",
       "label": "1024x1024 draw React 提交 p95",
-      "value": 1.800000011920929,
+      "value": 2.100000001490116,
       "samples": 3,
-      "noisePercent": 0,
+      "noisePercent": 9.523809658967448,
       "budget": 16.7,
       "target": {
         "kind": "canvas",
@@ -3715,9 +3715,9 @@
       "suiteId": "canvas-profile",
       "kind": "react-region",
       "label": "1024x1024 draw React MoonSprite",
-      "value": 1.800000011920929,
+      "value": 2.100000001490116,
       "samples": 3,
-      "noisePercent": 0,
+      "noisePercent": 9.523809658967448,
       "budget": 8,
       "target": {
         "kind": "canvas",
@@ -3726,60 +3726,6 @@
         "scenario": "draw",
         "metric": "reactRegionP95",
         "region": "MoonSprite"
-      }
-    },
-    {
-      "id": "canvas-profile:1024:draw:react-region:EditorWorkspaceShell",
-      "suiteId": "canvas-profile",
-      "kind": "react-region",
-      "label": "1024x1024 draw React EditorWorkspaceShell",
-      "value": 1.2999999970197678,
-      "samples": 3,
-      "noisePercent": 7.692307251444934,
-      "budget": 8,
-      "target": {
-        "kind": "canvas",
-        "suiteId": "canvas-profile",
-        "canvasSize": 1024,
-        "scenario": "draw",
-        "metric": "reactRegionP95",
-        "region": "EditorWorkspaceShell"
-      }
-    },
-    {
-      "id": "canvas-profile:1024:draw:react-region:AppMenuBar",
-      "suiteId": "canvas-profile",
-      "kind": "react-region",
-      "label": "1024x1024 draw React AppMenuBar",
-      "value": 0.09999999403953552,
-      "samples": 3,
-      "noisePercent": 0,
-      "budget": 8,
-      "target": {
-        "kind": "canvas",
-        "suiteId": "canvas-profile",
-        "canvasSize": 1024,
-        "scenario": "draw",
-        "metric": "reactRegionP95",
-        "region": "AppMenuBar"
-      }
-    },
-    {
-      "id": "canvas-profile:1024:draw:react-region:EditorToolOptions",
-      "suiteId": "canvas-profile",
-      "kind": "react-region",
-      "label": "1024x1024 draw React EditorToolOptions",
-      "value": 0.4000000059604645,
-      "samples": 3,
-      "noisePercent": 0.0000037252902429507637,
-      "budget": 8,
-      "target": {
-        "kind": "canvas",
-        "suiteId": "canvas-profile",
-        "canvasSize": 1024,
-        "scenario": "draw",
-        "metric": "reactRegionP95",
-        "region": "EditorToolOptions"
       }
     },
     {
@@ -3805,9 +3751,9 @@
       "suiteId": "canvas-profile",
       "kind": "react-region",
       "label": "1024x1024 draw React EditorCanvasHost",
-      "value": 0.29999999701976776,
+      "value": 0.4000000059604645,
       "samples": 3,
-      "noisePercent": 0,
+      "noisePercent": 0.0000018626451214753818,
       "budget": 8,
       "target": {
         "kind": "canvas",
@@ -3816,42 +3762,6 @@
         "scenario": "draw",
         "metric": "reactRegionP95",
         "region": "EditorCanvasHost"
-      }
-    },
-    {
-      "id": "canvas-profile:1024:draw:react-region:Panel:layers",
-      "suiteId": "canvas-profile",
-      "kind": "react-region",
-      "label": "1024x1024 draw React Panel:layers",
-      "value": 0.5999999940395355,
-      "samples": 3,
-      "noisePercent": 0.000002483526890312899,
-      "budget": 8,
-      "target": {
-        "kind": "canvas",
-        "suiteId": "canvas-profile",
-        "canvasSize": 1024,
-        "scenario": "draw",
-        "metric": "reactRegionP95",
-        "region": "Panel:layers"
-      }
-    },
-    {
-      "id": "canvas-profile:1024:draw:react-region:Panel:preview",
-      "suiteId": "canvas-profile",
-      "kind": "react-region",
-      "label": "1024x1024 draw React Panel:preview",
-      "value": 0,
-      "samples": 3,
-      "noisePercent": 0,
-      "budget": 8,
-      "target": {
-        "kind": "canvas",
-        "suiteId": "canvas-profile",
-        "canvasSize": 1024,
-        "scenario": "draw",
-        "metric": "reactRegionP95",
-        "region": "Panel:preview"
       }
     },
     {
@@ -3891,13 +3801,49 @@
       }
     },
     {
+      "id": "canvas-profile:1024:draw:react-region:Panel:layers",
+      "suiteId": "canvas-profile",
+      "kind": "react-region",
+      "label": "1024x1024 draw React Panel:layers",
+      "value": 0.3999999985098839,
+      "samples": 3,
+      "noisePercent": 0,
+      "budget": 8,
+      "target": {
+        "kind": "canvas",
+        "suiteId": "canvas-profile",
+        "canvasSize": 1024,
+        "scenario": "draw",
+        "metric": "reactRegionP95",
+        "region": "Panel:layers"
+      }
+    },
+    {
+      "id": "canvas-profile:1024:draw:react-region:Panel:preview",
+      "suiteId": "canvas-profile",
+      "kind": "react-region",
+      "label": "1024x1024 draw React Panel:preview",
+      "value": 0,
+      "samples": 3,
+      "noisePercent": 0,
+      "budget": 8,
+      "target": {
+        "kind": "canvas",
+        "suiteId": "canvas-profile",
+        "canvasSize": 1024,
+        "scenario": "draw",
+        "metric": "reactRegionP95",
+        "region": "Panel:preview"
+      }
+    },
+    {
       "id": "canvas-profile:1024:draw:react-region:InspectorPanels",
       "suiteId": "canvas-profile",
       "kind": "react-region",
       "label": "1024x1024 draw React InspectorPanels",
-      "value": 0.8999999910593033,
+      "value": 0.7999999970197678,
       "samples": 3,
-      "noisePercent": 11.111110559216247,
+      "noisePercent": 24.99999953433871,
       "budget": 8,
       "target": {
         "kind": "canvas",
@@ -3906,6 +3852,60 @@
         "scenario": "draw",
         "metric": "reactRegionP95",
         "region": "InspectorPanels"
+      }
+    },
+    {
+      "id": "canvas-profile:1024:draw:react-region:EditorWorkspaceShell",
+      "suiteId": "canvas-profile",
+      "kind": "react-region",
+      "label": "1024x1024 draw React EditorWorkspaceShell",
+      "value": 1.8999999985098839,
+      "samples": 3,
+      "noisePercent": 10.526315954583504,
+      "budget": 8,
+      "target": {
+        "kind": "canvas",
+        "suiteId": "canvas-profile",
+        "canvasSize": 1024,
+        "scenario": "draw",
+        "metric": "reactRegionP95",
+        "region": "EditorWorkspaceShell"
+      }
+    },
+    {
+      "id": "canvas-profile:1024:draw:react-region:AppMenuBar",
+      "suiteId": "canvas-profile",
+      "kind": "react-region",
+      "label": "1024x1024 draw React AppMenuBar",
+      "value": 0.09999999403953552,
+      "samples": 3,
+      "noisePercent": 0.000007450581041013064,
+      "budget": 8,
+      "target": {
+        "kind": "canvas",
+        "suiteId": "canvas-profile",
+        "canvasSize": 1024,
+        "scenario": "draw",
+        "metric": "reactRegionP95",
+        "region": "AppMenuBar"
+      }
+    },
+    {
+      "id": "canvas-profile:1024:draw:react-region:EditorToolOptions",
+      "suiteId": "canvas-profile",
+      "kind": "react-region",
+      "label": "1024x1024 draw React EditorToolOptions",
+      "value": 0.30000000447034836,
+      "samples": 3,
+      "noisePercent": 0.0000024835268286338427,
+      "budget": 8,
+      "target": {
+        "kind": "canvas",
+        "suiteId": "canvas-profile",
+        "canvasSize": 1024,
+        "scenario": "draw",
+        "metric": "reactRegionP95",
+        "region": "EditorToolOptions"
       }
     },
     {
@@ -3931,9 +3931,9 @@
       "suiteId": "canvas-profile",
       "kind": "react-root",
       "label": "1024x1024 shape React 提交 p95",
-      "value": 1.2999999970197678,
+      "value": 2.0000000074505806,
       "samples": 3,
-      "noisePercent": 0,
+      "noisePercent": 4.9999996833503255,
       "budget": 16.7,
       "target": {
         "kind": "canvas",
@@ -3944,13 +3944,13 @@
       }
     },
     {
-      "id": "canvas-profile:1024:shape:react-region:AppMenuBar",
+      "id": "canvas-profile:1024:shape:react-region:MoonSprite",
       "suiteId": "canvas-profile",
       "kind": "react-region",
-      "label": "1024x1024 shape React AppMenuBar",
-      "value": 0,
+      "label": "1024x1024 shape React MoonSprite",
+      "value": 2.0000000074505806,
       "samples": 3,
-      "noisePercent": 0,
+      "noisePercent": 4.9999996833503255,
       "budget": 8,
       "target": {
         "kind": "canvas",
@@ -3958,25 +3958,7 @@
         "canvasSize": 1024,
         "scenario": "shape",
         "metric": "reactRegionP95",
-        "region": "AppMenuBar"
-      }
-    },
-    {
-      "id": "canvas-profile:1024:shape:react-region:EditorToolOptions",
-      "suiteId": "canvas-profile",
-      "kind": "react-region",
-      "label": "1024x1024 shape React EditorToolOptions",
-      "value": 0.09999999403953552,
-      "samples": 3,
-      "noisePercent": 0.000014901162082026128,
-      "budget": 8,
-      "target": {
-        "kind": "canvas",
-        "suiteId": "canvas-profile",
-        "canvasSize": 1024,
-        "scenario": "shape",
-        "metric": "reactRegionP95",
-        "region": "EditorToolOptions"
+        "region": "MoonSprite"
       }
     },
     {
@@ -4002,9 +3984,9 @@
       "suiteId": "canvas-profile",
       "kind": "react-region",
       "label": "1024x1024 shape React EditorCanvasHost",
-      "value": 0.20000000298023224,
+      "value": 0.3999999985098839,
       "samples": 3,
-      "noisePercent": 0,
+      "noisePercent": 24.99999860301613,
       "budget": 8,
       "target": {
         "kind": "canvas",
@@ -4013,42 +3995,6 @@
         "scenario": "shape",
         "metric": "reactRegionP95",
         "region": "EditorCanvasHost"
-      }
-    },
-    {
-      "id": "canvas-profile:1024:shape:react-region:Panel:layers",
-      "suiteId": "canvas-profile",
-      "kind": "react-region",
-      "label": "1024x1024 shape React Panel:layers",
-      "value": 0.6000000089406967,
-      "samples": 3,
-      "noisePercent": 0.0000024835268286338427,
-      "budget": 8,
-      "target": {
-        "kind": "canvas",
-        "suiteId": "canvas-profile",
-        "canvasSize": 1024,
-        "scenario": "shape",
-        "metric": "reactRegionP95",
-        "region": "Panel:layers"
-      }
-    },
-    {
-      "id": "canvas-profile:1024:shape:react-region:Panel:preview",
-      "suiteId": "canvas-profile",
-      "kind": "react-region",
-      "label": "1024x1024 shape React Panel:preview",
-      "value": 0,
-      "samples": 3,
-      "noisePercent": 0,
-      "budget": 8,
-      "target": {
-        "kind": "canvas",
-        "suiteId": "canvas-profile",
-        "canvasSize": 1024,
-        "scenario": "shape",
-        "metric": "reactRegionP95",
-        "region": "Panel:preview"
       }
     },
     {
@@ -4088,13 +4034,49 @@
       }
     },
     {
+      "id": "canvas-profile:1024:shape:react-region:Panel:layers",
+      "suiteId": "canvas-profile",
+      "kind": "react-region",
+      "label": "1024x1024 shape React Panel:layers",
+      "value": 0.6000000014901161,
+      "samples": 3,
+      "noisePercent": 0.0000012417634297366852,
+      "budget": 8,
+      "target": {
+        "kind": "canvas",
+        "suiteId": "canvas-profile",
+        "canvasSize": 1024,
+        "scenario": "shape",
+        "metric": "reactRegionP95",
+        "region": "Panel:layers"
+      }
+    },
+    {
+      "id": "canvas-profile:1024:shape:react-region:Panel:preview",
+      "suiteId": "canvas-profile",
+      "kind": "react-region",
+      "label": "1024x1024 shape React Panel:preview",
+      "value": 0,
+      "samples": 3,
+      "noisePercent": 0,
+      "budget": 8,
+      "target": {
+        "kind": "canvas",
+        "suiteId": "canvas-profile",
+        "canvasSize": 1024,
+        "scenario": "shape",
+        "metric": "reactRegionP95",
+        "region": "Panel:preview"
+      }
+    },
+    {
       "id": "canvas-profile:1024:shape:react-region:InspectorPanels",
       "suiteId": "canvas-profile",
       "kind": "react-region",
       "label": "1024x1024 shape React InspectorPanels",
-      "value": 0.7999999970197678,
+      "value": 0.7000000029802322,
       "samples": 3,
-      "noisePercent": 0,
+      "noisePercent": 14.28571443776695,
       "budget": 8,
       "target": {
         "kind": "canvas",
@@ -4110,9 +4092,9 @@
       "suiteId": "canvas-profile",
       "kind": "react-region",
       "label": "1024x1024 shape React EditorWorkspaceShell",
-      "value": 0.7999999970197678,
+      "value": 1.5000000074505806,
       "samples": 3,
-      "noisePercent": 0,
+      "noisePercent": 13.3333334657881,
       "budget": 8,
       "target": {
         "kind": "canvas",
@@ -4124,11 +4106,11 @@
       }
     },
     {
-      "id": "canvas-profile:1024:shape:react-region:MoonSprite",
+      "id": "canvas-profile:1024:shape:react-region:AppMenuBar",
       "suiteId": "canvas-profile",
       "kind": "react-region",
-      "label": "1024x1024 shape React MoonSprite",
-      "value": 1.2999999970197678,
+      "label": "1024x1024 shape React AppMenuBar",
+      "value": 0.10000000149011612,
       "samples": 3,
       "noisePercent": 0,
       "budget": 8,
@@ -4138,7 +4120,25 @@
         "canvasSize": 1024,
         "scenario": "shape",
         "metric": "reactRegionP95",
-        "region": "MoonSprite"
+        "region": "AppMenuBar"
+      }
+    },
+    {
+      "id": "canvas-profile:1024:shape:react-region:EditorToolOptions",
+      "suiteId": "canvas-profile",
+      "kind": "react-region",
+      "label": "1024x1024 shape React EditorToolOptions",
+      "value": 0.10000000149011612,
+      "samples": 3,
+      "noisePercent": 0,
+      "budget": 8,
+      "target": {
+        "kind": "canvas",
+        "suiteId": "canvas-profile",
+        "canvasSize": 1024,
+        "scenario": "shape",
+        "metric": "reactRegionP95",
+        "region": "EditorToolOptions"
       }
     },
     {
@@ -4164,9 +4164,9 @@
       "suiteId": "canvas-profile",
       "kind": "react-root",
       "label": "1024x1024 marquee React 提交 p95",
-      "value": 1.2000000029802322,
+      "value": 2,
       "samples": 3,
-      "noisePercent": 0.0000012417634297366852,
+      "noisePercent": 14.999999850988388,
       "budget": 16.7,
       "target": {
         "kind": "canvas",
@@ -4177,49 +4177,13 @@
       }
     },
     {
-      "id": "canvas-profile:1024:marquee:react-region:AppMenuBar",
-      "suiteId": "canvas-profile",
-      "kind": "react-region",
-      "label": "1024x1024 marquee React AppMenuBar",
-      "value": 0.09999999403953552,
-      "samples": 3,
-      "noisePercent": 0.000014901162082026128,
-      "budget": 8,
-      "target": {
-        "kind": "canvas",
-        "suiteId": "canvas-profile",
-        "canvasSize": 1024,
-        "scenario": "marquee",
-        "metric": "reactRegionP95",
-        "region": "AppMenuBar"
-      }
-    },
-    {
-      "id": "canvas-profile:1024:marquee:react-region:EditorToolOptions",
-      "suiteId": "canvas-profile",
-      "kind": "react-region",
-      "label": "1024x1024 marquee React EditorToolOptions",
-      "value": 0.10000000894069672,
-      "samples": 3,
-      "noisePercent": 0.000014901159861580145,
-      "budget": 8,
-      "target": {
-        "kind": "canvas",
-        "suiteId": "canvas-profile",
-        "canvasSize": 1024,
-        "scenario": "marquee",
-        "metric": "reactRegionP95",
-        "region": "EditorToolOptions"
-      }
-    },
-    {
       "id": "canvas-profile:1024:marquee:react-region:CanvasStage",
       "suiteId": "canvas-profile",
       "kind": "react-region",
       "label": "1024x1024 marquee React CanvasStage",
       "value": 0.09999999403953552,
       "samples": 3,
-      "noisePercent": 0,
+      "noisePercent": 0.000007450581041013064,
       "budget": 8,
       "target": {
         "kind": "canvas",
@@ -4235,9 +4199,9 @@
       "suiteId": "canvas-profile",
       "kind": "react-region",
       "label": "1024x1024 marquee React EditorCanvasHost",
-      "value": 0.20000000298023224,
+      "value": 0.5999999940395355,
       "samples": 3,
-      "noisePercent": 0,
+      "noisePercent": 0.0000012417634451564495,
       "budget": 8,
       "target": {
         "kind": "canvas",
@@ -4246,132 +4210,6 @@
         "scenario": "marquee",
         "metric": "reactRegionP95",
         "region": "EditorCanvasHost"
-      }
-    },
-    {
-      "id": "canvas-profile:1024:marquee:react-region:EditorWorkspaceShell",
-      "suiteId": "canvas-profile",
-      "kind": "react-region",
-      "label": "1024x1024 marquee React EditorWorkspaceShell",
-      "value": 0.5999999940395355,
-      "samples": 3,
-      "noisePercent": 0,
-      "budget": 8,
-      "target": {
-        "kind": "canvas",
-        "suiteId": "canvas-profile",
-        "canvasSize": 1024,
-        "scenario": "marquee",
-        "metric": "reactRegionP95",
-        "region": "EditorWorkspaceShell"
-      }
-    },
-    {
-      "id": "canvas-profile:1024:marquee:react-region:EditorStatusBar",
-      "suiteId": "canvas-profile",
-      "kind": "react-region",
-      "label": "1024x1024 marquee React EditorStatusBar",
-      "value": 0,
-      "samples": 3,
-      "noisePercent": 0,
-      "budget": 8,
-      "target": {
-        "kind": "canvas",
-        "suiteId": "canvas-profile",
-        "canvasSize": 1024,
-        "scenario": "marquee",
-        "metric": "reactRegionP95",
-        "region": "EditorStatusBar"
-      }
-    },
-    {
-      "id": "canvas-profile:1024:marquee:react-region:MoonSprite",
-      "suiteId": "canvas-profile",
-      "kind": "react-region",
-      "label": "1024x1024 marquee React MoonSprite",
-      "value": 1.2000000029802322,
-      "samples": 3,
-      "noisePercent": 0.0000012417634297366852,
-      "budget": 8,
-      "target": {
-        "kind": "canvas",
-        "suiteId": "canvas-profile",
-        "canvasSize": 1024,
-        "scenario": "marquee",
-        "metric": "reactRegionP95",
-        "region": "MoonSprite"
-      }
-    },
-    {
-      "id": "canvas-profile:1024:marquee:react-region:Panel:layers",
-      "suiteId": "canvas-profile",
-      "kind": "react-region",
-      "label": "1024x1024 marquee React Panel:layers",
-      "value": 0,
-      "samples": 3,
-      "noisePercent": 0,
-      "budget": 8,
-      "target": {
-        "kind": "canvas",
-        "suiteId": "canvas-profile",
-        "canvasSize": 1024,
-        "scenario": "marquee",
-        "metric": "reactRegionP95",
-        "region": "Panel:layers"
-      }
-    },
-    {
-      "id": "canvas-profile:1024:marquee:react-region:InspectorPanels",
-      "suiteId": "canvas-profile",
-      "kind": "react-region",
-      "label": "1024x1024 marquee React InspectorPanels",
-      "value": 0.10000000894069672,
-      "samples": 3,
-      "noisePercent": 0.000014901159861580145,
-      "budget": 8,
-      "target": {
-        "kind": "canvas",
-        "suiteId": "canvas-profile",
-        "canvasSize": 1024,
-        "scenario": "marquee",
-        "metric": "reactRegionP95",
-        "region": "InspectorPanels"
-      }
-    },
-    {
-      "id": "canvas-profile:1024:marquee:react-region:DocumentTabs",
-      "suiteId": "canvas-profile",
-      "kind": "react-region",
-      "label": "1024x1024 marquee React DocumentTabs",
-      "value": 0,
-      "samples": 3,
-      "noisePercent": 0,
-      "budget": 8,
-      "target": {
-        "kind": "canvas",
-        "suiteId": "canvas-profile",
-        "canvasSize": 1024,
-        "scenario": "marquee",
-        "metric": "reactRegionP95",
-        "region": "DocumentTabs"
-      }
-    },
-    {
-      "id": "canvas-profile:1024:marquee:react-region:Panel:preview",
-      "suiteId": "canvas-profile",
-      "kind": "react-region",
-      "label": "1024x1024 marquee React Panel:preview",
-      "value": 0,
-      "samples": 3,
-      "noisePercent": 0,
-      "budget": 8,
-      "target": {
-        "kind": "canvas",
-        "suiteId": "canvas-profile",
-        "canvasSize": 1024,
-        "scenario": "marquee",
-        "metric": "reactRegionP95",
-        "region": "Panel:preview"
       }
     },
     {
@@ -4411,13 +4249,175 @@
       }
     },
     {
+      "id": "canvas-profile:1024:marquee:react-region:Panel:layers",
+      "suiteId": "canvas-profile",
+      "kind": "react-region",
+      "label": "1024x1024 marquee React Panel:layers",
+      "value": 0,
+      "samples": 3,
+      "noisePercent": 0,
+      "budget": 8,
+      "target": {
+        "kind": "canvas",
+        "suiteId": "canvas-profile",
+        "canvasSize": 1024,
+        "scenario": "marquee",
+        "metric": "reactRegionP95",
+        "region": "Panel:layers"
+      }
+    },
+    {
+      "id": "canvas-profile:1024:marquee:react-region:Panel:preview",
+      "suiteId": "canvas-profile",
+      "kind": "react-region",
+      "label": "1024x1024 marquee React Panel:preview",
+      "value": 0,
+      "samples": 3,
+      "noisePercent": 0,
+      "budget": 8,
+      "target": {
+        "kind": "canvas",
+        "suiteId": "canvas-profile",
+        "canvasSize": 1024,
+        "scenario": "marquee",
+        "metric": "reactRegionP95",
+        "region": "Panel:preview"
+      }
+    },
+    {
+      "id": "canvas-profile:1024:marquee:react-region:InspectorPanels",
+      "suiteId": "canvas-profile",
+      "kind": "react-region",
+      "label": "1024x1024 marquee React InspectorPanels",
+      "value": 0.5,
+      "samples": 3,
+      "noisePercent": 19.999998807907104,
+      "budget": 8,
+      "target": {
+        "kind": "canvas",
+        "suiteId": "canvas-profile",
+        "canvasSize": 1024,
+        "scenario": "marquee",
+        "metric": "reactRegionP95",
+        "region": "InspectorPanels"
+      }
+    },
+    {
+      "id": "canvas-profile:1024:marquee:react-region:EditorWorkspaceShell",
+      "suiteId": "canvas-profile",
+      "kind": "react-region",
+      "label": "1024x1024 marquee React EditorWorkspaceShell",
+      "value": 1.2000000029802322,
+      "samples": 3,
+      "noisePercent": 8.333334057695334,
+      "budget": 8,
+      "target": {
+        "kind": "canvas",
+        "suiteId": "canvas-profile",
+        "canvasSize": 1024,
+        "scenario": "marquee",
+        "metric": "reactRegionP95",
+        "region": "EditorWorkspaceShell"
+      }
+    },
+    {
+      "id": "canvas-profile:1024:marquee:react-region:MoonSprite",
+      "suiteId": "canvas-profile",
+      "kind": "react-region",
+      "label": "1024x1024 marquee React MoonSprite",
+      "value": 2,
+      "samples": 3,
+      "noisePercent": 14.999999850988388,
+      "budget": 8,
+      "target": {
+        "kind": "canvas",
+        "suiteId": "canvas-profile",
+        "canvasSize": 1024,
+        "scenario": "marquee",
+        "metric": "reactRegionP95",
+        "region": "MoonSprite"
+      }
+    },
+    {
+      "id": "canvas-profile:1024:marquee:react-region:AppMenuBar",
+      "suiteId": "canvas-profile",
+      "kind": "react-region",
+      "label": "1024x1024 marquee React AppMenuBar",
+      "value": 0.10000000149011612,
+      "samples": 3,
+      "noisePercent": 0,
+      "budget": 8,
+      "target": {
+        "kind": "canvas",
+        "suiteId": "canvas-profile",
+        "canvasSize": 1024,
+        "scenario": "marquee",
+        "metric": "reactRegionP95",
+        "region": "AppMenuBar"
+      }
+    },
+    {
+      "id": "canvas-profile:1024:marquee:react-region:EditorToolOptions",
+      "suiteId": "canvas-profile",
+      "kind": "react-region",
+      "label": "1024x1024 marquee React EditorToolOptions",
+      "value": 1.7000000029802322,
+      "samples": 3,
+      "noisePercent": 0,
+      "budget": 8,
+      "target": {
+        "kind": "canvas",
+        "suiteId": "canvas-profile",
+        "canvasSize": 1024,
+        "scenario": "marquee",
+        "metric": "reactRegionP95",
+        "region": "EditorToolOptions"
+      }
+    },
+    {
+      "id": "canvas-profile:1024:marquee:react-region:EditorStatusBar",
+      "suiteId": "canvas-profile",
+      "kind": "react-region",
+      "label": "1024x1024 marquee React EditorStatusBar",
+      "value": 0,
+      "samples": 3,
+      "noisePercent": 0,
+      "budget": 8,
+      "target": {
+        "kind": "canvas",
+        "suiteId": "canvas-profile",
+        "canvasSize": 1024,
+        "scenario": "marquee",
+        "metric": "reactRegionP95",
+        "region": "EditorStatusBar"
+      }
+    },
+    {
+      "id": "canvas-profile:1024:marquee:react-region:DocumentTabs",
+      "suiteId": "canvas-profile",
+      "kind": "react-region",
+      "label": "1024x1024 marquee React DocumentTabs",
+      "value": 0,
+      "samples": 3,
+      "noisePercent": 0,
+      "budget": 8,
+      "target": {
+        "kind": "canvas",
+        "suiteId": "canvas-profile",
+        "canvasSize": 1024,
+        "scenario": "marquee",
+        "metric": "reactRegionP95",
+        "region": "DocumentTabs"
+      }
+    },
+    {
       "id": "canvas-profile:1024:bucket-fill:reactCommitP95",
       "suiteId": "canvas-profile",
       "kind": "react-root",
       "label": "1024x1024 bucket-fill React 提交 p95",
-      "value": 1.0999999940395355,
+      "value": 1.7999999970197678,
       "samples": 3,
-      "noisePercent": 0,
+      "noisePercent": 11.111110467233773,
       "budget": 16.7,
       "target": {
         "kind": "canvas",
@@ -4425,42 +4425,6 @@
         "canvasSize": 1024,
         "scenario": "bucket-fill",
         "metric": "reactCommitP95"
-      }
-    },
-    {
-      "id": "canvas-profile:1024:bucket-fill:react-region:AppMenuBar",
-      "suiteId": "canvas-profile",
-      "kind": "react-region",
-      "label": "1024x1024 bucket-fill React AppMenuBar",
-      "value": 0.09999999403953552,
-      "samples": 3,
-      "noisePercent": 0,
-      "budget": 8,
-      "target": {
-        "kind": "canvas",
-        "suiteId": "canvas-profile",
-        "canvasSize": 1024,
-        "scenario": "bucket-fill",
-        "metric": "reactRegionP95",
-        "region": "AppMenuBar"
-      }
-    },
-    {
-      "id": "canvas-profile:1024:bucket-fill:react-region:EditorToolOptions",
-      "suiteId": "canvas-profile",
-      "kind": "react-region",
-      "label": "1024x1024 bucket-fill React EditorToolOptions",
-      "value": 0.29999999701976776,
-      "samples": 3,
-      "noisePercent": 0.000004967053780625798,
-      "budget": 8,
-      "target": {
-        "kind": "canvas",
-        "suiteId": "canvas-profile",
-        "canvasSize": 1024,
-        "scenario": "bucket-fill",
-        "metric": "reactRegionP95",
-        "region": "EditorToolOptions"
       }
     },
     {
@@ -4486,9 +4450,9 @@
       "suiteId": "canvas-profile",
       "kind": "react-region",
       "label": "1024x1024 bucket-fill React EditorCanvasHost",
-      "value": 0.20000000298023224,
+      "value": 0.3999999985098839,
       "samples": 3,
-      "noisePercent": 0,
+      "noisePercent": 24.99999860301613,
       "budget": 8,
       "target": {
         "kind": "canvas",
@@ -4497,42 +4461,6 @@
         "scenario": "bucket-fill",
         "metric": "reactRegionP95",
         "region": "EditorCanvasHost"
-      }
-    },
-    {
-      "id": "canvas-profile:1024:bucket-fill:react-region:Panel:layers",
-      "suiteId": "canvas-profile",
-      "kind": "react-region",
-      "label": "1024x1024 bucket-fill React Panel:layers",
-      "value": 0,
-      "samples": 3,
-      "noisePercent": 0,
-      "budget": 8,
-      "target": {
-        "kind": "canvas",
-        "suiteId": "canvas-profile",
-        "canvasSize": 1024,
-        "scenario": "bucket-fill",
-        "metric": "reactRegionP95",
-        "region": "Panel:layers"
-      }
-    },
-    {
-      "id": "canvas-profile:1024:bucket-fill:react-region:Panel:preview",
-      "suiteId": "canvas-profile",
-      "kind": "react-region",
-      "label": "1024x1024 bucket-fill React Panel:preview",
-      "value": 0,
-      "samples": 3,
-      "noisePercent": 0,
-      "budget": 8,
-      "target": {
-        "kind": "canvas",
-        "suiteId": "canvas-profile",
-        "canvasSize": 1024,
-        "scenario": "bucket-fill",
-        "metric": "reactRegionP95",
-        "region": "Panel:preview"
       }
     },
     {
@@ -4572,13 +4500,49 @@
       }
     },
     {
+      "id": "canvas-profile:1024:bucket-fill:react-region:Panel:layers",
+      "suiteId": "canvas-profile",
+      "kind": "react-region",
+      "label": "1024x1024 bucket-fill React Panel:layers",
+      "value": 0.10000000149011612,
+      "samples": 3,
+      "noisePercent": 0,
+      "budget": 8,
+      "target": {
+        "kind": "canvas",
+        "suiteId": "canvas-profile",
+        "canvasSize": 1024,
+        "scenario": "bucket-fill",
+        "metric": "reactRegionP95",
+        "region": "Panel:layers"
+      }
+    },
+    {
+      "id": "canvas-profile:1024:bucket-fill:react-region:Panel:preview",
+      "suiteId": "canvas-profile",
+      "kind": "react-region",
+      "label": "1024x1024 bucket-fill React Panel:preview",
+      "value": 0,
+      "samples": 3,
+      "noisePercent": 0,
+      "budget": 8,
+      "target": {
+        "kind": "canvas",
+        "suiteId": "canvas-profile",
+        "canvasSize": 1024,
+        "scenario": "bucket-fill",
+        "metric": "reactRegionP95",
+        "region": "Panel:preview"
+      }
+    },
+    {
       "id": "canvas-profile:1024:bucket-fill:react-region:InspectorPanels",
       "suiteId": "canvas-profile",
       "kind": "react-region",
       "label": "1024x1024 bucket-fill React InspectorPanels",
-      "value": 0.30000001192092896,
+      "value": 0.4000000059604645,
       "samples": 3,
-      "noisePercent": 0.000004967053533909578,
+      "noisePercent": 24.99999813735488,
       "budget": 8,
       "target": {
         "kind": "canvas",
@@ -4594,9 +4558,9 @@
       "suiteId": "canvas-profile",
       "kind": "react-region",
       "label": "1024x1024 bucket-fill React EditorWorkspaceShell",
-      "value": 0.699999988079071,
+      "value": 1.4000000059604645,
       "samples": 3,
-      "noisePercent": 28.571427355007227,
+      "noisePercent": 21.428571656650426,
       "budget": 8,
       "target": {
         "kind": "canvas",
@@ -4612,9 +4576,9 @@
       "suiteId": "canvas-profile",
       "kind": "react-region",
       "label": "1024x1024 bucket-fill React MoonSprite",
-      "value": 1.0999999940395355,
+      "value": 1.7999999970197678,
       "samples": 3,
-      "noisePercent": 0,
+      "noisePercent": 11.111110467233773,
       "budget": 8,
       "target": {
         "kind": "canvas",
@@ -4626,11 +4590,47 @@
       }
     },
     {
+      "id": "canvas-profile:1024:bucket-fill:react-region:AppMenuBar",
+      "suiteId": "canvas-profile",
+      "kind": "react-region",
+      "label": "1024x1024 bucket-fill React AppMenuBar",
+      "value": 0.10000000149011612,
+      "samples": 3,
+      "noisePercent": 0,
+      "budget": 8,
+      "target": {
+        "kind": "canvas",
+        "suiteId": "canvas-profile",
+        "canvasSize": 1024,
+        "scenario": "bucket-fill",
+        "metric": "reactRegionP95",
+        "region": "AppMenuBar"
+      }
+    },
+    {
+      "id": "canvas-profile:1024:bucket-fill:react-region:EditorToolOptions",
+      "suiteId": "canvas-profile",
+      "kind": "react-region",
+      "label": "1024x1024 bucket-fill React EditorToolOptions",
+      "value": 0.3999999985098839,
+      "samples": 3,
+      "noisePercent": 25.000000465661287,
+      "budget": 8,
+      "target": {
+        "kind": "canvas",
+        "suiteId": "canvas-profile",
+        "canvasSize": 1024,
+        "scenario": "bucket-fill",
+        "metric": "reactRegionP95",
+        "region": "EditorToolOptions"
+      }
+    },
+    {
       "id": "canvas-profile:1024:bucket-fill:react-region:DocumentTabs",
       "suiteId": "canvas-profile",
       "kind": "react-region",
       "label": "1024x1024 bucket-fill React DocumentTabs",
-      "value": 0,
+      "value": 0.10000000149011612,
       "samples": 3,
       "noisePercent": 0,
       "budget": 8,
@@ -4648,9 +4648,9 @@
       "suiteId": "canvas-profile",
       "kind": "react-root",
       "label": "1024x1024 gradient React 提交 p95",
-      "value": 1.0000000149011612,
+      "value": 1.7999999970197678,
       "samples": 3,
-      "noisePercent": 0.0000014901160971803056,
+      "noisePercent": 22.22222176230984,
       "budget": 16.7,
       "target": {
         "kind": "canvas",
@@ -4661,13 +4661,13 @@
       }
     },
     {
-      "id": "canvas-profile:1024:gradient:react-region:AppMenuBar",
+      "id": "canvas-profile:1024:gradient:react-region:MoonSprite",
       "suiteId": "canvas-profile",
       "kind": "react-region",
-      "label": "1024x1024 gradient React AppMenuBar",
-      "value": 0.09999999403953552,
+      "label": "1024x1024 gradient React MoonSprite",
+      "value": 1.7999999970197678,
       "samples": 3,
-      "noisePercent": 0,
+      "noisePercent": 22.22222176230984,
       "budget": 8,
       "target": {
         "kind": "canvas",
@@ -4675,25 +4675,7 @@
         "canvasSize": 1024,
         "scenario": "gradient",
         "metric": "reactRegionP95",
-        "region": "AppMenuBar"
-      }
-    },
-    {
-      "id": "canvas-profile:1024:gradient:react-region:EditorToolOptions",
-      "suiteId": "canvas-profile",
-      "kind": "react-region",
-      "label": "1024x1024 gradient React EditorToolOptions",
-      "value": 0.09999999403953552,
-      "samples": 3,
-      "noisePercent": 0,
-      "budget": 8,
-      "target": {
-        "kind": "canvas",
-        "suiteId": "canvas-profile",
-        "canvasSize": 1024,
-        "scenario": "gradient",
-        "metric": "reactRegionP95",
-        "region": "EditorToolOptions"
+        "region": "MoonSprite"
       }
     },
     {
@@ -4719,9 +4701,9 @@
       "suiteId": "canvas-profile",
       "kind": "react-region",
       "label": "1024x1024 gradient React EditorCanvasHost",
-      "value": 0.19999998807907104,
+      "value": 0.5,
       "samples": 3,
-      "noisePercent": 0.000007450581041013064,
+      "noisePercent": 0,
       "budget": 8,
       "target": {
         "kind": "canvas",
@@ -4730,42 +4712,6 @@
         "scenario": "gradient",
         "metric": "reactRegionP95",
         "region": "EditorCanvasHost"
-      }
-    },
-    {
-      "id": "canvas-profile:1024:gradient:react-region:Panel:layers",
-      "suiteId": "canvas-profile",
-      "kind": "react-region",
-      "label": "1024x1024 gradient React Panel:layers",
-      "value": 0,
-      "samples": 3,
-      "noisePercent": 0,
-      "budget": 8,
-      "target": {
-        "kind": "canvas",
-        "suiteId": "canvas-profile",
-        "canvasSize": 1024,
-        "scenario": "gradient",
-        "metric": "reactRegionP95",
-        "region": "Panel:layers"
-      }
-    },
-    {
-      "id": "canvas-profile:1024:gradient:react-region:Panel:preview",
-      "suiteId": "canvas-profile",
-      "kind": "react-region",
-      "label": "1024x1024 gradient React Panel:preview",
-      "value": 0,
-      "samples": 3,
-      "noisePercent": 0,
-      "budget": 8,
-      "target": {
-        "kind": "canvas",
-        "suiteId": "canvas-profile",
-        "canvasSize": 1024,
-        "scenario": "gradient",
-        "metric": "reactRegionP95",
-        "region": "Panel:preview"
       }
     },
     {
@@ -4805,13 +4751,49 @@
       }
     },
     {
+      "id": "canvas-profile:1024:gradient:react-region:Panel:layers",
+      "suiteId": "canvas-profile",
+      "kind": "react-region",
+      "label": "1024x1024 gradient React Panel:layers",
+      "value": 0.10000000149011612,
+      "samples": 3,
+      "noisePercent": 0,
+      "budget": 8,
+      "target": {
+        "kind": "canvas",
+        "suiteId": "canvas-profile",
+        "canvasSize": 1024,
+        "scenario": "gradient",
+        "metric": "reactRegionP95",
+        "region": "Panel:layers"
+      }
+    },
+    {
+      "id": "canvas-profile:1024:gradient:react-region:Panel:preview",
+      "suiteId": "canvas-profile",
+      "kind": "react-region",
+      "label": "1024x1024 gradient React Panel:preview",
+      "value": 0,
+      "samples": 3,
+      "noisePercent": 0,
+      "budget": 8,
+      "target": {
+        "kind": "canvas",
+        "suiteId": "canvas-profile",
+        "canvasSize": 1024,
+        "scenario": "gradient",
+        "metric": "reactRegionP95",
+        "region": "Panel:preview"
+      }
+    },
+    {
       "id": "canvas-profile:1024:gradient:react-region:InspectorPanels",
       "suiteId": "canvas-profile",
       "kind": "react-region",
       "label": "1024x1024 gradient React InspectorPanels",
-      "value": 0.30000001192092896,
+      "value": 0.5,
       "samples": 3,
-      "noisePercent": 0.000004967053533909578,
+      "noisePercent": 0,
       "budget": 8,
       "target": {
         "kind": "canvas",
@@ -4827,9 +4809,9 @@
       "suiteId": "canvas-profile",
       "kind": "react-region",
       "label": "1024x1024 gradient React EditorWorkspaceShell",
-      "value": 0.8999999910593033,
+      "value": 1.4999999925494194,
       "samples": 3,
-      "noisePercent": 0.0000016556845935419327,
+      "noisePercent": 19.99999940395355,
       "budget": 8,
       "target": {
         "kind": "canvas",
@@ -4841,13 +4823,13 @@
       }
     },
     {
-      "id": "canvas-profile:1024:gradient:react-region:MoonSprite",
+      "id": "canvas-profile:1024:gradient:react-region:AppMenuBar",
       "suiteId": "canvas-profile",
       "kind": "react-region",
-      "label": "1024x1024 gradient React MoonSprite",
-      "value": 1.0000000149011612,
+      "label": "1024x1024 gradient React AppMenuBar",
+      "value": 0.10000000149011612,
       "samples": 3,
-      "noisePercent": 0.0000014901160971803056,
+      "noisePercent": 0,
       "budget": 8,
       "target": {
         "kind": "canvas",
@@ -4855,7 +4837,25 @@
         "canvasSize": 1024,
         "scenario": "gradient",
         "metric": "reactRegionP95",
-        "region": "MoonSprite"
+        "region": "AppMenuBar"
+      }
+    },
+    {
+      "id": "canvas-profile:1024:gradient:react-region:EditorToolOptions",
+      "suiteId": "canvas-profile",
+      "kind": "react-region",
+      "label": "1024x1024 gradient React EditorToolOptions",
+      "value": 0.20000000298023224,
+      "samples": 3,
+      "noisePercent": 49.99999627470976,
+      "budget": 8,
+      "target": {
+        "kind": "canvas",
+        "suiteId": "canvas-profile",
+        "canvasSize": 1024,
+        "scenario": "gradient",
+        "metric": "reactRegionP95",
+        "region": "EditorToolOptions"
       }
     },
     {
@@ -4915,9 +4915,9 @@
       "suiteId": "canvas-complex",
       "kind": "canvas",
       "label": "800x800 complex-draw 主绘制 p95",
-      "value": 0.7000000029802322,
+      "value": 1.1999999955296516,
       "samples": 3,
-      "noisePercent": 0,
+      "noisePercent": 6.208817187232836e-7,
       "budget": 4,
       "target": {
         "kind": "canvas",
@@ -4932,9 +4932,9 @@
       "suiteId": "canvas-complex",
       "kind": "canvas",
       "label": "800x800 complex-draw 指针处理 p95",
-      "value": 0.7000000029802322,
+      "value": 1.1000000014901161,
       "samples": 3,
-      "noisePercent": 14.285713373398298,
+      "noisePercent": 0,
       "budget": 4,
       "target": {
         "kind": "canvas",
@@ -4949,9 +4949,9 @@
       "suiteId": "canvas-complex",
       "kind": "canvas",
       "label": "800x800 complex-undo 帧 p95",
-      "value": 3.800000000000182,
+      "value": 3.799999999999727,
       "samples": 3,
-      "noisePercent": 2.631578947365902,
+      "noisePercent": 2.631578947366217,
       "budget": 16.7,
       "target": {
         "kind": "canvas",
@@ -4983,9 +4983,9 @@
       "suiteId": "canvas-complex",
       "kind": "canvas",
       "label": "800x800 complex-undo 主绘制 p95",
-      "value": 0.699999988079071,
+      "value": 1.2000000029802322,
       "samples": 3,
-      "noisePercent": 14.285713677503614,
+      "noisePercent": 0,
       "budget": 4,
       "target": {
         "kind": "canvas",
@@ -5017,9 +5017,9 @@
       "suiteId": "canvas-complex",
       "kind": "canvas",
       "label": "800x800 complex-playback 帧 p95",
-      "value": 7.899999999999864,
+      "value": 53.5,
       "samples": 3,
-      "noisePercent": 8.860759493671615,
+      "noisePercent": 0,
       "budget": 16.7,
       "target": {
         "kind": "canvas",
@@ -5034,9 +5034,9 @@
       "suiteId": "canvas-complex",
       "kind": "canvas",
       "label": "800x800 complex-playback >25 ms 比例",
-      "value": 4.661016949152542,
+      "value": 5.851063829787234,
       "samples": 3,
-      "noisePercent": 1.2552301255230172,
+      "noisePercent": 2.5906735751295424,
       "budget": 1,
       "target": {
         "kind": "canvas",
@@ -5051,9 +5051,9 @@
       "suiteId": "canvas-complex",
       "kind": "canvas",
       "label": "800x800 complex-playback 主绘制 p95",
-      "value": 33.79999999701977,
+      "value": 59.900000005960464,
       "samples": 3,
-      "noisePercent": 6.508875749036131,
+      "noisePercent": 9.01502505078986,
       "budget": 4,
       "target": {
         "kind": "canvas",
@@ -5085,7 +5085,7 @@
       "suiteId": "canvas-complex",
       "kind": "canvas",
       "label": "1024x1024 complex-draw 帧 p95",
-      "value": 3.699999999999818,
+      "value": 3.700000000000273,
       "samples": 3,
       "noisePercent": 0,
       "budget": 16.7,
@@ -5119,9 +5119,9 @@
       "suiteId": "canvas-complex",
       "kind": "canvas",
       "label": "1024x1024 complex-draw 主绘制 p95",
-      "value": 0.699999988079071,
+      "value": 0.9000000059604645,
       "samples": 3,
-      "noisePercent": 0.000002128737349658989,
+      "noisePercent": 11.111110375251304,
       "budget": 4,
       "target": {
         "kind": "canvas",
@@ -5136,9 +5136,9 @@
       "suiteId": "canvas-complex",
       "kind": "canvas",
       "label": "1024x1024 complex-draw 指针处理 p95",
-      "value": 0.7000000029802322,
+      "value": 0.9000000059604645,
       "samples": 3,
-      "noisePercent": 0,
+      "noisePercent": 8.278422830645092e-7,
       "budget": 4,
       "target": {
         "kind": "canvas",
@@ -5153,9 +5153,9 @@
       "suiteId": "canvas-complex",
       "kind": "canvas",
       "label": "1024x1024 complex-undo 帧 p95",
-      "value": 3.800000000000182,
+      "value": 3.700000000000273,
       "samples": 3,
-      "noisePercent": 1.1967035549643218e-11,
+      "noisePercent": 0,
       "budget": 16.7,
       "target": {
         "kind": "canvas",
@@ -5187,9 +5187,9 @@
       "suiteId": "canvas-complex",
       "kind": "canvas",
       "label": "1024x1024 complex-undo 主绘制 p95",
-      "value": 0.7999999970197678,
+      "value": 1.1000000014901161,
       "samples": 3,
-      "noisePercent": 12.499999301508065,
+      "noisePercent": 9.090909214059183,
       "budget": 4,
       "target": {
         "kind": "canvas",
@@ -5221,9 +5221,9 @@
       "suiteId": "canvas-complex",
       "kind": "canvas",
       "label": "1024x1024 complex-playback 帧 p95",
-      "value": 46.399999999999636,
+      "value": 92.80000000000018,
       "samples": 3,
-      "noisePercent": 9.800589458760078e-13,
+      "noisePercent": 3.879310344827481,
       "budget": 16.7,
       "target": {
         "kind": "canvas",
@@ -5238,9 +5238,9 @@
       "suiteId": "canvas-complex",
       "kind": "canvas",
       "label": "1024x1024 complex-playback >25 ms 比例",
-      "value": 5.5,
+      "value": 5.472636815920398,
       "samples": 3,
-      "noisePercent": 4.3062200956937895,
+      "noisePercent": 0,
       "budget": 1,
       "target": {
         "kind": "canvas",
@@ -5255,9 +5255,9 @@
       "suiteId": "canvas-complex",
       "kind": "canvas",
       "label": "1024x1024 complex-playback 主绘制 p95",
-      "value": 45.6000000089407,
+      "value": 131.39999999850988,
       "samples": 3,
-      "noisePercent": 4.166666646242926,
+      "noisePercent": 3.95738204188676,
       "budget": 4,
       "target": {
         "kind": "canvas",
@@ -5289,7 +5289,7 @@
       "suiteId": "canvas-large-800",
       "kind": "canvas",
       "label": "800x800 large-pan 帧 p95",
-      "value": 3.700000000000273,
+      "value": 3.699999999999818,
       "samples": 1,
       "noisePercent": 0,
       "budget": 16.7,
@@ -5306,7 +5306,7 @@
       "suiteId": "canvas-large-800",
       "kind": "canvas",
       "label": "800x800 large-pan >25 ms 比例",
-      "value": 0.45351473922902497,
+      "value": 0,
       "samples": 1,
       "noisePercent": 0,
       "budget": 1,
@@ -5357,7 +5357,7 @@
       "suiteId": "canvas-large-800",
       "kind": "canvas",
       "label": "800x800 large-zoom 帧 p95",
-      "value": 3.7000000000000455,
+      "value": 3.700000000000273,
       "samples": 1,
       "noisePercent": 0,
       "budget": 16.7,
@@ -5374,7 +5374,7 @@
       "suiteId": "canvas-large-800",
       "kind": "canvas",
       "label": "800x800 large-zoom >25 ms 比例",
-      "value": 0.3003003003003003,
+      "value": 0.18214936247723132,
       "samples": 1,
       "noisePercent": 0,
       "budget": 1,
@@ -5391,7 +5391,7 @@
       "suiteId": "canvas-large-800",
       "kind": "canvas",
       "label": "800x800 large-zoom 主绘制 p95",
-      "value": 0.8999999910593033,
+      "value": 0.8999999985098839,
       "samples": 1,
       "noisePercent": 0,
       "budget": 4,
@@ -5408,7 +5408,7 @@
       "suiteId": "canvas-large-800",
       "kind": "canvas",
       "label": "800x800 large-zoom 指针处理 p95",
-      "value": 1.199999988079071,
+      "value": 1.3999999985098839,
       "samples": 1,
       "noisePercent": 0,
       "budget": 4,
@@ -5442,7 +5442,7 @@
       "suiteId": "canvas-large-800",
       "kind": "canvas",
       "label": "800x800 large-draw >25 ms 比例",
-      "value": 0.19723865877712032,
+      "value": 0.13679890560875513,
       "samples": 1,
       "noisePercent": 0,
       "budget": 1,
@@ -5459,7 +5459,7 @@
       "suiteId": "canvas-large-800",
       "kind": "canvas",
       "label": "800x800 large-draw 主绘制 p95",
-      "value": 1.4000000059604645,
+      "value": 1.2999999970197678,
       "samples": 1,
       "noisePercent": 0,
       "budget": 4,
@@ -5476,7 +5476,7 @@
       "suiteId": "canvas-large-800",
       "kind": "canvas",
       "label": "800x800 large-draw 指针处理 p95",
-      "value": 1.0999999940395355,
+      "value": 1.6000000014901161,
       "samples": 1,
       "noisePercent": 0,
       "budget": 4,
@@ -5493,7 +5493,7 @@
       "suiteId": "canvas-large-800",
       "kind": "canvas",
       "label": "800x800 large-shape 帧 p95",
-      "value": 7.200000000000273,
+      "value": 7.099999999999909,
       "samples": 1,
       "noisePercent": 0,
       "budget": 16.7,
@@ -5510,7 +5510,7 @@
       "suiteId": "canvas-large-800",
       "kind": "canvas",
       "label": "800x800 large-shape >25 ms 比例",
-      "value": 0.26455026455026454,
+      "value": 0.9881422924901186,
       "samples": 1,
       "noisePercent": 0,
       "budget": 1,
@@ -5527,7 +5527,7 @@
       "suiteId": "canvas-large-800",
       "kind": "canvas",
       "label": "800x800 large-shape 主绘制 p95",
-      "value": 12.400000005960464,
+      "value": 15.900000005960464,
       "samples": 1,
       "noisePercent": 0,
       "budget": 4,
@@ -5544,7 +5544,7 @@
       "suiteId": "canvas-large-800",
       "kind": "canvas",
       "label": "800x800 large-shape 指针处理 p95",
-      "value": 0.4000000059604645,
+      "value": 0.6999999955296516,
       "samples": 1,
       "noisePercent": 0,
       "budget": 4,
@@ -5595,7 +5595,7 @@
       "suiteId": "canvas-large-800",
       "kind": "canvas",
       "label": "800x800 large-marquee 主绘制 p95",
-      "value": 3,
+      "value": 3.899999998509884,
       "samples": 1,
       "noisePercent": 0,
       "budget": 4,
@@ -5612,7 +5612,7 @@
       "suiteId": "canvas-large-800",
       "kind": "canvas",
       "label": "800x800 large-marquee 指针处理 p95",
-      "value": 0.5999999940395355,
+      "value": 1,
       "samples": 1,
       "noisePercent": 0,
       "budget": 4,
@@ -5646,7 +5646,7 @@
       "suiteId": "canvas-large-800",
       "kind": "canvas",
       "label": "800x800 large-bucket-fill >25 ms 比例",
-      "value": 1.2987012987012987,
+      "value": 1.2048192771084338,
       "samples": 1,
       "noisePercent": 0,
       "budget": 1,
@@ -5663,7 +5663,7 @@
       "suiteId": "canvas-large-800",
       "kind": "canvas",
       "label": "800x800 large-bucket-fill 主绘制 p95",
-      "value": 1,
+      "value": 0.8999999985098839,
       "samples": 1,
       "noisePercent": 0,
       "budget": 4,
@@ -5680,7 +5680,7 @@
       "suiteId": "canvas-large-800",
       "kind": "canvas",
       "label": "800x800 large-bucket-fill 指针处理 p95",
-      "value": 2,
+      "value": 1.1999999955296516,
       "samples": 1,
       "noisePercent": 0,
       "budget": 4,
@@ -5697,7 +5697,7 @@
       "suiteId": "canvas-large-800",
       "kind": "canvas",
       "label": "800x800 large-gradient 帧 p95",
-      "value": 10.800000000000182,
+      "value": 32.100000000000364,
       "samples": 1,
       "noisePercent": 0,
       "budget": 16.7,
@@ -5714,7 +5714,7 @@
       "suiteId": "canvas-large-800",
       "kind": "canvas",
       "label": "800x800 large-gradient >25 ms 比例",
-      "value": 0.5050505050505051,
+      "value": 9.248554913294797,
       "samples": 1,
       "noisePercent": 0,
       "budget": 1,
@@ -5731,7 +5731,7 @@
       "suiteId": "canvas-large-800",
       "kind": "canvas",
       "label": "800x800 large-gradient 主绘制 p95",
-      "value": 15.799999997019768,
+      "value": 38.70000000298023,
       "samples": 1,
       "noisePercent": 0,
       "budget": 4,
@@ -5748,7 +5748,7 @@
       "suiteId": "canvas-large-800",
       "kind": "canvas",
       "label": "800x800 large-gradient 指针处理 p95",
-      "value": 0.5,
+      "value": 0.6000000014901161,
       "samples": 1,
       "noisePercent": 0,
       "budget": 4,
@@ -5765,7 +5765,7 @@
       "suiteId": "canvas-large-800",
       "kind": "canvas",
       "label": "800x800 large-detail-pan 帧 p95",
-      "value": 3.700000000000273,
+      "value": 3.7000000000000455,
       "samples": 1,
       "noisePercent": 0,
       "budget": 16.7,
@@ -5799,7 +5799,7 @@
       "suiteId": "canvas-large-800",
       "kind": "canvas",
       "label": "800x800 large-detail-pan 主绘制 p95",
-      "value": 0.5,
+      "value": 0.8000000044703484,
       "samples": 1,
       "noisePercent": 0,
       "budget": 4,
@@ -5850,7 +5850,7 @@
       "suiteId": "canvas-large-800",
       "kind": "canvas",
       "label": "800x800 large-detail-draw >25 ms 比例",
-      "value": 0.2028397565922921,
+      "value": 0.13908205841446453,
       "samples": 1,
       "noisePercent": 0,
       "budget": 1,
@@ -5867,7 +5867,7 @@
       "suiteId": "canvas-large-800",
       "kind": "canvas",
       "label": "800x800 large-detail-draw 主绘制 p95",
-      "value": 0.7000000029802322,
+      "value": 0.7999999970197678,
       "samples": 1,
       "noisePercent": 0,
       "budget": 4,
@@ -5884,7 +5884,7 @@
       "suiteId": "canvas-large-800",
       "kind": "canvas",
       "label": "800x800 large-detail-draw 指针处理 p95",
-      "value": 0.8999999910593033,
+      "value": 1.1000000014901161,
       "samples": 1,
       "noisePercent": 0,
       "budget": 4,
@@ -5897,11 +5897,79 @@
       }
     },
     {
+      "id": "canvas-large-800:800:large-detail-draw-timelapse:p95",
+      "suiteId": "canvas-large-800",
+      "kind": "canvas",
+      "label": "800x800 large-detail-draw-timelapse 帧 p95",
+      "value": 3.700000000000273,
+      "samples": 1,
+      "noisePercent": 0,
+      "budget": 16.7,
+      "target": {
+        "kind": "canvas",
+        "suiteId": "canvas-large-800",
+        "canvasSize": 800,
+        "scenario": "large-detail-draw-timelapse",
+        "metric": "p95"
+      }
+    },
+    {
+      "id": "canvas-large-800:800:large-detail-draw-timelapse:over25Percent",
+      "suiteId": "canvas-large-800",
+      "kind": "canvas",
+      "label": "800x800 large-detail-draw-timelapse >25 ms 比例",
+      "value": 0.13089005235602094,
+      "samples": 1,
+      "noisePercent": 0,
+      "budget": 1,
+      "target": {
+        "kind": "canvas",
+        "suiteId": "canvas-large-800",
+        "canvasSize": 800,
+        "scenario": "large-detail-draw-timelapse",
+        "metric": "over25Percent"
+      }
+    },
+    {
+      "id": "canvas-large-800:800:large-detail-draw-timelapse:drawP95",
+      "suiteId": "canvas-large-800",
+      "kind": "canvas",
+      "label": "800x800 large-detail-draw-timelapse 主绘制 p95",
+      "value": 0.9000000059604645,
+      "samples": 1,
+      "noisePercent": 0,
+      "budget": 4,
+      "target": {
+        "kind": "canvas",
+        "suiteId": "canvas-large-800",
+        "canvasSize": 800,
+        "scenario": "large-detail-draw-timelapse",
+        "metric": "drawP95"
+      }
+    },
+    {
+      "id": "canvas-large-800:800:large-detail-draw-timelapse:inputP95",
+      "suiteId": "canvas-large-800",
+      "kind": "canvas",
+      "label": "800x800 large-detail-draw-timelapse 指针处理 p95",
+      "value": 1,
+      "samples": 1,
+      "noisePercent": 0,
+      "budget": 4,
+      "target": {
+        "kind": "canvas",
+        "suiteId": "canvas-large-800",
+        "canvasSize": 800,
+        "scenario": "large-detail-draw-timelapse",
+        "metric": "inputP95"
+      }
+    },
+    {
       "id": "canvas-large-2048:2048:large-pan:p95",
       "suiteId": "canvas-large-2048",
       "kind": "canvas",
       "label": "2048x2048 large-pan 帧 p95",
-      "value": 7,
+      "value": 4,
       "samples": 1,
       "noisePercent": 0,
       "budget": 16.7,
@@ -5918,7 +5986,7 @@
       "suiteId": "canvas-large-2048",
       "kind": "canvas",
       "label": "2048x2048 large-pan >25 ms 比例",
-      "value": 0.24271844660194172,
+      "value": 0.4792332268370607,
       "samples": 1,
       "noisePercent": 0,
       "budget": 1,
@@ -5935,7 +6003,7 @@
       "suiteId": "canvas-large-2048",
       "kind": "canvas",
       "label": "2048x2048 large-pan 主绘制 p95",
-      "value": 2.199999988079071,
+      "value": 2.600000001490116,
       "samples": 1,
       "noisePercent": 0,
       "budget": 4,
@@ -5952,7 +6020,7 @@
       "suiteId": "canvas-large-2048",
       "kind": "canvas",
       "label": "2048x2048 large-pan 指针处理 p95",
-      "value": 0.29999999701976776,
+      "value": 0.20000000298023224,
       "samples": 1,
       "noisePercent": 0,
       "budget": 4,
@@ -5986,7 +6054,7 @@
       "suiteId": "canvas-large-2048",
       "kind": "canvas",
       "label": "2048x2048 large-zoom >25 ms 比例",
-      "value": 0.3003003003003003,
+      "value": 0.3656307129798903,
       "samples": 1,
       "noisePercent": 0,
       "budget": 1,
@@ -6003,7 +6071,7 @@
       "suiteId": "canvas-large-2048",
       "kind": "canvas",
       "label": "2048x2048 large-zoom 主绘制 p95",
-      "value": 2.2000000029802322,
+      "value": 2.2999999970197678,
       "samples": 1,
       "noisePercent": 0,
       "budget": 4,
@@ -6020,7 +6088,7 @@
       "suiteId": "canvas-large-2048",
       "kind": "canvas",
       "label": "2048x2048 large-zoom 指针处理 p95",
-      "value": 1.4000000059604645,
+      "value": 1.7999999970197678,
       "samples": 1,
       "noisePercent": 0,
       "budget": 4,
@@ -6037,7 +6105,7 @@
       "suiteId": "canvas-large-2048",
       "kind": "canvas",
       "label": "2048x2048 large-draw 帧 p95",
-      "value": 7.099999999999909,
+      "value": 10.699999999999818,
       "samples": 1,
       "noisePercent": 0,
       "budget": 16.7,
@@ -6054,7 +6122,7 @@
       "suiteId": "canvas-large-2048",
       "kind": "canvas",
       "label": "2048x2048 large-draw >25 ms 比例",
-      "value": 0.4024144869215292,
+      "value": 0.4195804195804196,
       "samples": 1,
       "noisePercent": 0,
       "budget": 1,
@@ -6071,7 +6139,7 @@
       "suiteId": "canvas-large-2048",
       "kind": "canvas",
       "label": "2048x2048 large-draw 主绘制 p95",
-      "value": 2.6000000089406967,
+      "value": 2.899999998509884,
       "samples": 1,
       "noisePercent": 0,
       "budget": 4,
@@ -6088,7 +6156,7 @@
       "suiteId": "canvas-large-2048",
       "kind": "canvas",
       "label": "2048x2048 large-draw 指针处理 p95",
-      "value": 1,
+      "value": 12,
       "samples": 1,
       "noisePercent": 0,
       "budget": 4,
@@ -6105,7 +6173,7 @@
       "suiteId": "canvas-large-2048",
       "kind": "canvas",
       "label": "2048x2048 large-shape 帧 p95",
-      "value": 7.200000000000273,
+      "value": 10.599999999999454,
       "samples": 1,
       "noisePercent": 0,
       "budget": 16.7,
@@ -6122,7 +6190,7 @@
       "suiteId": "canvas-large-2048",
       "kind": "canvas",
       "label": "2048x2048 large-shape >25 ms 比例",
-      "value": 0.2857142857142857,
+      "value": 0.43668122270742354,
       "samples": 1,
       "noisePercent": 0,
       "budget": 1,
@@ -6139,7 +6207,7 @@
       "suiteId": "canvas-large-2048",
       "kind": "canvas",
       "label": "2048x2048 large-shape 主绘制 p95",
-      "value": 13.599999994039536,
+      "value": 11.399999998509884,
       "samples": 1,
       "noisePercent": 0,
       "budget": 4,
@@ -6156,7 +6224,7 @@
       "suiteId": "canvas-large-2048",
       "kind": "canvas",
       "label": "2048x2048 large-shape 指针处理 p95",
-      "value": 0.4000000059604645,
+      "value": 0.3999999985098839,
       "samples": 1,
       "noisePercent": 0,
       "budget": 4,
@@ -6190,7 +6258,7 @@
       "suiteId": "canvas-large-2048",
       "kind": "canvas",
       "label": "2048x2048 large-marquee >25 ms 比例",
-      "value": 0,
+      "value": 0.4608294930875576,
       "samples": 1,
       "noisePercent": 0,
       "budget": 1,
@@ -6207,7 +6275,7 @@
       "suiteId": "canvas-large-2048",
       "kind": "canvas",
       "label": "2048x2048 large-marquee 主绘制 p95",
-      "value": 13.800000011920929,
+      "value": 9.100000001490116,
       "samples": 1,
       "noisePercent": 0,
       "budget": 4,
@@ -6224,7 +6292,7 @@
       "suiteId": "canvas-large-2048",
       "kind": "canvas",
       "label": "2048x2048 large-marquee 指针处理 p95",
-      "value": 0.5999999940395355,
+      "value": 1,
       "samples": 1,
       "noisePercent": 0,
       "budget": 4,
@@ -6242,7 +6310,7 @@
       "kind": "canvas",
       "label": "2048x2048 large-bucket-fill 帧 p95",
       "value": 3.700000000000273,
-      "samples": 1,
+      "samples": 3,
       "noisePercent": 0,
       "budget": 16.7,
       "target": {
@@ -6258,9 +6326,9 @@
       "suiteId": "canvas-large-2048",
       "kind": "canvas",
       "label": "2048x2048 large-bucket-fill >25 ms 比例",
-      "value": 1.36986301369863,
-      "samples": 1,
-      "noisePercent": 0,
+      "value": 3.389830508474576,
+      "samples": 3,
+      "noisePercent": 57.857142857142854,
       "budget": 1,
       "target": {
         "kind": "canvas",
@@ -6275,9 +6343,9 @@
       "suiteId": "canvas-large-2048",
       "kind": "canvas",
       "label": "2048x2048 large-bucket-fill 主绘制 p95",
-      "value": 3.7999999970197678,
-      "samples": 1,
-      "noisePercent": 0,
+      "value": 3.5,
+      "samples": 3,
+      "noisePercent": 45.714285543986726,
       "budget": 4,
       "target": {
         "kind": "canvas",
@@ -6292,9 +6360,9 @@
       "suiteId": "canvas-large-2048",
       "kind": "canvas",
       "label": "2048x2048 large-bucket-fill 指针处理 p95",
-      "value": 1.2999999970197678,
-      "samples": 1,
-      "noisePercent": 0,
+      "value": 20.5,
+      "samples": 3,
+      "noisePercent": 7.317073170731707,
       "budget": 4,
       "target": {
         "kind": "canvas",
@@ -6309,7 +6377,7 @@
       "suiteId": "canvas-large-2048",
       "kind": "canvas",
       "label": "2048x2048 large-gradient 帧 p95",
-      "value": 14.300000000000182,
+      "value": 39.29999999999973,
       "samples": 1,
       "noisePercent": 0,
       "budget": 16.7,
@@ -6326,7 +6394,7 @@
       "suiteId": "canvas-large-2048",
       "kind": "canvas",
       "label": "2048x2048 large-gradient >25 ms 比例",
-      "value": 0.7853403141361256,
+      "value": 10.828025477707007,
       "samples": 1,
       "noisePercent": 0,
       "budget": 1,
@@ -6343,7 +6411,7 @@
       "suiteId": "canvas-large-2048",
       "kind": "canvas",
       "label": "2048x2048 large-gradient 主绘制 p95",
-      "value": 17.200000002980232,
+      "value": 45.69999999552965,
       "samples": 1,
       "noisePercent": 0,
       "budget": 4,
@@ -6360,7 +6428,7 @@
       "suiteId": "canvas-large-2048",
       "kind": "canvas",
       "label": "2048x2048 large-gradient 指针处理 p95",
-      "value": 1,
+      "value": 0.8999999985098839,
       "samples": 1,
       "noisePercent": 0,
       "budget": 4,
@@ -6394,7 +6462,7 @@
       "suiteId": "canvas-large-2048",
       "kind": "canvas",
       "label": "2048x2048 large-detail-pan >25 ms 比例",
-      "value": 0.2304147465437788,
+      "value": 0.1597444089456869,
       "samples": 1,
       "noisePercent": 0,
       "budget": 1,
@@ -6411,7 +6479,7 @@
       "suiteId": "canvas-large-2048",
       "kind": "canvas",
       "label": "2048x2048 large-detail-pan 主绘制 p95",
-      "value": 0.4000000059604645,
+      "value": 2.899999998509884,
       "samples": 1,
       "noisePercent": 0,
       "budget": 4,
@@ -6445,7 +6513,7 @@
       "suiteId": "canvas-large-2048",
       "kind": "canvas",
       "label": "2048x2048 large-detail-draw 帧 p95",
-      "value": 3.700000000000273,
+      "value": 7,
       "samples": 1,
       "noisePercent": 0,
       "budget": 16.7,
@@ -6462,7 +6530,7 @@
       "suiteId": "canvas-large-2048",
       "kind": "canvas",
       "label": "2048x2048 large-detail-draw >25 ms 比例",
-      "value": 0.2028397565922921,
+      "value": 0.1455604075691412,
       "samples": 1,
       "noisePercent": 0,
       "budget": 1,
@@ -6496,7 +6564,7 @@
       "suiteId": "canvas-large-2048",
       "kind": "canvas",
       "label": "2048x2048 large-detail-draw 指针处理 p95",
-      "value": 0.7999999970197678,
+      "value": 9.600000001490116,
       "samples": 1,
       "noisePercent": 0,
       "budget": 4,
@@ -6509,11 +6577,79 @@
       }
     },
     {
+      "id": "canvas-large-2048:2048:large-detail-draw-timelapse:p95",
+      "suiteId": "canvas-large-2048",
+      "kind": "canvas",
+      "label": "2048x2048 large-detail-draw-timelapse 帧 p95",
+      "value": 7.200000000000728,
+      "samples": 1,
+      "noisePercent": 0,
+      "budget": 16.7,
+      "target": {
+        "kind": "canvas",
+        "suiteId": "canvas-large-2048",
+        "canvasSize": 2048,
+        "scenario": "large-detail-draw-timelapse",
+        "metric": "p95"
+      }
+    },
+    {
+      "id": "canvas-large-2048:2048:large-detail-draw-timelapse:over25Percent",
+      "suiteId": "canvas-large-2048",
+      "kind": "canvas",
+      "label": "2048x2048 large-detail-draw-timelapse >25 ms 比例",
+      "value": 0.6369426751592357,
+      "samples": 1,
+      "noisePercent": 0,
+      "budget": 1,
+      "target": {
+        "kind": "canvas",
+        "suiteId": "canvas-large-2048",
+        "canvasSize": 2048,
+        "scenario": "large-detail-draw-timelapse",
+        "metric": "over25Percent"
+      }
+    },
+    {
+      "id": "canvas-large-2048:2048:large-detail-draw-timelapse:drawP95",
+      "suiteId": "canvas-large-2048",
+      "kind": "canvas",
+      "label": "2048x2048 large-detail-draw-timelapse 主绘制 p95",
+      "value": 1.3000000044703484,
+      "samples": 1,
+      "noisePercent": 0,
+      "budget": 4,
+      "target": {
+        "kind": "canvas",
+        "suiteId": "canvas-large-2048",
+        "canvasSize": 2048,
+        "scenario": "large-detail-draw-timelapse",
+        "metric": "drawP95"
+      }
+    },
+    {
+      "id": "canvas-large-2048:2048:large-detail-draw-timelapse:inputP95",
+      "suiteId": "canvas-large-2048",
+      "kind": "canvas",
+      "label": "2048x2048 large-detail-draw-timelapse 指针处理 p95",
+      "value": 21.799999997019768,
+      "samples": 1,
+      "noisePercent": 0,
+      "budget": 4,
+      "target": {
+        "kind": "canvas",
+        "suiteId": "canvas-large-2048",
+        "canvasSize": 2048,
+        "scenario": "large-detail-draw-timelapse",
+        "metric": "inputP95"
+      }
+    },
+    {
       "id": "canvas-large-4000:4000:large-pan:p95",
       "suiteId": "canvas-large-4000",
       "kind": "canvas",
       "label": "4000x4000 large-pan 帧 p95",
-      "value": 28.40000000000009,
+      "value": 3.700000000000273,
       "samples": 1,
       "noisePercent": 0,
       "budget": 16.7,
@@ -6530,7 +6666,7 @@
       "suiteId": "canvas-large-4000",
       "kind": "canvas",
       "label": "4000x4000 large-pan >25 ms 比例",
-      "value": 8.333333333333332,
+      "value": 0.301659125188537,
       "samples": 1,
       "noisePercent": 0,
       "budget": 1,
@@ -6547,7 +6683,7 @@
       "suiteId": "canvas-large-4000",
       "kind": "canvas",
       "label": "4000x4000 large-pan 主绘制 p95",
-      "value": 8.599999994039536,
+      "value": 0.6000000014901161,
       "samples": 1,
       "noisePercent": 0,
       "budget": 4,
@@ -6581,7 +6717,7 @@
       "suiteId": "canvas-large-4000",
       "kind": "canvas",
       "label": "4000x4000 large-zoom 帧 p95",
-      "value": 7.199999999999818,
+      "value": 3.700000000000273,
       "samples": 1,
       "noisePercent": 0,
       "budget": 16.7,
@@ -6598,7 +6734,7 @@
       "suiteId": "canvas-large-4000",
       "kind": "canvas",
       "label": "4000x4000 large-zoom >25 ms 比例",
-      "value": 2.380952380952381,
+      "value": 0.5905511811023622,
       "samples": 1,
       "noisePercent": 0,
       "budget": 1,
@@ -6615,7 +6751,7 @@
       "suiteId": "canvas-large-4000",
       "kind": "canvas",
       "label": "4000x4000 large-zoom 主绘制 p95",
-      "value": 8.700000002980232,
+      "value": 6.299999997019768,
       "samples": 1,
       "noisePercent": 0,
       "budget": 4,
@@ -6632,7 +6768,7 @@
       "suiteId": "canvas-large-4000",
       "kind": "canvas",
       "label": "4000x4000 large-zoom 指针处理 p95",
-      "value": 2,
+      "value": 2.1999999955296516,
       "samples": 1,
       "noisePercent": 0,
       "budget": 4,
@@ -6649,7 +6785,7 @@
       "suiteId": "canvas-large-4000",
       "kind": "canvas",
       "label": "4000x4000 large-draw 帧 p95",
-      "value": 32.09999999999991,
+      "value": 25,
       "samples": 1,
       "noisePercent": 0,
       "budget": 16.7,
@@ -6666,7 +6802,7 @@
       "suiteId": "canvas-large-4000",
       "kind": "canvas",
       "label": "4000x4000 large-draw >25 ms 比例",
-      "value": 20.714285714285715,
+      "value": 4.953145917001338,
       "samples": 1,
       "noisePercent": 0,
       "budget": 1,
@@ -6683,7 +6819,7 @@
       "suiteId": "canvas-large-4000",
       "kind": "canvas",
       "label": "4000x4000 large-draw 主绘制 p95",
-      "value": 10.899999991059303,
+      "value": 1.7000000029802322,
       "samples": 1,
       "noisePercent": 0,
       "budget": 4,
@@ -6700,7 +6836,7 @@
       "suiteId": "canvas-large-4000",
       "kind": "canvas",
       "label": "4000x4000 large-draw 指针处理 p95",
-      "value": 1.7000000029802322,
+      "value": 35.100000001490116,
       "samples": 1,
       "noisePercent": 0,
       "budget": 4,
@@ -6717,7 +6853,7 @@
       "suiteId": "canvas-large-4000",
       "kind": "canvas",
       "label": "4000x4000 large-shape 帧 p95",
-      "value": 28.699999999999818,
+      "value": 3.700000000000273,
       "samples": 1,
       "noisePercent": 0,
       "budget": 16.7,
@@ -6734,7 +6870,7 @@
       "suiteId": "canvas-large-4000",
       "kind": "canvas",
       "label": "4000x4000 large-shape >25 ms 比例",
-      "value": 17.098445595854923,
+      "value": 0.4008016032064128,
       "samples": 1,
       "noisePercent": 0,
       "budget": 1,
@@ -6751,7 +6887,7 @@
       "suiteId": "canvas-large-4000",
       "kind": "canvas",
       "label": "4000x4000 large-shape 主绘制 p95",
-      "value": 17.700000002980232,
+      "value": 8.299999997019768,
       "samples": 1,
       "noisePercent": 0,
       "budget": 4,
@@ -6768,7 +6904,7 @@
       "suiteId": "canvas-large-4000",
       "kind": "canvas",
       "label": "4000x4000 large-shape 指针处理 p95",
-      "value": 0.5,
+      "value": 0.3999999985098839,
       "samples": 1,
       "noisePercent": 0,
       "budget": 4,
@@ -6785,7 +6921,7 @@
       "suiteId": "canvas-large-4000",
       "kind": "canvas",
       "label": "4000x4000 large-marquee 帧 p95",
-      "value": 35.600000000000364,
+      "value": 7.200000000000273,
       "samples": 1,
       "noisePercent": 0,
       "budget": 16.7,
@@ -6802,7 +6938,7 @@
       "suiteId": "canvas-large-4000",
       "kind": "canvas",
       "label": "4000x4000 large-marquee >25 ms 比例",
-      "value": 23.557692307692307,
+      "value": 0.20242914979757085,
       "samples": 1,
       "noisePercent": 0,
       "budget": 1,
@@ -6819,7 +6955,7 @@
       "suiteId": "canvas-large-4000",
       "kind": "canvas",
       "label": "4000x4000 large-marquee 主绘制 p95",
-      "value": 41.30000001192093,
+      "value": 16.5,
       "samples": 1,
       "noisePercent": 0,
       "budget": 4,
@@ -6836,7 +6972,7 @@
       "suiteId": "canvas-large-4000",
       "kind": "canvas",
       "label": "4000x4000 large-marquee 指针处理 p95",
-      "value": 1,
+      "value": 1.2999999970197678,
       "samples": 1,
       "noisePercent": 0,
       "budget": 4,
@@ -6853,7 +6989,7 @@
       "suiteId": "canvas-large-4000",
       "kind": "canvas",
       "label": "4000x4000 large-bucket-fill 帧 p95",
-      "value": 10.700000000000273,
+      "value": 7.199999999999818,
       "samples": 1,
       "noisePercent": 0,
       "budget": 16.7,
@@ -6870,7 +7006,7 @@
       "suiteId": "canvas-large-4000",
       "kind": "canvas",
       "label": "4000x4000 large-bucket-fill >25 ms 比例",
-      "value": 5.555555555555555,
+      "value": 3.7735849056603774,
       "samples": 1,
       "noisePercent": 0,
       "budget": 1,
@@ -6887,7 +7023,7 @@
       "suiteId": "canvas-large-4000",
       "kind": "canvas",
       "label": "4000x4000 large-bucket-fill 主绘制 p95",
-      "value": 11.899999991059303,
+      "value": 0.7999999970197678,
       "samples": 1,
       "noisePercent": 0,
       "budget": 4,
@@ -6904,7 +7040,7 @@
       "suiteId": "canvas-large-4000",
       "kind": "canvas",
       "label": "4000x4000 large-bucket-fill 指针处理 p95",
-      "value": 1.4000000059604645,
+      "value": 28.200000002980232,
       "samples": 1,
       "noisePercent": 0,
       "budget": 4,
@@ -6921,9 +7057,9 @@
       "suiteId": "canvas-large-4000",
       "kind": "canvas",
       "label": "4000x4000 large-gradient 帧 p95",
-      "value": 32.30000000000018,
-      "samples": 3,
-      "noisePercent": 0.30959752321812306,
+      "value": 21.5,
+      "samples": 1,
+      "noisePercent": 0,
       "budget": 16.7,
       "target": {
         "kind": "canvas",
@@ -6938,9 +7074,9 @@
       "suiteId": "canvas-large-4000",
       "kind": "canvas",
       "label": "4000x4000 large-gradient >25 ms 比例",
-      "value": 30.53097345132743,
-      "samples": 3,
-      "noisePercent": 5.3382856310538225,
+      "value": 1.8329938900203666,
+      "samples": 1,
+      "noisePercent": 0,
       "budget": 1,
       "target": {
         "kind": "canvas",
@@ -6955,9 +7091,9 @@
       "suiteId": "canvas-large-4000",
       "kind": "canvas",
       "label": "4000x4000 large-gradient 主绘制 p95",
-      "value": 37.20000000298023,
-      "samples": 3,
-      "noisePercent": 1.8817204379681522,
+      "value": 28,
+      "samples": 1,
+      "noisePercent": 0,
       "budget": 4,
       "target": {
         "kind": "canvas",
@@ -6972,9 +7108,9 @@
       "suiteId": "canvas-large-4000",
       "kind": "canvas",
       "label": "4000x4000 large-gradient 指针处理 p95",
-      "value": 1.1000000089406967,
-      "samples": 3,
-      "noisePercent": 18.18181830496827,
+      "value": 1.6000000014901161,
+      "samples": 1,
+      "noisePercent": 0,
       "budget": 4,
       "target": {
         "kind": "canvas",
@@ -7006,7 +7142,7 @@
       "suiteId": "canvas-large-4000",
       "kind": "canvas",
       "label": "4000x4000 large-detail-pan >25 ms 比例",
-      "value": 0.4784688995215311,
+      "value": 0.14947683109118087,
       "samples": 1,
       "noisePercent": 0,
       "budget": 1,
@@ -7023,7 +7159,7 @@
       "suiteId": "canvas-large-4000",
       "kind": "canvas",
       "label": "4000x4000 large-detail-pan 主绘制 p95",
-      "value": 0.6000000089406967,
+      "value": 2.2999999970197678,
       "samples": 1,
       "noisePercent": 0,
       "budget": 4,
@@ -7040,7 +7176,7 @@
       "suiteId": "canvas-large-4000",
       "kind": "canvas",
       "label": "4000x4000 large-detail-pan 指针处理 p95",
-      "value": 0.20000000298023224,
+      "value": 0.29999999701976776,
       "samples": 1,
       "noisePercent": 0,
       "budget": 4,
@@ -7057,7 +7193,7 @@
       "suiteId": "canvas-large-4000",
       "kind": "canvas",
       "label": "4000x4000 large-detail-draw 帧 p95",
-      "value": 3.700000000000273,
+      "value": 24.899999999999636,
       "samples": 1,
       "noisePercent": 0,
       "budget": 16.7,
@@ -7074,7 +7210,7 @@
       "suiteId": "canvas-large-4000",
       "kind": "canvas",
       "label": "4000x4000 large-detail-draw >25 ms 比例",
-      "value": 0.1949317738791423,
+      "value": 3.905160390516039,
       "samples": 1,
       "noisePercent": 0,
       "budget": 1,
@@ -7091,7 +7227,7 @@
       "suiteId": "canvas-large-4000",
       "kind": "canvas",
       "label": "4000x4000 large-detail-draw 主绘制 p95",
-      "value": 1.2000000029802322,
+      "value": 0.8999999985098839,
       "samples": 1,
       "noisePercent": 0,
       "budget": 4,
@@ -7108,7 +7244,7 @@
       "suiteId": "canvas-large-4000",
       "kind": "canvas",
       "label": "4000x4000 large-detail-draw 指针处理 p95",
-      "value": 1.300000011920929,
+      "value": 30.299999997019768,
       "samples": 1,
       "noisePercent": 0,
       "budget": 4,
@@ -7117,6 +7253,74 @@
         "suiteId": "canvas-large-4000",
         "canvasSize": 4000,
         "scenario": "large-detail-draw",
+        "metric": "inputP95"
+      }
+    },
+    {
+      "id": "canvas-large-4000:4000:large-detail-draw-timelapse:p95",
+      "suiteId": "canvas-large-4000",
+      "kind": "canvas",
+      "label": "4000x4000 large-detail-draw-timelapse 帧 p95",
+      "value": 21.399999999999636,
+      "samples": 1,
+      "noisePercent": 0,
+      "budget": 16.7,
+      "target": {
+        "kind": "canvas",
+        "suiteId": "canvas-large-4000",
+        "canvasSize": 4000,
+        "scenario": "large-detail-draw-timelapse",
+        "metric": "p95"
+      }
+    },
+    {
+      "id": "canvas-large-4000:4000:large-detail-draw-timelapse:over25Percent",
+      "suiteId": "canvas-large-4000",
+      "kind": "canvas",
+      "label": "4000x4000 large-detail-draw-timelapse >25 ms 比例",
+      "value": 0.9915014164305949,
+      "samples": 1,
+      "noisePercent": 0,
+      "budget": 1,
+      "target": {
+        "kind": "canvas",
+        "suiteId": "canvas-large-4000",
+        "canvasSize": 4000,
+        "scenario": "large-detail-draw-timelapse",
+        "metric": "over25Percent"
+      }
+    },
+    {
+      "id": "canvas-large-4000:4000:large-detail-draw-timelapse:drawP95",
+      "suiteId": "canvas-large-4000",
+      "kind": "canvas",
+      "label": "4000x4000 large-detail-draw-timelapse 主绘制 p95",
+      "value": 0.7000000029802322,
+      "samples": 1,
+      "noisePercent": 0,
+      "budget": 4,
+      "target": {
+        "kind": "canvas",
+        "suiteId": "canvas-large-4000",
+        "canvasSize": 4000,
+        "scenario": "large-detail-draw-timelapse",
+        "metric": "drawP95"
+      }
+    },
+    {
+      "id": "canvas-large-4000:4000:large-detail-draw-timelapse:inputP95",
+      "suiteId": "canvas-large-4000",
+      "kind": "canvas",
+      "label": "4000x4000 large-detail-draw-timelapse 指针处理 p95",
+      "value": 27.30000000447035,
+      "samples": 1,
+      "noisePercent": 0,
+      "budget": 4,
+      "target": {
+        "kind": "canvas",
+        "suiteId": "canvas-large-4000",
+        "canvasSize": 4000,
+        "scenario": "large-detail-draw-timelapse",
         "metric": "inputP95"
       }
     },
@@ -7142,9 +7346,9 @@
       "suiteId": "canvas-large-sentinel",
       "kind": "canvas",
       "label": "2048x2048 large-detail-pan >25 ms 比例",
-      "value": 0.2288329519450801,
+      "value": 0,
       "samples": 3,
-      "noisePercent": 0.4597701149425218,
+      "noisePercent": 0,
       "budget": 1,
       "target": {
         "kind": "canvas",
@@ -7159,9 +7363,9 @@
       "suiteId": "canvas-large-sentinel",
       "kind": "canvas",
       "label": "2048x2048 large-detail-pan 主绘制 p95",
-      "value": 0.5,
+      "value": 2.399999998509884,
       "samples": 3,
-      "noisePercent": 0,
+      "noisePercent": 4.166666420900987,
       "budget": 4,
       "target": {
         "kind": "canvas",
@@ -7176,7 +7380,7 @@
       "suiteId": "canvas-large-sentinel",
       "kind": "canvas",
       "label": "2048x2048 large-detail-pan 指针处理 p95",
-      "value": 0.20000000298023224,
+      "value": 0.19999999552965164,
       "samples": 3,
       "noisePercent": 0,
       "budget": 4,
@@ -7210,9 +7414,9 @@
       "suiteId": "canvas-large-sentinel",
       "kind": "canvas",
       "label": "2048x2048 large-detail-draw >25 ms 比例",
-      "value": 0.20325203252032523,
+      "value": 0.1455604075691412,
       "samples": 3,
-      "noisePercent": 0.2036659877800224,
+      "noisePercent": 0.2902757619738904,
       "budget": 1,
       "target": {
         "kind": "canvas",
@@ -7227,9 +7431,9 @@
       "suiteId": "canvas-large-sentinel",
       "kind": "canvas",
       "label": "2048x2048 large-detail-draw 主绘制 p95",
-      "value": 0.8999999910593033,
+      "value": 0.6000000014901161,
       "samples": 3,
-      "noisePercent": 0.0000016556845935419327,
+      "noisePercent": 0,
       "budget": 4,
       "target": {
         "kind": "canvas",
@@ -7244,9 +7448,9 @@
       "suiteId": "canvas-large-sentinel",
       "kind": "canvas",
       "label": "2048x2048 large-detail-draw 指针处理 p95",
-      "value": 1,
+      "value": 9.299999997019768,
       "samples": 3,
-      "noisePercent": 20.000000298023224,
+      "noisePercent": 8.011376988506886e-8,
       "budget": 4,
       "target": {
         "kind": "canvas",
@@ -7261,7 +7465,7 @@
       "suiteId": "canvas-large-sentinel",
       "kind": "canvas",
       "label": "4000x4000 large-detail-pan 帧 p95",
-      "value": 3.700000000000273,
+      "value": 3.699999999999818,
       "samples": 3,
       "noisePercent": 0,
       "budget": 16.7,
@@ -7278,9 +7482,9 @@
       "suiteId": "canvas-large-sentinel",
       "kind": "canvas",
       "label": "4000x4000 large-detail-pan >25 ms 比例",
-      "value": 0.47732696897374705,
+      "value": 0.15873015873015872,
       "samples": 3,
-      "noisePercent": 0.23923444976075922,
+      "noisePercent": 1.4492753623188421,
       "budget": 1,
       "target": {
         "kind": "canvas",
@@ -7295,9 +7499,9 @@
       "suiteId": "canvas-large-sentinel",
       "kind": "canvas",
       "label": "4000x4000 large-detail-pan 主绘制 p95",
-      "value": 0.6000000089406967,
+      "value": 1.8999999985098839,
       "samples": 3,
-      "noisePercent": 0.0000024835268286338427,
+      "noisePercent": 5.263157977291752,
       "budget": 4,
       "target": {
         "kind": "canvas",
@@ -7329,9 +7533,9 @@
       "suiteId": "canvas-large-sentinel",
       "kind": "canvas",
       "label": "4000x4000 large-detail-draw 帧 p95",
-      "value": 3.700000000000273,
+      "value": 21.399999999999636,
       "samples": 3,
-      "noisePercent": 0,
+      "noisePercent": 15.887850467288288,
       "budget": 16.7,
       "target": {
         "kind": "canvas",
@@ -7346,9 +7550,9 @@
       "suiteId": "canvas-large-sentinel",
       "kind": "canvas",
       "label": "4000x4000 large-detail-draw >25 ms 比例",
-      "value": 0.1976284584980237,
+      "value": 1.4265335235378032,
       "samples": 3,
-      "noisePercent": 0.19723865877711472,
+      "noisePercent": 40.7605633802817,
       "budget": 1,
       "target": {
         "kind": "canvas",
@@ -7363,7 +7567,7 @@
       "suiteId": "canvas-large-sentinel",
       "kind": "canvas",
       "label": "4000x4000 large-detail-draw 主绘制 p95",
-      "value": 0.9000000059604645,
+      "value": 0.7000000029802322,
       "samples": 3,
       "noisePercent": 0,
       "budget": 4,
@@ -7380,9 +7584,9 @@
       "suiteId": "canvas-large-sentinel",
       "kind": "canvas",
       "label": "4000x4000 large-detail-draw 指针处理 p95",
-      "value": 1,
+      "value": 27.600000001490116,
       "samples": 3,
-      "noisePercent": 9.999999403953552,
+      "noisePercent": 9.420289859962837,
       "budget": 4,
       "target": {
         "kind": "canvas",
@@ -7397,9 +7601,9 @@
       "suiteId": "selection",
       "kind": "algorithm",
       "label": "src/renderer/src/core/selection-performance.bench.ts > magic-wand hot paths > select contiguous noise background",
-      "value": 14.519350000000031,
-      "samples": 34,
-      "noisePercent": 3.1150857277877293,
+      "value": 13.944000000000415,
+      "samples": 37,
+      "noisePercent": 2.801423446547866,
       "budget": 22,
       "target": {
         "kind": "vitest-benchmark",
@@ -7412,9 +7616,9 @@
       "suiteId": "selection",
       "kind": "algorithm",
       "label": "src/renderer/src/core/selection-performance.bench.ts > magic-wand hot paths > build noisy selection boundary",
-      "value": 7.60694999999987,
-      "samples": 64,
-      "noisePercent": 3.484372944263328,
+      "value": 6.046300000000883,
+      "samples": 83,
+      "noisePercent": 2.884078876761061,
       "budget": 12,
       "target": {
         "kind": "vitest-benchmark",
@@ -7427,9 +7631,9 @@
       "suiteId": "document-composite",
       "kind": "algorithm",
       "label": "src/renderer/src/core/document-performance.bench.ts > complex document compositing > composite 800x800 with 24 grouped layers",
-      "value": 107.6286,
-      "samples": 5,
-      "noisePercent": 5.528826629124246,
+      "value": 412.1131999999998,
+      "samples": 3,
+      "noisePercent": 16.192764373270798,
       "budget": 1000,
       "target": {
         "kind": "vitest-benchmark",
@@ -7442,9 +7646,9 @@
       "suiteId": "document-composite",
       "kind": "algorithm",
       "label": "src/renderer/src/core/document-performance.bench.ts > complex document compositing > composite 64x64 dirty region with 24 grouped layers",
-      "value": 1.034099999999853,
-      "samples": 484,
-      "noisePercent": 1.792548395176096,
+      "value": 2.694050000000061,
+      "samples": 180,
+      "noisePercent": 2.5287926655281443,
       "budget": 100,
       "target": {
         "kind": "vitest-benchmark",
@@ -7453,82 +7657,191 @@
       }
     },
     {
-      "id": "bundle:assets/index-CXtQEw9q.js:gzipBytes",
+      "id": "document-composite:211194537_1_0",
+      "suiteId": "document-composite",
+      "kind": "algorithm",
+      "label": "src/renderer/src/core/document-performance.bench.ts > large document dirty-region compositing > composite 64x64 without scanning the full 4000x2000 layer",
+      "value": 0.015099999999620195,
+      "samples": 29529,
+      "noisePercent": 1.2646059297447423,
+      "budget": 100,
+      "target": {
+        "kind": "vitest-benchmark",
+        "suiteId": "document-composite",
+        "benchmarkId": "211194537_1_0"
+      }
+    },
+    {
+      "id": "project-format:-1189390439_0_0",
+      "suiteId": "project-format",
+      "kind": "algorithm",
+      "label": "src/renderer/src/core/project-format-performance.bench.ts > large project format > encode 4000x2000 with 12 layers and 12 linked frames",
+      "value": 698.0106999999998,
+      "samples": 3,
+      "noisePercent": 7.7938679877035035,
+      "budget": 100,
+      "target": {
+        "kind": "vitest-benchmark",
+        "suiteId": "project-format",
+        "benchmarkId": "-1189390439_0_0"
+      }
+    },
+    {
+      "id": "project-format:-1189390439_0_1",
+      "suiteId": "project-format",
+      "kind": "algorithm",
+      "label": "src/renderer/src/core/project-format-performance.bench.ts > large project format > decode 4000x2000 with 12 layers and 12 linked frames",
+      "value": 126.7883499999989,
+      "samples": 4,
+      "noisePercent": 11.509908039656702,
+      "budget": 100,
+      "target": {
+        "kind": "vitest-benchmark",
+        "suiteId": "project-format",
+        "benchmarkId": "-1189390439_0_1"
+      }
+    },
+    {
+      "id": "bundle:assets/index-CHAtcyZW.js:gzipBytes",
       "suiteId": "bundle",
       "kind": "bundle",
-      "label": "assets/index-CXtQEw9q.js gzip",
-      "value": 201975,
+      "label": "assets/index-CHAtcyZW.js gzip",
+      "value": 243615,
       "samples": 1,
       "noisePercent": 0,
       "budget": 307200,
       "target": {
         "kind": "bundle",
         "suiteId": "bundle",
-        "file": "assets/index-CXtQEw9q.js",
+        "file": "assets/index-CHAtcyZW.js",
         "metric": "gzipBytes"
       }
     },
     {
-      "id": "bundle:assets/I18nProvider-D7X9V-ta.js:gzipBytes",
+      "id": "bundle:assets/I18nProvider-3TuHReJI.js:gzipBytes",
       "suiteId": "bundle",
       "kind": "bundle",
-      "label": "assets/I18nProvider-D7X9V-ta.js gzip",
-      "value": 177443,
+      "label": "assets/I18nProvider-3TuHReJI.js gzip",
+      "value": 233569,
       "samples": 1,
       "noisePercent": 0,
       "budget": 307200,
       "target": {
         "kind": "bundle",
         "suiteId": "bundle",
-        "file": "assets/I18nProvider-D7X9V-ta.js",
+        "file": "assets/I18nProvider-3TuHReJI.js",
         "metric": "gzipBytes"
       }
     },
     {
-      "id": "bundle:assets/CanvasStage-DKB0qbYm.js:gzipBytes",
+      "id": "bundle:assets/document-decode.worker-B2tw-9DD.js:gzipBytes",
       "suiteId": "bundle",
       "kind": "bundle",
-      "label": "assets/CanvasStage-DKB0qbYm.js gzip",
-      "value": 32890,
+      "label": "assets/document-decode.worker-B2tw-9DD.js gzip",
+      "value": 109564,
       "samples": 1,
       "noisePercent": 0,
       "budget": 307200,
       "target": {
         "kind": "bundle",
         "suiteId": "bundle",
-        "file": "assets/CanvasStage-DKB0qbYm.js",
+        "file": "assets/document-decode.worker-B2tw-9DD.js",
         "metric": "gzipBytes"
       }
     },
     {
-      "id": "bundle:assets/ComponentLibrary-D4eFrjAL.js:gzipBytes",
+      "id": "bundle:assets/project-gallery.worker-uLWKuLg5.js:gzipBytes",
       "suiteId": "bundle",
       "kind": "bundle",
-      "label": "assets/ComponentLibrary-D4eFrjAL.js gzip",
-      "value": 11162,
+      "label": "assets/project-gallery.worker-uLWKuLg5.js gzip",
+      "value": 108534,
       "samples": 1,
       "noisePercent": 0,
       "budget": 307200,
       "target": {
         "kind": "bundle",
         "suiteId": "bundle",
-        "file": "assets/ComponentLibrary-D4eFrjAL.js",
+        "file": "assets/project-gallery.worker-uLWKuLg5.js",
         "metric": "gzipBytes"
       }
     },
     {
-      "id": "bundle:assets/HomeWorkspace-BP6WnYnN.js:gzipBytes",
+      "id": "bundle:assets/CanvasStage-DobZwx8N.js:gzipBytes",
       "suiteId": "bundle",
       "kind": "bundle",
-      "label": "assets/HomeWorkspace-BP6WnYnN.js gzip",
-      "value": 4885,
+      "label": "assets/CanvasStage-DobZwx8N.js gzip",
+      "value": 42174,
       "samples": 1,
       "noisePercent": 0,
       "budget": 307200,
       "target": {
         "kind": "bundle",
         "suiteId": "bundle",
-        "file": "assets/HomeWorkspace-BP6WnYnN.js",
+        "file": "assets/CanvasStage-DobZwx8N.js",
+        "metric": "gzipBytes"
+      }
+    },
+    {
+      "id": "bundle:assets/ComponentLibrary-DopTD4kU.js:gzipBytes",
+      "suiteId": "bundle",
+      "kind": "bundle",
+      "label": "assets/ComponentLibrary-DopTD4kU.js gzip",
+      "value": 12446,
+      "samples": 1,
+      "noisePercent": 0,
+      "budget": 307200,
+      "target": {
+        "kind": "bundle",
+        "suiteId": "bundle",
+        "file": "assets/ComponentLibrary-DopTD4kU.js",
+        "metric": "gzipBytes"
+      }
+    },
+    {
+      "id": "bundle:assets/HomeWorkspace-l9ntZjRZ.js:gzipBytes",
+      "suiteId": "bundle",
+      "kind": "bundle",
+      "label": "assets/HomeWorkspace-l9ntZjRZ.js gzip",
+      "value": 10146,
+      "samples": 1,
+      "noisePercent": 0,
+      "budget": 307200,
+      "target": {
+        "kind": "bundle",
+        "suiteId": "bundle",
+        "file": "assets/HomeWorkspace-l9ntZjRZ.js",
+        "metric": "gzipBytes"
+      }
+    },
+    {
+      "id": "bundle:assets/project-encode.worker-CydMhW6S.js:gzipBytes",
+      "suiteId": "bundle",
+      "kind": "bundle",
+      "label": "assets/project-encode.worker-CydMhW6S.js gzip",
+      "value": 4536,
+      "samples": 1,
+      "noisePercent": 0,
+      "budget": 307200,
+      "target": {
+        "kind": "bundle",
+        "suiteId": "bundle",
+        "file": "assets/project-encode.worker-CydMhW6S.js",
+        "metric": "gzipBytes"
+      }
+    },
+    {
+      "id": "bundle:assets/timelapse-encode.worker-BWkmgetg.js:gzipBytes",
+      "suiteId": "bundle",
+      "kind": "bundle",
+      "label": "assets/timelapse-encode.worker-BWkmgetg.js gzip",
+      "value": 4125,
+      "samples": 1,
+      "noisePercent": 0,
+      "budget": 307200,
+      "target": {
+        "kind": "bundle",
+        "suiteId": "bundle",
+        "file": "assets/timelapse-encode.worker-BWkmgetg.js",
         "metric": "gzipBytes"
       }
     }

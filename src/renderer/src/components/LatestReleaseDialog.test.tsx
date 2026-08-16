@@ -8,7 +8,7 @@ describe('LatestReleaseDialog', () => {
   it('shows only the latest packaged release summary', () => {
     render(<LatestReleaseDialog onClose={vi.fn()} />)
     expect(screen.getByRole('heading', { name: '更新日志' })).toBeInTheDocument()
-    expect(screen.getByText('最新版本：DEV.4')).toBeInTheDocument()
+    expect(screen.getByText('最新版本：DEV.5')).toBeInTheDocument()
     expect(screen.getAllByRole('listitem')).toHaveLength(16)
     expect(screen.queryByText('重置对称中心')).not.toBeInTheDocument()
   })

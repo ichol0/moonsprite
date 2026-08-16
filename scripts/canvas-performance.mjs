@@ -207,7 +207,8 @@ async function seedUndoHistory(page, center) {
 async function benchmarkScenarioPage(page, size, scenario) {
   const projectKind = scenario.startsWith('complex-') ? 'complex' : scenario.startsWith('large-') ? 'large' : 'simple'
   const detailView = scenario.startsWith('large-detail-')
-  const actionKind = scenario.replace(/^complex-/, '').replace(/^large-(?:detail-)?/, '')
+  const actionKind = scenario.replace(/^complex-/, '').replace(/^large-(?:detail-)?/, '').replace(/-timelapse$/, '')
+  const timelapseEnabled = scenario.endsWith('-timelapse')
   let project = { uniquePixelBytes: size * size * 4, layerCount: 1, frameCount: 1 }
   if (projectKind === 'complex') project = await createComplexDocument(page, size)
   else if (projectKind === 'large') project = await createLargeDocument(page, size)
@@ -270,6 +271,11 @@ async function benchmarkScenarioPage(page, size, scenario) {
 
   if (actionKind === 'draw') {
     if (initialView) await prepareToolScenario(page, initialView, 'pencil')
+    if (timelapseEnabled) await page.evaluate(() => {
+      const harness = window.__moonSpritePerformanceHarness
+      if (!harness) throw new Error('Performance harness is unavailable.')
+      harness.setTimelapseRecording(true)
+    })
     results.push(await runScenario(page, size, scenario, async () => {
       await page.mouse.move(center.x - 120, center.y - 70)
       await page.mouse.down({ button: 'left' })
@@ -279,6 +285,13 @@ async function benchmarkScenarioPage(page, size, scenario) {
         await page.waitForTimeout(12)
       }
       await page.mouse.up({ button: 'left' })
+      if (timelapseEnabled) {
+        try {
+          await page.waitForFunction(() => (window.__moonSpritePerformanceHarness?.timelapseSnapshotCount() ?? 0) > 0, undefined, { timeout: 10_000 })
+        } catch (error) {
+          throw new Error('Timelapse capture did not finish within 10 seconds.', { cause: error })
+        }
+      }
     }))
   }
 

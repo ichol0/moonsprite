@@ -1,21 +1,98 @@
-MIT License
+MoonSprite Source-Available License 1.0
 
+Effective date: August 16, 2026
 Copyright (c) 2026 MoonSprite contributors
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+This license applies to MoonSprite source code first published under this
+license. It is a source-available license and is not an open-source license as
+defined by the Open Source Initiative.
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+1. Definitions
+
+"Software" means the MoonSprite source code, documentation, and original
+assets distributed with this license.
+
+"Source Form" means the preferred form for reading or modifying the Software.
+
+"Binary Form" means any compiled, packaged, executable, installer, portable,
+hosted, or otherwise directly usable form of the Software.
+
+"Official Binary" means a Binary Form distributed by MoonSprite's copyright
+holders or through a channel they have authorized, including an authorized
+Steam release.
+
+2. Source Form permissions
+
+Subject to this license, you may:
+
+a. inspect, study, and evaluate the Source Form;
+b. modify the Source Form;
+c. compile and run your own Binary Form for personal, educational, evaluation,
+   contribution, or internal development and testing purposes; and
+d. redistribute the Source Form or patches to it, with or without changes, if
+   you include this license, preserve copyright and attribution notices, mark
+   material changes, provide the complete corresponding Source Form, and apply
+   this same license to the redistributed Software.
+
+3. Binary Form restrictions
+
+Except for private use allowed by Section 2(c), or under a separate written
+commercial distribution agreement, you may not:
+
+a. distribute, sell, sublicense, rent, lease, lend, or publicly provide any
+   Binary Form to another person or organization;
+b. offer the Software as a hosted, streamed, portable, or managed application
+   service for another person or organization;
+c. bypass an authorized distribution channel, payment requirement, license
+   check, or access control; or
+d. present an unofficial build as an Official Binary.
+
+Source availability does not grant a right to redistribute compiled builds.
+
+4. Official Binaries
+
+Official Binaries are licensed separately under the MoonSprite Official Binary
+End User License Agreement (EULA.md) and any applicable authorized-store terms.
+The EULA permits licensed users to create personal and commercial artwork.
+
+5. User-created output
+
+You retain all rights you otherwise hold in artwork, animation, documents,
+exports, and other content created with the Software. This license does not
+claim ownership of that output.
+
+6. Trademarks
+
+This license grants no right to use the MoonSprite name, logo, trade dress, or
+other brand identifiers to endorse or identify a redistributed or modified
+build. Factual attribution is permitted.
+
+7. Third-party material
+
+Third-party software, fonts, libraries, formats, and assets remain governed by
+their own licenses. See THIRD_PARTY_NOTICES.md and the notices distributed with
+those components.
+
+8. Termination
+
+Your rights under this license terminate automatically if you violate it. They
+may be reinstated only when the violation is cured and the copyright holders
+confirm reinstatement in writing.
+
+9. Disclaimer of warranty
 
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+IMPLIED, INCLUDING BUT NOT LIMITED TO WARRANTIES OF MERCHANTABILITY, FITNESS
+FOR A PARTICULAR PURPOSE, TITLE, AND NON-INFRINGEMENT.
+
+10. Limitation of liability
+
+TO THE MAXIMUM EXTENT PERMITTED BY LAW, THE COPYRIGHT HOLDERS SHALL NOT BE
+LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER LIABILITY ARISING FROM, OUT OF, OR IN
+CONNECTION WITH THE SOFTWARE OR ITS USE.
+
+11. Previously published MIT versions
+
+Code and releases already published under the MIT License remain available
+under those historical terms. This license does not revoke permissions already
+granted for those versions. See LICENSE-MIT.

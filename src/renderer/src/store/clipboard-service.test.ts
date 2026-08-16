@@ -4,6 +4,15 @@ import { ClipboardService, selectionClipboardFromImage, selectionClipboardImage 
 const red = new Uint8Array([255, 0, 0, 255])
 
 describe('ClipboardService', () => {
+  it('reuses fully opaque RGBA bytes without allocating a packed pixel copy', () => {
+    const data = new Uint8Array([...red, 0, 255, 0, 255])
+    const clipboard = selectionClipboardFromImage({ width: 2, height: 1, data })
+
+    expect(clipboard?.mask).toBeUndefined()
+    expect(clipboard?.pixels.buffer).toBe(data.buffer)
+    expect(clipboard && selectionClipboardImage(clipboard).data).toEqual(data)
+  })
+
   it('converts clipboard images without retaining transparent pixels', () => {
     const clipboard = selectionClipboardFromImage({ width: 2, height: 1, data: new Uint8Array([...red, 0, 0, 0, 0]) })
     expect(clipboard).not.toBeNull()
@@ -14,9 +23,11 @@ describe('ClipboardService', () => {
   it('uses a readable system image before the internal selection', async () => {
     const service = new ClipboardService()
     service.setSelection({ width: 1, height: 1, pixels: new Uint32Array([0xff0000ff]), mask: new Uint8Array([1]) })
+    const systemData = new Uint8Array([0, 255, 0, 255])
 
-    const clipboard = await service.readSelection(async () => ({ width: 1, height: 1, data: new Uint8Array([0, 255, 0, 255]) }))
+    const clipboard = await service.readSelection(async () => ({ width: 1, height: 1, data: systemData }))
 
+    expect(clipboard?.pixels.buffer).toBe(systemData.buffer)
     expect(clipboard && selectionClipboardImage(clipboard).data).toEqual(new Uint8Array([0, 255, 0, 255]))
   })
 

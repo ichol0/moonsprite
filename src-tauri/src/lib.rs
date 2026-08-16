@@ -9,10 +9,12 @@ use std::{
 use tauri::{AppHandle, DragDropEvent, Emitter, Manager, State, WindowEvent};
 
 mod close_coordinator;
+mod platform_background_presets;
 mod platform_brushes;
 mod platform_clipboard;
 mod platform_dialogs;
 mod platform_files;
+mod platform_fonts;
 mod platform_gallery;
 mod platform_palette;
 mod platform_paths;
@@ -110,10 +112,15 @@ pub fn run() {
         })
         .manage(platform_recovery::RecoveryState::default())
         .setup(|app| {
+            if let Some(window) = app.get_webview_window("main") {
+                let icon = tauri::image::Image::from_bytes(include_bytes!("../icons/32x32.png"))?;
+                window.set_icon(icon)?;
+            }
             let recovery_state = app.state::<platform_recovery::RecoveryState>();
             platform_recovery::initialize_session_marker(app.handle(), &recovery_state)?;
             let _ = platform_gallery::ensure_builtin_example(app.handle().clone());
             let _ = platform_paths::export_directory();
+            let _ = platform_background_presets::ensure_background_preset_folder();
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -128,7 +135,10 @@ pub fn run() {
             platform_dialogs::choose_directory,
             platform_files::file_exists,
             platform_files::read_binary,
+            platform_files::read_project_preview,
+            platform_files::cache_project_preview,
             platform_files::write_binary_atomic,
+            platform_files::write_project_incremental,
             platform_clipboard::write_clipboard_image,
             platform_clipboard::read_clipboard_text,
             platform_clipboard::read_clipboard_image,
@@ -146,13 +156,22 @@ pub fn run() {
             platform_brushes::save_brush,
             platform_brushes::delete_brush,
             platform_brushes::open_brush_folder,
+            platform_fonts::list_fonts,
+            platform_fonts::list_system_fonts,
+            platform_fonts::import_font,
+            platform_fonts::import_system_font,
+            platform_fonts::delete_font,
+            platform_background_presets::list_background_presets,
+            platform_background_presets::open_background_preset_folder,
             platform_recovery::list_recoveries,
             platform_recovery::read_recovery,
             platform_recovery::write_recovery,
             platform_recovery::delete_recovery,
             platform_gallery::list_gallery_projects,
+            platform_gallery::list_folder_projects,
             platform_gallery::delete_gallery_project,
             platform_gallery::open_gallery_folder,
+            platform_gallery::open_directory,
             platform_gallery::ensure_builtin_example,
             platform_gallery::open_project_in_folder,
             platform_gallery::open_external_url,

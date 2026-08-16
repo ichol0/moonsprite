@@ -1,62 +1,115 @@
 import type { RgbaColor, SpriteDocument } from '@shared/types'
 import { compositeDocument } from './document'
-import { encodePng } from './png'
+import { encodePng } from './png-encode'
 import { translateCurrent as tr } from './localization'
+import { clampByte, hsvToRgb, packColor, rgbToHsv } from './raster'
 
 interface WeightedColor extends RgbaColor { count: number }
 
+export type PaletteSortMode = 'hue' | 'saturation' | 'brightness' | 'luminance' | 'red' | 'green' | 'blue' | 'alpha'
+export type PaletteSortDirection = 'ascending' | 'descending'
+
+interface PaletteColorSortValues {
+  achromatic: boolean
+  hue: number
+  brightness: number
+  luminance: number
+  saturation: number
+}
+
+const srgbToLinear = (channel: number): number => {
+  const value = channel / 255
+  return value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4
+}
+
+const paletteColorSortValues = (color: RgbaColor): PaletteColorSortValues => {
+  const red = color.r / 255
+  const green = color.g / 255
+  const blue = color.b / 255
+  const maximum = Math.max(red, green, blue)
+  const minimum = Math.min(red, green, blue)
+  const range = maximum - minimum
+  let hue = 0
+  if (range > 0) {
+    if (maximum === red) hue = ((green - blue) / range + (green < blue ? 6 : 0)) * 60
+    else if (maximum === green) hue = ((blue - red) / range + 2) * 60
+    else hue = ((red - green) / range + 4) * 60
+  }
+  return {
+    achromatic: range <= 8 / 255,
+    hue,
+    brightness: maximum,
+    luminance: 0.2126 * srgbToLinear(color.r) + 0.7152 * srgbToLinear(color.g) + 0.0722 * srgbToLinear(color.b),
+    saturation: maximum === 0 ? 0 : range / maximum
+  }
+}
+
+const comparePaletteColorsByHue = (left: RgbaColor, right: RgbaColor): number => {
+  const leftValues = paletteColorSortValues(left)
+  const rightValues = paletteColorSortValues(right)
+  if (leftValues.achromatic !== rightValues.achromatic) return leftValues.achromatic ? -1 : 1
+  if (leftValues.achromatic) return leftValues.brightness - rightValues.brightness || right.a - left.a || packColor(left) - packColor(right)
+  return leftValues.hue - rightValues.hue
+    || leftValues.brightness - rightValues.brightness
+    || rightValues.saturation - leftValues.saturation
+    || right.a - left.a
+    || packColor(left) - packColor(right)
+}
+
+export const comparePaletteColors = (left: RgbaColor, right: RgbaColor, mode: PaletteSortMode, direction: PaletteSortDirection = 'ascending'): number => {
+  const leftValues = paletteColorSortValues(left)
+  const rightValues = paletteColorSortValues(right)
+  const result = mode === 'saturation'
+    ? leftValues.saturation - rightValues.saturation || leftValues.brightness - rightValues.brightness || comparePaletteColorsByHue(left, right)
+    : mode === 'brightness'
+      ? leftValues.brightness - rightValues.brightness || leftValues.saturation - rightValues.saturation || comparePaletteColorsByHue(left, right)
+      : mode === 'luminance'
+        ? leftValues.luminance - rightValues.luminance || leftValues.brightness - rightValues.brightness || comparePaletteColorsByHue(left, right)
+        : mode === 'red'
+          ? left.r - right.r || left.g - right.g || left.b - right.b || left.a - right.a
+          : mode === 'green'
+            ? left.g - right.g || left.r - right.r || left.b - right.b || left.a - right.a
+            : mode === 'blue'
+              ? left.b - right.b || left.r - right.r || left.g - right.g || left.a - right.a
+              : mode === 'alpha'
+                ? left.a - right.a || comparePaletteColorsByHue(left, right)
+                : comparePaletteColorsByHue(left, right)
+  return direction === 'descending' ? -result : result
+}
+
+export const sortPaletteColors = (colors: readonly RgbaColor[], mode: PaletteSortMode = 'hue', direction: PaletteSortDirection = 'ascending'): RgbaColor[] => [...colors]
+  .sort((left, right) => comparePaletteColors(left, right, mode, direction))
+  .map((color) => ({ ...color }))
+
+const interpolateChannel = (start: number, end: number, amount: number): number => clampByte(start + (end - start) * amount)
+
+export const paletteGradient = (start: RgbaColor, end: RgbaColor, count: number, byHue = false): RgbaColor[] => {
+  const length = Math.max(0, Math.trunc(count))
+  if (length === 0) return []
+  if (length === 1) return [{ ...start }]
+  const startHsv = rgbToHsv(start)
+  const endHsv = rgbToHsv(end)
+  let hueDelta = endHsv.h - startHsv.h
+  if (hueDelta > 180) hueDelta -= 360
+  else if (hueDelta < -180) hueDelta += 360
+  return Array.from({ length }, (_, index) => {
+    const amount = index / (length - 1)
+    if (!byHue) return {
+      r: interpolateChannel(start.r, end.r, amount),
+      g: interpolateChannel(start.g, end.g, amount),
+      b: interpolateChannel(start.b, end.b, amount),
+      a: interpolateChannel(start.a, end.a, amount)
+    }
+    return hsvToRgb({
+      h: startHsv.h + hueDelta * amount,
+      s: startHsv.s + (endHsv.s - startHsv.s) * amount,
+      v: startHsv.v + (endHsv.v - startHsv.v) * amount
+    }, interpolateChannel(start.a, end.a, amount))
+  })
+}
+
 const colorKey = (color: RgbaColor): number =>
   (color.r | (color.g << 8) | (color.b << 16) | (color.a << 24)) >>> 0
-
-export function countUsedPaletteColors(document: SpriteDocument): number {
-  const opaqueEntries = document.palette.filter((entry) => entry.color.a > 0)
-  if (opaqueEntries.length === 0) return 0
-
-  const paletteIds = new Set(opaqueEntries.map((entry) => entry.id))
-  const paletteIdsByColor = new Map<number, number[]>()
-  for (const entry of opaqueEntries) {
-    const key = colorKey(entry.color)
-    const ids = paletteIdsByColor.get(key)
-    if (ids) ids.push(entry.id)
-    else paletteIdsByColor.set(key, [entry.id])
-  }
-
-  const usedIds = new Set<number>()
-  const visitedPixels = new Set<Uint8ClampedArray | Uint32Array>()
-  const surfaces = [
-    ...document.layers,
-    ...(document.animation?.cels.flatMap((cel) => cel.surface ? [cel.surface] : []) ?? [])
-  ]
-
-  for (const surface of surfaces) {
-    if (visitedPixels.has(surface.pixels)) continue
-    visitedPixels.add(surface.pixels)
-
-    if (surface.format === 'indexed') {
-      for (const id of surface.pixels) {
-        if (paletteIds.has(id)) usedIds.add(id)
-        if (usedIds.size === opaqueEntries.length) return usedIds.size
-      }
-      continue
-    }
-
-    for (let offset = 0; offset < surface.pixels.length; offset += 4) {
-      if (surface.pixels[offset + 3] === 0) continue
-      const key = (
-        surface.pixels[offset]
-        | (surface.pixels[offset + 1] << 8)
-        | (surface.pixels[offset + 2] << 16)
-        | (surface.pixels[offset + 3] << 24)
-      ) >>> 0
-      const ids = paletteIdsByColor.get(key)
-      if (!ids) continue
-      for (const id of ids) usedIds.add(id)
-      if (usedIds.size === opaqueEntries.length) return usedIds.size
-    }
-  }
-
-  return usedIds.size
-}
 
 const channelValue = (color: RgbaColor, channel: keyof RgbaColor): number => color[channel]
 
@@ -95,17 +148,25 @@ const averageBucket = (colors: WeightedColor[]): RgbaColor => {
   return { r: average('r'), g: average('g'), b: average('b'), a: average('a') }
 }
 
-export function extractPaletteColors(document: SpriteDocument, requestedLimit: number): RgbaColor[] {
+export function extractPaletteColorsFromRgbaSurfaces(surfaces: readonly Uint8ClampedArray[], requestedLimit: number, maximumSamples = Number.POSITIVE_INFINITY): RgbaColor[] {
   const limit = Math.max(1, Math.min(4096, Math.round(requestedLimit) || 1))
-  const pixels = compositeDocument(document)
+  const totalPixels = surfaces.reduce((total, pixels) => total + Math.floor(pixels.length / 4), 0)
+  const sampleLimit = Number.isFinite(maximumSamples) ? Math.max(1, Math.floor(maximumSamples)) : Math.max(1, totalPixels)
+  const sampleStride = Math.max(1, Math.ceil(totalPixels / sampleLimit))
   const colors = new Map<number, WeightedColor>()
-  for (let offset = 0; offset < pixels.length; offset += 4) {
-    if (pixels[offset + 3] === 0) continue
-    const color = { r: pixels[offset], g: pixels[offset + 1], b: pixels[offset + 2], a: pixels[offset + 3] }
-    const key = colorKey(color)
-    const existing = colors.get(key)
-    if (existing) existing.count += 1
-    else colors.set(key, { ...color, count: 1 })
+  let globalPixelIndex = 0
+  for (const pixels of surfaces) {
+    for (let offset = 0; offset < pixels.length; offset += 4) {
+      const sample = globalPixelIndex % sampleStride === 0
+      globalPixelIndex += 1
+      if (!sample) continue
+      if (pixels[offset + 3] === 0) continue
+      const color = { r: pixels[offset], g: pixels[offset + 1], b: pixels[offset + 2], a: pixels[offset + 3] }
+      const key = colorKey(color)
+      const existing = colors.get(key)
+      if (existing) existing.count += 1
+      else colors.set(key, { ...color, count: 1 })
+    }
   }
   const unique = [...colors.values()]
   if (unique.length <= limit) return unique.map(({ r, g, b, a }) => ({ r, g, b, a }))
@@ -155,6 +216,10 @@ export function extractPaletteColors(document: SpriteDocument, requestedLimit: n
     }
   }
   return result
+}
+
+export function extractPaletteColors(document: SpriteDocument, requestedLimit: number): RgbaColor[] {
+  return sortPaletteColors(extractPaletteColorsFromRgbaSurfaces([compositeDocument(document)], requestedLimit), 'luminance')
 }
 
 export function mergePaletteColors(current: RgbaColor[], incoming: RgbaColor[]): RgbaColor[] {

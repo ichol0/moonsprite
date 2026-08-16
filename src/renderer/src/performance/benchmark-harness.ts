@@ -186,6 +186,12 @@ const prepareTool = (tool: ToolId, fillKind: FillKind | null = null, shapeKind: 
   state.setGradientDither('none')
 }
 
+const setTimelapseRecording = (enabled: boolean) => {
+  useWorkspace.getState().setTimelapseSettings({ enabled, quality: 'low', fps: 12, speed: 8 })
+}
+
+const timelapseSnapshotCount = () => activeSession()?.document.timelapse?.snapshots.length ?? 0
+
 const delay = (milliseconds: number) => new Promise((resolve) => window.setTimeout(resolve, milliseconds))
 
 async function undoRedo(count: number) {
@@ -226,6 +232,8 @@ export function installPerformanceHarness() {
     activeView,
     resetScenario,
     prepareTool,
+    setTimelapseRecording,
+    timelapseSnapshotCount,
     undoRedo,
     playAnimation
   }

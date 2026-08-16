@@ -29,6 +29,8 @@ import builtinRotateSw from '@/assets/pixel-icons/cursor-selection-rotate-sw.png
 import builtinRotateNw from '@/assets/pixel-icons/cursor-selection-rotate-nw.png'
 import cursorShearHorizontal from '@/assets/pixel-icons/cursor-selection-shear-horizontal.png'
 import cursorShearVertical from '@/assets/pixel-icons/cursor-selection-shear-vertical.png'
+import cursorShearNesw from '@/assets/pixel-icons/cursor-selection-shear-nesw.png'
+import cursorShearNwse from '@/assets/pixel-icons/cursor-selection-shear-nwse.png'
 
 export interface CursorDefinition {
   variable: string
@@ -73,7 +75,9 @@ export const CURSOR_ICON_LIBRARY: readonly CursorDefinition[] = [
   { variable: '--cursor-selection-rotate-n', source: cursorRotateN, builtinSource: cursorRotateN, hotspot: [16, 16], fallback: 'crosshair' },
   { variable: '--cursor-selection-rotate-s', source: cursorRotateS, builtinSource: cursorRotateS, hotspot: [16, 16], fallback: 'crosshair' },
   { variable: '--cursor-selection-shear-horizontal', source: cursorShearHorizontal, builtinSource: cursorShearHorizontal, hotspot: [16, 16], fallback: 'ew-resize' },
-  { variable: '--cursor-selection-shear-vertical', source: cursorShearVertical, builtinSource: cursorShearVertical, hotspot: [16, 16], fallback: 'ns-resize' }
+  { variable: '--cursor-selection-shear-vertical', source: cursorShearVertical, builtinSource: cursorShearVertical, hotspot: [16, 16], fallback: 'ns-resize' },
+  { variable: '--cursor-selection-shear-nesw', source: cursorShearNesw, builtinSource: cursorShearNesw, hotspot: [16, 16], fallback: 'nesw-resize' },
+  { variable: '--cursor-selection-shear-nwse', source: cursorShearNwse, builtinSource: cursorShearNwse, hotspot: [16, 16], fallback: 'nwse-resize' }
 ] as const
 
 const cursorDefinitions: CursorDefinition[] = [...CURSOR_ICON_LIBRARY]
@@ -88,7 +92,8 @@ const canvasPixelCursorVariables = new Set([
   '--cursor-pencil-white',
   '--cursor-selection-black',
   '--cursor-selection-white',
-  '--cursor-eyedropper'
+  '--cursor-eyedropper',
+  '--cursor-zoom'
 ])
 
 export type CursorPreferenceSource = 'system' | 'moonsprite'

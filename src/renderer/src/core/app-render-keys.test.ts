@@ -92,6 +92,13 @@ describe('app render keys', () => {
     }
   })
 
+  it('invalidates tool options when rotational symmetry changes', () => {
+    const session = createSession()
+    const before = toolOptionsRenderKey(session)
+    session.symmetryAxes.rotational = true
+    expect(toolOptionsRenderKey(session)).not.toBe(before)
+  })
+
   it('keeps the app coordinator stable for high-frequency canvas updates', () => {
     const session = createSession()
     const state = { activeId: session.document.id, sessions: [session], dialog: null, saveProgress: null }
@@ -115,6 +122,12 @@ describe('app render keys', () => {
     session.view.showSelectionOutline = false
     expect(appCoordinatorRenderKey(state)).not.toBe(hiddenOutline)
     expect(appMenuRenderKey(session)).toContain(';0;')
+
+    const hiddenPivot = appCoordinatorRenderKey(state)
+    const pivotOptions = toolOptionsRenderKey(session)
+    session.view.showSelectionPivot = true
+    expect(appCoordinatorRenderKey(state)).not.toBe(hiddenPivot)
+    expect(toolOptionsRenderKey(session)).not.toBe(pivotOptions)
 
     const toolKey = appCoordinatorRenderKey(state)
     session.tool = 'eyedropper'

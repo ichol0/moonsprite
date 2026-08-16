@@ -1,12 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import { selectionContains } from './selection'
-import { moveSymmetryCenter, symmetryAxisSegment, symmetryPoints, symmetrySelection, transformSymmetrySelection, type SymmetryAxes } from './symmetry'
+import { moveSymmetryCenter, symmetryAxisSegment, symmetryPoints, symmetrySelection, symmetrySelectionDragDelta, transformSymmetrySelection, type SymmetryAxes } from './symmetry'
 
 const axes = (values: Partial<SymmetryAxes>): SymmetryAxes => ({
   horizontal: false,
   vertical: false,
   diagonalUp: false,
   diagonalDown: false,
+  rotational: false,
   ...values
 })
 
@@ -46,6 +47,30 @@ describe('symmetry', () => {
     expect(symmetryPoints({ x: 0, y: 0 }, 8, 2, axes({ diagonalDown: true }))).toEqual([{ x: 0, y: 0 }])
   })
 
+  it('creates a four-way 90-degree rotational orbit around the movable center', () => {
+    expect(symmetryPoints({ x: 3, y: 2 }, 5, 5, axes({ rotational: true }))).toEqual([
+      { x: 3, y: 2 },
+      { x: 2, y: 3 },
+      { x: 1, y: 2 },
+      { x: 2, y: 1 }
+    ])
+    expect(symmetryPoints({ x: 2, y: 2 }, 5, 5, axes({ rotational: true }))).toEqual([{ x: 2, y: 2 }])
+  })
+
+  it('keeps evaluating rotational closure after an intermediate point leaves a rectangular canvas', () => {
+    expect(symmetryPoints({ x: 0, y: 0 }, 8, 2, axes({ rotational: true }))).toEqual([
+      { x: 0, y: 0 },
+      { x: 7, y: 1 }
+    ])
+  })
+
+  it('composes rotational symmetry with mirror axes without duplicate pixels', () => {
+    const points = symmetryPoints({ x: 5, y: 2 }, 7, 7, axes({ horizontal: true, rotational: true }))
+    expect(points).toHaveLength(8)
+    expect(points).toContainEqual({ x: 5, y: 4 })
+    expect(new Set(points.map((point) => `${point.x}:${point.y}`)).size).toBe(points.length)
+  })
+
   it('preserves mirrored transform previews outside the canvas when requested', () => {
     const transformed = transformSymmetrySelection(
       { x: 0, y: 1, width: 1, height: 1 },
@@ -68,6 +93,24 @@ describe('symmetry', () => {
     const mirrored = symmetrySelection(selection, 4, 4, axes({ horizontal: true, vertical: true }))!
     expect([[0, 0], [1, 1], [3, 0], [2, 1], [0, 3], [1, 2], [3, 3], [2, 2]].every(([x, y]) => selectionContains(mirrored, x, y))).toBe(true)
     expect(Array.from(mirrored.mask ?? []).reduce((sum, value) => sum + value, 0)).toBe(8)
+  })
+
+  it('moves whichever horizontal mirror region was pressed in the pointer direction', () => {
+    const horizontalAxes = axes({ horizontal: true })
+    const selection = symmetrySelection({ x: 1, y: 1, width: 1, height: 1 }, 6, 6, horizontalAxes)!
+    expect(symmetrySelectionDragDelta(selection, { x: 1, y: 1 }, { x: 0, y: 1 }, 6, 6, horizontalAxes)).toEqual({ x: 0, y: 1 })
+    expect(symmetrySelectionDragDelta(selection, { x: 1, y: 4 }, { x: 0, y: 1 }, 6, 6, horizontalAxes)).toEqual({ x: 0, y: -1 })
+
+    const movedFromLower = transformSymmetrySelection(selection, { ...selection, y: selection.y - 1 }, 6, 6, 0, undefined, horizontalAxes)!
+    expect(selectionContains(movedFromLower, 1, 5)).toBe(true)
+    expect(selectionContains(movedFromLower, 1, 0)).toBe(true)
+  })
+
+  it('maps diagonal mirror drags back to the canonical selection orientation', () => {
+    const diagonalAxes = axes({ diagonalDown: true })
+    const selection = symmetrySelection({ x: 3, y: 1, width: 1, height: 1 }, 5, 5, diagonalAxes)!
+    expect(selectionContains(selection, 1, 3)).toBe(true)
+    expect(symmetrySelectionDragDelta(selection, { x: 1, y: 3 }, { x: 1, y: 0 }, 5, 5, diagonalAxes)).toEqual({ x: 0, y: 1 })
   })
 
   it('uses a movable half-pixel center for every reflection', () => {

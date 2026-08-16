@@ -1,14 +1,18 @@
 import { describe, expect, it } from 'vitest'
 import {
   EXPORT_PRESETS_STORAGE_KEY,
+  DOCUMENT_EXPORT_SETTINGS_STORAGE_KEY,
   LEGACY_EXPORT_PRESETS_STORAGE_KEY,
   RECENT_EXPORT_PATHS_STORAGE_KEY,
+  loadDocumentExportSettings,
   loadExportPresets,
   loadRecentExportPaths,
   parentDirectoryFromPath,
   recordRecentExportPath,
+  saveDocumentExportSettings,
   saveExportPresets,
   withExportFileExtension,
+  type DocumentExportSettingsOwner,
   type ExportPreset
 } from './export-settings'
 
@@ -24,6 +28,8 @@ function memoryStorage(): Storage {
   }
 }
 
+const exportOwner = (id: string, filePath: string | null, sourceFilePath?: string): DocumentExportSettingsOwner => ({ id, filePath, sourceFilePath })
+
 describe('export settings persistence', () => {
   it('round-trips every export option including GIF settings and directory', () => {
     const storage = memoryStorage()
@@ -33,6 +39,7 @@ describe('export settings persistence', () => {
       { presetName: 'JPEG', name: 'sprite.jpg', format: 'jpeg', scalePercent: 300 },
       { presetName: 'WebP', name: 'sprite.webp', format: 'webp', scalePercent: 400 },
       { presetName: 'SVG', name: 'sprite.svg', format: 'svg', scalePercent: 800 },
+      { presetName: 'All frames', name: 'walk.png', format: 'png-rgba', scalePercent: 100, target: 'frames' },
       {
         presetName: 'GIF preview',
         name: 'walk.gif',
@@ -87,10 +94,44 @@ describe('export settings persistence', () => {
     expect(JSON.parse(storage.getItem(RECENT_EXPORT_PATHS_STORAGE_KEY) ?? '{}').schemaVersion).toBe(1)
   })
 
+  it('restores the last successful export settings for the same document path', () => {
+    const storage = memoryStorage()
+    const settings = {
+      name: 'walk.gif',
+      format: 'gif' as const,
+      scalePercent: 400,
+      target: 'document' as const,
+      directory: 'D:/exports/animation',
+      gifFrameRange: 'range' as const,
+      gifFrameStart: 2,
+      gifFrameEnd: 8,
+      gifDirection: 'reverse-ping-pong' as const,
+      presetName: 'GIF preview'
+    }
+    expect(saveDocumentExportSettings(exportOwner('doc-a', 'D:\\projects\\walk.moonsprite'), settings, storage, 10)).toBe(true)
+    expect(loadDocumentExportSettings(exportOwner('reopened-doc', 'd:/projects/walk.moonsprite'), storage)).toEqual(settings)
+    expect(JSON.parse(storage.getItem(DOCUMENT_EXPORT_SETTINGS_STORAGE_KEY) ?? '{}').schemaVersion).toBe(1)
+  })
+
+  it('isolates settings between files while retaining an unsaved document by id', () => {
+    const storage = memoryStorage()
+    const first = exportOwner('doc-a', null, 'D:/imports/a.png')
+    const second = exportOwner('doc-b', null, 'D:/imports/b.png')
+    const unsaved = exportOwner('doc-unsaved', null)
+    expect(saveDocumentExportSettings(first, { name: 'a.png', format: 'png-rgba', scalePercent: 200, target: 'frames', directory: 'D:/exports/a' }, storage, 10)).toBe(true)
+    expect(saveDocumentExportSettings(second, { name: 'b.webp', format: 'webp', scalePercent: 300, target: 'document', directory: 'D:/exports/b' }, storage, 20)).toBe(true)
+    expect(saveDocumentExportSettings(unsaved, { name: 'draft.png', format: 'png-auto', scalePercent: 100, target: 'document', directory: 'D:/exports/draft' }, storage, 30)).toBe(true)
+    expect(loadDocumentExportSettings(exportOwner('reopened-a', null, 'D:/imports/a.png'), storage)).toMatchObject({ name: 'a.png', format: 'png-rgba', target: 'frames', directory: 'D:/exports/a' })
+    expect(loadDocumentExportSettings(exportOwner('reopened-b', null, 'D:/imports/b.png'), storage)).toMatchObject({ name: 'b.webp', format: 'webp', directory: 'D:/exports/b' })
+    expect(loadDocumentExportSettings(exportOwner('doc-unsaved', null), storage)).toMatchObject({ name: 'draft.png', directory: 'D:/exports/draft' })
+    expect(loadDocumentExportSettings(exportOwner('doc-c', null), storage)).toBeNull()
+  })
+
   it('reports storage write failures', () => {
     const storage = memoryStorage()
     storage.setItem = () => { throw new Error('quota') }
     expect(saveExportPresets([], storage)).toBe(false)
     expect(recordRecentExportPath('D:/exports/sprite.png', storage)).toBe(false)
+    expect(saveDocumentExportSettings(exportOwner('doc-a', null), { name: 'sprite.png', format: 'png-auto', scalePercent: 100 }, storage)).toBe(false)
   })
 })

@@ -4,6 +4,7 @@ import type { MoonSpriteApi, RgbaColor, StoredPalette } from '@shared/types'
 import { createDocument } from '@/core/document'
 import { useWorkspace } from '@/store/workspace'
 import { PalettePanel } from './PalettePanel'
+import { beginPaletteSamplingShortcut, endPaletteSamplingShortcut } from '@/core/palette-sampling-shortcut'
 
 beforeEach(() => {
   localStorage.clear()
@@ -11,11 +12,62 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  endPaletteSamplingShortcut()
   cleanup()
   vi.useRealTimers()
 })
 
 describe('PalettePanel editing lock', () => {
+  it('uses small swatches by default', () => {
+    const project = createDocument('small palette swatches', 2, 2, 'rgba')
+    useWorkspace.getState().addSession(project)
+    const { container } = render(<PalettePanel session={useWorkspace.getState().sessions[0]} docked />)
+
+    expect(container.querySelector<HTMLElement>('.swatch-grid')?.style.getPropertyValue('--swatch-size')).toBe('30px')
+  })
+
+  it('samples palette colors with the eyedropper and adds them only while Alt+S is held', () => {
+    const project = createDocument('palette sampling', 2, 2, 'rgba')
+    useWorkspace.getState().addSession(project)
+    const session = useWorkspace.getState().sessions[0]
+    session.tool = 'eyedropper'
+    const sampled = project.palette.find((entry) => entry.id === 2)!
+    const add = vi.spyOn(useWorkspace.getState(), 'addPaletteColor')
+    add.mockClear()
+    const { container } = render(<PalettePanel session={session} docked />)
+    const swatch = container.querySelector<HTMLButtonElement>('[data-palette-id="2"]')!
+
+    fireEvent.pointerDown(swatch, { button: 0, pointerId: 71 })
+    expect(session.primaryColor).toEqual(sampled.color)
+    expect(add).not.toHaveBeenCalled()
+
+    beginPaletteSamplingShortcut()
+    fireEvent.pointerDown(swatch, { button: 0, pointerId: 72 })
+    expect(add).toHaveBeenCalledWith(sampled.color)
+  })
+
+  it('temporarily samples palette colors with Alt and keeps the eyedropper cursor visible', () => {
+    const project = createDocument('temporary palette sampling', 2, 2, 'rgba')
+    useWorkspace.getState().addSession(project)
+    const session = useWorkspace.getState().sessions[0]
+    session.tool = 'pencil'
+    const sampled = project.palette.find((entry) => entry.id === 2)!
+    const add = vi.spyOn(useWorkspace.getState(), 'addPaletteColor')
+    add.mockClear()
+    const { container } = render(<PalettePanel session={session} docked />)
+    const panel = container.querySelector<HTMLElement>('.palette-panel')!
+    const swatch = container.querySelector<HTMLButtonElement>('[data-palette-id="2"]')!
+
+    fireEvent.keyDown(window, { key: 'Alt', altKey: true })
+    expect(panel).toHaveClass('panel-color-sampling')
+    fireEvent.pointerDown(swatch, { button: 0, pointerId: 73, altKey: true })
+    expect(session.primaryColor).toEqual(sampled.color)
+    expect(add).not.toHaveBeenCalled()
+
+    fireEvent.keyUp(window, { key: 'Alt', altKey: false })
+    expect(panel).not.toHaveClass('panel-color-sampling')
+  })
+
   it('uses the standard menu pattern with expanded swatch-size choices', () => {
     const project = createDocument('palette actions', 2, 2, 'rgba')
     useWorkspace.getState().addSession(project)
@@ -26,9 +78,30 @@ describe('PalettePanel editing lock', () => {
 
     const menu = document.querySelector('.palette-actions-popover')
     expect(menu).toHaveClass('context-menu')
-    expect(menu?.querySelector('.menu-submenu-trigger')).not.toBeInTheDocument()
-    expect(menu?.querySelectorAll('[role="menuitemradio"]')).toHaveLength(5)
+    expect(menu?.querySelector('.menu-submenu-trigger')).toHaveTextContent('排序与渐变')
+    expect(menu?.querySelectorAll('[role="menuitemradio"]')).toHaveLength(7)
+    expect(menu?.querySelectorAll('.palette-sort-popover [role="menuitem"]')).toHaveLength(11)
+    expect(menu?.querySelectorAll('.palette-sort-popover [role="menuitem"]:disabled')).toHaveLength(2)
+    expect(menu).toHaveTextContent('反向颜色渐变色调渐变色调排序饱和度排序明度排序亮度排序Red 排序Green 排序Blue 排序Alpha 排序升序降序')
     expect(menu).toHaveTextContent('较小尺寸小尺寸中尺寸大尺寸较大尺寸')
+  })
+
+  it('keeps color synchronization off by default and explains the persisted toggle', async () => {
+    const project = createDocument('palette color synchronization', 2, 2, 'rgba')
+    useWorkspace.getState().addSession(project)
+    const session = useWorkspace.getState().sessions[0]
+    const { container } = render(<PalettePanel session={session} docked />)
+
+    fireEvent.click(container.querySelector<HTMLButtonElement>('.palette-actions-control > button')!)
+    const toggle = screen.getByRole('menuitemcheckbox', { name: '同步颜色' })
+    expect(toggle).toHaveAttribute('aria-checked', 'false')
+
+    fireEvent.pointerEnter(toggle.closest('.moon-tooltip-anchor')!)
+    expect(await screen.findByRole('tooltip')).toHaveTextContent('修改色板颜色时，会同时替换项目中所有未锁定图层和动画帧里使用该颜色的像素')
+
+    fireEvent.click(toggle)
+    expect(toggle).toHaveAttribute('aria-checked', 'true')
+    expect(localStorage.getItem('moonsprite.palette-sync-colors')).toBe('true')
   })
 
   it('keeps the swatch grid unchanged when unlocking and selecting a swatch', () => {
@@ -45,6 +118,31 @@ describe('PalettePanel editing lock', () => {
 
     expect(container.querySelectorAll('.palette-swatch-wrap')).toHaveLength(swatchCount)
     expect(container.querySelector('.palette-inline-editor')).not.toBeInTheDocument()
+  })
+
+  it('keeps an unlocked palette color selected while editing it from the color panel', () => {
+    localStorage.setItem('moonsprite.palette-edit-locked', 'false')
+    const project = createDocument('palette color editing focus', 2, 2, 'rgba')
+    useWorkspace.getState().addSession(project)
+    const session = useWorkspace.getState().sessions[0]
+    const entry = project.palette.find((candidate) => candidate.id === 1)!
+    const { container } = render(<PalettePanel session={session} docked />)
+    const swatch = container.querySelector<HTMLButtonElement>('[data-palette-id="1"]')!
+    const colorPanel = document.createElement('section')
+    colorPanel.className = 'color-panel'
+    const colorControl = document.createElement('button')
+    colorPanel.append(colorControl)
+    document.body.append(colorPanel)
+
+    fireEvent.pointerDown(swatch, { button: 0, pointerId: 31 })
+    fireEvent.pointerUp(swatch, { button: 0, pointerId: 31 })
+    fireEvent.blur(swatch, { relatedTarget: colorControl })
+    fireEvent.pointerDown(colorControl)
+    expect(session.paletteSelectionId).toBe(1)
+
+    useWorkspace.getState().setPrimaryColor({ r: 12, g: 34, b: 56, a: 255 })
+    expect(entry.color).toEqual({ r: 12, g: 34, b: 56, a: 255 })
+    colorPanel.remove()
   })
 
   it('renders an adaptive clickable row including empty destinations', () => {
@@ -83,6 +181,44 @@ describe('PalettePanel editing lock', () => {
 
     fireEvent.blur(updatedColors[1], { relatedTarget: document.body })
     expect(session.selectedPaletteIds).toEqual([])
+  })
+
+  it('keeps a palette box selection while using panel buttons and clears it after clicking outside', () => {
+    const project = createDocument('palette retained selection', 2, 2, 'rgba')
+    useWorkspace.getState().addSession(project)
+    useWorkspace.getState().selectPaletteColors([1, 2], 2)
+    const session = useWorkspace.getState().sessions[0]
+    const { container } = render(<PalettePanel session={session} docked />)
+    const swatch = container.querySelector<HTMLButtonElement>('[data-palette-id="2"]')!
+    const actions = container.querySelector<HTMLButtonElement>('.palette-actions-control > button')!
+
+    fireEvent.blur(swatch, { relatedTarget: actions })
+    fireEvent.click(actions)
+    expect(session.selectedPaletteIds).toEqual([1, 2])
+
+    fireEvent.pointerDown(document.body)
+    expect(session.selectedPaletteIds).toEqual([])
+  })
+
+  it('fills empty slots between selected endpoint colors when applying a gradient from the menu', () => {
+    const project = createDocument('palette endpoint gradient', 2, 2, 'rgba')
+    project.palette.find((entry) => entry.id === 1)!.color = { r: 0, g: 120, b: 255, a: 255 }
+    project.palette.find((entry) => entry.id === 2)!.color = { r: 255, g: 255, b: 255, a: 255 }
+    project.paletteColumns = 8
+    project.paletteSlots = [1, null, null, null, 2, null, null, null]
+    project.paletteOrder = [1, 2]
+    useWorkspace.getState().addSession(project)
+    useWorkspace.getState().selectPaletteColors([1, 2], 2)
+    const session = useWorkspace.getState().sessions[0]
+    const { container } = render(<PalettePanel session={session} docked />)
+
+    fireEvent.click(container.querySelector<HTMLButtonElement>('.palette-actions-control > button')!)
+    const gradientButton = document.querySelector<HTMLElement>('[data-sort-mode="gradient"]')?.closest<HTMLButtonElement>('button')
+    expect(gradientButton).not.toBeDisabled()
+    fireEvent.click(gradientButton!)
+
+    expect(project.paletteSlots?.slice(0, 5).every((id) => id !== null)).toBe(true)
+    expect(project.paletteOrder).toHaveLength(5)
   })
 
   it('starts moving only from the selected selection outline', () => {
@@ -149,6 +285,25 @@ describe('PalettePanel editing lock', () => {
     expect(project.paletteSlots?.[6]).toBe(added?.id)
   })
 
+  it('clears an empty-slot focus after adding a color while unlocked', () => {
+    localStorage.setItem('moonsprite.palette-edit-locked', 'false')
+    const project = createDocument('palette unlocked add', 2, 2, 'rgba')
+    useWorkspace.getState().addSession(project)
+    useWorkspace.getState().setPrimaryColor({ r: 211, g: 41, b: 91, a: 255 })
+    const session = useWorkspace.getState().sessions[0]
+    const { container } = render(<PalettePanel session={session} docked />)
+    const target = container.querySelectorAll<HTMLButtonElement>('[data-palette-slot]')[6]
+    fireEvent.pointerDown(target, { button: 0, pointerId: 41 })
+    fireEvent.pointerUp(target, { button: 0, pointerId: 41 })
+    expect(target).toHaveClass('focused')
+
+    fireEvent.doubleClick(target)
+
+    expect(session.paletteSelectionId).toBeNull()
+    expect(session.selectedPaletteIds).toEqual([])
+    expect(container.querySelector('[data-palette-selection-outline]')).not.toBeInTheDocument()
+  })
+
   it('uses the shared scrollbar and maps Alt wheel input to horizontal scrolling', () => {
     const project = createDocument('palette horizontal scroll', 2, 2, 'rgba')
     useWorkspace.getState().addSession(project)
@@ -169,13 +324,13 @@ describe('PalettePanel editing lock', () => {
     const { container } = render(<PalettePanel session={session} docked />)
     const grid = container.querySelector<HTMLDivElement>('.swatch-grid')!
 
+    expect(grid.style.getPropertyValue('--swatch-size')).toBe('30px')
+    fireEvent.wheel(grid, { ctrlKey: true, deltaY: -48 })
     expect(grid.style.getPropertyValue('--swatch-size')).toBe('40px')
     fireEvent.wheel(grid, { ctrlKey: true, deltaY: -48 })
     expect(grid.style.getPropertyValue('--swatch-size')).toBe('52px')
-    fireEvent.wheel(grid, { ctrlKey: true, deltaY: -48 })
-    expect(grid.style.getPropertyValue('--swatch-size')).toBe('64px')
     fireEvent.wheel(grid, { ctrlKey: true, deltaY: 48 })
-    expect(grid.style.getPropertyValue('--swatch-size')).toBe('52px')
+    expect(grid.style.getPropertyValue('--swatch-size')).toBe('40px')
   })
 
   it('saves the persistent columns and empty slot positions', async () => {

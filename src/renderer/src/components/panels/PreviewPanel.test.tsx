@@ -5,18 +5,24 @@ import { useWorkspace } from '@/store/workspace'
 import { PreviewPanel } from './PreviewPanel'
 
 class MockResizeObserver {
+  static created = 0
+  static disconnected = 0
+  constructor() { MockResizeObserver.created += 1 }
   observe() {}
-  disconnect() {}
+  disconnect() { MockResizeObserver.disconnected += 1 }
 }
 
 class MockOffscreenCanvas {
   static instances: MockOffscreenCanvas[] = []
+  readonly context = { putImageData: vi.fn(), drawImage: vi.fn(), imageSmoothingEnabled: false, imageSmoothingQuality: 'low' }
   constructor(public width: number, public height: number) { MockOffscreenCanvas.instances.push(this) }
-  getContext() { return { putImageData: vi.fn() } }
+  getContext() { return this.context }
 }
 
 beforeEach(() => {
   MockOffscreenCanvas.instances = []
+  MockResizeObserver.created = 0
+  MockResizeObserver.disconnected = 0
   useWorkspace.setState({ sessions: [], activeId: null, message: null, dialog: null })
   vi.stubGlobal('ResizeObserver', MockResizeObserver)
   vi.stubGlobal('OffscreenCanvas', MockOffscreenCanvas)
@@ -33,11 +39,35 @@ afterEach(() => {
 })
 
 describe('PreviewPanel animation controls', () => {
-  it('keeps the full source resolution for large pixel canvases', () => {
-    const document = createDocument('large preview', 640, 720, 'rgba')
+  it('keeps one exact source surface for dirty-region preview updates', () => {
+    const context = {
+      setTransform: vi.fn(), clearRect: vi.fn(), fillRect: vi.fn(), save: vi.fn(), restore: vi.fn(),
+      beginPath: vi.fn(), rect: vi.fn(), clip: vi.fn(), translate: vi.fn(), scale: vi.fn(), drawImage: vi.fn(),
+      imageSmoothingEnabled: true, imageSmoothingQuality: 'high', fillStyle: ''
+    }
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockImplementation(() => context as never)
+    vi.spyOn(HTMLCanvasElement.prototype, 'getBoundingClientRect').mockReturnValue({
+      x: 0, y: 0, top: 0, left: 0, right: 320, bottom: 180, width: 320, height: 180, toJSON: () => ({})
+    })
+    const document = createDocument('exact preview', 512, 256, 'rgba')
     useWorkspace.getState().addSession(document)
-    render(<PreviewPanel session={useWorkspace.getState().sessions[0]} onClose={vi.fn()} docked />)
-    expect(MockOffscreenCanvas.instances.at(-1)).toMatchObject({ width: 640, height: 720 })
+    const session = useWorkspace.getState().sessions[0]
+    const { rerender } = render(<PreviewPanel session={session} onClose={vi.fn()} docked />)
+    const exactSurface = MockOffscreenCanvas.instances.find((canvas) => canvas.width === 512 && canvas.height === 256)
+    expect(exactSurface).toBeDefined()
+    expect(context.imageSmoothingEnabled).toBe(false)
+
+    const nextSession = {
+      ...session,
+      contentInvalidation: { kind: 'region' as const, fromRevision: 0, revision: 1, frameId: document.animation!.activeFrameId, rect: { x: 5, y: 6, width: 2, height: 3 } },
+      contentRevision: 1
+    }
+    rerender(<PreviewPanel session={nextSession} onClose={vi.fn()} docked />)
+
+    expect(MockOffscreenCanvas.instances.filter((canvas) => canvas.width === 512 && canvas.height === 256)).toHaveLength(1)
+    expect(exactSurface!.context.putImageData).toHaveBeenLastCalledWith(expect.objectContaining({ width: 2, height: 3 }), 5, 6)
+    expect(MockResizeObserver.created).toBe(1)
+    expect(MockResizeObserver.disconnected).toBe(0)
   })
 
   it('keeps preview playback independent from canvas playback', () => {

@@ -1,6 +1,8 @@
-export type ColorMode = 'rgba' | 'indexed'
+export type ColorMode = 'rgba' | 'indexed' | 'grayscale'
+export type RasterFormat = 'rgba' | 'indexed'
 export type ImageResizeInterpolation = 'nearest' | 'smooth'
-export type ToolId = 'pencil' | 'eraser' | 'fill' | 'eyedropper' | 'selection' | 'shape' | 'move' | 'hand' | 'zoom' | 'rotate'
+export type ToolId = 'pencil' | 'airbrush' | 'eraser' | 'fill' | 'eyedropper' | 'selection' | 'shape' | 'line' | 'text' | 'move' | 'hand' | 'zoom' | 'rotate'
+export type MoveKind = 'move' | 'slice'
 export type BrushShape = 'round' | 'square' | 'line'
 export type BrushTexture = 'solid' | 'cracks' | 'wood' | 'grain'
 export type BrushPaintMode = 'paint' | 'pattern-source' | 'pattern-target'
@@ -69,7 +71,32 @@ export interface BrushListing {
   directoryPath: string
   brushes: StoredBrush[]
 }
-export type ShapeKind = 'rectangle' | 'ellipse' | 'rectangle-outline' | 'ellipse-outline'
+
+export interface StoredFont {
+  id: string
+  family: string
+  filePath: string
+  imported: boolean
+}
+
+export interface FontListing {
+  directoryPath: string
+  fonts: StoredFont[]
+}
+
+export interface StoredBackgroundPreset {
+  id: string
+  name: string
+  filePath: string
+  builtIn: boolean
+}
+
+export interface BackgroundPresetListing {
+  directoryPath: string
+  presets: StoredBackgroundPreset[]
+}
+export type ShapeKind = 'rectangle' | 'ellipse' | 'rectangle-outline' | 'ellipse-outline' | 'freeform' | 'polygon'
+export type LineKind = 'line' | 'curve'
 export interface ShapeRatio { width: number; height: number }
 export type FillMode = 'contiguous' | 'global'
 export type FillKind = 'bucket' | 'gradient'
@@ -115,10 +142,121 @@ export interface RgbaColor {
   a: number
 }
 
+export type TextAntialiasMode = 'pixel' | 'smooth'
+export type TextSpacingMode = 'font' | 'actual'
+
+export interface TextStyleRun {
+  start: number
+  end: number
+  fontSize?: number
+  lineSpacing?: number
+  letterSpacing?: number
+  color?: RgbaColor
+}
+
+export interface TextCelTransform {
+  source: SelectionRect
+  target: SelectionRect
+  angle: number
+  shear?: {
+    axis: 'x' | 'y'
+    edge: 'n' | 'e' | 's' | 'w'
+    amount: number
+  }
+}
+
+export interface TextCelData {
+  text: string
+  fontFamily: string
+  fontSize: number
+  lineSpacing: number
+  letterSpacing: number
+  spacingMode: TextSpacingMode
+  antialias: TextAntialiasMode
+  color: RgbaColor
+  styleRuns?: TextStyleRun[]
+  /** Original insertion point used when editable text is rasterized again. */
+  originX?: number
+  originY?: number
+  /** Optional fixed canvas area for wrapped paragraph text. */
+  boxWidth?: number
+  boxHeight?: number
+  /** Ordered transforms keep Ctrl+T edits reproducible after changing the text. */
+  transforms?: TextCelTransform[]
+}
+
 export interface PaletteEntry {
   id: number
   name: string
   color: RgbaColor
+}
+
+export interface RuntimeRasterTiles {
+  kind: 'sparse-tiles-v1'
+  format: RasterFormat
+  width: number
+  height: number
+  tileSize: number
+  data: Uint8Array
+  /** One-based payload offset per tile slot; zero means the tile is absent. */
+  tileOffsets: Int32Array
+  /** Exact visible bounds for immutable RGBA tiles; null means fully transparent. */
+  visibleBounds?: { x: number; y: number; width: number; height: number } | null
+}
+
+export interface LayerStyleStroke {
+  enabled: boolean
+  color: RgbaColor
+  size: number
+  position: OutlinePosition
+  kernel: OutlineKernel
+  directions: OutlineDirections
+  smartHue: boolean
+  smartHueDarkness: number
+}
+
+export interface LayerStyleShadow {
+  enabled: boolean
+  color: RgbaColor
+  offsetX: number
+  offsetY: number
+  blur: number
+  smartShadow: boolean
+  smartShadowDarkness: number
+}
+
+export interface LayerStyleInnerGlow {
+  enabled: boolean
+  color: RgbaColor
+  size: number
+}
+
+export interface LayerStyleColorOverlay {
+  enabled: boolean
+  color: RgbaColor
+}
+
+export interface LayerStyleGradientOverlay {
+  enabled: boolean
+  from: RgbaColor
+  to: RgbaColor
+  angle: number
+  dither: GradientDither
+}
+
+export interface LayerStyles {
+  stroke: LayerStyleStroke
+  shadow: LayerStyleShadow
+  innerGlow: LayerStyleInnerGlow
+  colorOverlay: LayerStyleColorOverlay
+  gradientOverlay: LayerStyleGradientOverlay
+}
+
+export type BackgroundPatternId = 'solid' | 'grid' | 'stripes' | 'diamond' | 'diamond-nested' | 'circles'
+
+export interface BackgroundLayerSettings {
+  mode: 'preset' | 'canvas'
+  pattern?: BackgroundPatternId
 }
 
 export interface RgbaLayer {
@@ -128,12 +266,18 @@ export interface RgbaLayer {
   displayColor?: RgbaColor
   /** Optional user-facing note shown when hovering the layer row. */
   description?: string
+  /** Editable text layers retain raster surfaces for the existing compositor. */
+  kind?: 'text'
   visible: boolean
   locked: boolean
   opacity: number
   blendMode: BlendMode
   /** Restricts this layer to the visible alpha of its immediate lower sibling. */
   clippingMask?: boolean
+  /** Non-destructive effects evaluated from the active cel surface during compositing. */
+  layerStyles?: LayerStyles
+  /** Treats this layer as editable canvas wallpaper with resize-time tiling. */
+  background?: BackgroundLayerSettings
   groupId?: string | null
   /** Local bitmap dimensions. They may differ from the visible canvas after moving/resizing. */
   width: number
@@ -143,6 +287,7 @@ export interface RgbaLayer {
   offsetY: number
   format: 'rgba'
   pixels: Uint8ClampedArray
+  runtimeRaster?: RuntimeRasterTiles
 }
 
 export interface IndexedLayer {
@@ -152,12 +297,18 @@ export interface IndexedLayer {
   displayColor?: RgbaColor
   /** Optional user-facing note shown when hovering the layer row. */
   description?: string
+  /** Editable text layers retain raster surfaces for the existing compositor. */
+  kind?: 'text'
   visible: boolean
   locked: boolean
   opacity: number
   blendMode: BlendMode
   /** Restricts this layer to the visible alpha of its immediate lower sibling. */
   clippingMask?: boolean
+  /** Non-destructive effects evaluated from the active cel surface during compositing. */
+  layerStyles?: LayerStyles
+  /** Treats this layer as editable canvas wallpaper with resize-time tiling. */
+  background?: BackgroundLayerSettings
   groupId?: string | null
   width: number
   height: number
@@ -165,6 +316,7 @@ export interface IndexedLayer {
   offsetY: number
   format: 'indexed'
   pixels: Uint32Array
+  runtimeRaster?: RuntimeRasterTiles
 }
 
 export type RasterLayer = RgbaLayer | IndexedLayer
@@ -198,6 +350,8 @@ export interface LayerGroup {
   blendMode: BlendMode
   /** Restricts this group to the visible alpha of its immediate lower sibling. */
   clippingMask?: boolean
+  /** Non-destructive effects evaluated from the composited group contents. */
+  layerStyles?: LayerStyles
   /** Re-applies the group blend mode after its children have composited against the external backdrop. */
   cumulativeBlend?: boolean
 }
@@ -219,6 +373,7 @@ export type AnimationCelSurface =
       storageOriginX?: number
       storageOriginY?: number
       pixels: Uint8ClampedArray
+      runtimeRaster?: RuntimeRasterTiles
     }
   | {
       format: 'indexed'
@@ -229,6 +384,7 @@ export type AnimationCelSurface =
       storageOriginX?: number
       storageOriginY?: number
       pixels: Uint32Array
+      runtimeRaster?: RuntimeRasterTiles
     }
 
 export interface AnimationCel {
@@ -239,6 +395,8 @@ export interface AnimationCel {
   /** Cel 独立的不透明度，未设置时沿用图层不透明度。 */
   opacity?: number
   surface?: AnimationCelSurface
+  /** Editable source data for text cels. The surface remains the rendered cache. */
+  text?: TextCelData
   /** Independent grayscale surface for this cell; transparent pixels are neutral/unpainted. */
   mask?: LayerMask
 }
@@ -284,8 +442,26 @@ export interface TimelapseSettings {
   snapshots: TimelapseSnapshot[]
 }
 
+export interface ProjectLayerPanelState {
+  activeLayerId: string
+  selectedLayerIds: string[]
+  selectedGroupIds: string[]
+  selectedGroupId: string | null
+  layerSelectionAnchorId: string | null
+  collapsedGroupIds: string[]
+}
+
+export interface DocumentSlice {
+  id: string
+  name: string
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
 export interface SpriteDocument {
-  schemaVersion: 1 | 2 | 3 | 4
+  schemaVersion: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12
   id: string
   name: string
   width: number
@@ -309,10 +485,14 @@ export interface SpriteDocument {
   outlineSettings?: OutlineSettings
   /** Project-owned display toggles. View navigation remains session-only. */
   displaySettings?: ProjectDisplaySettings
+  /** Layer panel context restored when the project is reopened. */
+  layerPanelState?: ProjectLayerPanelState
   /** Persisted editing statistics used by the project information view. */
   statistics?: ProjectStatistics
   /** Optional bounded history of drawing snapshots for timelapse export. */
   timelapse?: TimelapseSettings
+  /** Named export regions stored in document pixel coordinates. */
+  slices?: DocumentSlice[]
   filePath: string | null
   /** Original path used to open imported images or Aseprite projects. */
   sourceFilePath?: string
@@ -372,6 +552,12 @@ export interface ViewState {
   relativeLuminance: boolean
   /** View-only selection outline visibility. The selection itself remains active. */
   showSelectionOutline?: boolean
+  /** View-only transform pivot visibility. The configured pivot still affects transforms while hidden. */
+  showSelectionPivot?: boolean
+  /** Quick Command Bar center as a normalized horizontal position in its owning canvas. */
+  quickCommandBarPositionX?: number
+  /** Whether this project keeps its Quick Command Bar expanded while it owns canvas focus. */
+  quickCommandBarExpanded?: boolean
 }
 
 export interface GridSettings {
@@ -454,6 +640,10 @@ export interface WorkspaceLayout {
   inspectorWidth: number
   leftDockWidth: number
   bottomDockHeight: number
+  /** Preferred dock proportions within the editor layout. Pixel fields remain for older workspaces. */
+  inspectorWidthRatio?: number
+  leftDockWidthRatio?: number
+  bottomDockHeightRatio?: number
   toolRailSide: ToolRailSide
   previewOpen: boolean
   inspectorLayout: string | null
@@ -489,6 +679,18 @@ export interface ClipboardImageSize {
   height: number
 }
 
+export interface ProjectPreview {
+  preview: Uint8Array
+  width: number
+  height: number
+  colorMode: ColorMode
+}
+
+export interface BinaryReadProgress {
+  bytesRead: number
+  totalBytes: number
+}
+
 export interface MoonSpriteApi {
   openFiles(): Promise<OpenDialogResult>
   takeStartupFiles(): Promise<string[]>
@@ -500,8 +702,11 @@ export interface MoonSpriteApi {
   getDefaultFileDirectories(): Promise<DefaultFileDirectories>
   chooseDirectory(defaultPath?: string): Promise<DirectoryDialogResult>
   fileExists(filePath: string): Promise<boolean>
-  readBinary(filePath: string): Promise<Uint8Array>
+  readBinary(filePath: string, onProgress?: (progress: BinaryReadProgress) => void): Promise<Uint8Array>
+  readProjectPreview(filePath: string): Promise<ProjectPreview>
+  cacheProjectPreview(filePath: string, preview: ProjectPreview): Promise<void>
   writeBinaryAtomic(filePath: string, data: Uint8Array): Promise<void>
+  writeProjectIncremental(filePath: string, sourcePath: string, data: Uint8Array): Promise<void>
   writeClipboardImage(image: ClipboardImage): Promise<void>
   readClipboardText(): Promise<string | null>
   readClipboardImage(): Promise<ClipboardImage | null>
@@ -518,13 +723,22 @@ export interface MoonSpriteApi {
   saveBrush(name: string, data: Uint8Array, intrinsicSize?: boolean, sourceX?: number, sourceY?: number): Promise<StoredBrush>
   deleteBrush(id: string): Promise<void>
   openBrushFolder(): Promise<void>
-  listRecoveries(): Promise<RecoveryRecord[]>
+  listFonts(): Promise<FontListing>
+  listSystemFonts(): Promise<StoredFont[]>
+  importFont(): Promise<StoredFont | null>
+  importSystemFont(id: string): Promise<StoredFont>
+  deleteFont(id: string): Promise<void>
+  listBackgroundPresets(): Promise<BackgroundPresetListing>
+  openBackgroundPresetFolder(): Promise<void>
+  listRecoveries(retentionDays: number): Promise<RecoveryRecord[]>
   readRecovery(id: string): Promise<Uint8Array>
   writeRecovery(id: string, name: string, data: Uint8Array): Promise<void>
   deleteRecovery(id: string): Promise<void>
   listGalleryProjects(): Promise<GalleryListing>
+  listFolderProjects(directoryPath: string): Promise<GalleryListing>
   deleteGalleryProject(fileName: string): Promise<void>
   openGalleryFolder(): Promise<void>
+  openDirectory(directoryPath: string): Promise<void>
   ensureBuiltinExample(): Promise<string | null>
   openProjectInFolder(filePath: string): Promise<void>
   openExternalUrl(url: string): Promise<void>

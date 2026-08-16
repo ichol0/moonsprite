@@ -57,4 +57,8 @@ describe('panel preference boundaries', () => {
     saveColorPickerConfig(config, storage)
     expect(parseColorPickerConfig(storage.getItem('moonsprite.color-picker-config'), storage.getItem('moonsprite.color-picker-scheme'), [0, 6, 12, 24, 36], [0, 5, 9, 15])).toEqual(config)
   })
+
+  it('uses saturation and value as the default color picker scheme', () => {
+    expect(parseColorPickerConfig(null, null, [0, 6, 12], [0, 5, 9])).toMatchObject({ scheme: 'sv-square' })
+  })
 })

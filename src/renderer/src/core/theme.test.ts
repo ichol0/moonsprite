@@ -29,7 +29,7 @@ describe('theme definitions', () => {
   })
 
   it('provides complete and readable variables for every built-in theme', () => {
-    expect(BUILT_IN_THEMES.map((theme) => theme.id)).toEqual(expect.arrayContaining(['ocean', 'forest', 'sunset', 'classic', 'slate', 'copper', 'pink']))
+    expect(BUILT_IN_THEMES.map((theme) => theme.id)).toEqual(expect.arrayContaining(['gray', 'dark-gray', 'ocean', 'forest', 'sunset', 'classic', 'slate', 'copper', 'pink']))
     for (const definition of BUILT_IN_THEMES) {
       const resolved = resolveTheme({ ...DEFAULT_THEME_PREFERENCES, activeThemeId: definition.id })
       expect(Object.keys(resolved.variables).length).toBeGreaterThan(45)
@@ -37,6 +37,15 @@ describe('theme definitions', () => {
       expect(contrastRatio(definition.seeds.textPrimary, definition.seeds.surface)).toBeGreaterThanOrEqual(4.5)
       expect(resolved.variables['--theme-on-accent']).toBe('#ffffff')
       expect(contrastRatio(resolved.variables['--theme-development-notice-text'], resolved.variables['--theme-development-notice-background'])).toBeGreaterThanOrEqual(4.5)
+    }
+  })
+
+  it('uses the shared blue guides and checkerboard colors across built-in themes', () => {
+    for (const definition of BUILT_IN_THEMES) {
+      expect(definition.visualDefaults.checkerLight).toEqual({ r: 215, g: 215, b: 217, a: 255 })
+      expect(definition.visualDefaults.checkerDark).toEqual({ r: 155, g: 155, b: 159, a: 255 })
+      expect(definition.visualDefaults.customGrid).toEqual({ r: 0, g: 0, b: 255, a: 255 })
+      expect(definition.visualDefaults.symmetryAxis).toEqual({ r: 0, g: 0, b: 255, a: 255 })
     }
   })
 
@@ -54,6 +63,28 @@ describe('theme definitions', () => {
     expect(resolved.variables['--theme-accent-soft']).toBe('#182a46')
     expect(resolved.variables['--theme-surface-active']).toBe('#212c40')
     expect(resolved.variables['--theme-accent-hover']).toBe('#478bff')
+  })
+
+  it('keeps the light theme surfaces visibly layered', () => {
+    const resolved = resolveTheme({ ...DEFAULT_THEME_PREFERENCES, activeThemeId: 'light' })
+    expect(resolved.variables['--theme-workspace-background']).toBe('#bec7d2')
+    expect(resolved.variables['--theme-deep-surface']).toBe('#d8dfe7')
+    expect(resolved.variables['--theme-surface']).toBe('#edf1f5')
+    expect(resolved.variables['--theme-raised-surface']).toBe('#ffffff')
+    expect(resolved.variables['--theme-control-background']).toBe('#f8fafc')
+    expect(resolved.variables['--theme-border']).toBe('#98a5b4')
+  })
+
+  it('provides distinct neutral gray and dark gray themes', () => {
+    const gray = resolveTheme({ ...DEFAULT_THEME_PREFERENCES, activeThemeId: 'gray' })
+    const darkGray = resolveTheme({ ...DEFAULT_THEME_PREFERENCES, activeThemeId: 'dark-gray' })
+    expect(BUILT_IN_THEMES.slice(0, 4).map((theme) => theme.id)).toEqual(['dark', 'dark-gray', 'gray', 'light'])
+    expect(gray.definition.seeds.workspace).toBe('#383b40')
+    expect(gray.definition.seeds.surface).toBe('#474b52')
+    expect(darkGray.definition.seeds.workspace).toBe('#1f2125')
+    expect(darkGray.definition.seeds.surface).toBe('#2b2e34')
+    expect(gray.mode).toBe('dark')
+    expect(darkGray.mode).toBe('dark')
   })
 
   it('provides a readable light pink theme with distinct interaction layers', () => {

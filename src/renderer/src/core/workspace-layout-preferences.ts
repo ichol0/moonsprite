@@ -5,11 +5,14 @@ export type MainWindowState = NonNullable<WorkspaceLayout['mainWindow']>
 
 export const MAIN_WINDOW_STORAGE_KEY = 'moonsprite.main-window-state.v2'
 export const INSPECTOR_WIDTH_STORAGE_KEY = 'moonsprite.inspector-width.v1'
+export const INSPECTOR_WIDTH_RATIO_STORAGE_KEY = 'moonsprite.inspector-width-ratio.v1'
 export const PANEL_DOCKS_STORAGE_KEY = 'moonsprite.panel-docks.v1'
 export const PANEL_VISIBILITY_STORAGE_KEY = 'moonsprite.panel-visibility.v1'
 export const LEGACY_LAYERS_DOCK_STORAGE_KEY = 'moonsprite.layers-dock.v1'
 export const BOTTOM_DOCK_HEIGHT_STORAGE_KEY = 'moonsprite.bottom-layers-height.v1'
+export const BOTTOM_DOCK_HEIGHT_RATIO_STORAGE_KEY = 'moonsprite.bottom-dock-height-ratio.v1'
 export const LEFT_DOCK_WIDTH_STORAGE_KEY = 'moonsprite.left-dock-width.v1'
+export const LEFT_DOCK_WIDTH_RATIO_STORAGE_KEY = 'moonsprite.left-dock-width-ratio.v1'
 export const TOOL_RAIL_SIDE_STORAGE_KEY = 'moonsprite.tool-rail-side.v1'
 export const INSPECTOR_LAYOUT_STORAGE_KEY = 'moonsprite.inspector-layout.v2'
 export const COLOR_SQUARE_DOCK_STORAGE_KEY = 'moonsprite.color-picker-square-dock'
@@ -21,37 +24,70 @@ export const FLOATING_PANEL_STORAGE_KEYS: Record<WorkspacePanelId, string> = {
   layers: 'moonsprite.layers-panel.v1',
   preview: 'moonsprite.preview-panel.v1'
 }
+export const POPUP_PANEL_STORAGE_KEYS: Record<WorkspacePanelId, string> = {
+  color: 'moonsprite.popup-color-panel.v1',
+  palette: 'moonsprite.popup-palette-panel.v1',
+  layers: 'moonsprite.popup-layers-panel.v1',
+  preview: 'moonsprite.popup-preview-panel.v1'
+}
 
 export const DEFAULT_PANEL_DOCKS: Record<WorkspacePanelId, WorkspacePanelDock> = {
-  color: 'left', palette: 'left', layers: 'right', preview: 'right'
+  color: 'left', palette: 'left', layers: 'bottom', preview: 'bottom'
 }
 export const DEFAULT_PANEL_VISIBILITY: Record<WorkspacePanelId, boolean> = {
   color: true, palette: true, layers: true, preview: true
 }
+export const DEFAULT_INSPECTOR_WIDTH = 300
+export const DEFAULT_LEFT_DOCK_WIDTH = 280
+export const DEFAULT_BOTTOM_DOCK_HEIGHT = 220
+export const DEFAULT_INSPECTOR_WIDTH_RATIO = DEFAULT_INSPECTOR_WIDTH / 1440
+export const DEFAULT_LEFT_DOCK_WIDTH_RATIO = DEFAULT_LEFT_DOCK_WIDTH / 1440
+export const DEFAULT_BOTTOM_DOCK_HEIGHT_RATIO = DEFAULT_BOTTOM_DOCK_HEIGHT / 800
 
 const clamp = (value: unknown, fallback: number, minimum: number, maximum: number): number => {
+  if (value === null || value === undefined || value === '') return fallback
   const number = Number(value)
   return Number.isFinite(number) ? Math.max(minimum, Math.min(maximum, number)) : fallback
 }
 
-export function constrainInspectorWidth(width: number, viewportWidth: number): number {
-  return clamp(width, 310, 180, Math.max(180, viewportWidth - 220))
+const validRatio = (value: unknown): number | null => {
+  if (value === null || value === undefined || value === '') return null
+  const number = Number(value)
+  return Number.isFinite(number) && number > 0 ? Math.max(0.01, Math.min(1, number)) : null
 }
 
-export function constrainLeftDockWidth(width: number, viewportWidth: number): number {
-  return clamp(width, 250, 180, Math.min(520, Math.max(180, viewportWidth - 520)))
+export function dockSizeRatio(size: unknown, parentSize: number, fallbackRatio: number): number {
+  const number = Number(size)
+  if (!Number.isFinite(number) || number <= 0 || !Number.isFinite(parentSize) || parentSize <= 0) return fallbackRatio
+  return Math.max(0.01, Math.min(1, number / parentSize))
 }
 
-export function constrainBottomDockHeight(height: number, availableHeight: number): number {
-  return clamp(height, 190, 120, Math.max(120, Math.min(520, availableHeight - 43 - 150)))
+export function resolveDockSizeRatio(storedRatio: unknown, legacySize: unknown, parentSize: number, fallbackRatio: number): number {
+  return validRatio(storedRatio) ?? dockSizeRatio(legacySize, parentSize, fallbackRatio)
+}
+
+export function dockSizeFromRatio(ratio: unknown, parentSize: number, fallbackRatio: number): number {
+  return (validRatio(ratio) ?? fallbackRatio) * Math.max(1, parentSize)
+}
+
+export function constrainInspectorWidth(width: unknown, viewportWidth: number): number {
+  return clamp(width, DEFAULT_INSPECTOR_WIDTH, 180, Math.max(180, viewportWidth - 220))
+}
+
+export function constrainLeftDockWidth(width: unknown, viewportWidth: number): number {
+  return clamp(width, DEFAULT_LEFT_DOCK_WIDTH, 180, Math.min(520, Math.max(180, viewportWidth - 520)))
+}
+
+export function constrainBottomDockHeight(height: unknown, availableHeight: number): number {
+  return clamp(height, DEFAULT_BOTTOM_DOCK_HEIGHT, 120, Math.max(120, Math.min(520, availableHeight - 43 - 150)))
 }
 
 export function loadToolRailSide(storage?: Storage): ToolRailSide {
-  return readStoredString(TOOL_RAIL_SIDE_STORAGE_KEY, storage) === 'right' ? 'right' : 'left'
+  return readStoredString(TOOL_RAIL_SIDE_STORAGE_KEY, storage) === 'left' ? 'left' : 'right'
 }
 
 export function loadInspectorWidth(viewportWidth: number, storage?: Storage): number {
-  return constrainInspectorWidth(Number(readStoredString(INSPECTOR_WIDTH_STORAGE_KEY, storage)), viewportWidth)
+  return constrainInspectorWidth(readStoredString(INSPECTOR_WIDTH_STORAGE_KEY, storage), viewportWidth)
 }
 
 export function loadPanelDocks(storage?: Storage): Record<WorkspacePanelId, WorkspacePanelDock> {
@@ -74,11 +110,11 @@ export function loadPanelVisibility(storage?: Storage): Record<WorkspacePanelId,
 }
 
 export function loadBottomDockHeight(storage?: Storage): number {
-  return clamp(readStoredString(BOTTOM_DOCK_HEIGHT_STORAGE_KEY, storage), 190, 120, 520)
+  return clamp(readStoredString(BOTTOM_DOCK_HEIGHT_STORAGE_KEY, storage), DEFAULT_BOTTOM_DOCK_HEIGHT, 120, 520)
 }
 
 export function loadLeftDockWidth(storage?: Storage): number {
-  return clamp(readStoredString(LEFT_DOCK_WIDTH_STORAGE_KEY, storage), 250, 180, 520)
+  return clamp(readStoredString(LEFT_DOCK_WIDTH_STORAGE_KEY, storage), DEFAULT_LEFT_DOCK_WIDTH, 180, 520)
 }
 
 export function loadMainWindowState(storage?: Storage): MainWindowState | null {
@@ -117,11 +153,14 @@ export interface NormalizedWorkspaceLayout {
   inspectorWidth: number
   leftDockWidth: number
   bottomDockHeight: number
+  inspectorWidthRatio: number
+  leftDockWidthRatio: number
+  bottomDockHeightRatio: number
   toolRailSide: ToolRailSide
   previewOpen: boolean
 }
 
-export function normalizeWorkspaceLayout(layout: WorkspaceLayout, viewportWidth: number): NormalizedWorkspaceLayout {
+export function normalizeWorkspaceLayout(layout: WorkspaceLayout, viewportWidth: number, availableHeight = 800): NormalizedWorkspaceLayout {
   const panelDocks = { ...DEFAULT_PANEL_DOCKS }
   for (const id of Object.keys(panelDocks) as WorkspacePanelId[]) {
     const dock = layout.panelDocks?.[id]
@@ -133,13 +172,22 @@ export function normalizeWorkspaceLayout(layout: WorkspaceLayout, viewportWidth:
   } else {
     panelVisibility.preview = layout.previewOpen !== false
   }
+  const legacyInspectorWidth = constrainInspectorWidth(layout.inspectorWidth, viewportWidth)
+  const legacyLeftDockWidth = constrainLeftDockWidth(layout.leftDockWidth, viewportWidth)
+  const legacyBottomDockHeight = constrainBottomDockHeight(layout.bottomDockHeight, availableHeight)
+  const inspectorWidthRatio = resolveDockSizeRatio(layout.inspectorWidthRatio, legacyInspectorWidth, viewportWidth, DEFAULT_INSPECTOR_WIDTH_RATIO)
+  const leftDockWidthRatio = resolveDockSizeRatio(layout.leftDockWidthRatio, legacyLeftDockWidth, viewportWidth, DEFAULT_LEFT_DOCK_WIDTH_RATIO)
+  const bottomDockHeightRatio = resolveDockSizeRatio(layout.bottomDockHeightRatio, legacyBottomDockHeight, availableHeight, DEFAULT_BOTTOM_DOCK_HEIGHT_RATIO)
   return {
     panelDocks,
     panelVisibility,
-    inspectorWidth: constrainInspectorWidth(layout.inspectorWidth, viewportWidth),
-    leftDockWidth: constrainLeftDockWidth(layout.leftDockWidth, viewportWidth),
-    bottomDockHeight: clamp(layout.bottomDockHeight, 190, 120, 520),
-    toolRailSide: layout.toolRailSide === 'right' ? 'right' : 'left',
+    inspectorWidth: constrainInspectorWidth(dockSizeFromRatio(inspectorWidthRatio, viewportWidth, DEFAULT_INSPECTOR_WIDTH_RATIO), viewportWidth),
+    leftDockWidth: constrainLeftDockWidth(dockSizeFromRatio(leftDockWidthRatio, viewportWidth, DEFAULT_LEFT_DOCK_WIDTH_RATIO), viewportWidth),
+    bottomDockHeight: constrainBottomDockHeight(dockSizeFromRatio(bottomDockHeightRatio, availableHeight, DEFAULT_BOTTOM_DOCK_HEIGHT_RATIO), availableHeight),
+    inspectorWidthRatio,
+    leftDockWidthRatio,
+    bottomDockHeightRatio,
+    toolRailSide: layout.toolRailSide === 'left' ? 'left' : 'right',
     previewOpen: panelVisibility.preview
   }
 }

@@ -5,19 +5,36 @@ import { shortcutGroupLabelsByLocale, shortcutLabelsByLocale } from '@/locales/s
 export const SHORTCUTS_KEY = 'moonsprite.shortcuts.v1'
 export const POLYGON_LASSO_SHORTCUT_MIGRATION_KEY = 'moonsprite.shortcuts.migration.polygon-lasso-shift-q'
 export const GRID_SHORTCUT_MIGRATION_KEY = 'moonsprite.shortcuts.migration.grid-shortcuts'
+export const REPLACE_COLOR_SHORTCUT_MIGRATION_KEY = 'moonsprite.shortcuts.migration.replace-color-ctrl-shift-k'
+export const POPUP_PANEL_SHORTCUT_MIGRATION_KEY = 'moonsprite.shortcuts.migration.popup-panel-1234'
+export const ANIMATION_PLAYBACK_SHORTCUT_MIGRATION_KEY = 'moonsprite.shortcuts.migration.animation-playback-enter'
 
 export const DEFAULT_SHORTCUTS = {
+  openHome: '',
   newDocument: 'Ctrl+N',
   openDocument: 'Ctrl+O',
   closeDocument: 'Ctrl+W',
   openProjectFolder: '',
   exportDocument: 'Ctrl+E',
+  exportAllFrames: '',
+  exportSpriteSheet: '',
+  openTimelapse: '',
+  openProjectInfo: '',
   'tool.pencil': 'B',
+  'tool.airbrush': 'A',
   'tool.eraser': 'E',
   'tool.selection': 'M',
   'tool.selection.ellipse': 'Shift+M',
   'tool.move': 'V',
+  'tool.slice': '',
   'tool.shape': 'U',
+  'tool.line': '',
+  'tool.text': 'T',
+  'tool.curve': '',
+  'tool.shape.rectangleOutline': '',
+  'tool.shape.rectangle': '',
+  'tool.shape.ellipseOutline': '',
+  'tool.shape.ellipse': '',
   'tool.fill': 'G',
   'tool.fill.gradient': 'Shift+G',
   'tool.eyedropper': 'I',
@@ -54,13 +71,17 @@ export const DEFAULT_SHORTCUTS = {
   relativeLuminance: 'Ctrl+Y',
   advancedMode: 'Ctrl+F',
   fillForeground: 'F',
+  addForegroundToPalette: 'Alt+S',
   swapForegroundBackground: 'X',
-  replaceColor: 'Ctrl+Alt+R',
+  replaceColor: 'Ctrl+Shift+K',
   convertColorMode: '',
   createBrushFromSelection: 'Ctrl+B',
   newLayer: 'Shift+N',
   createLayerGroup: 'Ctrl+G',
   toggleClippingMask: 'Ctrl+Alt+G',
+  toggleSelectedLayerVisibility: '',
+  toggleSelectedLayerLock: '',
+  toggleSelectedGroupCollapsed: '',
   duplicateLayer: '',
   mergeLayerDown: '',
   mergeSelectedLayers: '',
@@ -80,13 +101,24 @@ export const DEFAULT_SHORTCUTS = {
   togglePalettePanel: '',
   toggleLayersPanel: '',
   togglePreviewPanel: '',
+  popupColorPanel: '1',
+  popupPalettePanel: '2',
+  popupLayersPanel: '3',
+  popupPreviewPanel: '4',
+  toggleTimeline: '',
+  openGridSettings: '',
   toolRailLeft: '',
   toolRailRight: '',
+  saveWorkspaceLayout: '',
+  openWorkspaceManager: '',
   openComponentLibrary: '',
+  openLatestRelease: '',
+  openRoadmap: '',
   openAbout: '',
   brushSizeDecrease: '[',
   brushSizeIncrease: ']',
   temporaryEyedropper: 'Alt',
+  temporaryMove: 'Ctrl',
   copySelectionContent: 'Ctrl',
   copyLayerOnDrag: 'Alt',
   constrainAxis: 'Shift',
@@ -104,7 +136,10 @@ export const DEFAULT_SHORTCUTS = {
   addAnimationFrame: 'Alt+N',
   addBlankAnimationFrame: 'Alt+B',
   deleteAnimationFrame: 'Alt+C',
-  copyAnimationCel: 'Ctrl+D'
+  copyAnimationCel: 'Ctrl+D',
+  toggleAnimationPlayback: 'Enter',
+  previousAnimationFrame: '',
+  nextAnimationFrame: ''
 } as const
 
 export type ShortcutId = keyof typeof DEFAULT_SHORTCUTS
@@ -118,21 +153,22 @@ export function normalizeShortcut(value: string): string {
 }
 
 export const SHORTCUT_GROUPS = {
-  file: ['newDocument', 'openDocument', 'closeDocument', 'save', 'saveAs', 'exportDocument', 'openProjectFolder'],
-  tools: ['tool.pencil', 'tool.eraser', 'tool.selection', 'tool.selection.ellipse', 'tool.move', 'tool.shape', 'tool.fill', 'tool.fill.gradient', 'tool.eyedropper', 'tool.hand', 'tool.zoom', 'tool.rotate', 'brushSizeDecrease', 'brushSizeIncrease'],
-  selection: ['lasso', 'polygonLasso', 'magic', 'selectAll', 'invertSelection', 'deselect', 'transform', 'outline', 'flipVertical', 'flipHorizontal', 'toggleSelectionOutline', 'createBrushFromSelection'],
-  image: ['canvasResize', 'imageResize', 'fillForeground', 'convertColorMode'],
-  colors: ['swapForegroundBackground', 'replaceColor'],
-  adjustments: ['adjustmentColorBalance', 'adjustmentBrightnessContrast', 'adjustmentHueSaturation', 'adjustmentCurves'],
-  layers: ['newLayer', 'createLayerGroup', 'toggleClippingMask', 'duplicateLayer', 'mergeLayerDown', 'mergeSelectedLayers', 'mergeLayerGroup', 'mergeVisibleLayers', 'ungroupLayers', 'deleteLayer'],
-  view: ['relativeLuminance', 'advancedMode', 'mirrorView', 'mirrorViewVertical', 'toggleGrid', 'toggleCustomGrid', 'rotateViewClockwise90', 'rotateViewCounterClockwise90', 'resetView', 'toggleColorPanel', 'togglePalettePanel', 'toggleLayersPanel', 'togglePreviewPanel', 'toolRailLeft', 'toolRailRight'],
-  modifiers: ['temporaryEyedropper', 'copySelectionContent', 'copyLayerOnDrag', 'constrainAxis', 'addToSelection', 'proportionalSelectionTransform', 'integerSelectionScale', 'snapSelectionRotation', 'snapViewRotation', 'resetViewRotation', 'temporaryPan', 'brushSizeAdjust', 'brushSizeWheelAdjust', 'lineConnectionMode', 'constrainLineDirections'],
-  commands: ['copy', 'cut', 'paste', 'pasteAsNewLayer', 'pasteAsNewDocument', 'undo', 'redo', 'openShortcutSettings', 'openPreferences'],
-  animation: ['addAnimationFrame', 'addBlankAnimationFrame', 'deleteAnimationFrame', 'copyAnimationCel'],
-  help: ['openComponentLibrary', 'openAbout']
-} as const
+  file: ['openHome', 'newDocument', 'openDocument', 'closeDocument', 'openProjectInfo', 'save', 'saveAs', 'exportDocument', 'exportAllFrames', 'exportSpriteSheet', 'openProjectFolder', 'openTimelapse'],
+  edit: ['undo', 'redo', 'copy', 'cut', 'paste', 'pasteAsNewLayer', 'pasteAsNewDocument'],
+  selection: ['selectAll', 'invertSelection', 'deselect', 'transform', 'flipHorizontal', 'flipVertical', 'outline', 'toggleSelectionOutline', 'createBrushFromSelection'],
+  image: ['canvasResize', 'imageResize', 'convertColorMode'],
+  color: ['fillForeground', 'addForegroundToPalette', 'swapForegroundBackground', 'replaceColor', 'adjustmentColorBalance', 'adjustmentBrightnessContrast', 'adjustmentHueSaturation', 'adjustmentCurves'],
+  layers: ['newLayer', 'createLayerGroup', 'toggleClippingMask', 'toggleSelectedLayerVisibility', 'toggleSelectedLayerLock', 'toggleSelectedGroupCollapsed', 'duplicateLayer', 'mergeLayerDown', 'mergeSelectedLayers', 'mergeLayerGroup', 'mergeVisibleLayers', 'ungroupLayers', 'deleteLayer'],
+  animation: ['toggleAnimationPlayback', 'previousAnimationFrame', 'nextAnimationFrame', 'addAnimationFrame', 'addBlankAnimationFrame', 'deleteAnimationFrame', 'copyAnimationCel'],
+  view: ['relativeLuminance', 'toggleGrid', 'toggleCustomGrid', 'openGridSettings', 'mirrorView', 'mirrorViewVertical', 'rotateViewClockwise90', 'rotateViewCounterClockwise90', 'resetView'],
+  interface: ['popupColorPanel', 'popupPalettePanel', 'popupLayersPanel', 'popupPreviewPanel', 'toggleColorPanel', 'togglePalettePanel', 'toggleLayersPanel', 'togglePreviewPanel', 'toggleTimeline', 'toolRailLeft', 'toolRailRight', 'saveWorkspaceLayout', 'openWorkspaceManager', 'advancedMode', 'openShortcutSettings', 'openPreferences'],
+  tools: ['tool.pencil', 'tool.airbrush', 'tool.eraser', 'tool.fill', 'tool.fill.gradient', 'tool.eyedropper', 'tool.selection', 'tool.selection.ellipse', 'lasso', 'polygonLasso', 'magic', 'tool.move', 'tool.slice', 'tool.shape', 'tool.shape.rectangleOutline', 'tool.shape.rectangle', 'tool.shape.ellipseOutline', 'tool.shape.ellipse', 'tool.line', 'tool.curve', 'tool.text', 'tool.hand', 'tool.zoom', 'tool.rotate', 'brushSizeDecrease', 'brushSizeIncrease'],
+  modifiers: ['temporaryEyedropper', 'temporaryMove', 'brushSizeAdjust', 'brushSizeWheelAdjust', 'lineConnectionMode', 'constrainLineDirections', 'copySelectionContent', 'addToSelection', 'proportionalSelectionTransform', 'integerSelectionScale', 'snapSelectionRotation', 'copyLayerOnDrag', 'constrainAxis', 'temporaryPan', 'snapViewRotation', 'resetViewRotation'],
+  help: ['openComponentLibrary', 'openLatestRelease', 'openRoadmap', 'openAbout']
+} as const satisfies Record<string, ReadonlyArray<ShortcutId>>
 
 export type ShortcutGroupId = keyof typeof SHORTCUT_GROUPS
+
 export const SHORTCUT_GROUP_LABELS = shortcutGroupLabelsByLocale['zh-CN']
 export const SHORTCUT_LABELS = shortcutLabelsByLocale['zh-CN']
 export const shortcutGroupLabels = (locale: AppLocale): Record<ShortcutGroupId, string> => shortcutGroupLabelsByLocale[locale]
@@ -182,6 +218,20 @@ export function loadShortcuts(storage?: Storage): ShortcutMap {
     if (saved.toggleGrid === '') saved.toggleGrid = DEFAULT_SHORTCUTS.toggleGrid
     writeStoredString(GRID_SHORTCUT_MIGRATION_KEY, 'done', storage)
   }
+  if (readStoredString(REPLACE_COLOR_SHORTCUT_MIGRATION_KEY, storage) !== 'done') {
+    if (saved.replaceColor === 'Ctrl+Alt+R') saved.replaceColor = DEFAULT_SHORTCUTS.replaceColor
+    writeStoredString(REPLACE_COLOR_SHORTCUT_MIGRATION_KEY, 'done', storage)
+  }
+  if (readStoredString(POPUP_PANEL_SHORTCUT_MIGRATION_KEY, storage) !== 'done') {
+    for (const id of ['popupColorPanel', 'popupPalettePanel', 'popupLayersPanel', 'popupPreviewPanel'] as const) {
+      if (saved[id] === undefined || saved[id] === '') saved[id] = DEFAULT_SHORTCUTS[id]
+    }
+    writeStoredString(POPUP_PANEL_SHORTCUT_MIGRATION_KEY, 'done', storage)
+  }
+  if (readStoredString(ANIMATION_PLAYBACK_SHORTCUT_MIGRATION_KEY, storage) !== 'done') {
+    if (saved.toggleAnimationPlayback === '') saved.toggleAnimationPlayback = DEFAULT_SHORTCUTS.toggleAnimationPlayback
+    writeStoredString(ANIMATION_PLAYBACK_SHORTCUT_MIGRATION_KEY, 'done', storage)
+  }
   return { ...DEFAULT_SHORTCUTS, ...saved }
 }
 
@@ -202,6 +252,31 @@ export function shortcutText(event: KeyboardEvent): string {
   const isModifier = key === 'Control' || key === 'Meta' || key === 'Alt' || key === 'Shift'
   const ordinaryKey = isModifier ? '' : key.length === 1 ? key.toUpperCase() : key
   return [...modifiers, ...(ordinaryKey ? [ordinaryKey] : [])].join('+')
+}
+
+export function shortcutMatchesEvent(event: KeyboardEvent, shortcut: string): boolean {
+  return shortcut.trim() !== '' && normalizeShortcut(shortcutText(event)).toLowerCase() === normalizeShortcut(shortcut).toLowerCase()
+}
+
+export function shortcutReleasedByEvent(event: KeyboardEvent, shortcut: string): boolean {
+  const parts = normalizeShortcut(shortcut).split('+').filter(Boolean)
+  const released = keyboardEventKey(event).toLowerCase()
+  if (released === 'control' || released === 'meta') return parts.includes('Ctrl')
+  if (released === 'alt') return parts.includes('Alt')
+  if (released === 'shift') return parts.includes('Shift')
+  return parts.some((part) => !['Ctrl', 'Alt', 'Shift'].includes(part) && part.toLowerCase() === released)
+}
+
+export function shortcutKeyPart(event: KeyboardEvent): string {
+  const key = keyboardEventKey(event)
+  if (key === 'Control' || key === 'Meta') return 'Ctrl'
+  if (key === 'Alt' || key === 'Shift') return key
+  return key.length === 1 ? key.toUpperCase() : key
+}
+
+export function shortcutHeldByKeyParts(heldParts: ReadonlySet<string>, shortcut: string): boolean {
+  const parts = normalizeShortcut(shortcut).split('+').filter(Boolean)
+  return parts.length > 0 && parts.every((part) => heldParts.has(part))
 }
 
 export interface ShortcutConflict {

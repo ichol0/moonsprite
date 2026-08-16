@@ -212,16 +212,20 @@ describe('gradient tool core', () => {
     expect(readLayerColorAt(document, layer, 3999, 3999).a).toBe(0)
   })
 
-  it('keeps indexed palette insertion in scan order', () => {
+  it('maps indexed gradients to the existing palette without inserting colors', () => {
     const document = createDocument('indexed gradient', 3, 1, 'indexed')
     const layer = getActiveLayer(document)
     const startColor = { r: 200, g: 10, b: 20, a: 255 }
     const endColor = { r: 20, g: 30, b: 220, a: 255 }
+    const originalPalette = document.palette.map((entry) => ({ ...entry, color: { ...entry.color } }))
 
     applyGradient(document, layer, { x: 0, y: 0 }, { x: 2, y: 0 }, startColor, endColor)
 
-    const expected = [startColor, { r: 110, g: 20, b: 120, a: 255 }, endColor]
-    expect([0, 1, 2].map((x) => readLayerColorAt(document, layer, x, 0))).toEqual(expected)
-    expect(document.palette.slice(-3).map((entry) => entry.color)).toEqual(expected)
+    expect([0, 1, 2].map((x) => readLayerColorAt(document, layer, x, 0))).toEqual([
+      { r: 24, g: 27, b: 33, a: 255 },
+      { r: 24, g: 27, b: 33, a: 255 },
+      { r: 41, g: 121, b: 255, a: 255 }
+    ])
+    expect(document.palette).toEqual(originalPalette)
   })
 })

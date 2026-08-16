@@ -6,13 +6,73 @@ export const canvasCursors = {
   default: 'var(--cursor-default)', unavailable: 'var(--cursor-unavailable)', crosshair: 'var(--cursor-crosshair)', pencilWhite: 'var(--cursor-pencil-white)', pencilBlack: 'var(--cursor-pencil-black)', grab: 'var(--cursor-grab)', grabbing: 'var(--cursor-grabbing)',
   selectionWhite: 'var(--cursor-selection-white)', selectionBlack: 'var(--cursor-selection-black)', eyedropper: 'var(--cursor-eyedropper)', zoom: 'var(--cursor-zoom)', rotate: 'var(--cursor-rotate)', move: 'var(--cursor-move)', ewResize: 'var(--cursor-ew-resize)', nsResize: 'var(--cursor-ns-resize)',
   nwseResize: 'var(--cursor-nwse-resize)', neswResize: 'var(--cursor-nesw-resize)', selectionMove: 'var(--cursor-selection-move)', copy: 'var(--cursor-copy)',
-  rotateN: 'var(--cursor-selection-rotate-n)', rotateNe: 'var(--cursor-selection-rotate-ne)', rotateSe: 'var(--cursor-selection-rotate-se)', rotateS: 'var(--cursor-selection-rotate-s)', rotateSw: 'var(--cursor-selection-rotate-sw)', rotateNw: 'var(--cursor-selection-rotate-nw)', shearHorizontal: 'var(--cursor-selection-shear-horizontal)', shearVertical: 'var(--cursor-selection-shear-vertical)'
+  rotateN: 'var(--cursor-selection-rotate-n)', rotateNe: 'var(--cursor-selection-rotate-ne)', rotateSe: 'var(--cursor-selection-rotate-se)', rotateS: 'var(--cursor-selection-rotate-s)', rotateSw: 'var(--cursor-selection-rotate-sw)', rotateNw: 'var(--cursor-selection-rotate-nw)', shearHorizontal: 'var(--cursor-selection-shear-horizontal)', shearVertical: 'var(--cursor-selection-shear-vertical)', shearNesw: 'var(--cursor-selection-shear-nesw)', shearNwse: 'var(--cursor-selection-shear-nwse)'
 } as const
 
 export const resizeCursors: Record<SelectionHandle, string> = { nw: canvasCursors.nwseResize, n: canvasCursors.nsResize, ne: canvasCursors.neswResize, w: canvasCursors.ewResize, e: canvasCursors.ewResize, sw: canvasCursors.neswResize, s: canvasCursors.nsResize, se: canvasCursors.nwseResize }
+export type SelectionResizeCursor = 'horizontal' | 'vertical' | 'nesw' | 'nwse'
+export const directionalResizeCursors: Record<SelectionResizeCursor, string> = { horizontal: canvasCursors.ewResize, vertical: canvasCursors.nsResize, nesw: canvasCursors.neswResize, nwse: canvasCursors.nwseResize }
 export type SelectionRotationCursor = SelectionRotationHandle | 'rotate-n' | 'rotate-s'
 export const rotationCursors: Record<SelectionRotationCursor, string> = { 'rotate-n': canvasCursors.rotateN, 'rotate-ne': canvasCursors.rotateNe, 'rotate-se': canvasCursors.rotateSe, 'rotate-s': canvasCursors.rotateS, 'rotate-sw': canvasCursors.rotateSw, 'rotate-nw': canvasCursors.rotateNw }
 export const shearCursors: Record<SelectionShearHandle, string> = { 'shear-n': canvasCursors.shearHorizontal, 'shear-s': canvasCursors.shearHorizontal, 'shear-w': canvasCursors.shearVertical, 'shear-e': canvasCursors.shearVertical }
+export type SelectionShearCursor = 'horizontal' | 'vertical' | 'nesw' | 'nwse'
+export const directionalShearCursors: Record<SelectionShearCursor, string> = { horizontal: canvasCursors.shearHorizontal, vertical: canvasCursors.shearVertical, nesw: canvasCursors.shearNesw, nwse: canvasCursors.shearNwse }
+
+export const selectionResizeCursorForDirection = (direction: { x: number; y: number }): SelectionResizeCursor => {
+  const angle = ((Math.atan2(direction.y, direction.x) * 180 / Math.PI) % 180 + 180) % 180
+  if (angle < 22.5 || angle >= 157.5) return 'horizontal'
+  if (angle < 67.5) return 'nwse'
+  if (angle < 112.5) return 'vertical'
+  return 'nesw'
+}
+
+const selectionCornerDiagonalIndices: Partial<Record<SelectionHandle, readonly [number, number]>> = {
+  nw: [0, 7], ne: [2, 5], sw: [5, 2], se: [7, 0]
+}
+
+export const selectionCornerResizeCursorForPoints = (
+  handle: SelectionHandle,
+  points: readonly { x: number; y: number }[]
+): SelectionResizeCursor | null => {
+  const diagonal = selectionCornerDiagonalIndices[handle]
+  if (!diagonal) return null
+  const first = points[diagonal[0]]
+  const second = points[diagonal[1]]
+  if (!first || !second) return null
+  const direction = { x: first.x - second.x, y: first.y - second.y }
+  return Math.hypot(direction.x, direction.y) < 1e-9 ? null : selectionResizeCursorForDirection(direction)
+}
+
+export const selectionShearCursorForDirection = (direction: { x: number; y: number }): SelectionShearCursor =>
+  selectionResizeCursorForDirection(direction)
+
+const selectionHandleDirections: Record<SelectionHandle, { x: number; y: number }> = {
+  nw: { x: -1, y: -1 }, n: { x: 0, y: -1 }, ne: { x: 1, y: -1 },
+  w: { x: -1, y: 0 }, e: { x: 1, y: 0 },
+  sw: { x: -1, y: 1 }, s: { x: 0, y: 1 }, se: { x: 1, y: 1 }
+}
+
+const rotateDirection = (direction: { x: number; y: number }, angle: number): { x: number; y: number } => {
+  const radians = angle * Math.PI / 180
+  const cosine = Math.cos(radians)
+  const sine = Math.sin(radians)
+  return { x: direction.x * cosine - direction.y * sine, y: direction.x * sine + direction.y * cosine }
+}
+
+export const selectionResizeCursorForHandle = (
+  handle: SelectionHandle,
+  selectionRotation = 0,
+  viewRotation = 0,
+  mirrored = false,
+  mirroredVertical = false
+): SelectionResizeCursor => {
+  const selectionDirection = rotateDirection(selectionHandleDirections[handle], selectionRotation)
+  const displayedDirection = rotateDirection({
+    x: mirrored ? -selectionDirection.x : selectionDirection.x,
+    y: mirroredVertical ? -selectionDirection.y : selectionDirection.y
+  }, viewRotation)
+  return selectionResizeCursorForDirection(displayedDirection)
+}
 
 const VERTICAL_ROTATION_CURSOR_RATIO = Math.SQRT2 - 1
 
@@ -84,8 +144,8 @@ export const transparencyColorAt = (pixelX: number, pixelY: number, checkerboard
     ? checkerboard.lightColor
     : checkerboard.darkColor
 
-const colorCursorTools = new Set<ToolId>(['pencil', 'eraser', 'fill', 'selection'])
-export const previewCursorTools = new Set<ToolId>(['pencil', 'eraser', 'fill', 'shape'])
+const colorCursorTools = new Set<ToolId>(['pencil', 'airbrush', 'eraser', 'fill', 'selection'])
+export const previewCursorTools = new Set<ToolId>(['pencil', 'airbrush', 'eraser', 'fill', 'shape', 'line'])
 
 export const canvasToolCursor = (tool: ToolId, color: RgbaColor, available = true): string => {
   if (tool === 'rotate') return canvasCursors.rotate

@@ -1,5 +1,6 @@
 import type { BlendMode, LayerGroup, RasterLayer, SpriteDocument } from '@shared/types'
-import { compositeDocument, createLayer, findOrAddPaletteColor, getDescendantGroupIds, isLayerEffectivelyLocked } from './document'
+import { compositeDocument, createLayer, getDescendantGroupIds, isLayerEffectivelyLocked, paletteColorIdForCanvas } from './document'
+import { applyRelativeLuminance } from './raster'
 import { translateCurrent as tr } from './localization'
 
 export interface LayerMergeSuccess {
@@ -29,11 +30,11 @@ function createMergedLayer(document: SpriteDocument, name: string, pixels: Uint8
   layer.blendMode = properties.blendMode
   if (properties.clippingMask === true) layer.clippingMask = true
   if (layer.format === 'rgba') {
-    layer.pixels.set(pixels)
+    layer.pixels.set(document.colorMode === 'grayscale' ? applyRelativeLuminance(pixels.slice()) : pixels)
   } else {
     for (let index = 0; index < layer.pixels.length; index += 1) {
       const offset = index * 4
-      layer.pixels[index] = findOrAddPaletteColor(document, {
+      layer.pixels[index] = paletteColorIdForCanvas(document, {
         r: pixels[offset],
         g: pixels[offset + 1],
         b: pixels[offset + 2],

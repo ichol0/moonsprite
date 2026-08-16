@@ -4,7 +4,8 @@ import { PerformanceProfiler } from '@/components/PerformanceProfiler'
 import { useI18n } from '@/components/I18nProvider'
 import { documentTabsRenderKey } from '@/core/app-render-keys'
 import type { DocumentPaneDirection, DocumentPanePlacement } from '@/core/document-pane-layout'
-import { paneDockTargetAtPoint, type DocumentPaneDockTarget } from './document-pane-hit-test'
+import { captureDocumentPaneDockTargets, paneDockTargetAtPoint, type DocumentPaneDockTarget } from './document-pane-hit-test'
+import { clearDocumentPaneDockPreview, updateDocumentPaneDockPreview } from './document-pane-dock-preview'
 import { useWorkspace } from '@/store/workspace'
 import { PixelUtilityIcon } from '@/components/PixelUtilityIcon'
 
@@ -14,8 +15,16 @@ interface DocumentTabsProps {
   onNew: () => void
   onActivate: (documentId: string) => void
   onContextActivate: (documentId: string) => void
-  onSplitPreview: (placement: DocumentPanePlacement | null) => void
-  onSplit: (documentId: string, targetPaneId: string, direction: DocumentPaneDirection) => void
+  onSplit: (placement: DocumentPanePlacement) => void
+  onFloat?: (documentId: string, anchor: { x: number; y: number }) => void
+  onDockDebug?: (state: DocumentTabDockDebugState | null) => void
+}
+
+export interface DocumentTabDockDebugState {
+  draggedDocumentId: string
+  targetDocumentId: string | null
+  direction: DocumentPaneDirection | null
+  magnetVisible: boolean
 }
 
 interface DocumentTabDragPreview {
@@ -26,6 +35,42 @@ interface DocumentTabDragPreview {
   height: number
   pointerOffsetX: number
   pointerOffsetY: number
+}
+
+interface DocumentTabDragState {
+  id: string
+  name: string
+  pointerId: number
+  startX: number
+  startY: number
+  lastX: number
+  lastY: number
+  direction: -1 | 1
+  pointerOffsetX: number
+  pointerOffsetY: number
+  width: number
+  height: number
+  moved: boolean
+  insideTabStrip: boolean
+  detached: boolean
+  insertIndex: number | null
+  splitPreview: DocumentPanePlacement | null
+  dockTarget: DocumentPaneDockTarget | null
+  dockTargets: readonly DocumentPaneDockTarget[] | null
+  dockPreviewSurface: HTMLElement | null
+  captureTarget: HTMLElement | null
+  previewVisible: boolean
+}
+
+const clearDocumentTabDockPreview = (drag: DocumentTabDragState): void => {
+  clearDocumentPaneDockPreview(drag.dockPreviewSurface)
+  drag.dockPreviewSurface = null
+}
+
+const updateDocumentTabDockPreview = (drag: DocumentTabDragState, pane: HTMLElement | null, direction: DocumentPaneDirection | null): boolean => {
+  const preview = updateDocumentPaneDockPreview(drag.dockPreviewSurface, pane, direction)
+  drag.dockPreviewSurface = preview.surface
+  return preview.visible
 }
 
 const captureTabPositions = (): Map<string, number> => new Map(
@@ -77,13 +122,13 @@ const animateTabPositions = (before: Map<string, number>, draggedDocumentId: str
   })
 }
 
-export const DocumentTabs = memo(function DocumentTabs({ homeOpen, hiddenDocumentIds, onNew, onActivate, onContextActivate, onSplitPreview, onSplit }: DocumentTabsProps) {
+export const DocumentTabs = memo(function DocumentTabs({ homeOpen, hiddenDocumentIds, onNew, onActivate, onContextActivate, onSplit, onFloat, onDockDebug }: DocumentTabsProps) {
   const { t } = useI18n()
   const renderKey = useWorkspace(documentTabsRenderKey)
   const [contextMenu, setContextMenu] = useState<{ documentId: string; x: number; y: number } | null>(null)
   const [dragPreview, setDragPreview] = useState<DocumentTabDragPreview | null>(null)
   const [dragVisual, setDragVisual] = useState<{ id: string; detached: boolean } | null>(null)
-  const dragRef = useRef<{ id: string; name: string; pointerId: number; startX: number; startY: number; lastX: number; lastY: number; direction: -1 | 1; pointerOffsetX: number; pointerOffsetY: number; width: number; height: number; moved: boolean; insideTabStrip: boolean; detached: boolean; insertIndex: number | null; splitPreview: DocumentPanePlacement | null; dockTarget: DocumentPaneDockTarget | null; captureTarget: HTMLElement | null; previewVisible: boolean } | null>(null)
+  const dragRef = useRef<DocumentTabDragState | null>(null)
   const suppressClickRef = useRef(false)
   const state = useWorkspace.getState()
 
@@ -101,7 +146,6 @@ export const DocumentTabs = memo(function DocumentTabs({ homeOpen, hiddenDocumen
       event.preventDefault()
       if (event.clientX > drag.lastX + 0.5) drag.direction = 1
       else if (event.clientX < drag.lastX - 0.5) drag.direction = -1
-      const previousPoint = { x: drag.lastX, y: drag.lastY }
       drag.lastX = event.clientX
       drag.lastY = event.clientY
       const tabStrip = document.querySelector<HTMLElement>('.tab-strip')
@@ -114,11 +158,11 @@ export const DocumentTabs = memo(function DocumentTabs({ homeOpen, hiddenDocumen
         }
         drag.previewVisible = false
         setDragPreview(null)
-        if (drag.splitPreview) {
-          drag.splitPreview = null
-          onSplitPreview(null)
-        }
+        clearDocumentTabDockPreview(drag)
+        drag.splitPreview = null
         drag.dockTarget = null
+        drag.dockTargets = null
+        onDockDebug?.({ draggedDocumentId: drag.id, targetDocumentId: null, direction: null, magnetVisible: false })
         drag.insideTabStrip = true
         const tabs = [...document.querySelectorAll<HTMLButtonElement>('.document-tab')].filter((tab) => tab.dataset.documentId !== drag.id)
         const threshold = drag.direction > 0 ? 0.3 : 0.7
@@ -149,7 +193,8 @@ export const DocumentTabs = memo(function DocumentTabs({ homeOpen, hiddenDocumen
         drag.detached = true
         setDragVisual({ id: drag.id, detached: true })
       }
-      const hit = paneDockTargetAtPoint(event.clientX, event.clientY, { currentTarget: drag.dockTarget, previousPoint })
+      if (!drag.dockTargets) drag.dockTargets = captureDocumentPaneDockTargets()
+      const hit = paneDockTargetAtPoint(event.clientX, event.clientY, { currentTarget: drag.dockTarget, strictPoint: true, targets: drag.dockTargets })
       const workspace = useWorkspace.getState()
       const fallbackTargetId = hit.target?.paneId === drag.id && hit.direction
         ? workspace.sessions.find((item) => item.document.id !== drag.id && !hiddenDocumentIds.includes(item.document.id))?.document.id ?? null
@@ -157,12 +202,24 @@ export const DocumentTabs = memo(function DocumentTabs({ homeOpen, hiddenDocumen
       const targetId = fallbackTargetId ?? hit.target?.paneId ?? null
       const canSplit = Boolean(targetId && targetId !== drag.id)
       const nextSplitPreview = hit.target && hit.direction && canSplit && targetId
-        ? { documentId: drag.id, targetPaneId: targetId, direction: hit.direction }
+        ? {
+            documentId: drag.id,
+            targetPaneId: targetId,
+            direction: hit.direction,
+            ...(hit.target.paneId !== targetId ? { previewPaneId: hit.target.paneId } : {})
+          }
         : null
-      drag.dockTarget = nextSplitPreview && hit.target ? { ...hit.target, paneId: nextSplitPreview.targetPaneId } : null
-      if (nextSplitPreview?.documentId !== drag.splitPreview?.documentId || nextSplitPreview?.targetPaneId !== drag.splitPreview?.targetPaneId || nextSplitPreview?.direction !== drag.splitPreview?.direction) {
-        drag.splitPreview = nextSplitPreview
-        onSplitPreview(nextSplitPreview)
+      const magnetVisible = updateDocumentTabDockPreview(drag, nextSplitPreview ? hit.pane : null, nextSplitPreview?.direction ?? null)
+      const visibleSplitPreview = magnetVisible ? nextSplitPreview : null
+      onDockDebug?.({
+        draggedDocumentId: drag.id,
+        targetDocumentId: hit.target?.paneId ?? null,
+        direction: hit.direction,
+        magnetVisible
+      })
+      drag.dockTarget = visibleSplitPreview && hit.target ? hit.target : null
+      if (visibleSplitPreview?.documentId !== drag.splitPreview?.documentId || visibleSplitPreview?.targetPaneId !== drag.splitPreview?.targetPaneId || visibleSplitPreview?.direction !== drag.splitPreview?.direction || visibleSplitPreview?.previewPaneId !== drag.splitPreview?.previewPaneId) {
+        drag.splitPreview = visibleSplitPreview
       }
       if (!drag.previewVisible) {
         drag.previewVisible = true
@@ -182,10 +239,11 @@ export const DocumentTabs = memo(function DocumentTabs({ homeOpen, hiddenDocumen
     const end = (event: PointerEvent, cancelled = false): void => {
       const drag = dragRef.current
       if (!drag || drag.pointerId !== event.pointerId) return
-      dragRef.current = null
       const splitPreview = drag.splitPreview
       const commitSplit = !cancelled && drag.moved && !drag.insideTabStrip && Boolean(splitPreview)
       drag.previewVisible = false
+      clearDocumentTabDockPreview(drag)
+      dragRef.current = null
       if (drag.moved) {
         suppressClickRef.current = true
         window.setTimeout(() => { suppressClickRef.current = false }, 0)
@@ -194,10 +252,10 @@ export const DocumentTabs = memo(function DocumentTabs({ homeOpen, hiddenDocumen
       resetDraggedTabPosition(drag.id)
       document.documentElement.classList.remove('document-tabs-dragging')
       flushSync(() => {
-        if (splitPreview) onSplitPreview(null)
+        onDockDebug?.(null)
         setDragPreview(null)
         setDragVisual(null)
-        if (commitSplit && splitPreview) onSplit(drag.id, splitPreview.targetPaneId, splitPreview.direction)
+        if (commitSplit && splitPreview) onSplit(splitPreview)
       })
     }
     window.addEventListener('pointermove', move)
@@ -224,10 +282,11 @@ export const DocumentTabs = memo(function DocumentTabs({ homeOpen, hiddenDocumen
       window.removeEventListener('mouseup', mouseUp, true)
       window.removeEventListener('blur', blur)
       if (dragRef.current) resetDraggedTabPosition(dragRef.current.id)
-      if (dragRef.current?.splitPreview) onSplitPreview(null)
+      if (dragRef.current) clearDocumentTabDockPreview(dragRef.current)
+      onDockDebug?.(null)
       document.documentElement.classList.remove('document-tabs-dragging')
     }
-  }, [hiddenDocumentIds, onSplit, onSplitPreview])
+  }, [hiddenDocumentIds, onDockDebug, onSplit])
 
   useEffect(() => {
     const closeOutside = (event: PointerEvent): void => {
@@ -252,7 +311,8 @@ export const DocumentTabs = memo(function DocumentTabs({ homeOpen, hiddenDocumen
     const documentName = useWorkspace.getState().sessions.find((item) => item.document.id === documentId)?.document.name ?? ''
     const bounds = event.currentTarget.getBoundingClientRect()
     const captureTarget = event.currentTarget.closest<HTMLElement>('.tab-strip') ?? event.currentTarget
-    dragRef.current = { id: documentId, name: documentName, pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, lastX: event.clientX, lastY: event.clientY, direction: 1, pointerOffsetX: event.clientX - bounds.left, pointerOffsetY: event.clientY - bounds.top, width: bounds.width, height: bounds.height, moved: false, insideTabStrip: true, detached: false, insertIndex: null, splitPreview: null, dockTarget: null, captureTarget, previewVisible: false }
+    dragRef.current = { id: documentId, name: documentName, pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, lastX: event.clientX, lastY: event.clientY, direction: 1, pointerOffsetX: event.clientX - bounds.left, pointerOffsetY: event.clientY - bounds.top, width: bounds.width, height: bounds.height, moved: false, insideTabStrip: true, detached: false, insertIndex: null, splitPreview: null, dockTarget: null, dockTargets: null, dockPreviewSurface: null, captureTarget, previewVisible: false }
+    onDockDebug?.({ draggedDocumentId: documentId, targetDocumentId: null, direction: null, magnetVisible: false })
   }
   const openProjectFolder = (documentId: string): void => {
     const workspace = useWorkspace.getState()
@@ -299,9 +359,10 @@ export const DocumentTabs = memo(function DocumentTabs({ homeOpen, hiddenDocumen
       <span className="tab-close" role="button" tabIndex={0} aria-label={t('tabs.closeAria', { name: item.document.name })} onClick={(event) => { event.stopPropagation(); void useWorkspace.getState().closeDocument(item.document.id) }}><PixelUtilityIcon kind="close" /></span>
     </button>)}
       <button className="new-tab-button" aria-label={t('tabs.newProject')} title={t('tabs.newProject')} onClick={onNew}><PixelUtilityIcon kind="plus" /></button>
-    {contextMenu && createPortal(<div className="context-menu document-tab-context-menu" role="menu" aria-label={t('tabs.contextAria')} style={{ left: Math.min(contextMenu.x, Math.max(8, window.innerWidth - 232)), top: Math.min(contextMenu.y, Math.max(8, window.innerHeight - 150)) }}>
+    {contextMenu && createPortal(<div className="context-menu document-tab-context-menu" role="menu" aria-label={t('tabs.contextAria')} style={{ left: Math.min(contextMenu.x, Math.max(8, window.innerWidth - 232)), top: Math.min(contextMenu.y, Math.max(8, window.innerHeight - 184)) }}>
       <button className="context-menu-item" role="menuitem" onClick={() => { void useWorkspace.getState().closeDocument(contextMenu.documentId); setContextMenu(null) }}><PixelUtilityIcon kind="close" /><span>{t('common.close')}</span></button>
       <button className="context-menu-item" role="menuitem" onClick={() => { void duplicateDocumentView(contextMenu.documentId) }}><PixelUtilityIcon kind="copy" /><span>{t('tabs.duplicateView')}</span></button>
+      {onFloat && <button className="context-menu-item" role="menuitem" onClick={() => { onFloat(contextMenu.documentId, { x: contextMenu.x, y: contextMenu.y }); setContextMenu(null) }}><PixelUtilityIcon kind="move" /><span>{t('tabs.floatDocument')}</span></button>}
       <button className="context-menu-item" role="menuitem" onClick={() => openProjectFolder(contextMenu.documentId)}><PixelUtilityIcon kind="folderOpen" /><span>{t('app.menu.file.openFolder')}</span></button>
     </div>, document.body)}
     {dragPreview && createPortal(<div className="document-tab-drag-layer" aria-hidden="true">

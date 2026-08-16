@@ -1,22 +1,26 @@
 import { describe, expect, it } from 'vitest'
-import { convertDocumentColorMode, createDocument, getActiveLayer, readLayerColor } from './document'
+import { convertDocumentColorMode, createDocument, getActiveLayer, readLayerColor, writeLayerColor } from './document'
 import { decodeProject, encodeProject, readProjectGalleryMetadata } from './project-format'
 import { paintSquare } from './tools'
 import { beginPixelEdit } from './history'
+import { relativeLuminanceColor } from './raster'
 
 describe('MoonSprite project format', () => {
-  it.each(['rgba', 'indexed'] as const)('round trips %s documents', (mode) => {
+  it.each(['rgba', 'indexed', 'grayscale'] as const)('round trips %s documents', (mode) => {
     const document = createDocument(`${mode} project`, 6, 5, mode)
     const layer = getActiveLayer(document)
     layer.blendMode = 'screen'
+    const requested = mode === 'indexed'
+      ? document.palette.find((entry) => entry.id === 2)!.color
+      : { r: 100, g: 20, b: 220, a: 190 }
     const edit = beginPixelEdit(layer.id)
-    paintSquare(document, layer, edit, 2, 3, 1, { r: 100, g: 20, b: 220, a: 190 })
+    paintSquare(document, layer, edit, 2, 3, 1, requested)
     const restored = decodeProject(encodeProject(document))
     expect(restored.colorMode).toBe(mode)
     expect(restored.width).toBe(6)
     expect(restored.layers).toHaveLength(1)
     expect(restored.layers[0].blendMode).toBe('screen')
-    expect(readLayerColor(restored, restored.layers[0], 3 * 6 + 2)).toEqual({ r: 100, g: 20, b: 220, a: 190 })
+    expect(readLayerColor(restored, restored.layers[0], 3 * 6 + 2)).toEqual(mode === 'grayscale' ? relativeLuminanceColor(requested) : requested)
   })
 
   it('stores selection-created brushes inside the project', () => {
@@ -46,15 +50,41 @@ describe('MoonSprite project format', () => {
     expect(Array.from(restored.customBrushes?.[0].colors ?? [])).toEqual([0xff0000ff, 0xff00ff00])
   })
 
-  it('converts RGBA to indexed and back without changing colors', () => {
+  it('maps RGBA layers and inactive animation cels to the existing indexed palette', () => {
     const document = createDocument('convert', 2, 1, 'rgba')
+    document.palette[0].color = { r: 0, g: 0, b: 0, a: 255 }
+    document.palette[1].color = { r: 255, g: 0, b: 0, a: 255 }
     const layer = getActiveLayer(document)
     const edit = beginPixelEdit(layer.id)
-    paintSquare(document, layer, edit, 0, 0, 1, { r: 12, g: 34, b: 56, a: 255 })
+    paintSquare(document, layer, edit, 0, 0, 1, { r: 245, g: 12, b: 8, a: 255 })
+    document.animation!.frames.push({ id: 'frame-2', duration: 100 })
+    document.animation!.cels.push({
+      id: 'cel-2',
+      layerId: layer.id,
+      frameId: 'frame-2',
+      surface: { format: 'rgba', width: 2, height: 1, offsetX: 0, offsetY: 0, pixels: new Uint8ClampedArray([4, 5, 6, 255, 250, 4, 5, 255]) }
+    })
+    const paletteBefore = document.palette.map((entry) => ({ id: entry.id, color: { ...entry.color } }))
     convertDocumentColorMode(document, 'indexed')
-    expect(document.palette.some((entry) => entry.color.r === 12)).toBe(true)
+    expect(document.palette.filter((entry) => entry.id !== 0).map((entry) => ({ id: entry.id, color: entry.color }))).toEqual(paletteBefore)
+    expect(layer.format).toBe('indexed')
+    expect(layer.pixels[0]).toBe(2)
+    expect(document.animation!.cels.find((cel) => cel.id === 'cel-2')!.surface).toMatchObject({ format: 'indexed' })
+    expect((document.animation!.cels.find((cel) => cel.id === 'cel-2')!.surface!.pixels as Uint32Array)[1]).toBe(2)
     convertDocumentColorMode(document, 'rgba')
-    expect(readLayerColor(document, document.layers[0], 0)).toEqual({ r: 12, g: 34, b: 56, a: 255 })
+    expect(readLayerColor(document, document.layers[0], 0)).toEqual({ r: 255, g: 0, b: 0, a: 255 })
+  })
+
+  it('converts color to perceptual grayscale while preserving alpha', () => {
+    const document = createDocument('grayscale conversion', 1, 1, 'rgba')
+    writeLayerColor(document, getActiveLayer(document), 0, { r: 40, g: 180, b: 90, a: 123 })
+
+    convertDocumentColorMode(document, 'grayscale')
+
+    const color = readLayerColor(document, getActiveLayer(document), 0)
+    expect(color.r).toBe(color.g)
+    expect(color.g).toBe(color.b)
+    expect(color.a).toBe(123)
   })
 
   it('rejects invalid containers', () => {

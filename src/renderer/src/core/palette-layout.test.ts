@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { fitPaletteSlotsToGrid, normalizePaletteSlots, PALETTE_GRID_COLUMNS, PALETTE_SWATCH_GAP, PALETTE_SWATCH_PIXELS, paletteGridCapacity, paletteOrderFromSlots, paletteRangeIds, paletteRangeIdsBySlots, paletteSlotRange, isPaletteDeleteKey, paletteColorRoles, paletteColorsEqual, paletteMarkerColor, repositionPaletteSlots } from './palette-layout'
+import { fitPaletteSlotsToGrid, normalizePaletteSlots, PALETTE_GRID_COLUMNS, PALETTE_SWATCH_GAP, PALETTE_SWATCH_PIXELS, paletteGridCapacity, paletteOrderFromSlots, paletteRangeIds, paletteRangeIdsBySlots, paletteSlotRange, isPaletteDeleteKey, paletteColorRoles, paletteColorsEqual, paletteMarkerColor, repositionPaletteSlots, visiblePaletteColors } from './palette-layout'
 
 describe('palette layout helpers', () => {
   it('recognizes both Windows palette deletion keys', () => {
@@ -40,6 +40,13 @@ describe('palette layout helpers', () => {
     const slots = normalizePaletteSlots([1, 2, 3], [1, 2, 3], [null, 2, 2, 99, null, 1])
     expect(slots.slice(0, 7)).toEqual([3, 2, null, null, null, 1, null])
     expect(paletteOrderFromSlots(slots)).toEqual([3, 2, 1])
+  })
+
+  it('only reports colors that remain visible in the palette order', () => {
+    const hidden = { id: 1, name: 'Hidden', color: { r: 10, g: 20, b: 30, a: 255 } }
+    const visible = { id: 2, name: 'Visible', color: { r: 40, g: 50, b: 60, a: 255 } }
+
+    expect(visiblePaletteColors([hidden, visible], [visible.id])).toEqual([visible.color])
   })
 
   it('moves colors into empty slots and swaps occupied destinations', () => {

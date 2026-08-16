@@ -2,7 +2,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { PreferencesDialog } from './PreferencesDialog'
 import { useWorkspace } from '@/store/workspace'
-import { THEME_PREFERENCE_KEY } from '@/core/file-preferences'
+import { QUICK_COMMAND_BAR_ENABLED_PREFERENCE_KEY, QUICK_COMMAND_BAR_TRANSLUCENT_PREFERENCE_KEY, QUICK_COMMAND_PREFERENCES_KEY, THEME_PREFERENCE_KEY } from '@/core/file-preferences'
 import type { MoonSpriteApi } from '@shared/types'
 
 afterEach(() => {
@@ -36,7 +36,7 @@ describe('PreferencesDialog', () => {
 
   it('shows selection and eyedropper preferences disabled by default', () => {
     render(<PreferencesDialog onClose={vi.fn()} onPresetChange={vi.fn()} />)
-    fireEvent.click(screen.getByRole('button', { name: '编辑' }))
+    fireEvent.click(screen.getByRole('button', { name: '工具' }))
 
     expect(screen.getByText('套索选区预览闭合').closest('label')?.querySelector('input')).not.toBeChecked()
     expect(screen.getByText('吸管取色后切回铅笔').closest('label')?.querySelector('input')).not.toBeChecked()
@@ -47,15 +47,15 @@ describe('PreferencesDialog', () => {
 
   it('separates system cursor behavior from tool previews', () => {
     render(<PreferencesDialog onClose={vi.fn()} onPresetChange={vi.fn()} />)
-    fireEvent.click(screen.getByRole('button', { name: '光标' }))
-    const localCursor = screen.getByText('使用本地指针').closest('label')?.querySelector('input')
-    expect(localCursor).not.toBeChecked()
+    fireEvent.click(screen.getByRole('button', { name: '输入' }))
+    const softwareCursor = screen.getByText('使用软件指针').closest('label')?.querySelector('input')
+    expect(softwareCursor).toBeChecked()
     expect(screen.getByRole('button', { name: '鼠标光标比例' })).toBeEnabled()
-    fireEvent.click(localCursor!)
+    fireEvent.click(softwareCursor!)
     expect(screen.getByRole('button', { name: '鼠标光标比例' })).toBeDisabled()
     expect(screen.queryByText('笔刷预览')).not.toBeInTheDocument()
 
-    fireEvent.click(screen.getByRole('button', { name: '工具预览' }))
+    fireEvent.click(screen.getByRole('button', { name: '工具' }))
     expect(screen.getByText('笔刷预览')).toBeInTheDocument()
     expect(screen.getByText('完整预览')).toBeInTheDocument()
     expect(screen.queryByText('绘制时显示笔刷边缘')).not.toBeInTheDocument()
@@ -67,7 +67,7 @@ describe('PreferencesDialog', () => {
 
   it('allows layer display color presets to be added and restored', () => {
     render(<PreferencesDialog onClose={vi.fn()} onPresetChange={vi.fn()} />)
-    fireEvent.click(screen.getByRole('button', { name: '图层' }))
+    fireEvent.click(screen.getByRole('button', { name: '预设' }))
 
     expect(screen.getByText('图层属性颜色预设').closest('.preference-checker-colors')).not.toBeNull()
 
@@ -83,9 +83,73 @@ describe('PreferencesDialog', () => {
     render(<PreferencesDialog onClose={vi.fn()} onPresetChange={vi.fn()} />)
     fireEvent.click(screen.getByRole('button', { name: '预设' }))
 
-    const deleteButtons = screen.getAllByRole('button', { name: /删除/ })
+    const deleteButtons = screen.getAllByRole('button', { name: /删除(尺寸|导出倍率)/ })
     expect(deleteButtons.length).toBeGreaterThan(0)
     expect(deleteButtons.every((button) => button.classList.contains('delete-icon-button') && button.classList.contains('compact'))).toBe(true)
+  })
+
+  it('keeps reordering color modes after the pointer leaves the drag handle', async () => {
+    render(<PreferencesDialog onClose={vi.fn()} onPresetChange={vi.fn()} />)
+    fireEvent.click(screen.getByRole('button', { name: '颜色' }))
+
+    const rgbRow = document.querySelector<HTMLElement>('[data-color-mode="rgb"]')
+    const hsvRow = document.querySelector<HTMLElement>('[data-color-mode="hsv"]')
+    const dragHandle = screen.getByRole('button', { name: 'RGB 拖动调整位置' })
+    if (!rgbRow || !hsvRow) throw new Error('Color mode rows were not rendered')
+
+    const setPointerCapture = vi.fn()
+    const hasPointerCapture = vi.fn(() => false)
+    const releasePointerCapture = vi.fn()
+    Object.assign(dragHandle, { setPointerCapture, hasPointerCapture, releasePointerCapture })
+    vi.spyOn(hsvRow, 'getBoundingClientRect').mockReturnValue({ top: 40, bottom: 74, left: 0, right: 300, width: 300, height: 34, x: 0, y: 40, toJSON: () => ({}) })
+    Object.defineProperty(document, 'elementsFromPoint', { configurable: true, value: vi.fn(() => [hsvRow]) })
+
+    fireEvent.pointerDown(dragHandle, { button: 0, pointerId: 7, clientX: 15, clientY: 17 })
+    expect(rgbRow).toHaveClass('dragging')
+    expect(setPointerCapture).toHaveBeenCalledWith(7)
+    fireEvent.pointerMove(window, { pointerId: 7, clientX: 220, clientY: 70 })
+
+    await waitFor(() => expect([...document.querySelectorAll<HTMLElement>('[data-color-mode]')].slice(0, 2).map((row) => row.dataset.colorMode)).toEqual(['hsv', 'rgb']))
+    fireEvent.pointerUp(window, { pointerId: 7, clientX: 220, clientY: 70 })
+  })
+
+  it('opens and configures the dedicated quick command preferences section', async () => {
+    render(<PreferencesDialog initialSection="quickCommands" onClose={vi.fn()} onPresetChange={vi.fn()} />)
+
+    expect(screen.getByRole('button', { name: '快捷指令栏' })).toHaveAttribute('aria-current', 'page')
+    const quickCommandToggle = screen.getByText('显示快捷指令栏').closest('label')?.querySelector('input')
+    const translucentToggle = screen.getByText('半透明显示').closest('label')?.querySelector('input')
+    const pixelGridToggle = screen.getByLabelText('在快捷指令栏中显示 像素网格')
+    expect(quickCommandToggle).toBeChecked()
+    expect(translucentToggle).toBeChecked()
+    expect(pixelGridToggle).not.toBeChecked()
+    fireEvent.click(pixelGridToggle)
+    expect(pixelGridToggle).toBeChecked()
+
+    const resetRow = document.querySelector<HTMLElement>('[data-quick-command-id="resetView"]')
+    const customGridRow = document.querySelector<HTMLElement>('[data-quick-command-id="customGrid"]')
+    const dragHandle = screen.getByRole('button', { name: '重置视图 拖动调整位置' })
+    if (!resetRow || !customGridRow) throw new Error('Quick command preference rows were not rendered')
+    Object.assign(dragHandle, { setPointerCapture: vi.fn(), hasPointerCapture: vi.fn(() => false), releasePointerCapture: vi.fn() })
+    vi.spyOn(customGridRow, 'getBoundingClientRect').mockReturnValue({ top: 40, bottom: 74, left: 0, right: 300, width: 300, height: 34, x: 0, y: 40, toJSON: () => ({}) })
+    Object.defineProperty(document, 'elementsFromPoint', { configurable: true, value: vi.fn(() => [customGridRow]) })
+
+    fireEvent.pointerDown(dragHandle, { button: 0, pointerId: 11, clientX: 15, clientY: 17 })
+    fireEvent.pointerMove(window, { pointerId: 11, clientX: 220, clientY: 45 })
+    await waitFor(() => {
+      const ids = [...document.querySelectorAll<HTMLElement>('[data-quick-command-id]')].map((row) => row.dataset.quickCommandId)
+      expect(ids.indexOf('resetView')).toBeLessThan(ids.indexOf('customGrid'))
+    })
+    fireEvent.pointerUp(window, { pointerId: 11, clientX: 220, clientY: 45 })
+
+    fireEvent.click(quickCommandToggle!)
+    fireEvent.click(translucentToggle!)
+    fireEvent.click(screen.getByRole('button', { name: '应用' }))
+    expect(localStorage.getItem(QUICK_COMMAND_BAR_ENABLED_PREFERENCE_KEY)).toBe('false')
+    expect(localStorage.getItem(QUICK_COMMAND_BAR_TRANSLUCENT_PREFERENCE_KEY)).toBe('false')
+    const stored = JSON.parse(localStorage.getItem(QUICK_COMMAND_PREFERENCES_KEY) ?? '[]') as Array<{ id: string; enabled: boolean }>
+    expect(stored.find((item) => item.id === 'pixelGrid')?.enabled).toBe(true)
+    expect(stored.findIndex((item) => item.id === 'resetView')).toBeLessThan(stored.findIndex((item) => item.id === 'customGrid'))
   })
 
   it('previews a theme immediately and restores the persisted theme when canceled', () => {

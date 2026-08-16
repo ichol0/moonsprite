@@ -1,4 +1,4 @@
-import type { RasterLayer, SelectionMask, SelectionMode, SelectionRect, SpriteDocument } from '@shared/types'
+import type { CanvasAnchor, RasterLayer, SelectionMask, SelectionMode, SelectionRect, SpriteDocument } from '@shared/types'
 import { getPaletteEntry } from './document'
 import { isInBounds, packColor, pixelIndex } from './raster'
 
@@ -330,6 +330,23 @@ export const inverseTransformedSelectionPoint = (
   return { x: snapRotationValue(localX), y: snapRotationValue(localY) }
 }
 
+export const remapTransformedSelectionPoint = (
+  sourceTarget: SelectionRect,
+  destinationTarget: SelectionRect,
+  point: { x: number; y: number },
+  sourceAngle = 0,
+  sourceShear?: SelectionShearTransform,
+  destinationAngle = sourceAngle,
+  destinationShear = sourceShear
+): { x: number; y: number } => {
+  const localPoint = inverseTransformedSelectionPoint(sourceTarget, point, sourceAngle, sourceShear)
+  let normalizedX = sourceTarget.width === 0 ? 0.5 : (localPoint.x - sourceTarget.x) / sourceTarget.width
+  let normalizedY = sourceTarget.height === 0 ? 0.5 : (localPoint.y - sourceTarget.y) / sourceTarget.height
+  if (Boolean(sourceTarget.flipHorizontal) !== Boolean(destinationTarget.flipHorizontal)) normalizedX = 1 - normalizedX
+  if (Boolean(sourceTarget.flipVertical) !== Boolean(destinationTarget.flipVertical)) normalizedY = 1 - normalizedY
+  return transformedSelectionPoint(destinationTarget, normalizedX, normalizedY, destinationAngle, destinationShear)
+}
+
 export const transformedSelectionControlPoints = (
   target: SelectionRect,
   angle = 0,
@@ -339,6 +356,232 @@ export const transformedSelectionControlPoints = (
   [0, 0.5], [1, 0.5],
   [0, 1], [0.5, 1], [1, 1]
 ].map(([normalizedX, normalizedY]) => transformedSelectionPoint(target, normalizedX, normalizedY, angle, shear))
+
+export const transformedSelectionCenter = (
+  target: SelectionRect,
+  angle = 0,
+  shear?: SelectionShearTransform
+): { x: number; y: number } => {
+  const points = transformedSelectionControlPoints(target, angle, shear)
+  const corners = [points[0], points[2], points[5], points[7]]
+  return {
+    x: snapRotationValue(corners.reduce((sum, point) => sum + point.x, 0) / corners.length),
+    y: snapRotationValue(corners.reduce((sum, point) => sum + point.y, 0) / corners.length)
+  }
+}
+
+type SelectionPivotAxisPosition = 'start' | 'center' | 'end'
+
+const selectionPivotAxisPositions: Record<CanvasAnchor, readonly [SelectionPivotAxisPosition, SelectionPivotAxisPosition]> = {
+  nw: ['start', 'start'],
+  n: ['center', 'start'],
+  ne: ['end', 'start'],
+  w: ['start', 'center'],
+  center: ['center', 'center'],
+  e: ['end', 'center'],
+  sw: ['start', 'end'],
+  s: ['center', 'end'],
+  se: ['end', 'end']
+}
+
+const selectionPivotPixelCenter = (size: number, position: SelectionPivotAxisPosition): number => {
+  const lastPixelCenter = Math.max(0.5, size - 0.5)
+  if (position === 'start') return 0.5
+  if (position === 'end') return lastPixelCenter
+  return Math.min(lastPixelCenter, Math.floor(size / 2) + 0.5)
+}
+
+export const transformedSelectionPivotPreset = (
+  target: SelectionRect,
+  preset: CanvasAnchor,
+  angle = 0,
+  shear?: SelectionShearTransform
+): { x: number; y: number } => {
+  const [horizontal, vertical] = selectionPivotAxisPositions[preset]
+  return transformedSelectionPoint(
+    target,
+    selectionPivotPixelCenter(target.width, horizontal) / Math.max(1, target.width),
+    selectionPivotPixelCenter(target.height, vertical) / Math.max(1, target.height),
+    angle,
+    shear
+  )
+}
+
+export const transformedSelectionShearDirection = (
+  target: SelectionRect,
+  angle: number,
+  shear: SelectionShearTransform | undefined,
+  edge: SelectionShearTransform['edge']
+): { x: number; y: number } | null => {
+  const points = transformedSelectionControlPoints(target, angle, shear)
+  const from = points[0]
+  const to = edge === 'n' || edge === 's' ? points[2] : points[5]
+  const deltaX = to.x - from.x
+  const deltaY = to.y - from.y
+  const length = Math.hypot(deltaX, deltaY)
+  return length < 1e-9 ? null : { x: deltaX / length, y: deltaY / length }
+}
+
+export const rotateSelectionTargetAroundPivot = (
+  target: SelectionRect,
+  pivot: { x: number; y: number },
+  angleDelta: number
+): SelectionRect => {
+  const radians = angleDelta * Math.PI / 180
+  const cosine = snapRotationValue(Math.cos(radians))
+  const sine = snapRotationValue(Math.sin(radians))
+  const centerX = target.x + target.width / 2
+  const centerY = target.y + target.height / 2
+  const offsetX = centerX - pivot.x
+  const offsetY = centerY - pivot.y
+  const rotatedCenterX = pivot.x + offsetX * cosine - offsetY * sine
+  const rotatedCenterY = pivot.y + offsetX * sine + offsetY * cosine
+  const deltaX = snapRotationValue(rotatedCenterX - centerX)
+  const deltaY = snapRotationValue(rotatedCenterY - centerY)
+  return {
+    ...target,
+    x: snapRotationValue(target.x + deltaX),
+    y: snapRotationValue(target.y + deltaY),
+    ...(Number.isFinite(target.flipOriginX) ? { flipOriginX: snapRotationValue(target.flipOriginX! + deltaX) } : {}),
+    ...(Number.isFinite(target.flipOriginY) ? { flipOriginY: snapRotationValue(target.flipOriginY! + deltaY) } : {})
+  }
+}
+
+export interface TransformedSelectionGeometry {
+  target: SelectionRect
+  angle: number
+  shear?: SelectionShearTransform
+}
+
+const shiftedSelectionPoint = (
+  point: { x: number; y: number },
+  delta: { x: number; y: number }
+): { x: number; y: number } => ({ x: point.x + delta.x, y: point.y + delta.y })
+
+const remappedFlipOrigin = (
+  origin: number | undefined,
+  sourceStart: number,
+  sourceSize: number,
+  targetStart: number,
+  targetSize: number
+): number | undefined => Number.isFinite(origin)
+  ? origin! <= sourceStart + sourceSize / 2 ? targetStart : targetStart + targetSize
+  : undefined
+
+export const shearTransformedSelection = (
+  target: SelectionRect,
+  angle: number,
+  shear: SelectionShearTransform | undefined,
+  edge: SelectionShearTransform['edge'],
+  amount: number,
+  pivot?: { x: number; y: number }
+): TransformedSelectionGeometry => {
+  if (amount === 0) return { target: { ...target }, angle, shear: shear ? { ...shear } : undefined }
+
+  const points = transformedSelectionControlPoints(target, angle, shear)
+  let topLeft = points[0]
+  let topRight = points[2]
+  let bottomLeft = points[5]
+  const startHorizontalAxis = { x: topRight.x - topLeft.x, y: topRight.y - topLeft.y }
+  const startVerticalAxis = { x: bottomLeft.x - topLeft.x, y: bottomLeft.y - topLeft.y }
+  const radians = angle * Math.PI / 180
+  const cosine = snapRotationValue(Math.cos(radians))
+  const sine = snapRotationValue(Math.sin(radians))
+  if (pivot) {
+    const horizontalShear = edge === 'n' || edge === 's'
+    const determinant = startHorizontalAxis.x * startVerticalAxis.y - startHorizontalAxis.y * startVerticalAxis.x
+    const direction = horizontalShear ? startHorizontalAxis : startVerticalAxis
+    const directionLength = Math.hypot(direction.x, direction.y)
+    if (Math.abs(determinant) < 1e-9 || directionLength < 1e-9) return { target: { ...target }, angle, shear: shear ? { ...shear } : undefined }
+    const axisCoordinate = (point: { x: number; y: number }): number => {
+      const offsetX = point.x - points[0].x
+      const offsetY = point.y - points[0].y
+      return horizontalShear
+        ? (startHorizontalAxis.x * offsetY - startHorizontalAxis.y * offsetX) / determinant
+        : (offsetX * startVerticalAxis.y - offsetY * startVerticalAxis.x) / determinant
+    }
+    const pivotCoordinate = axisCoordinate(pivot)
+    const edgeCoordinate = edge === 'n' || edge === 'w' ? 0 : 1
+    const edgeDistance = edgeCoordinate - pivotCoordinate
+    if (Math.abs(edgeDistance) < 1e-9) return { target: { ...target }, angle, shear: shear ? { ...shear } : undefined }
+    const directionX = direction.x / directionLength
+    const directionY = direction.y / directionLength
+    const shearPointAroundPivot = (point: { x: number; y: number }): { x: number; y: number } => {
+      const displacement = amount * (axisCoordinate(point) - pivotCoordinate) / edgeDistance
+      return { x: point.x + displacement * directionX, y: point.y + displacement * directionY }
+    }
+    topLeft = shearPointAroundPivot(topLeft)
+    topRight = shearPointAroundPivot(topRight)
+    bottomLeft = shearPointAroundPivot(bottomLeft)
+  } else {
+    const delta = edge === 'n' || edge === 's'
+      ? { x: amount * cosine, y: amount * sine }
+      : { x: -amount * sine, y: amount * cosine }
+    if (edge === 'n') {
+      topLeft = shiftedSelectionPoint(topLeft, delta)
+      topRight = shiftedSelectionPoint(topRight, delta)
+    } else if (edge === 's') {
+      bottomLeft = shiftedSelectionPoint(bottomLeft, delta)
+    } else if (edge === 'w') {
+      topLeft = shiftedSelectionPoint(topLeft, delta)
+      bottomLeft = shiftedSelectionPoint(bottomLeft, delta)
+    } else {
+      topRight = shiftedSelectionPoint(topRight, delta)
+    }
+  }
+
+  const horizontalAxis = { x: topRight.x - topLeft.x, y: topRight.y - topLeft.y }
+  const verticalAxis = { x: bottomLeft.x - topLeft.x, y: bottomLeft.y - topLeft.y }
+  const horizontalShear = edge === 'n' || edge === 's'
+  let axisCosine: number
+  let axisSine: number
+  let width: number
+  let height: number
+  let shearAmount: number
+  if (horizontalShear) {
+    width = Math.hypot(horizontalAxis.x, horizontalAxis.y)
+    if (width < 1e-9) return { target: { ...target }, angle, shear: shear ? { ...shear } : undefined }
+    axisCosine = horizontalAxis.x / width
+    axisSine = horizontalAxis.y / width
+    height = -axisSine * verticalAxis.x + axisCosine * verticalAxis.y
+    shearAmount = axisCosine * verticalAxis.x + axisSine * verticalAxis.y
+  } else {
+    height = Math.hypot(verticalAxis.x, verticalAxis.y)
+    if (height < 1e-9) return { target: { ...target }, angle, shear: shear ? { ...shear } : undefined }
+    axisCosine = verticalAxis.y / height
+    axisSine = -verticalAxis.x / height
+    width = axisCosine * horizontalAxis.x + axisSine * horizontalAxis.y
+    shearAmount = -axisSine * horizontalAxis.x + axisCosine * horizontalAxis.y
+  }
+  if (width < 1 || height < 1) return { target: { ...target }, angle, shear: shear ? { ...shear } : undefined }
+  const centerX = topLeft.x + axisCosine * width / 2 - axisSine * height / 2
+  const centerY = topLeft.y + axisSine * width / 2 + axisCosine * height / 2
+  const nextTarget: SelectionRect = {
+    x: snapRotationValue(centerX - width / 2),
+    y: snapRotationValue(centerY - height / 2),
+    width: snapRotationValue(width),
+    height: snapRotationValue(height)
+  }
+  if (target.flipHorizontal) {
+    nextTarget.flipHorizontal = true
+    nextTarget.flipOriginX = remappedFlipOrigin(target.flipOriginX, target.x, target.width, nextTarget.x, nextTarget.width)
+  }
+  if (target.flipVertical) {
+    nextTarget.flipVertical = true
+    nextTarget.flipOriginY = remappedFlipOrigin(target.flipOriginY, target.y, target.height, nextTarget.y, nextTarget.height)
+  }
+  const nextShearAmount = snapRotationValue(shearAmount)
+  const nextAngle = snapRotationValue(Math.atan2(axisSine, axisCosine) * 180 / Math.PI)
+  return {
+    target: nextTarget,
+    angle: nextAngle === 0 ? 0 : nextAngle,
+    shear: Math.abs(nextShearAmount) < 1e-9
+      ? undefined
+      : horizontalShear
+        ? { axis: 'x', edge: 's', amount: nextShearAmount }
+        : { axis: 'y', edge: 'e', amount: nextShearAmount }
+  }
+}
 
 export const transformedSelectionBounds = (target: SelectionRect, angle = 0, shear?: SelectionShearTransform): SelectionRect => {
   if (!shear || shear.amount === 0) return rotatedSelectionBounds(target, angle)

@@ -1,5 +1,9 @@
-import type { AnimationCel, AnimationCelSurface, AnimationFrame, AnimationGroupMask, AnimationTimeline, LayerMask, PaletteEntry, RasterLayer, SelectionMask, SpriteDocument } from '@shared/types'
+import type { AnimationCel, AnimationCelSurface, AnimationFrame, AnimationGroupMask, AnimationTimeline, LayerMask, PaletteEntry, RasterLayer, SelectionMask, SpriteDocument, TextCelData } from '@shared/types'
 import { animationMaskAt, createId, getLayerStorageOrigin, resolveAnimationMask, setLayerStorageOrigin } from './document'
+import { assignRasterStorage, installRuntimeRaster, rasterStorageIdentity, runtimeRasterVisibleBounds, readSurfacePackedLocal } from './runtime-raster'
+import { normalizeTextCelData, translateTextCelData } from './text-raster'
+import { cloneLayerStyles } from './layer-styles'
+import { tileBackgroundSurfaceToCanvas } from './background-patterns'
 
 export const DEFAULT_FRAME_DURATION = 100
 export const MAX_ANIMATION_FRAME_DURATION = 60_000
@@ -32,6 +36,17 @@ const normalizeSurface = (value: unknown): AnimationCelSurface | undefined => {
   if (!Number.isSafeInteger(width) || !Number.isSafeInteger(height) || width < 1 || height < 1) return undefined
   const offsetX = Number.isFinite(candidate.offsetX) ? Math.trunc(Number(candidate.offsetX)) : 0
   const offsetY = Number.isFinite(candidate.offsetY) ? Math.trunc(Number(candidate.offsetY)) : 0
+  const runtime = candidate.runtimeRaster
+  if (candidate.format === 'rgba' && runtime?.kind === 'sparse-tiles-v1' && runtime.format === 'rgba' && runtime.width === width && runtime.height === height) {
+    const surface: AnimationCelSurface = { format: 'rgba', width, height, offsetX, offsetY, pixels: new Uint8ClampedArray(4) }
+    installRuntimeRaster(surface, runtime)
+    return surface
+  }
+  if (candidate.format === 'indexed' && runtime?.kind === 'sparse-tiles-v1' && runtime.format === 'indexed' && runtime.width === width && runtime.height === height) {
+    const surface: AnimationCelSurface = { format: 'indexed', width, height, offsetX, offsetY, pixels: new Uint32Array(1) }
+    installRuntimeRaster(surface, runtime)
+    return surface
+  }
   if (candidate.format === 'rgba' && candidate.pixels instanceof Uint8ClampedArray && candidate.pixels.length === width * height * 4) {
     return { format: 'rgba', width, height, offsetX, offsetY, pixels: candidate.pixels }
   }
@@ -97,6 +112,18 @@ const cloneLayerMaskForCel = (mask: LayerMask, ownerId: string, id = mask.id): L
   pixels: new Uint8ClampedArray(mask.pixels)
 })
 
+const cloneAnimationText = (text: TextCelData | undefined): TextCelData | undefined => text ? ({
+  ...text,
+  color: { ...text.color },
+  styleRuns: text.styleRuns?.map((run) => ({ ...run, color: run.color ? { ...run.color } : undefined })),
+  transforms: text.transforms?.map((transform) => ({
+    ...transform,
+    source: { ...transform.source },
+    target: { ...transform.target },
+    shear: transform.shear ? { ...transform.shear } : undefined
+  }))
+}) : undefined
+
 export const cloneAnimationGroupMask = (entry: AnimationGroupMask, groupId = entry.groupId, frameId = entry.frameId, maskId = entry.mask.id): AnimationGroupMask => ({
   groupId,
   frameId,
@@ -119,6 +146,7 @@ const normalizeCels = (value: unknown, frameIds: Set<string>): AnimationCel[] =>
     slots.add(slot)
     const surface = normalizeSurface(candidate.surface)
     const mask = normalizeLayerMask(candidate.mask, candidate.id)
+    const text = candidate.text && typeof candidate.text === 'object' ? normalizeTextCelData(candidate.text) : undefined
     result.push({
       id: candidate.id,
       layerId: candidate.layerId,
@@ -126,6 +154,7 @@ const normalizeCels = (value: unknown, frameIds: Set<string>): AnimationCel[] =>
       ...(typeof candidate.linkedCelId === 'string' ? { linkedCelId: candidate.linkedCelId } : {}),
       ...(Number.isFinite(candidate.opacity) ? { opacity: Math.max(0, Math.min(1, Number(candidate.opacity))) } : {}),
       ...(surface ? { surface } : {}),
+      ...(text ? { text } : {}),
       ...(mask ? { mask } : {})
     })
   }
@@ -207,13 +236,18 @@ export const resolveAnimationCel = (timeline: AnimationTimeline, cel: AnimationC
 /** 判断 cel 是否包含至少一个可见像素，而不是只判断是否存在 surface。 */
 export const animationCelHasContent = (cel: AnimationCel | null, palette: readonly PaletteEntry[] = []): boolean => {
   if (!cel?.surface) return false
+  const opaqueIds = cel.surface.format === 'indexed' && palette.length > 0
+    ? new Set(palette.filter((entry) => entry.color.a > 0).map((entry) => entry.id))
+    : undefined
+  const runtimeBounds = runtimeRasterVisibleBounds(cel.surface, opaqueIds)
+  if (runtimeBounds !== undefined) return runtimeBounds !== null
   if (cel.surface.format === 'rgba') {
     for (let index = 3; index < cel.surface.pixels.length; index += 4) if (cel.surface.pixels[index] > 0) return true
     return false
   }
   if (palette.length === 0) return cel.surface.pixels.some((pixel) => pixel !== 0)
-  const opaqueIds = new Set(palette.filter((entry) => entry.color.a > 0).map((entry) => entry.id))
-  return cel.surface.pixels.some((pixel) => opaqueIds.has(pixel))
+  const visiblePaletteIds = new Set(palette.filter((entry) => entry.color.a > 0).map((entry) => entry.id))
+  return cel.surface.pixels.some((pixel) => visiblePaletteIds.has(pixel))
 }
 
 /** Builds a canvas-clipped selection from every visible pixel in one cel. */
@@ -232,10 +266,10 @@ export const animationCelContentSelection = (cel: AnimationCel | null, palette: 
     ? new Set(palette.filter((entry) => entry.color.a > 0).map((entry) => entry.id))
     : null
   const opaqueAt = surface.format === 'rgba'
-    ? (x: number, y: number): boolean => surface.pixels[(y * surface.width + x) * 4 + 3] > 0
+    ? (x: number, y: number): boolean => (readSurfacePackedLocal(surface, x, y) >>> 24) > 0
     : palette.length === 0
-      ? (x: number, y: number): boolean => surface.pixels[y * surface.width + x] !== 0
-      : (x: number, y: number): boolean => opaquePaletteIds!.has(surface.pixels[y * surface.width + x])
+      ? (x: number, y: number): boolean => readSurfacePackedLocal(surface, x, y) !== 0
+      : (x: number, y: number): boolean => opaquePaletteIds!.has(readSurfacePackedLocal(surface, x, y))
 
   let minX = sourceRight
   let minY = sourceBottom
@@ -325,22 +359,41 @@ const uniqueAnimationId = (timeline: AnimationTimeline, prefix: 'frame' | 'cel')
 
 const surfaceFromLayer = (layer: RasterLayer, copyPixels = false): AnimationCelSurface => {
   const storageOrigin = getLayerStorageOrigin(layer)
-  return layer.format === 'rgba'
-    ? { format: 'rgba', width: layer.width, height: layer.height, offsetX: layer.offsetX, offsetY: layer.offsetY, storageOriginX: storageOrigin.x, storageOriginY: storageOrigin.y, pixels: copyPixels ? layer.pixels.slice() : layer.pixels }
-    : { format: 'indexed', width: layer.width, height: layer.height, offsetX: layer.offsetX, offsetY: layer.offsetY, storageOriginX: storageOrigin.x, storageOriginY: storageOrigin.y, pixels: copyPixels ? layer.pixels.slice() : layer.pixels }
+  const surface: AnimationCelSurface = layer.format === 'rgba'
+    ? { format: 'rgba', width: layer.width, height: layer.height, offsetX: layer.offsetX, offsetY: layer.offsetY, storageOriginX: storageOrigin.x, storageOriginY: storageOrigin.y, pixels: new Uint8ClampedArray(4) }
+    : { format: 'indexed', width: layer.width, height: layer.height, offsetX: layer.offsetX, offsetY: layer.offsetY, storageOriginX: storageOrigin.x, storageOriginY: storageOrigin.y, pixels: new Uint32Array(1) }
+  assignRasterStorage(surface, layer, copyPixels)
+  return surface
+}
+
+const updateSurfaceFromLayer = (surface: AnimationCelSurface, layer: RasterLayer): AnimationCelSurface => {
+  if (surface.format !== layer.format) return surfaceFromLayer(layer)
+  const storageOrigin = getLayerStorageOrigin(layer)
+  surface.width = layer.width
+  surface.height = layer.height
+  surface.offsetX = layer.offsetX
+  surface.offsetY = layer.offsetY
+  surface.storageOriginX = storageOrigin.x
+  surface.storageOriginY = storageOrigin.y
+  assignRasterStorage(surface, layer)
+  return surface
 }
 
 const blankSurfaceFromLayer = (layer: RasterLayer): AnimationCelSurface => layer.format === 'rgba'
   ? { format: 'rgba', width: 1, height: 1, offsetX: 0, offsetY: 0, pixels: new Uint8ClampedArray(4) }
   : { format: 'indexed', width: 1, height: 1, offsetX: 0, offsetY: 0, pixels: new Uint32Array(1) }
 
-export const cloneAnimationCelSurface = (surface: AnimationCelSurface): AnimationCelSurface => surface.format === 'rgba'
-  ? { ...surface, pixels: surface.pixels.slice() }
-  : { ...surface, pixels: surface.pixels.slice() }
+export const cloneAnimationCelSurface = (surface: AnimationCelSurface): AnimationCelSurface => surfaceFromSurface(surface, true)
 
-const shareAnimationCelSurface = (surface: AnimationCelSurface): AnimationCelSurface => surface.format === 'rgba'
-  ? { ...surface, pixels: surface.pixels }
-  : { ...surface, pixels: surface.pixels }
+const surfaceFromSurface = (source: AnimationCelSurface, copyPixels = false): AnimationCelSurface => {
+  const surface: AnimationCelSurface = source.format === 'rgba'
+    ? { ...source, pixels: new Uint8ClampedArray(4) }
+    : { ...source, pixels: new Uint32Array(1) }
+  assignRasterStorage(surface, source, copyPixels)
+  return surface
+}
+
+const shareAnimationCelSurface = (surface: AnimationCelSurface): AnimationCelSurface => surfaceFromSurface(surface)
 
 const cropAnimationCelSurface = (surface: AnimationCelSurface, canvasWidth: number, canvasHeight: number): void => {
   const left = Math.max(0, surface.offsetX)
@@ -388,15 +441,28 @@ const cropAnimationCelSurface = (surface: AnimationCelSurface, canvasWidth: numb
 }
 
 /** 将画布坐标偏移同步到所有动画 cel，不改变 cel 在画布中的世界位置。 */
-export const resizeAnimationCelsAt = (document: SpriteDocument, offsetX: number, offsetY: number, trimOutside = false): void => {
+export const resizeAnimationCelsAt = (
+  document: SpriteDocument,
+  offsetX: number,
+  offsetY: number,
+  trimOutside = false,
+  sourceCanvasWidth = document.width,
+  sourceCanvasHeight = document.height
+): void => {
   const timeline = ensureAnimationDocument(document)
   const horizontal = Math.trunc(offsetX)
   const vertical = Math.trunc(offsetY)
+  const expanding = document.width > sourceCanvasWidth || document.height > sourceCanvasHeight
+  const backgroundLayerIds = new Set(document.layers.filter((layer) => layer.background).map((layer) => layer.id))
   const resized = new Set<AnimationCelSurface>()
   for (const cel of timeline.cels) {
     const source = resolveAnimationCel(timeline, cel)
     if (cel.frameId === timeline.activeFrameId || !source?.surface || resized.has(source.surface)) continue
     resized.add(source.surface)
+    if (expanding && backgroundLayerIds.has(cel.layerId)) {
+      tileBackgroundSurfaceToCanvas(source.surface, sourceCanvasWidth, sourceCanvasHeight, document.width, document.height, horizontal, vertical)
+      continue
+    }
     source.surface.offsetX += horizontal
     source.surface.offsetY += vertical
     if (trimOutside) cropAnimationCelSurface(source.surface, document.width, document.height)
@@ -407,20 +473,24 @@ export const resizeAnimationCelsAt = (document: SpriteDocument, offsetX: number,
 export const cloneAnimationCel = (cel: AnimationCel): AnimationCel => ({
   ...cel,
   surface: cel.surface ? cloneAnimationCelSurface(cel.surface) : undefined,
+  text: cloneAnimationText(cel.text),
   mask: cel.mask ? cloneLayerMaskForCel(cel.mask, cel.id) : undefined
 })
 
 /** Create an isolated document snapshot for read-only animation previewing. */
 export const cloneDocumentForAnimationFrame = (document: SpriteDocument, frameId: string): SpriteDocument => {
   const layers = document.layers.map((layer) => {
-    const clone = { ...layer, pixels: layer.pixels } as RasterLayer
+    const clone = layer.format === 'rgba'
+      ? { ...layer, layerStyles: cloneLayerStyles(layer.layerStyles), background: layer.background ? { ...layer.background } : undefined, pixels: new Uint8ClampedArray(4) } as RasterLayer
+      : { ...layer, layerStyles: cloneLayerStyles(layer.layerStyles), background: layer.background ? { ...layer.background } : undefined, pixels: new Uint32Array(1) } as RasterLayer
+    assignRasterStorage(clone, layer)
     setLayerStorageOrigin(clone, getLayerStorageOrigin(layer))
     return clone
   })
   const preview: SpriteDocument = {
     ...document,
     layers,
-    groups: document.groups.map((group) => ({ ...group })),
+    groups: document.groups.map((group) => ({ ...group, layerStyles: cloneLayerStyles(group.layerStyles), displayColor: group.displayColor ? { ...group.displayColor } : undefined })),
     palette: document.palette.map((entry) => ({ ...entry, color: { ...entry.color } })),
     paletteOrder: [...document.paletteOrder],
     paletteSlots: document.paletteSlots ? [...document.paletteSlots] : undefined,
@@ -430,7 +500,7 @@ export const cloneDocumentForAnimationFrame = (document: SpriteDocument, frameId
       ? {
           ...document.animation,
           frames: document.animation.frames.map((frame) => ({ ...frame })),
-          cels: document.animation.cels.map((cel) => ({ ...cel, surface: cel.surface ? shareAnimationCelSurface(cel.surface) : undefined, mask: cel.mask ? { ...cel.mask, pixels: cel.mask.pixels } : undefined })),
+          cels: document.animation.cels.map((cel) => ({ ...cel, text: cloneAnimationText(cel.text), surface: cel.surface ? shareAnimationCelSurface(cel.surface) : undefined, mask: cel.mask ? { ...cel.mask, pixels: cel.mask.pixels } : undefined })),
           groupMasks: (document.animation.groupMasks ?? []).map((entry) => ({ ...entry, mask: { ...entry.mask, pixels: entry.mask.pixels } }))
         }
       : undefined
@@ -446,8 +516,7 @@ const applySurfaceToLayer = (layer: RasterLayer, surface: AnimationCelSurface, o
   layer.height = surface.height
   layer.offsetX = surface.offsetX
   layer.offsetY = surface.offsetY
-  if (layer.format === 'rgba' && surface.format === 'rgba') layer.pixels = surface.pixels
-  if (layer.format === 'indexed' && surface.format === 'indexed') layer.pixels = surface.pixels
+  assignRasterStorage(layer, surface)
   if (Number.isFinite(opacity)) layer.opacity = Math.max(0, Math.min(1, opacity!))
   setLayerStorageOrigin(layer, { x: surface.storageOriginX ?? 0, y: surface.storageOriginY ?? 0 })
 }
@@ -569,7 +638,7 @@ export const ensureAnimationDocument = (document: SpriteDocument): AnimationTime
       } else if (!cel.surface || cel.surface.format !== layer.format) {
         cel.surface = frame.id === timeline.activeFrameId ? surfaceFromLayer(layer) : blankSurfaceFromLayer(layer)
       }
-      if (frame.id === timeline.activeFrameId && cel.surface?.pixels === layer.pixels) {
+      if (frame.id === timeline.activeFrameId && cel.surface && rasterStorageIdentity(cel.surface) === rasterStorageIdentity(layer)) {
         cel.surface = surfaceFromLayer(layer)
         cel.opacity = layer.opacity
       }
@@ -612,6 +681,7 @@ export const connectAnimationCels = (document: SpriteDocument, celIds: readonly 
       cel.linkedCelId = source.id
       cel.surface = source.surface
       cel.opacity = source.opacity
+      cel.text = source.text
       if (source.mask) {
         if (!cel.mask) cel.mask = cloneLayerMaskForCel(source.mask, cel.id, `mask-${cel.id}`)
         cel.mask.linkedMaskId = source.mask.id
@@ -646,6 +716,7 @@ export const disconnectAnimationCels = (document: SpriteDocument, celIds: readon
     const resolvedMask = animationMaskAt(timeline, cel.layerId, cel.frameId)
     cel.surface = source.surface ? cloneAnimationCelSurface(source.surface) : undefined
     cel.opacity = source.opacity
+    cel.text = cloneAnimationText(source.text)
     cel.mask = resolvedMask ? cloneLayerMaskForCel(resolvedMask, cel.id, `mask-${cel.id}`) : undefined
     cel.linkedCelId = null
     changed = true
@@ -658,6 +729,48 @@ export const disconnectAnimationCels = (document: SpriteDocument, celIds: readon
 export const syncActiveAnimationFrame = (document: SpriteDocument): void => {
   const timeline = ensureAnimationDocument(document)
   syncFrameSurfaces(document, timeline)
+}
+
+const syncAnimationLayerSurface = (timeline: AnimationTimeline, lookup: AnimationCelLookup, layer: RasterLayer): boolean => {
+  const cel = lookup.at(layer.id, timeline.activeFrameId)
+  if (!cel) return false
+  const source = lookup.resolve(cel) ?? cel
+  source.surface = source.surface ? updateSurfaceFromLayer(source.surface, layer) : surfaceFromLayer(layer)
+  source.opacity = layer.opacity
+  if (cel !== source) {
+    cel.surface = source.surface
+    cel.opacity = source.opacity
+  }
+  return true
+}
+
+/** Synchronizes the active frame with one index build and no timeline normalization. */
+export const syncActiveAnimationLayers = (document: SpriteDocument): void => {
+  const timeline = document.animation
+  if (!timeline) {
+    syncActiveAnimationFrame(document)
+    return
+  }
+  const lookup = createAnimationCelLookup(timeline)
+  if (document.layers.some((layer) => !lookup.at(layer.id, timeline.activeFrameId))) {
+    syncActiveAnimationFrame(document)
+    return
+  }
+  for (const layer of document.layers) syncAnimationLayerSurface(timeline, lookup, layer)
+}
+
+/** Keeps a pixel edit on one active layer out of the full layer-by-frame normalization path. */
+export const syncActiveAnimationLayer = (document: SpriteDocument, layerId: string): void => {
+  const timeline = document.animation
+  const layer = document.layers.find((candidate) => candidate.id === layerId)
+  if (!timeline || !layer) return
+  const cel = animationCelAt(timeline, layerId, timeline.activeFrameId)
+  if (!cel) {
+    syncActiveAnimationFrame(document)
+    return
+  }
+  const lookup = cel.linkedCelId ? createAnimationCelLookup(timeline) : { at: () => cel, resolve: () => cel }
+  syncAnimationLayerSurface(timeline, lookup, layer)
 }
 
 export const refreshActiveAnimationFrame = (document: SpriteDocument): void => {
@@ -687,6 +800,7 @@ export const setAnimationCelOffsetsForKeys = (document: SpriteDocument, offsets:
     if (!target) continue
     const cel = lookup.resolve(lookup.at(target.layerId, target.frameId))
     if (!cel?.surface) continue
+    if (cel.text) translateTextCelData(cel.text, offset.x - cel.surface.offsetX, offset.y - cel.surface.offsetY)
     cel.surface.offsetX = offset.x
     cel.surface.offsetY = offset.y
   }
@@ -795,6 +909,7 @@ export const cloneAnimationCelsForLayer = (document: SpriteDocument, sourceLayer
       frameId: frame.id,
       opacity: sourceCel?.opacity ?? targetLayer.opacity,
       surface: source ? cloneAnimationCelSurface(source) : blankSurfaceFromLayer(targetLayer),
+      text: cloneAnimationText(resolvedSourceCel?.text),
       mask: animationMaskAt(timeline, sourceLayerId, frame.id) ? cloneLayerMaskForCel(animationMaskAt(timeline, sourceLayerId, frame.id)!, celId, `mask-${celId}`) : undefined
     })
   }
@@ -824,10 +939,11 @@ const layerFromAnimationCel = (layer: RasterLayer | undefined, cel: AnimationCel
   const surface = cel?.surface
   if (!layer || !surface || layer.format !== surface.format) return null
   const target: RasterLayer | null = layer.format === 'rgba' && surface.format === 'rgba'
-    ? { ...layer, width: surface.width, height: surface.height, offsetX: surface.offsetX, offsetY: surface.offsetY, pixels: surface.pixels }
+    ? { ...layer, width: surface.width, height: surface.height, offsetX: surface.offsetX, offsetY: surface.offsetY, pixels: new Uint8ClampedArray(4) }
     : layer.format === 'indexed' && surface.format === 'indexed'
-      ? { ...layer, width: surface.width, height: surface.height, offsetX: surface.offsetX, offsetY: surface.offsetY, pixels: surface.pixels }
+      ? { ...layer, width: surface.width, height: surface.height, offsetX: surface.offsetX, offsetY: surface.offsetY, pixels: new Uint32Array(1) }
       : null
+  if (target) assignRasterStorage(target, surface)
   if (target) setLayerStorageOrigin(target, { x: surface.storageOriginX ?? 0, y: surface.storageOriginY ?? 0 })
   if (target && Number.isFinite(cel?.opacity)) target.opacity = cel!.opacity!
   return target
@@ -846,4 +962,28 @@ export const animationLayerAtFrame = (document: SpriteDocument, layerId: string,
   const timeline = ensureAnimationDocument(document)
   const lookup = createAnimationCelLookup(timeline)
   return layerFromAnimationCel(layer, lookup.resolve(lookup.at(layerId, frameId)))
+}
+
+/** Updates cel geometry without copying or materializing its raster storage. */
+export const setAnimationLayerOffsetsAtFrame = (document: SpriteDocument, layerId: string, frameId: string, offsetX: number, offsetY: number): void => {
+  const layer = document.layers.find((candidate) => candidate.id === layerId)
+  const timeline = document.animation
+  if (!timeline) {
+    if (layer) {
+      layer.offsetX = offsetX
+      layer.offsetY = offsetY
+    }
+    return
+  }
+  const cel = animationCelAt(timeline, layerId, frameId)
+  const source = cel ? resolveAnimationCel(timeline, cel) ?? cel : null
+  if (source?.surface) {
+    source.surface.offsetX = offsetX
+    source.surface.offsetY = offsetY
+    if (cel && cel !== source) cel.surface = source.surface
+  }
+  if (layer && timeline.activeFrameId === frameId) {
+    layer.offsetX = offsetX
+    layer.offsetY = offsetY
+  }
 }

@@ -114,14 +114,17 @@ fn workspace_from_file(
 
 fn built_in_workspace() -> StoredWorkspace {
     let layout = serde_json::json!({
-        "panelDocks": { "color": "left", "palette": "left", "layers": "right", "preview": "right" },
+        "panelDocks": { "color": "left", "palette": "left", "layers": "bottom", "preview": "bottom" },
         "panelVisibility": { "color": true, "palette": true, "layers": true, "preview": true },
         "inspectorWidth": 300,
         "leftDockWidth": 280,
-        "bottomDockHeight": 180,
-        "toolRailSide": "left",
+        "bottomDockHeight": 220,
+        "inspectorWidthRatio": 0.20833333333333334,
+        "leftDockWidthRatio": 0.19444444444444445,
+        "bottomDockHeightRatio": 0.275,
+        "toolRailSide": "right",
         "previewOpen": true,
-        "inspectorLayout": "{\"order\":[\"palette\",\"color\",\"layers\",\"preview\"],\"sizes\":{\"color\":330,\"palette\":620,\"layers\":560,\"preview\":220},\"bottomWidths\":{\"color\":280,\"palette\":280,\"layers\":320,\"preview\":280}}",
+        "inspectorLayout": "{\"order\":[\"palette\",\"color\",\"layers\",\"preview\"],\"verticalWeights\":{\"color\":330,\"palette\":620,\"layers\":560,\"preview\":220},\"bottomWeights\":{\"color\":280,\"palette\":280,\"layers\":720,\"preview\":280}}",
         "colorSquareDock": "left",
         "colorSquareAnchor": "end",
         "floatingPanels": { "color": null, "palette": null, "layers": null, "preview": null },
@@ -171,6 +174,8 @@ fn read_default_workspace(path: &Path) -> Result<StoredWorkspace, String> {
     }
     // The built-in workspace is editable, but keeps its stable user-facing name.
     workspace.name = "默认工作区".to_string();
+    // Preserve the current layout while keeping Reset aligned with this build.
+    workspace.initial_layout = built_in_workspace().initial_layout;
     Ok(workspace)
 }
 
@@ -257,13 +262,13 @@ pub(crate) fn save_workspace(
     } else {
         directory.join(format!("{workspace_id}.workspace.json"))
     };
-    let initial_layout = if path.is_file() {
+    let initial_layout = if built_in {
+        built_in_workspace().initial_layout
+    } else if path.is_file() {
         let existing: WorkspaceDiskFile =
             serde_json::from_slice(&fs::read(&path).map_err(|error| error.to_string())?)
                 .map_err(|error| format!("无法读取现有工作区 {}：{error}", path.display()))?;
         existing.initial_layout.unwrap_or(existing.layout)
-    } else if built_in {
-        built_in_workspace().initial_layout
     } else {
         layout.clone()
     };
@@ -310,4 +315,48 @@ pub(crate) fn open_workspace_folder() -> Result<(), String> {
         .spawn()
         .map_err(|error| format!("无法打开工作区文件夹：{error}"))?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn refreshes_built_in_reset_baseline_without_replacing_current_layout() {
+        let suffix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should follow the Unix epoch")
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!(
+            "moonsprite-default-workspace-{}-{suffix}.json",
+            std::process::id()
+        ));
+        let legacy_layout = serde_json::json!({
+            "panelDocks": { "color": "left", "palette": "left", "layers": "right", "preview": "right" },
+            "toolRailSide": "left"
+        });
+        let file = WorkspaceDiskFile {
+            schema_version: 1,
+            id: "builtin-default".to_string(),
+            name: "旧默认工作区".to_string(),
+            updated_at: String::new(),
+            layout: legacy_layout.clone(),
+            initial_layout: Some(legacy_layout.clone()),
+        };
+        fs::write(
+            &path,
+            serde_json::to_vec(&file).expect("workspace should encode"),
+        )
+        .expect("temporary workspace should be writable");
+
+        let result = read_default_workspace(&path);
+        let _ = fs::remove_file(&path);
+        let workspace = result.expect("default workspace should load");
+
+        assert_eq!(workspace.layout, legacy_layout);
+        assert_eq!(workspace.initial_layout["panelDocks"]["layers"], "bottom");
+        assert_eq!(workspace.initial_layout["panelDocks"]["preview"], "bottom");
+        assert_eq!(workspace.initial_layout["toolRailSide"], "right");
+    }
 }

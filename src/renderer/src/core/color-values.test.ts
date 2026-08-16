@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { colorFromValues, colorToValues, displayRgbaHex, hslToRgb, parseRgbaHex, rgbToHsl, rgbaHex } from './color-values'
+import { colorFromValues, colorToValues, colorValueFields, colorValueModeLabel, displayRgbaHex, hslToRgb, parseRgbaHex, rgbToHsl, rgbaHex } from './color-values'
 
 describe('color value models', () => {
   it('round-trips RGB, HSV, HSL, LAB and CMYK values', () => {
@@ -13,6 +13,15 @@ describe('color value models', () => {
 
   it('supports grayscale and alpha values', () => {
     expect(colorFromValues('gray', { gray: 88, a: 64 }, { r: 0, g: 0, b: 0, a: 255 })).toEqual({ r: 88, g: 88, b: 88, a: 64 })
+  })
+
+  it('treats PLT as a palette-only editor mode', () => {
+    const color = { r: 41, g: 121, b: 255, a: 128 }
+    expect(colorValueModeLabel('palette')).toBe('PLT')
+    expect(colorValueModeLabel('gray')).toBe('GRAY')
+    expect(colorValueFields('palette')).toEqual([])
+    expect(colorToValues(color, 'palette')).toEqual({})
+    expect(colorFromValues('palette', {}, color)).toEqual(color)
   })
 
   it('formats and parses six/eight digit HEX values', () => {

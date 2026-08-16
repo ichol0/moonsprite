@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import { blendWithMode } from './raster'
+import { blendWithMode, packColor } from './raster'
 import { activateAnimationFrame, duplicateAnimationFrame, ensureAnimationDocument } from './animation'
-import { compositePixelWithLayerColor, compositeRegion, createCompositePointReplacementSampler, createCompositePointSampler, createCompositeSampler, createDocument, createLayer, createLayerMask, createNormalCompositePointReplacementSampler, DocumentCompositeCache, layerContentBounds, readLayerColor, readLayerColorAt, readLayerMaskDisplayColorAt, renderLayerMaskRegion, resizeDocumentAt, resizeDocumentImage, writeLayerColor } from './document'
+import { captureDocumentImageResizeSnapshot, compositePixelWithLayerColor, compositeRegion, createCompositePointReplacementSampler, createCompositePointSampler, createCompositeSampler, createDocument, createLayer, createLayerMask, createNormalCompositePointReplacementSampler, createNormalCompositePointSampler, DocumentCompositeCache, getPaletteEntry, layerContentBounds, markLayerContentChanged, normalCompositeLayers, paletteColorIdForCanvas, readLayerColor, readLayerColorAt, readLayerMaskDisplayColorAt, renderLayerMaskRegion, resizeDocumentAt, resizeDocumentImage, resolveLayerCanvasColor, restoreDocumentImageResizeSnapshot, writeLayerColor, writeLayerPackedRun } from './document'
+import { installRuntimeRaster, surfacePixelsMaterialized } from './runtime-raster'
 
 const red = { r: 255, g: 0, b: 0, a: 255 }
 const blue = { r: 0, g: 0, b: 255, a: 128 }
@@ -11,8 +12,8 @@ describe('document compositing', () => {
     expect(createLayer('plain', 1, 1, 'rgba').displayColor).toBeUndefined()
   })
 
-  it('starts new documents with timelapse recording enabled by default', () => {
-    expect(createDocument('timelapse default', 1, 1, 'rgba').timelapse?.enabled).toBe(true)
+  it('starts new documents with timelapse recording disabled by default', () => {
+    expect(createDocument('timelapse default', 1, 1, 'rgba').timelapse?.enabled).toBe(false)
   })
 
   it('copies a single RGBA layer region without changing transparent pixels', () => {
@@ -21,6 +22,41 @@ describe('document compositing', () => {
     writeLayerColor(document, layer, 4, red)
 
     expect(Array.from(compositeRegion(document, 1, 1, 2, 1))).toEqual([255, 0, 0, 255, 0, 0, 0, 0])
+  })
+
+  it('invalidates transparent-tile occupancy when a large layer changes', () => {
+    const document = createDocument('large sparse layer', 1025, 1025, 'rgba')
+    const layer = document.layers[0]
+    const cache = new DocumentCompositeCache()
+
+    expect(Array.from(compositeRegion(document, 1000, 1000, 1, 1, cache, 1))).toEqual([0, 0, 0, 0])
+    const index = 1000 * layer.width + 1000
+    layer.pixels.set([255, 0, 0, 255], index * 4)
+    markLayerContentChanged(layer)
+
+    expect(Array.from(compositeRegion(document, 1000, 1000, 1, 1, cache, 2))).toEqual([255, 0, 0, 255])
+  })
+
+  it('ignores transparent special-blend layers without changing exact output', () => {
+    const document = createDocument('transparent special blend', 2, 1, 'rgba')
+    writeLayerColor(document, document.layers[0], 0, red)
+    const special = createLayer('empty color blend', 1, 1, 'rgba')
+    special.blendMode = 'color'
+    document.layers.push(special)
+
+    expect(normalCompositeLayers(document)).toEqual([document.layers[0]])
+    expect(Array.from(compositeRegion(document, 0, 0, 2, 1))).toEqual([255, 0, 0, 255, 0, 0, 0, 0])
+
+    writeLayerColor(document, special, 0, blue)
+    expect(normalCompositeLayers(document)).toBeNull()
+  })
+
+  it('does not scan a large layer to composite a small dirty region', () => {
+    const document = createDocument('large dirty region', 1025, 1025, 'rgba')
+    const cache = new DocumentCompositeCache()
+    cache.rowsFor = () => { throw new Error('large row scan should be skipped') }
+
+    expect(Array.from(compositeRegion(document, 512, 512, 1, 1, cache, 1))).toEqual([0, 0, 0, 0])
   })
 
   it('preserves normal alpha compositing across flat layers', () => {
@@ -483,6 +519,38 @@ describe('document compositing', () => {
     ])
   })
 
+  it('rescans only dirty rows while retaining the cached row-range storage', () => {
+    const document = createDocument('incremental cached rows', 4, 3, 'rgba')
+    const layer = document.layers[0]
+    const cache = new DocumentCompositeCache()
+    writeLayerColor(document, layer, 0, red)
+    writeLayerColor(document, layer, 2 * layer.width + 3, blue)
+
+    const initial = cache.rowsFor(layer, document.palette, 1)
+    expect(Array.from(initial)).toEqual([0, 1, 4, 0, 3, 4])
+
+    writeLayerColor(document, layer, layer.width + 2, red)
+    const updated = cache.rowsFor(layer, document.palette, 2, { x: 2, y: 1, width: 1, height: 1 })
+
+    expect(updated).toBe(initial)
+    expect(Array.from(updated)).toEqual([0, 1, 2, 3, 3, 4])
+  })
+
+  it('rescans every disjoint dirty row produced by one live content revision', () => {
+    const document = createDocument('disjoint live rows', 4, 4, 'rgba')
+    const layer = document.layers[0]
+    const cache = new DocumentCompositeCache()
+    const rows = cache.rowsFor(layer, document.palette, 1)
+
+    writeLayerColor(document, layer, layer.width + 1, red)
+    writeLayerColor(document, layer, 3 * layer.width + 2, blue)
+    cache.rowsFor(layer, document.palette, 1, { x: 1, y: 1, width: 1, height: 1 })
+    const updated = cache.rowsFor(layer, document.palette, 1, { x: 2, y: 3, width: 1, height: 1 })
+
+    expect(updated).toBe(rows)
+    expect(Array.from(updated)).toEqual([4, 0, 1, 2, 4, 0, 2, 3])
+  })
+
   it('substitutes an active-layer color in a compiled sampler', () => {
     const document = createDocument('replacement', 1, 1, 'rgba')
     const layer = document.layers[0]
@@ -536,6 +604,26 @@ describe('document compositing', () => {
     expect(createNormalCompositePointReplacementSampler(document, active.id)).toBeNull()
   })
 
+  it('matches the generic sampler with spatially bucketed normal layers', () => {
+    const document = createDocument('normal point sampling', 1025, 3, 'rgba')
+    const background = document.layers[0]
+    const local = createLayer('local', 8, 3, 'rgba')
+    background.opacity = 0.8
+    local.offsetX = 510
+    writeLayerColor(document, background, 0, { r: 30, g: 40, b: 50, a: 255 })
+    writeLayerColor(document, background, 512, { r: 80, g: 90, b: 100, a: 180 })
+    writeLayerColor(document, local, 1, { r: 220, g: 40, b: 80, a: 160 })
+    document.layers = [background, local]
+    const generic = createCompositePointSampler(document)
+    const bucketed = createNormalCompositePointSampler(document)
+    expect(bucketed).not.toBeNull()
+
+    for (const [x, y] of [[0, 0], [511, 0], [512, 0], [517, 0], [1024, 2]]) expect(bucketed!(x, y)).toEqual(generic(x, y))
+
+    local.blendMode = 'multiply'
+    expect(createNormalCompositePointSampler(document)).toBeNull()
+  })
+
   it('previews a replacement color in newly expanded canvas space', () => {
     const document = createDocument('expanded preview', 2, 1, 'rgba')
     const layer = document.layers[0]
@@ -587,9 +675,52 @@ describe('document compositing', () => {
     expect(layerContentBounds(document, layer)).toEqual({ x: -1, y: 4, width: 4, height: 3 })
   })
 
+  it('reuses local content bounds while only the layer offset changes', () => {
+    const document = createDocument('cached content bounds', 6, 5, 'rgba')
+    const layer = document.layers[0]
+    writeLayerColor(document, layer, 2 + layer.width * 3, red)
+
+    expect(layerContentBounds(document, layer)).toEqual({ x: 2, y: 3, width: 1, height: 1 })
+    layer.offsetX = 100
+    layer.offsetY = -50
+    expect(layerContentBounds(document, layer)).toEqual({ x: 102, y: -47, width: 1, height: 1 })
+
+    writeLayerColor(document, layer, 4 + layer.width, blue)
+    expect(layerContentBounds(document, layer)).toEqual({ x: 102, y: -49, width: 3, height: 3 })
+  })
+
+  it('reuses the normal composite plan until the content revision changes', () => {
+    const document = createDocument('cached composite plan', 2, 1, 'rgba')
+    const special = createLayer('special', 2, 1, 'rgba')
+    special.blendMode = 'multiply'
+    document.layers.push(special)
+    const cache = new DocumentCompositeCache()
+
+    expect(cache.normalLayersFor(document, 1)).toHaveLength(1)
+    writeLayerColor(document, special, 0, red)
+    expect(cache.normalLayersFor(document, 1)).toHaveLength(1)
+    expect(cache.normalLayersFor(document, 2)).toBeNull()
+  })
+
   it('returns no content bounds for a transparent layer', () => {
     const document = createDocument('empty bounds', 3, 2, 'indexed')
     expect(layerContentBounds(document, document.layers[0])).toBeNull()
+  })
+
+  it('reads sparse runtime content bounds without materializing the full layer', () => {
+    const document = createDocument('runtime bounds', 4096, 2048, 'rgba')
+    const layer = document.layers[0]
+    layer.offsetX = 10
+    layer.offsetY = -4
+    installRuntimeRaster(layer, {
+      kind: 'sparse-tiles-v1', format: 'rgba', width: layer.width, height: layer.height, tileSize: 2,
+      data: new Uint8Array([0, 0, 0, 0, 255, 0, 0, 255, 0, 0, 0, 0, 0, 0, 0, 0]),
+      tileOffsets: new Int32Array(Math.ceil(layer.width / 2) * Math.ceil(layer.height / 2)).fill(0)
+    })
+    layer.runtimeRaster!.tileOffsets[1] = 1
+
+    expect(layerContentBounds(document, layer)).toEqual({ x: 13, y: -4, width: 1, height: 1 })
+    expect(surfacePixelsMaterialized(layer)).toBe(false)
   })
 
   it('permanently crops layer pixels outside the resized canvas when requested', () => {
@@ -653,5 +784,124 @@ describe('document compositing', () => {
       expect(cel.mask.pixels[offset + 2]).toBe(cel.mask.pixels[offset])
       expect([0, 255]).toContain(cel.mask.pixels[offset + 3])
     }
+  })
+
+  it('resizes inactive animation cels and preserves linked surface sharing', () => {
+    const document = createDocument('animated image resize', 2, 1, 'rgba')
+    const layer = document.layers[0]
+    writeLayerColor(document, layer, 0, red)
+    writeLayerColor(document, layer, 1, red)
+    const timeline = ensureAnimationDocument(document)
+    const firstFrameId = timeline.activeFrameId
+    const secondFrameId = duplicateAnimationFrame(document)
+    writeLayerColor(document, layer, 0, blue)
+    writeLayerColor(document, layer, 1, blue)
+    activateAnimationFrame(document, firstFrameId)
+    const firstCel = timeline.cels.find((cel) => cel.layerId === layer.id && cel.frameId === firstFrameId)!
+    const secondCel = timeline.cels.find((cel) => cel.layerId === layer.id && cel.frameId === secondFrameId)!
+
+    resizeDocumentImage(document, 1, 1, 'nearest')
+
+    expect(firstCel.surface).toMatchObject({ width: 1, height: 1 })
+    expect(secondCel.surface).toMatchObject({ width: 1, height: 1 })
+    expect(Array.from(firstCel.surface!.pixels)).toEqual([255, 0, 0, 255])
+    expect(Array.from(secondCel.surface!.pixels)).toEqual([blue.r, blue.g, blue.b, blue.a])
+
+    secondCel.linkedCelId = firstCel.id
+    secondCel.surface = firstCel.surface
+    resizeDocumentImage(document, 2, 2, 'nearest')
+    expect(secondCel.surface!.pixels).toBe(firstCel.surface!.pixels)
+  })
+
+  it('restores image resize snapshots by reusing the old and new pixel buffers', () => {
+    const document = createDocument('image resize snapshots', 2, 1, 'indexed')
+    const layer = document.layers[0]
+    layer.pixels.set([1, 2])
+    const cel = ensureAnimationDocument(document).cels[0]
+    const beforePixels = layer.pixels
+    const before = captureDocumentImageResizeSnapshot(document)
+
+    resizeDocumentImage(document, 4, 2, 'nearest')
+    const afterPixels = layer.pixels
+    const after = captureDocumentImageResizeSnapshot(document)
+    expect(afterPixels).not.toBe(beforePixels)
+
+    restoreDocumentImageResizeSnapshot(document, before)
+    expect(document).toMatchObject({ width: 2, height: 1 })
+    expect(layer.pixels).toBe(beforePixels)
+    expect(cel.surface!.pixels).toBe(beforePixels)
+
+    restoreDocumentImageResizeSnapshot(document, after)
+    expect(document).toMatchObject({ width: 4, height: 2 })
+    expect(layer.pixels).toBe(afterPixels)
+    expect(cel.surface!.pixels).toBe(afterPixels)
+  })
+
+  it('shrinks a lazy raster without materializing its full source bitmap', () => {
+    const document = createDocument('lazy image resize', 8, 8, 'rgba')
+    const layer = document.layers[0]
+    const runtime = {
+      kind: 'sparse-tiles-v1' as const,
+      format: 'rgba' as const,
+      width: 8,
+      height: 8,
+      tileSize: 2,
+      data: new Uint8Array([255, 0, 0, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
+      tileOffsets: new Int32Array(16)
+    }
+    runtime.tileOffsets[5] = 1
+    installRuntimeRaster(layer, runtime)
+    const celSurface = ensureAnimationDocument(document).cels[0].surface!
+    installRuntimeRaster(celSurface, runtime)
+    const probe = { format: 'rgba' as const, width: 8, height: 8, offsetX: 0, offsetY: 0, pixels: new Uint8ClampedArray(4) }
+    installRuntimeRaster(probe, runtime)
+
+    resizeDocumentImage(document, 2, 2, 'nearest')
+
+    expect(surfacePixelsMaterialized(probe)).toBe(false)
+    expect(Array.from(layer.pixels.slice(0, 4))).toEqual([255, 0, 0, 255])
+  })
+
+  it('ignores hidden historical palette entries when resolving indexed canvas colors', () => {
+    const document = createDocument('visible indexed palette', 1, 1, 'indexed')
+    document.palette.push({ id: 9, name: 'hidden green', color: { r: 0, g: 255, b: 0, a: 255 } })
+
+    const id = paletteColorIdForCanvas(document, { r: 0, g: 255, b: 0, a: 255 })
+
+    expect(id).not.toBe(9)
+    expect(document.paletteOrder).toContain(id)
+  })
+
+  it('resolves preview colors to the value visible in each document color mode', () => {
+    const rgbaDocument = createDocument('rgba preview', 1, 1, 'rgba')
+    const rgbaColor = { r: 240, g: 80, b: 20, a: 160 }
+    expect(resolveLayerCanvasColor(rgbaDocument, rgbaDocument.layers[0], rgbaColor)).toEqual(rgbaColor)
+
+    const grayscaleDocument = createDocument('grayscale preview', 1, 1, 'grayscale')
+    const grayscaleColor = resolveLayerCanvasColor(grayscaleDocument, grayscaleDocument.layers[0], rgbaColor)
+    expect(grayscaleColor.r).toBe(grayscaleColor.g)
+    expect(grayscaleColor.g).toBe(grayscaleColor.b)
+    expect(grayscaleColor.a).toBe(rgbaColor.a)
+
+    const indexedDocument = createDocument('indexed preview', 1, 1, 'indexed')
+    indexedDocument.palette.push({ id: 9, name: 'hidden exact', color: rgbaColor })
+    const indexedColor = resolveLayerCanvasColor(indexedDocument, indexedDocument.layers[0], rgbaColor)
+    expect(indexedColor).toEqual(getPaletteEntry(indexedDocument, paletteColorIdForCanvas(indexedDocument, rgbaColor)).color)
+    expect(indexedColor).not.toEqual(rgbaColor)
+  })
+
+  it('normalizes direct grayscale writes across single pixels and runs', () => {
+    const document = createDocument('grayscale writes', 2, 1, 'grayscale')
+    const layer = document.layers[0]
+    writeLayerColor(document, layer, 0, { r: 255, g: 0, b: 0, a: 120 })
+    writeLayerPackedRun(document, layer, 1, 1, packColor({ r: 0, g: 255, b: 0, a: 200 }))
+
+    for (let index = 0; index < 2; index += 1) {
+      const color = readLayerColor(document, layer, index)
+      expect(color.r).toBe(color.g)
+      expect(color.g).toBe(color.b)
+    }
+    expect(readLayerColor(document, layer, 0).a).toBe(120)
+    expect(readLayerColor(document, layer, 1).a).toBe(200)
   })
 })

@@ -15,6 +15,7 @@ describe('cursor preference source', () => {
     expect(cursorPreferenceSource('--cursor-pointer', true)).toBe('system')
     expect(cursorPreferenceSource('--cursor-crosshair', true)).toBe('moonsprite')
     expect(cursorPreferenceSource('--cursor-eyedropper', true)).toBe('moonsprite')
+    expect(cursorPreferenceSource('--cursor-zoom', true)).toBe('moonsprite')
     expect(cursorPreferenceSource('--cursor-selection-rotate-ne', true)).toBe('moonsprite')
     expect(cursorPreferenceSource('--cursor-selection-rotate-n', true)).toBe('moonsprite')
     expect(cursorPreferenceSource('--cursor-selection-rotate-s', true)).toBe('moonsprite')

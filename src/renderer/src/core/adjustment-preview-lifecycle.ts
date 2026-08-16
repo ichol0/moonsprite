@@ -10,6 +10,8 @@ export interface AdjustmentPreviewController {
 const controllers = new Map<string, AdjustmentPreviewController>()
 const editDepths = new Map<string, number>()
 
+export const hasAdjustmentPreviewController = (documentId: string): boolean => controllers.has(documentId)
+
 export const registerAdjustmentPreviewController = (documentId: string, controller: AdjustmentPreviewController): (() => void) => {
   editDepths.delete(documentId)
   controllers.set(documentId, controller)

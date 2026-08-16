@@ -37,7 +37,7 @@ describe('ShortcutDialog', () => {
     render(<ShortcutDialog shortcuts={{ ...DEFAULT_SHORTCUTS }} onSave={vi.fn()} onClose={vi.fn()} />)
 
     const dialog = screen.getByRole('dialog', { name: '快捷键设置' })
-    expect(dialog).toHaveStyle({ height: '600px' })
+    expect(dialog).toHaveStyle({ height: '620px' })
     expect(dialog.querySelector(':scope > .settings-layout')).toBeInTheDocument()
   })
 

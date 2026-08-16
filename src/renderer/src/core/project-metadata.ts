@@ -14,7 +14,7 @@ export const DEFAULT_PROJECT_STATISTICS: ProjectStatistics = {
 }
 
 export const DEFAULT_TIMELAPSE_SETTINGS: TimelapseSettings = {
-  enabled: true,
+  enabled: false,
   quality: 'medium',
   fps: 12,
   speed: 8,

@@ -1,0 +1,347 @@
+import type { GradientDither, LayerStyles, RasterLayer, RgbaColor, SelectionRect } from '@shared/types'
+import { blendWithMode, colorEquals, TRANSPARENT } from './raster'
+import { normalizeOutlineDirections, normalizeOutlineKernel, normalizeOutlinePosition, OUTLINE_DIRECTIONS, outlineDirectionsForKernel, outlineDirectionForOffset, outlineKernelContainsOffset } from './outline-settings'
+import { gradientColorForAmount, GRADIENT_DITHER_PRESETS } from './gradient-color'
+
+export const MAX_LAYER_STYLE_SIZE = 32
+export const MAX_LAYER_STYLE_STROKE_SIZE = 64
+export const MAX_LAYER_STYLE_SHADOW_OFFSET = 64
+export const DEFAULT_LAYER_STYLE_SMART_HUE_DARKNESS = 45
+export const DEFAULT_LAYER_STYLE_SMART_SHADOW_DARKNESS = 45
+
+const gradientDithers = new Set<GradientDither>(GRADIENT_DITHER_PRESETS)
+
+const clamp = (value: number, min: number, max: number): number => Math.max(min, Math.min(max, value))
+const integer = (value: unknown, fallback: number, min: number, max: number): number => {
+  const numeric = Number(value)
+  return Number.isFinite(numeric) ? clamp(Math.round(numeric), min, max) : fallback
+}
+const byte = (value: unknown, fallback: number): number => integer(value, fallback, 0, 255)
+const enabled = (value: unknown): boolean => value === true
+const record = (value: unknown): Record<string, unknown> | null => value && typeof value === 'object' ? value as Record<string, unknown> : null
+const color = (value: unknown, fallback: RgbaColor): RgbaColor => {
+  const source = record(value)
+  return source
+    ? { r: byte(source.r, fallback.r), g: byte(source.g, fallback.g), b: byte(source.b, fallback.b), a: byte(source.a, fallback.a) }
+    : { ...fallback }
+}
+
+export function createDefaultLayerStyles(): LayerStyles {
+  return {
+    stroke: { enabled: false, color: { r: 0, g: 0, b: 0, a: 255 }, size: 1, position: 'outside', kernel: 'round', directions: outlineDirectionsForKernel('round'), smartHue: false, smartHueDarkness: DEFAULT_LAYER_STYLE_SMART_HUE_DARKNESS },
+    shadow: { enabled: false, color: { r: 0, g: 0, b: 0, a: 160 }, offsetX: 2, offsetY: 2, blur: 0, smartShadow: false, smartShadowDarkness: DEFAULT_LAYER_STYLE_SMART_SHADOW_DARKNESS },
+    innerGlow: { enabled: false, color: { r: 255, g: 255, b: 255, a: 192 }, size: 2 },
+    colorOverlay: { enabled: false, color: { r: 41, g: 121, b: 255, a: 255 } },
+    gradientOverlay: { enabled: false, from: { r: 0, g: 0, b: 0, a: 255 }, to: { r: 255, g: 255, b: 255, a: 255 }, angle: 0, dither: 'none' }
+  }
+}
+
+export function normalizeLayerStyles(value: unknown): LayerStyles | undefined {
+  const source = record(value)
+  if (!source) return undefined
+  const defaults = createDefaultLayerStyles()
+  const stroke = record(source.stroke)
+  const shadow = record(source.shadow)
+  const innerGlow = record(source.innerGlow)
+  const colorOverlay = record(source.colorOverlay)
+  const gradientOverlay = record(source.gradientOverlay)
+  const strokeKernel = normalizeOutlineKernel(stroke?.kernel, defaults.stroke.kernel)
+  return {
+    stroke: {
+      enabled: enabled(stroke?.enabled),
+      color: color(stroke?.color, defaults.stroke.color),
+      size: integer(stroke?.size, defaults.stroke.size, 1, MAX_LAYER_STYLE_STROKE_SIZE),
+      position: normalizeOutlinePosition(stroke?.position, defaults.stroke.position),
+      kernel: strokeKernel,
+      directions: normalizeOutlineDirections(stroke?.directions, outlineDirectionsForKernel(strokeKernel)),
+      smartHue: enabled(stroke?.smartHue),
+      smartHueDarkness: integer(stroke?.smartHueDarkness, defaults.stroke.smartHueDarkness, 0, 100)
+    },
+    shadow: {
+      enabled: enabled(shadow?.enabled),
+      color: color(shadow?.color, defaults.shadow.color),
+      offsetX: integer(shadow?.offsetX, defaults.shadow.offsetX, -MAX_LAYER_STYLE_SHADOW_OFFSET, MAX_LAYER_STYLE_SHADOW_OFFSET),
+      offsetY: integer(shadow?.offsetY, defaults.shadow.offsetY, -MAX_LAYER_STYLE_SHADOW_OFFSET, MAX_LAYER_STYLE_SHADOW_OFFSET),
+      blur: integer(shadow?.blur, defaults.shadow.blur, 0, MAX_LAYER_STYLE_SIZE),
+      smartShadow: enabled(shadow?.smartShadow),
+      smartShadowDarkness: integer(shadow?.smartShadowDarkness, defaults.shadow.smartShadowDarkness, 0, 100)
+    },
+    innerGlow: {
+      enabled: enabled(innerGlow?.enabled),
+      color: color(innerGlow?.color, defaults.innerGlow.color),
+      size: integer(innerGlow?.size, defaults.innerGlow.size, 1, MAX_LAYER_STYLE_SIZE)
+    },
+    colorOverlay: {
+      enabled: enabled(colorOverlay?.enabled),
+      color: color(colorOverlay?.color, defaults.colorOverlay.color)
+    },
+    gradientOverlay: {
+      enabled: enabled(gradientOverlay?.enabled),
+      from: color(gradientOverlay?.from, defaults.gradientOverlay.from),
+      to: color(gradientOverlay?.to, defaults.gradientOverlay.to),
+      angle: integer(gradientOverlay?.angle, defaults.gradientOverlay.angle, 0, 359),
+      dither: gradientDithers.has(gradientOverlay?.dither as GradientDither) ? gradientOverlay?.dither as GradientDither : defaults.gradientOverlay.dither
+    }
+  }
+}
+
+export const cloneLayerStyles = (styles: LayerStyles | undefined): LayerStyles | undefined => {
+  const normalized = normalizeLayerStyles(styles)
+  return normalized ? {
+    stroke: { ...normalized.stroke, color: { ...normalized.stroke.color }, directions: { ...normalized.stroke.directions } },
+    shadow: { ...normalized.shadow, color: { ...normalized.shadow.color } },
+    innerGlow: { ...normalized.innerGlow, color: { ...normalized.innerGlow.color } },
+    colorOverlay: { ...normalized.colorOverlay, color: { ...normalized.colorOverlay.color } },
+    gradientOverlay: { ...normalized.gradientOverlay, from: { ...normalized.gradientOverlay.from }, to: { ...normalized.gradientOverlay.to } }
+  } : undefined
+}
+
+export const resolveLayerStyles = (styles: LayerStyles | undefined): LayerStyles => cloneLayerStyles(styles) ?? createDefaultLayerStyles()
+
+export const hasEnabledLayerStyles = (styles: LayerStyles | undefined): boolean => Boolean(styles && (
+  styles.stroke.enabled
+  || styles.shadow.enabled
+  || styles.innerGlow.enabled
+  || styles.colorOverlay.enabled
+  || styles.gradientOverlay.enabled
+))
+
+export const layerStylesEqual = (left: LayerStyles | undefined, right: LayerStyles | undefined): boolean => {
+  if (left === right) return true
+  const a = normalizeLayerStyles(left)
+  const b = normalizeLayerStyles(right)
+  if (!a || !b) return a === b
+  return a.stroke.enabled === b.stroke.enabled
+    && a.stroke.size === b.stroke.size
+    && a.stroke.position === b.stroke.position
+    && a.stroke.kernel === b.stroke.kernel
+    && a.stroke.smartHue === b.stroke.smartHue
+    && a.stroke.smartHueDarkness === b.stroke.smartHueDarkness
+    && OUTLINE_DIRECTIONS.every((direction) => a.stroke.directions[direction] === b.stroke.directions[direction])
+    && colorEquals(a.stroke.color, b.stroke.color)
+    && a.shadow.enabled === b.shadow.enabled
+    && a.shadow.offsetX === b.shadow.offsetX
+    && a.shadow.offsetY === b.shadow.offsetY
+    && a.shadow.blur === b.shadow.blur
+    && a.shadow.smartShadow === b.shadow.smartShadow
+    && a.shadow.smartShadowDarkness === b.shadow.smartShadowDarkness
+    && colorEquals(a.shadow.color, b.shadow.color)
+    && a.innerGlow.enabled === b.innerGlow.enabled
+    && a.innerGlow.size === b.innerGlow.size
+    && colorEquals(a.innerGlow.color, b.innerGlow.color)
+    && a.colorOverlay.enabled === b.colorOverlay.enabled
+    && colorEquals(a.colorOverlay.color, b.colorOverlay.color)
+    && a.gradientOverlay.enabled === b.gradientOverlay.enabled
+    && a.gradientOverlay.angle === b.gradientOverlay.angle
+    && a.gradientOverlay.dither === b.gradientOverlay.dither
+    && colorEquals(a.gradientOverlay.from, b.gradientOverlay.from)
+    && colorEquals(a.gradientOverlay.to, b.gradientOverlay.to)
+}
+
+export const mapLayerStyleColors = (styles: LayerStyles, mapper: (color: RgbaColor) => RgbaColor): LayerStyles => ({
+  stroke: { ...styles.stroke, color: mapper(styles.stroke.color), directions: { ...styles.stroke.directions } },
+  shadow: { ...styles.shadow, color: mapper(styles.shadow.color) },
+  innerGlow: { ...styles.innerGlow, color: mapper(styles.innerGlow.color) },
+  colorOverlay: { ...styles.colorOverlay, color: mapper(styles.colorOverlay.color) },
+  gradientOverlay: { ...styles.gradientOverlay, from: mapper(styles.gradientOverlay.from), to: mapper(styles.gradientOverlay.to) }
+})
+
+export const layerStylesHistoryBytes = (styles: LayerStyles | undefined): number => styles ? 128 : 0
+
+const expandRect = (rect: SelectionRect, amount: number): SelectionRect => ({
+  x: rect.x - amount,
+  y: rect.y - amount,
+  width: rect.width + amount * 2,
+  height: rect.height + amount * 2
+})
+
+const translateRect = (rect: SelectionRect, offsetX: number, offsetY: number): SelectionRect => ({
+  x: rect.x + offsetX,
+  y: rect.y + offsetY,
+  width: rect.width,
+  height: rect.height
+})
+
+const unionRect = (left: SelectionRect, right: SelectionRect): SelectionRect => {
+  const x = Math.min(left.x, right.x)
+  const y = Math.min(left.y, right.y)
+  const toX = Math.max(left.x + left.width, right.x + right.width)
+  const toY = Math.max(left.y + left.height, right.y + right.height)
+  return { x, y, width: toX - x, height: toY - y }
+}
+
+/** Expands a changed source region to every output pixel that can depend on it. */
+export const layerStyleAffectedRect = (rect: SelectionRect, styles: LayerStyles | undefined): SelectionRect => {
+  if (!hasEnabledLayerStyles(styles)) return { ...rect }
+  const resolved = resolveLayerStyles(styles)
+  let affected = { ...rect }
+  if (resolved.stroke.enabled) affected = unionRect(affected, expandRect(rect, resolved.stroke.size))
+  if (resolved.innerGlow.enabled) affected = unionRect(affected, expandRect(rect, resolved.innerGlow.size))
+  if (resolved.shadow.enabled) {
+    affected = unionRect(affected, expandRect(translateRect(rect, resolved.shadow.offsetX, resolved.shadow.offsetY), resolved.shadow.blur))
+  }
+  return affected
+}
+
+/** Returns the visible output bounds after effects that can extend beyond the source. */
+export const layerStyleOutputBounds = (bounds: SelectionRect | null, styles: LayerStyles | undefined): SelectionRect | null => {
+  if (!bounds || !hasEnabledLayerStyles(styles)) return bounds ? { ...bounds } : null
+  const resolved = resolveLayerStyles(styles)
+  let output = { ...bounds }
+  if (resolved.stroke.enabled && resolved.stroke.position !== 'inside') output = unionRect(output, expandRect(bounds, resolved.stroke.size))
+  if (resolved.shadow.enabled) output = unionRect(output, expandRect(translateRect(bounds, resolved.shadow.offsetX, resolved.shadow.offsetY), resolved.shadow.blur))
+  return output
+}
+
+const withCoverage = (colorValue: RgbaColor, coverage: number): RgbaColor => ({
+  r: colorValue.r,
+  g: colorValue.g,
+  b: colorValue.b,
+  a: Math.round(colorValue.a * clamp(coverage, 0, 1))
+})
+
+const shadowColor = (style: LayerStyles['shadow']): RgbaColor => {
+  if (!style.smartShadow) return style.color
+  // A black overlay at this alpha scales every live background RGB channel by
+  // the same amount, preserving its hue while applying the darkness factor.
+  return { r: 0, g: 0, b: 0, a: Math.round(255 * clamp(style.smartShadowDarkness, 0, 100) / 100) }
+}
+
+const overlayPreservingAlpha = (base: RgbaColor, overlay: RgbaColor, coverage = 1): RgbaColor => {
+  if (base.a === 0) return base
+  const amount = clamp((overlay.a / 255) * coverage, 0, 1)
+  if (amount <= 0) return base
+  return {
+    r: Math.round(base.r + (overlay.r - base.r) * amount),
+    g: Math.round(base.g + (overlay.g - base.g) * amount),
+    b: Math.round(base.b + (overlay.b - base.b) * amount),
+    a: base.a
+  }
+}
+
+interface OutsideStrokeSample {
+  alpha: number
+  referenceColor: RgbaColor
+}
+
+const outsideStrokeSample = (read: LayerStyleSourceReader, x: number, y: number, style: LayerStyles['stroke']): OutsideStrokeSample => {
+  let maximum = 0
+  let referenceColor = TRANSPARENT
+  let referenceDistance = Number.POSITIVE_INFINITY
+  for (let offsetY = -style.size; offsetY <= style.size; offsetY += 1) for (let offsetX = -style.size; offsetX <= style.size; offsetX += 1) {
+    if (!outlineKernelContainsOffset(offsetX, offsetY, style.size, style.kernel)) continue
+    const direction = outlineDirectionForOffset(-offsetX, -offsetY)
+    if (!direction || !style.directions[direction]) continue
+    const sample = read(x + offsetX, y + offsetY)
+    maximum = Math.max(maximum, sample.a)
+    if (style.smartHue && sample.a > 0) {
+      const distance = offsetX * offsetX + offsetY * offsetY
+      if (distance < referenceDistance) {
+        referenceColor = sample
+        referenceDistance = distance
+      }
+    }
+    if (!style.smartHue && maximum === 255) return { alpha: maximum, referenceColor }
+  }
+  return { alpha: maximum, referenceColor }
+}
+
+const smartHueStrokeColor = (style: LayerStyles['stroke'], reference: RgbaColor, resolveColor: LayerStyleColorResolver): RgbaColor => {
+  if (!style.smartHue || reference.a === 0) return style.color
+  const multiplier = 1 - clamp(style.smartHueDarkness, 0, 100) / 100
+  return resolveColor({
+    r: Math.round(reference.r * multiplier),
+    g: Math.round(reference.g * multiplier),
+    b: Math.round(reference.b * multiplier),
+    a: style.color.a
+  })
+}
+
+const innerStrokeCoverage = (read: LayerStyleSourceReader, x: number, y: number, style: LayerStyles['stroke']): number => {
+  let coverage = 0
+  for (let offsetY = -style.size; offsetY <= style.size; offsetY += 1) for (let offsetX = -style.size; offsetX <= style.size; offsetX += 1) {
+    if (!outlineKernelContainsOffset(offsetX, offsetY, style.size, style.kernel)) continue
+    const direction = outlineDirectionForOffset(offsetX, offsetY)
+    if (!direction || !style.directions[direction]) continue
+    coverage = Math.max(coverage, 1 - read(x + offsetX, y + offsetY).a / 255)
+    if (coverage >= 1) return 1
+  }
+  return coverage
+}
+
+const shadowCoverage = (read: LayerStyleSourceReader, x: number, y: number, blur: number): number => {
+  if (blur <= 0) return read(x, y).a / 255
+  let maximum = 0
+  for (let offsetY = -blur; offsetY <= blur; offsetY += 1) for (let offsetX = -blur; offsetX <= blur; offsetX += 1) {
+    const distance = Math.max(Math.abs(offsetX), Math.abs(offsetY))
+    const alpha = read(x + offsetX, y + offsetY).a / 255
+    maximum = Math.max(maximum, alpha * (1 - distance / (blur + 1)))
+    if (maximum >= 1) return 1
+  }
+  return maximum
+}
+
+const innerGlowCoverage = (read: LayerStyleSourceReader, x: number, y: number, size: number): number => {
+  for (let distance = 1; distance <= size; distance += 1) {
+    let transparentCoverage = 0
+    for (let offset = -distance; offset <= distance; offset += 1) {
+      transparentCoverage = Math.max(transparentCoverage, 1 - read(x + offset, y - distance).a / 255)
+      transparentCoverage = Math.max(transparentCoverage, 1 - read(x + offset, y + distance).a / 255)
+      if (offset > -distance && offset < distance) {
+        transparentCoverage = Math.max(transparentCoverage, 1 - read(x - distance, y + offset).a / 255)
+        transparentCoverage = Math.max(transparentCoverage, 1 - read(x + distance, y + offset).a / 255)
+      }
+    }
+    if (transparentCoverage > 0) return transparentCoverage * ((size - distance + 1) / size)
+  }
+  return 0
+}
+
+export interface LayerStyleGeometry {
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
+const gradientColorAt = (geometry: LayerStyleGeometry, style: LayerStyles['gradientOverlay'], x: number, y: number): RgbaColor => {
+  const localX = geometry.width <= 1 ? 0.5 : (x - geometry.x) / (geometry.width - 1)
+  const localY = geometry.height <= 1 ? 0.5 : (y - geometry.y) / (geometry.height - 1)
+  const radians = style.angle * Math.PI / 180
+  const cosine = Math.cos(radians)
+  const sine = Math.sin(radians)
+  const extent = Math.max(Number.EPSILON, (Math.abs(cosine) + Math.abs(sine)) / 2)
+  const position = clamp(0.5 + (((localX - 0.5) * cosine + (localY - 0.5) * sine) / (2 * extent)), 0, 1)
+  return gradientColorForAmount(style.from, style.to, position, x, y, style.dither)
+}
+
+export type LayerStyleSourceReader = (x: number, y: number) => RgbaColor
+export type LayerStyleColorResolver = (color: RgbaColor) => RgbaColor
+
+export function applyLayerStylesAt(
+  geometry: LayerStyleGeometry | RasterLayer,
+  styles: LayerStyles,
+  x: number,
+  y: number,
+  source: RgbaColor,
+  readGeometry: LayerStyleSourceReader,
+  resolveDynamicColor: LayerStyleColorResolver = (color) => color
+): RgbaColor {
+  let backdrop = TRANSPARENT
+  if (styles.shadow.enabled) {
+    const coverage = shadowCoverage(readGeometry, x - styles.shadow.offsetX, y - styles.shadow.offsetY, styles.shadow.blur)
+    if (coverage > 0) backdrop = blendWithMode(backdrop, withCoverage(shadowColor(styles.shadow), coverage), 1, 'normal')
+  }
+  if (styles.stroke.enabled && styles.stroke.position !== 'inside' && source.a === 0) {
+    const sample = outsideStrokeSample(readGeometry, x, y, styles.stroke)
+    const coverage = sample.alpha / 255
+    if (coverage > 0) backdrop = blendWithMode(backdrop, withCoverage(smartHueStrokeColor(styles.stroke, sample.referenceColor, resolveDynamicColor), coverage), 1, 'normal')
+  }
+
+  let styledSource = source
+  if (styledSource.a > 0 && styles.colorOverlay.enabled) styledSource = overlayPreservingAlpha(styledSource, styles.colorOverlay.color)
+  if (styledSource.a > 0 && styles.gradientOverlay.enabled) styledSource = overlayPreservingAlpha(styledSource, gradientColorAt('offsetX' in geometry ? { x: geometry.offsetX, y: geometry.offsetY, width: geometry.width, height: geometry.height } : geometry, styles.gradientOverlay, x, y))
+  if (styledSource.a > 0 && styles.innerGlow.enabled) styledSource = overlayPreservingAlpha(styledSource, styles.innerGlow.color, innerGlowCoverage(readGeometry, x, y, styles.innerGlow.size))
+  if (styledSource.a > 0 && styles.stroke.enabled && styles.stroke.position !== 'outside') styledSource = overlayPreservingAlpha(styledSource, smartHueStrokeColor(styles.stroke, styledSource, resolveDynamicColor), innerStrokeCoverage(readGeometry, x, y, styles.stroke))
+  return styledSource.a > 0 ? blendWithMode(backdrop, styledSource, 1, 'normal') : backdrop
+}

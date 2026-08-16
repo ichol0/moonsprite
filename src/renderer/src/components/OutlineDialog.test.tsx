@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createDocument, getActiveLayer, readLayerColorAt, writeLayerColor } from '@/core/document'
 import { useWorkspace } from '@/store/workspace'
@@ -18,6 +18,12 @@ describe('OutlineDialog', () => {
     const onClose = vi.fn()
     const session = useWorkspace.getState().sessions[0]
     render(<OutlineDialog open session={session} onClose={onClose} />)
+
+    const settings = screen.getByRole('group', { name: '描边设置' })
+    expect(within(settings).getByRole('button', { name: '圆形' })).toBeInTheDocument()
+    expect(within(settings).getByRole('button', { name: '方形' })).toBeInTheDocument()
+    expect(within(settings).getByLabelText('允许描边的像素方向')).toBeInTheDocument()
+    expect(within(screen.getByRole('group', { name: '位置' })).queryByRole('button', { name: '两侧' })).not.toBeInTheDocument()
 
     const widthInput = screen.getByRole('spinbutton')
     fireEvent.change(widthInput, { target: { value: '2' } })

@@ -14,6 +14,15 @@ const api = (changes: Partial<MoonSpriteApi> = {}): MoonSpriteApi => ({
 } as MoonSpriteApi)
 
 describe('recovery service', () => {
+  it('passes the configured retention period to the platform', async () => {
+    const listRecoveries = vi.fn(async () => [])
+    const service = new RecoveryService()
+
+    await service.list(api({ listRecoveries }), 14)
+
+    expect(listRecoveries).toHaveBeenCalledWith(14)
+  })
+
   it('serializes discard after an in-flight autosave', async () => {
     let releaseWrite!: () => void
     const events: string[] = []

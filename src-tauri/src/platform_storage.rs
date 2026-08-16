@@ -4,6 +4,28 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+pub fn atomic_write_with(
+    path: &Path,
+    write: impl FnOnce(&mut fs::File) -> Result<(), String>,
+) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    }
+
+    let temporary = path.with_extension(format!("{}.tmp", temporary_suffix()));
+    let result = (|| {
+        let mut file = fs::File::create(&temporary).map_err(|error| error.to_string())?;
+        write(&mut file)?;
+        file.sync_all().map_err(|error| error.to_string())?;
+        replace_file(&temporary, path).map_err(|error| error.to_string())
+    })();
+    if let Err(error) = result {
+        let _ = fs::remove_file(&temporary);
+        return Err(error);
+    }
+    Ok(())
+}
+
 fn temporary_suffix() -> String {
     let timestamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -59,27 +81,14 @@ fn replace_file(source: &Path, target: &Path) -> io::Result<()> {
 
 /// Writes a file through a sibling temporary file and replaces the target in one operation.
 pub fn atomic_write(path: &Path, data: &[u8]) -> Result<(), String> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
-    }
-
-    let temporary = path.with_extension(format!("{}.tmp", temporary_suffix()));
-    let result = (|| {
-        let mut file = fs::File::create(&temporary)?;
-        std::io::Write::write_all(&mut file, data)?;
-        file.sync_all()?;
-        replace_file(&temporary, path)
-    })();
-    if let Err(error) = result {
-        let _ = fs::remove_file(&temporary);
-        return Err(error.to_string());
-    }
-    Ok(())
+    atomic_write_with(path, |file| {
+        std::io::Write::write_all(file, data).map_err(|error| error.to_string())
+    })
 }
 
 #[cfg(test)]
 mod tests {
-    use super::atomic_write;
+    use super::{atomic_write, atomic_write_with};
     use std::{
         fs,
         time::{SystemTime, UNIX_EPOCH},
@@ -108,5 +117,18 @@ mod tests {
         atomic_write(&path, b"content").unwrap();
         assert_eq!(fs::read(&path).unwrap(), b"content");
         let _ = fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn failed_streaming_write_preserves_the_existing_target() {
+        let path = test_path("stream-failure.bin");
+        atomic_write(&path, b"original").unwrap();
+        let result = atomic_write_with(&path, |file| {
+            std::io::Write::write_all(file, b"partial").map_err(|error| error.to_string())?;
+            Err("write failed".to_string())
+        });
+        assert!(result.is_err());
+        assert_eq!(fs::read(&path).unwrap(), b"original");
+        let _ = fs::remove_file(path);
     }
 }

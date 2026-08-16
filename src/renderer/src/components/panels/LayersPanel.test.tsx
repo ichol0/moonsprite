@@ -1,12 +1,13 @@
-import { act, cleanup, createEvent, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, createEvent, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createDocument, createLayer, ensureLayerCoversCanvas, getActiveLayer } from '@/core/document'
 import { animationCelAt, animationCelKey, connectAnimationCels, ensureAnimationDocument } from '@/core/animation'
 import { buildLayerPanelTree } from '@/core/layer-panel-layout'
-import { ONION_SKIN_PREFERENCE_KEY } from '@/core/file-preferences'
+import { ONION_SKIN_PREFERENCE_KEY, TIMELINE_HIDDEN_PREFERENCE_KEY } from '@/core/file-preferences'
 import { useWorkspace } from '@/store/workspace'
 import { finishAnimationCellOperation, revealLayerInPanel } from '@/components/layer-panel-reveal'
 import { LayersPanel } from './LayersPanel'
+import { createDefaultLayerStyles } from '@/core/layer-styles'
 
 beforeEach(() => {
   localStorage.clear()
@@ -19,6 +20,30 @@ afterEach(() => {
 })
 
 describe('LayersPanel animation', () => {
+  it('uses compact density by default', () => {
+    const document = createDocument('default compact density', 2, 2, 'rgba')
+    useWorkspace.getState().addSession(document)
+    const { container } = render(<LayersPanel session={useWorkspace.getState().sessions[0]} docked />)
+
+    expect(container.querySelector('.layers-panel')).toHaveClass('layer-density-compact')
+  })
+
+  it('removes frame and layer edit buttons while docked on either side', () => {
+    const document = createDocument('side dock actions', 2, 2, 'rgba')
+    useWorkspace.getState().addSession(document)
+    const session = useWorkspace.getState().sessions[0]
+    const { container, rerender } = render(<LayersPanel session={session} docked sideDocked />)
+
+    expect(container.querySelectorAll('.timeline-frame-edit-button')).toHaveLength(0)
+    expect(container.querySelectorAll('.layer-structure-edit-button')).toHaveLength(0)
+    expect(container.querySelectorAll('.layer-animation-edit button')).toHaveLength(1)
+    expect(container.querySelectorAll('.panel-actions button')).toHaveLength(1)
+
+    rerender(<LayersPanel session={session} docked />)
+    expect(container.querySelectorAll('.timeline-frame-edit-button')).toHaveLength(2)
+    expect(container.querySelectorAll('.layer-structure-edit-button')).toHaveLength(3)
+  })
+
   it('keeps timeline selections while interacting with a marked floating dialog', () => {
     const document = createDocument('preserved timeline selection', 2, 2, 'rgba')
     useWorkspace.getState().addSession(document)
@@ -38,6 +63,24 @@ describe('LayersPanel animation', () => {
     dialog.remove()
     fireEvent.pointerDown(globalThis.document.body)
     expect(useWorkspace.getState().sessions[0].selectedAnimationCellKeys).toEqual([])
+  })
+
+  it('keeps timeline selections while sampling a color from the canvas', () => {
+    const document = createDocument('preserved eyedropper selection', 2, 2, 'rgba')
+    useWorkspace.getState().addSession(document)
+    const timeline = ensureAnimationDocument(document)
+    const key = animationCelKey(document.activeLayerId, timeline.activeFrameId)
+    useWorkspace.getState().selectAnimationCell(key)
+    useWorkspace.getState().setTool('eyedropper')
+    render(<LayersPanel session={useWorkspace.getState().sessions[0]} docked />)
+    const canvas = globalThis.document.createElement('canvas')
+    canvas.className = 'stage-canvas'
+    globalThis.document.body.appendChild(canvas)
+
+    fireEvent.pointerDown(canvas)
+
+    expect(useWorkspace.getState().sessions[0].selectedAnimationCellKeys).toEqual([key])
+    canvas.remove()
   })
 
   it('uses a shorter frame header without duration text at compact density', () => {
@@ -141,12 +184,12 @@ describe('LayersPanel animation', () => {
 
     rerender(<LayersPanel session={session} docked />)
     fireEvent.doubleClick(screen.getByRole('button', { name: '第 1 帧动画单元格' }))
-    expect(screen.getByRole('spinbutton', { name: '不透明度数值' })).toBeInTheDocument()
+    expect(screen.getByRole('spinbutton', { name: '不透明度' })).toBeInTheDocument()
     fireEvent.keyDown(window, { key: 'Escape' })
     expect(screen.queryByRole('spinbutton', { name: '不透明度数值' })).not.toBeInTheDocument()
 
     fireEvent.doubleClick(screen.getByRole('button', { name: '第 1 帧动画单元格' }))
-    const opacity = screen.getByRole('spinbutton', { name: '不透明度数值' })
+    const opacity = screen.getByRole('spinbutton', { name: '不透明度' })
     expect(opacity.closest('.layer-opacity-control')).not.toBeNull()
     expect(screen.getByRole('slider', { name: '不透明度' })).toBeInTheDocument()
     fireEvent.change(opacity, { target: { value: '45' } })
@@ -189,6 +232,8 @@ describe('LayersPanel animation', () => {
 
     const panel = container.querySelector('.layers-panel') as HTMLElement
     fireEvent.wheel(panel, { ctrlKey: true, deltaY: -100 })
+    expect(panel).toHaveClass('layer-density-normal')
+    fireEvent.wheel(panel, { ctrlKey: true, deltaY: -100 })
     expect(panel).toHaveClass('layer-density-detailed')
     fireEvent.wheel(panel, { ctrlKey: true, deltaY: -100 })
     expect(panel).toHaveClass('layer-density-expanded')
@@ -218,6 +263,8 @@ describe('LayersPanel animation', () => {
 
     expect(container.querySelector('.layer-mask-thumbnail')).not.toBeInTheDocument()
     const panel = container.querySelector('.layers-panel') as HTMLElement
+    fireEvent.wheel(panel, { ctrlKey: true, deltaY: -100 })
+    expect(panel).toHaveClass('layer-density-normal')
     fireEvent.wheel(panel, { ctrlKey: true, deltaY: -100 })
 
     expect(panel).toHaveClass('layer-density-detailed')
@@ -515,6 +562,35 @@ describe('LayersPanel animation', () => {
     fireEvent.pointerUp(frames[2], { pointerId: 1, clientX: 90, clientY: 10 })
     expect(session.selectedAnimationFrameIds).toHaveLength(3)
     vi.useRealTimers()
+  })
+
+  it('updates the cel range outline continuously while dragging across cells', () => {
+    const document = createDocument('animation live cel range preview', 1, 1, 'rgba')
+    const secondLayer = createLayer('second', 1, 1, 'rgba')
+    document.layers.push(secondLayer)
+    useWorkspace.getState().addSession(document)
+    const session = useWorkspace.getState().sessions[0]
+    const { container, rerender } = render(<LayersPanel session={session} docked />)
+
+    useWorkspace.getState().duplicateAnimationFrame()
+    rerender(<LayersPanel session={session} docked />)
+
+    const timeline = ensureAnimationDocument(document)
+    const firstKey = animationCelKey(document.layers[0].id, timeline.frames[0].id)
+    const lastKey = animationCelKey(secondLayer.id, timeline.frames[1].id)
+    const firstCell = container.querySelector<HTMLElement>(`[data-animation-cel-key="${firstKey}"]`)!
+    const lastCell = container.querySelector<HTMLElement>(`[data-animation-cel-key="${lastKey}"]`)!
+
+    fireEvent.pointerDown(firstCell, { button: 0, pointerId: 1, clientX: 10, clientY: 50 })
+    fireEvent.pointerMove(lastCell, { pointerId: 1, clientX: 50, clientY: 90 })
+
+    const outline = container.querySelector<HTMLElement>('[data-animation-cel-selection]')
+    expect(outline?.style.getPropertyValue('--animation-frame-span')).toBe('2')
+    expect(outline?.style.getPropertyValue('--animation-row-span')).toBe('2')
+    expect(session.selectedAnimationCellKeys).toHaveLength(0)
+
+    fireEvent.pointerUp(lastCell, { pointerId: 1, clientX: 50, clientY: 90 })
+    expect(session.selectedAnimationCellKeys).toHaveLength(4)
   })
 
   it('extends a selected frame range while the pointer moves through cel rows', () => {
@@ -840,10 +916,30 @@ describe('LayersPanel animation', () => {
     fireEvent.click(container.querySelector<HTMLButtonElement>('.panel-actions button:last-child')!)
     const modal = document.querySelector('.layer-settings-modal')
     expect(modal).not.toBeNull()
-    fireEvent.click(modal!.querySelector<HTMLInputElement>('input[type="checkbox"]')!)
+    fireEvent.click(screen.getByRole('checkbox', { name: '启用洋葱皮' }))
     fireEvent.submit(modal!)
 
     expect(JSON.parse(localStorage.getItem(ONION_SKIN_PREFERENCE_KEY) ?? '{}')).toMatchObject({ enabled: true, previousFrames: 1, nextFrames: 1 })
+  })
+
+  it('hides timeline editing and clears active animation interaction from layer settings', () => {
+    const spriteDocument = createDocument('hidden timeline', 1, 1, 'rgba')
+    useWorkspace.getState().addSession(spriteDocument)
+    useWorkspace.getState().duplicateAnimationFrame()
+    useWorkspace.getState().setAnimationPlaying(true)
+    const session = useWorkspace.getState().sessions[0]
+    const { container } = render(<LayersPanel session={session} docked />)
+
+    fireEvent.click(container.querySelector<HTMLButtonElement>('.panel-actions button:last-child')!)
+    fireEvent.click(screen.getByRole('checkbox', { name: '隐藏时间轴' }))
+
+    expect(container.querySelector('.layers-panel')).toHaveClass('timeline-hidden')
+    expect(container.querySelector('.layer-panel-title')).toHaveTextContent('图层')
+    expect(document.querySelector('.layer-settings-modal')).toHaveClass('timeline-disabled')
+    expect(document.querySelector('.layer-settings-onion')).toBeDisabled()
+    expect(localStorage.getItem(TIMELINE_HIDDEN_PREFERENCE_KEY)).toBe('true')
+    expect(useWorkspace.getState().sessions[0].animationPlaying).toBe(false)
+    expect(useWorkspace.getState().sessions[0].selectedAnimationFrameIds).toEqual([])
   })
 })
 
@@ -881,10 +977,19 @@ describe('LayersPanel properties', () => {
     fireEvent.click(marker!)
     expect(useWorkspace.getState().sessions[0].activeLayerMaskId).toBe(cel.mask?.id)
     expect(useWorkspace.getState().sessions[0].layerMaskIsolatedView).toBe(false)
-    fireEvent.pointerDown(marker!, { button: 0, altKey: true })
+    fireEvent.click(maskRow)
+    expect(container.querySelector('[data-animation-cel-selection]')).not.toBeInTheDocument()
+    fireEvent.pointerDown(maskRow, { button: 0, altKey: true })
+    fireEvent.click(maskRow, { altKey: true })
     expect(useWorkspace.getState().sessions[0].activeLayerMaskId).toBe(cel.mask?.id)
     expect(useWorkspace.getState().sessions[0].layerMaskIsolatedView).toBe(true)
-    expect(layerRow).not.toHaveClass('selected')
+    fireEvent.pointerDown(maskRow, { button: 0, altKey: true })
+    fireEvent.click(maskRow, { altKey: true })
+    expect(useWorkspace.getState().sessions[0].activeLayerMaskId).toBe(cel.mask?.id)
+    expect(useWorkspace.getState().sessions[0].layerMaskIsolatedView).toBe(false)
+    fireEvent.pointerDown(marker!, { button: 0, altKey: true })
+    expect(useWorkspace.getState().sessions[0].layerMaskIsolatedView).toBe(true)
+    expect(layerRow).toHaveClass('selected')
     expect(container.querySelector('[data-animation-cel-selection]')).toHaveStyle('--animation-row-index: 0')
     act(() => finishAnimationCellOperation(document.id))
     expect(container.querySelector('[data-animation-cel-selection]')).toHaveStyle('--animation-row-index: 0')
@@ -897,6 +1002,7 @@ describe('LayersPanel properties', () => {
 
     fireEvent.keyDown(window, { key: 'Alt' })
     expect(activeMaskCell).toHaveClass('mask-edit-ready')
+    expect(maskRow).toHaveClass('mask-edit-ready')
     expect(container.querySelector('.layers-panel')).not.toHaveClass('layer-alt-copy-ready')
     fireEvent.keyUp(window, { key: 'Alt' })
 
@@ -1009,6 +1115,58 @@ describe('LayersPanel properties', () => {
     expect(layer.clippingMask).toBeUndefined()
   })
 
+  it('opens layer styles for layers and groups from their context menu or status icon', () => {
+    const document = createDocument('layer style menu', 2, 2, 'rgba')
+    const layer = getActiveLayer(document)
+    const layerStyles = createDefaultLayerStyles()
+    layerStyles.stroke.enabled = true
+    layer.layerStyles = layerStyles
+    const groupStyles = createDefaultLayerStyles()
+    groupStyles.shadow.enabled = true
+    document.groups.push({ id: 'group', name: 'Group', parentGroupId: null, visible: true, locked: false, opacity: 1, blendMode: 'normal', layerStyles: groupStyles })
+    useWorkspace.getState().addSession(document)
+    const { container } = render(<LayersPanel session={useWorkspace.getState().sessions[0]} docked />)
+
+    fireEvent.contextMenu(container.querySelector('[data-group-id="group"]')!, { clientX: 20, clientY: 20 })
+    fireEvent.click(screen.getByRole('menuitem', { name: '图层样式' }))
+    expect(screen.getByRole('dialog', { name: '图层样式' })).toHaveTextContent('Group')
+    fireEvent.click(screen.getByRole('button', { name: '关闭' }))
+
+    const layerIndicator = container.querySelector(`[data-layer-id="${layer.id}"] .layer-style-indicator`)
+    const groupIndicator = container.querySelector('[data-group-id="group"] .layer-style-indicator')
+    expect(layerIndicator).toBeInTheDocument()
+    expect(groupIndicator).toBeInTheDocument()
+    fireEvent.click(layerIndicator!)
+
+    expect(screen.getByRole('dialog', { name: '图层样式' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: `${layer.name} 图层样式` })).toBeInTheDocument()
+    expect(within(screen.getByRole('navigation', { name: '图层样式效果' })).getByRole('button', { name: '描边' })).toBeInTheDocument()
+    const dialog = screen.getByRole('dialog', { name: '图层样式' })
+    expect(dialog.querySelector('.layer-style-effect-editor > header')).not.toBeInTheDocument()
+    expect(within(dialog).getByRole('group', { name: '描边设置' })).toBeInTheDocument()
+    expect(within(dialog).getByRole('button', { name: '圆形' })).toBeInTheDocument()
+    expect(within(dialog).getByRole('button', { name: '方形' })).toBeInTheDocument()
+    expect(within(dialog).getByRole('button', { name: '水平' })).toBeInTheDocument()
+    expect(within(dialog).getByRole('button', { name: '垂直' })).toBeInTheDocument()
+    expect(within(dialog).getByLabelText('允许描边的像素方向')).toBeInTheDocument()
+    expect(within(within(dialog).getByRole('group', { name: '位置' })).getByRole('button', { name: '两侧' })).toBeInTheDocument()
+    expect(dialog.querySelector('.layer-style-effect-list')).toHaveClass('component-scrollbar')
+    expect(dialog.querySelector('.layer-style-fields')).toHaveClass('component-scrollbar')
+    expect(dialog.querySelector('.color-value-trigger')).toBeInTheDocument()
+    fireEvent.click(within(dialog).getByRole('checkbox', { name: '智能色相' }))
+    expect(dialog.querySelector('.color-value-trigger')).not.toBeInTheDocument()
+    expect(dialog.querySelector('.layer-style-smart-darkness')).toBeInTheDocument()
+    fireEvent.click(within(dialog).getByRole('button', { name: '方形' }))
+    expect(layer.layerStyles?.stroke).toMatchObject({ kernel: 'square', directions: { nw: true, n: true, ne: true, w: true, e: true, sw: true, s: true, se: true } })
+    fireEvent.click(within(screen.getByRole('navigation', { name: '图层样式效果' })).getByRole('button', { name: '阴影' }))
+    expect(dialog.querySelector('.color-value-trigger')).toBeInTheDocument()
+    fireEvent.click(within(dialog).getByRole('checkbox', { name: '智能阴影' }))
+    expect(dialog.querySelector('.color-value-trigger')).not.toBeInTheDocument()
+    expect(dialog.querySelector('.layer-style-smart-darkness')).toBeInTheDocument()
+    fireEvent.click(within(screen.getByRole('navigation', { name: '图层样式效果' })).getByRole('button', { name: '渐变叠加' }))
+    expect(within(dialog).getByRole('button', { name: '渐变抖动' })).toBeInTheDocument()
+  })
+
   it('edits a single selected group without changing its implicit descendant selection', () => {
     const document = createDocument('single group properties', 2, 2, 'rgba')
     const member = getActiveLayer(document)
@@ -1057,6 +1215,21 @@ describe('LayersPanel properties', () => {
     expect(layer.name).toBe('已确认名称')
     expect(screen.queryByDisplayValue('已确认名称')).not.toBeInTheDocument()
     expect(document.dirty).toBe(true)
+  })
+
+  it('commits a typed opacity value before Enter closes layer properties', async () => {
+    const document = createDocument('layer opacity properties', 2, 2, 'rgba')
+    const layer = getActiveLayer(document)
+    useWorkspace.getState().addSession(document)
+    render(<LayersPanel session={useWorkspace.getState().sessions[0]} docked />)
+
+    fireEvent.doubleClick(screen.getByRole('button', { name: new RegExp(layer.name) }))
+    const opacity = screen.getByRole('spinbutton', { name: '不透明度' })
+    fireEvent.change(opacity, { target: { value: '37' } })
+    fireEvent.keyDown(opacity, { key: 'Enter' })
+
+    await waitFor(() => expect(layer.opacity).toBeCloseTo(0.37))
+    expect(screen.queryByRole('heading', { name: '图层属性' })).not.toBeInTheDocument()
   })
 
   it('does not open properties when the visibility control is double-clicked', () => {
@@ -1278,7 +1451,9 @@ describe('LayersPanel properties', () => {
     const document = createDocument('layer close', 2, 2, 'rgba')
     const layer = getActiveLayer(document)
     useWorkspace.getState().addSession(document)
-    render(<LayersPanel session={useWorkspace.getState().sessions[0]} docked />)
+    const session = useWorkspace.getState().sessions[0]
+    const initialContentRevision = session.contentRevision
+    render(<LayersPanel session={session} docked />)
 
     fireEvent.doubleClick(screen.getByRole('button', { name: new RegExp(layer.name) }))
     fireEvent.change(screen.getByDisplayValue(layer.name), { target: { value: '关闭仍保存' } })
@@ -1286,8 +1461,27 @@ describe('LayersPanel properties', () => {
 
     expect(layer.name).toBe('关闭仍保存')
     expect(document.dirty).toBe(true)
+    expect(session.contentRevision).toBe(initialContentRevision)
     useWorkspace.getState().undo()
     expect(layer.name).not.toBe('关闭仍保存')
+    expect(session.contentRevision).toBe(initialContentRevision)
+  })
+
+  it('closes unchanged properties without invalidating canvas content', () => {
+    const document = createDocument('unchanged layer close', 2, 2, 'rgba')
+    const layer = getActiveLayer(document)
+    useWorkspace.getState().addSession(document)
+    const session = useWorkspace.getState().sessions[0]
+    const initialRevision = session.revision
+    const initialContentRevision = session.contentRevision
+    render(<LayersPanel session={session} docked />)
+
+    fireEvent.doubleClick(screen.getByRole('button', { name: new RegExp(layer.name) }))
+    fireEvent.click(screen.getByRole('button', { name: '关闭' }))
+
+    expect(session.revision).toBe(initialRevision)
+    expect(session.contentRevision).toBe(initialContentRevision)
+    expect(session.history.canUndo).toBe(false)
   })
 
   it.each(['解除图层锁定', '锁定图层'] as const)('does not open properties when the %s control is double-clicked', (label) => {

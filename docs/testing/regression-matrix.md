@@ -49,6 +49,7 @@
 | --- | --- | --- |
 | 视图逆变换 | 旋转、水平/垂直镜像和非整数缩放后，绘制、吸色、选区与预览命中同一文档像素 | `view-geometry.test.ts`、`canvas-input.test.ts` |
 | 指针锚点缩放 | 主画布和预览栏缩放前后保持指针下的文档位置，不因旋转或镜像回弹 | `view-geometry.test.ts`、`preview-geometry.test.ts` |
+| 视口尺寸重绘 | 分栏和浮窗改变宽高时，旧 Canvas 位图在下一次重绘前保持原像素比例，不被 CSS 横向或纵向拉伸 | `canvas-display-size.test.ts` |
 | 选区命中对称性 | 八个手柄、边缘移动、旋转和倾斜使用连续文档坐标，左右上下命中无固定偏移或空洞 | `canvas-input.test.ts`、`canvas-visuals.test.ts` |
 | 套索与组合边界 | 套索闭合不丢右边或下边像素；新建、加选、减选、交集和比例修饰键使用统一规则 | `tools.test.ts`、`selection.test.ts`、`canvas-input.test.ts` |
 | 画布外选区内容 | 浮动内容移出画布再移回时像素完整保留，确认时才按文档边界写入 | `tools.test.ts`、`workspace.test.ts` |

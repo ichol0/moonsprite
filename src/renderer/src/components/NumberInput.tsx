@@ -9,6 +9,7 @@ interface NumberInputProps extends Omit<InputHTMLAttributes<HTMLInputElement>, '
   live?: boolean
   min?: number
   max?: number
+  density?: 'compact' | 'regular'
   step?: number
   suffix?: string
 }
@@ -27,7 +28,7 @@ const filterNumericExpression = (source: string): string => {
   return filtered
 }
 
-export function NumberInput({ value, onValueChange, live = false, min, max, step = 1, suffix, className = '', onFocus, onBlur, onKeyDown, ...inputProps }: NumberInputProps) {
+export function NumberInput({ value, onValueChange, live = false, min, max, density = 'regular', step = 1, suffix, className = '', onFocus, onBlur, onKeyDown, ...inputProps }: NumberInputProps) {
   const { t } = useI18n()
   const [draft, setDraft] = useState(String(value))
   useLayoutEffect(() => setDraft(String(value)), [value])
@@ -35,7 +36,7 @@ export function NumberInput({ value, onValueChange, live = false, min, max, step
     if (!Number.isFinite(next)) return typeof value === 'number' ? value : min ?? 0
     return Math.min(max ?? Number.POSITIVE_INFINITY, Math.max(min ?? Number.NEGATIVE_INFINITY, next))
   }
-  const adjust = (delta: number): void => onValueChange(normalize((typeof value === 'number' ? value : min ?? 0) + delta))
+  const adjust = (delta: number): void => onValueChange(normalize((typeof value === 'number' ? value : 0) + delta))
   const commit = (): void => {
     if (!draft.trim()) { setDraft(String(value)); return }
     const evaluated = evaluateNumericExpression(draft)
@@ -54,7 +55,7 @@ export function NumberInput({ value, onValueChange, live = false, min, max, step
     if (next !== value) onValueChange(next)
   }
 
-  const control = <span className={`number-input ${suffix ? 'has-suffix' : ''} ${className}`.trim()}>
+  const control = <span className={`number-input number-input-${density} ${suffix ? 'has-suffix' : ''} ${className}`.trim()}>
     <span className="number-input-editor" style={suffix ? { '--number-input-value-chars': Math.max(1, draft.length) } as CSSProperties : undefined}>
       <input {...inputProps} type="text" inputMode="decimal" role="spinbutton" aria-valuemin={min} aria-valuemax={max} aria-valuenow={typeof value === 'number' ? value : undefined} value={draft} style={inputProps.style} onFocus={onFocus} onChange={(event) => updateDraft(event.target.value)} onBlur={(event) => { commit(); onBlur?.(event) }} onKeyDown={(event) => { onKeyDown?.(event); if (event.defaultPrevented || event.key !== 'Enter') return; event.preventDefault(); const form = event.currentTarget.form; commit(); if (form) window.queueMicrotask(() => form.requestSubmit()); else event.currentTarget.blur() }} />
       {suffix && <span className="number-input-suffix" aria-hidden="true">{suffix}</span>}

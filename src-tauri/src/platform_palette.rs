@@ -52,25 +52,29 @@ pub(crate) struct PaletteListing {
 
 const DEFAULT_PALETTES: &[(&str, &str)] = &[
     (
-        "moonlight-12.palette.json",
-        include_str!("../../palettes/moonlight-12.palette.json"),
+        "universal-spectrum-48.palette.json",
+        include_str!("../../palettes/universal-spectrum-48.palette.json"),
     ),
     (
-        "tiny-console-16.palette.json",
-        include_str!("../../palettes/tiny-console-16.palette.json"),
+        "soft-spectrum-48.palette.json",
+        include_str!("../../palettes/soft-spectrum-48.palette.json"),
     ),
     (
-        "forest-dusk-12.palette.json",
-        include_str!("../../palettes/forest-dusk-12.palette.json"),
+        "vivid-spectrum-48.palette.json",
+        include_str!("../../palettes/vivid-spectrum-48.palette.json"),
     ),
     (
-        "sunset-12.palette.json",
-        include_str!("../../palettes/sunset-12.palette.json"),
+        "deep-spectrum-48.palette.json",
+        include_str!("../../palettes/deep-spectrum-48.palette.json"),
     ),
-    (
-        "mono-10.palette.json",
-        include_str!("../../palettes/mono-10.palette.json"),
-    ),
+];
+
+const LEGACY_DEFAULT_PALETTE_FILES: &[&str] = &[
+    "moonlight-12.palette.json",
+    "tiny-console-16.palette.json",
+    "forest-dusk-12.palette.json",
+    "sunset-12.palette.json",
+    "mono-10.palette.json",
 ];
 
 fn chrono_like_timestamp() -> u128 {
@@ -85,6 +89,9 @@ fn palette_dir() -> Result<PathBuf, String> {
     // Built-in palettes are embedded resources. Remove copies created by older builds so
     // the user palette directory contains only user-owned files.
     for (file_name, _) in DEFAULT_PALETTES {
+        let _ = fs::remove_file(directory.join(file_name));
+    }
+    for file_name in LEGACY_DEFAULT_PALETTE_FILES {
         let _ = fs::remove_file(directory.join(file_name));
     }
     Ok(directory)

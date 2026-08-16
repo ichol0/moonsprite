@@ -1,9 +1,10 @@
 export type PixelSamplingMode = 'hard' | 'smooth'
 
-/**
- * A source pixel can be shown intact once it occupies at least one CSS pixel.
- * Below that threshold nearest-neighbor sampling necessarily drops pixels, so
- * the display switches to smooth downsampling.
+/** Integer magnification keeps every source pixel on an even display grid.
+ * Fractional magnification produces uneven nearest-neighbour columns, while
+ * downscaling necessarily drops source pixels, so both use smooth sampling.
  */
-export const pixelSamplingMode = (displayScale: number): PixelSamplingMode =>
-  Number.isFinite(displayScale) && displayScale >= 1 ? 'hard' : 'smooth'
+export const pixelSamplingMode = (displayScale: number): PixelSamplingMode => {
+  if (!Number.isFinite(displayScale) || displayScale < 1) return 'smooth'
+  return Math.abs(displayScale - Math.round(displayScale)) < 0.000001 ? 'hard' : 'smooth'
+}

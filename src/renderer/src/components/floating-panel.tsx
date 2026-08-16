@@ -8,7 +8,7 @@ let floatingZIndex = 40
 export type PanelDock = 'right' | 'left' | 'bottom' | 'floating'
 export type FixedPanelDock = Exclude<PanelDock, 'floating'>
 export type ResizeDirection = 'n' | 'e' | 's' | 'w' | 'ne' | 'nw' | 'se' | 'sw'
-export interface FloatingSizeConstraints { minWidth?: number; minHeight?: number; maxWidth?: number; maxHeight?: number }
+export interface FloatingSizeConstraints { minWidth?: number; minHeight?: number; maxWidth?: number; maxHeight?: number; restoreSizeOnly?: boolean }
 
 interface PanelDockZone {
   dock: FixedPanelDock
@@ -67,10 +67,23 @@ export function useFloatingPanel(initialPosition: FloatingPosition | null = null
   const [position, setPosition] = useState<FloatingPosition | null>(() => {
     const loaded = loadFloatingPosition(storageKey, initialPosition, { width: window.innerWidth, height: window.innerHeight }, responsiveToViewport, forceDocked)
     if (!loaded) return null
-    return {
+    const constrained = {
       ...loaded,
       width: loaded.width === undefined ? undefined : Math.max(minimumWidth, Math.min(maximumWidth(), loaded.width)),
       height: loaded.height === undefined ? undefined : Math.max(minimumHeight, Math.min(maximumHeight(), loaded.height))
+    }
+    if (!constraints.restoreSizeOnly || !initialPosition) return constrained
+    const initialWidth = initialPosition.width ?? constrained.width ?? minimumWidth
+    const initialHeight = initialPosition.height ?? constrained.height ?? minimumHeight
+    const width = constrained.width ?? initialWidth
+    const height = constrained.height ?? initialHeight
+    const centerX = initialPosition.x + initialWidth / 2
+    const centerY = initialPosition.y + initialHeight / 2
+    return {
+      x: Math.max(0, Math.min(window.innerWidth - width, centerX - width / 2)),
+      y: Math.max(0, Math.min(window.innerHeight - height, centerY - height / 2)),
+      width,
+      height
     }
   })
   const [zIndex, setZIndex] = useState(() => ++floatingZIndex)

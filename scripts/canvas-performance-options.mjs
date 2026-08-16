@@ -6,7 +6,7 @@ export const CANVAS_PERFORMANCE_SIZES = [...new Set([
 ])]
 export const CANVAS_PERFORMANCE_SCENARIOS = ['pan', 'zoom', 'rotated-zoom', 'draw', 'shape', 'marquee', 'bucket-fill', 'gradient']
 export const COMPLEX_CANVAS_PERFORMANCE_SCENARIOS = ['complex-draw', 'complex-undo', 'complex-playback']
-export const LARGE_CANVAS_PERFORMANCE_SCENARIOS = ['large-pan', 'large-zoom', 'large-draw', 'large-shape', 'large-marquee', 'large-bucket-fill', 'large-gradient', 'large-detail-pan', 'large-detail-draw']
+export const LARGE_CANVAS_PERFORMANCE_SCENARIOS = ['large-pan', 'large-zoom', 'large-draw', 'large-shape', 'large-marquee', 'large-bucket-fill', 'large-gradient', 'large-detail-pan', 'large-detail-draw', 'large-detail-draw-timelapse']
 const SUPPORTED_SCENARIOS = [...CANVAS_PERFORMANCE_SCENARIOS, ...COMPLEX_CANVAS_PERFORMANCE_SCENARIOS, ...LARGE_CANVAS_PERFORMANCE_SCENARIOS]
 const SUPPORTED_RUNTIMES = ['production', 'profile']
 

@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "MoonSprite",
-  "version": "0.1.0-dev.4",
+  "version": "0.1.0-dev.5",
   "identifier": "art.moonpx.moonsprite",
   "build": {
     "beforeDevCommand": "pnpm dev:web",
@@ -39,7 +39,10 @@
     "shortDescription": "Windows pixel art editor",
     "resources": {
       "thumbnail-provider/target/release/moonsprite_thumbnail.dll": "moonsprite_thumbnail.dll",
-      "resources/moonsprite-file.ico": "moonsprite-file.ico"
+      "resources/moonsprite-file.ico": "moonsprite-file.ico",
+      "resources/fonts/licenses/Fusion-Pixel-Font-OFL-1.1.txt": "font-licenses/Fusion-Pixel-Font-OFL-1.1.txt",
+      "resources/fonts/licenses/Silkscreen-OFL-1.1.txt": "font-licenses/Silkscreen-OFL-1.1.txt",
+      "resources/fonts/licenses/Tiny5-OFL-1.1.txt": "font-licenses/Tiny5-OFL-1.1.txt"
     },
     "fileAssociations": [
       {

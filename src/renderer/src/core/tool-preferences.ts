@@ -1,4 +1,4 @@
-import type { BrushPaintMode, BrushShape, BrushTexture, FillKind, FillMode, GradientDither, ImageBrushSettings, ProceduralBrushId, ProceduralBrushSettings, SelectionKind, SelectionMode, ShapeKind, ShapeRatio, ToolId } from '@shared/types'
+import type { BrushPaintMode, BrushShape, BrushTexture, FillKind, FillMode, GradientDither, ImageBrushSettings, LineKind, ProceduralBrushId, ProceduralBrushSettings, SelectionKind, SelectionMode, ShapeKind, ShapeRatio, ToolId } from '@shared/types'
 import { normalizeProceduralBrushSettings, PROCEDURAL_BRUSH_IDS } from './brushes'
 import { readStoredJson, writeStoredJson } from './storage'
 import { DEFAULT_SYMMETRY_AXES, type SymmetryAxes } from './symmetry'
@@ -17,7 +17,8 @@ import {
 } from './pressure'
 
 export const TOOL_SETTINGS_KEY = 'moonsprite.tool-settings.v1'
-export type BrushTool = 'pencil' | 'eraser' | 'fill'
+export const BRUSH_TOOLS = ['pencil', 'eraser', 'fill', 'line'] as const
+export type BrushTool = typeof BRUSH_TOOLS[number]
 
 export interface PersistedBrushProfile {
   brushSize: number
@@ -39,6 +40,8 @@ export interface PersistedToolSettings extends PersistedBrushProfile {
   proceduralAntialiasPreferenceVersion: number
   brushProfiles?: Partial<Record<BrushTool, PersistedBrushProfile>>
   shapeKind: ShapeKind
+  lineKind: LineKind
+  curveAnchorCount: number
   shapeRatio: ShapeRatio | number | null
   fillMode: FillMode
   fillKind: FillKind
@@ -53,6 +56,11 @@ export interface PersistedToolSettings extends PersistedBrushProfile {
   wandContiguous: boolean
   perfectPixels: boolean
   symmetryAxes: SymmetryAxes
+  airbrushParticleRadius: number
+  airbrushParticleShape: BrushShape
+  airbrushScatterRadius: number
+  airbrushDensity: number
+  airbrushIntervalMs: number
 }
 
 const createDefaultProceduralBrushSettings = (): Record<ProceduralBrushId, ProceduralBrushSettings> => Object.fromEntries(
@@ -76,6 +84,8 @@ export const defaultToolSettings: PersistedToolSettings = {
   brushPressure: { ...DEFAULT_BRUSH_PRESSURE_SETTINGS },
   brushProfiles: undefined,
   shapeKind: 'rectangle',
+  lineKind: 'line',
+  curveAnchorCount: 2,
   shapeRatio: null,
   fillMode: 'contiguous',
   fillKind: 'bucket',
@@ -89,7 +99,12 @@ export const defaultToolSettings: PersistedToolSettings = {
   wandTolerance: 0,
   wandContiguous: true,
   perfectPixels: false,
-  symmetryAxes: { ...DEFAULT_SYMMETRY_AXES }
+  symmetryAxes: { ...DEFAULT_SYMMETRY_AXES },
+  airbrushParticleRadius: 1,
+  airbrushParticleShape: 'round',
+  airbrushScatterRadius: 12,
+  airbrushDensity: 8,
+  airbrushIntervalMs: 50
 }
 
 export const cloneProceduralSettings = (settings: Record<ProceduralBrushId, ProceduralBrushSettings>): Record<ProceduralBrushId, ProceduralBrushSettings> => Object.fromEntries(
@@ -151,7 +166,7 @@ export function loadToolSettings(storage?: Storage): PersistedToolSettings {
     if (stored.brushPaintModePreferenceVersion !== 1) legacyProfile.brushPaintMode = defaultToolSettings.brushPaintMode
     if (stored.proceduralAntialiasPreferenceVersion !== 1) legacyProfile.proceduralAntialias = defaultToolSettings.proceduralAntialias
     const storedProfiles = stored.brushProfiles
-    const brushProfiles = Object.fromEntries((['pencil', 'eraser', 'fill'] as BrushTool[]).map((tool) => [
+    const brushProfiles = Object.fromEntries(BRUSH_TOOLS.map((tool) => [
       tool,
       normalizePersistedBrushProfile(storedProfiles?.[tool], legacyProfile)
     ])) as Record<BrushTool, PersistedBrushProfile>
@@ -161,7 +176,9 @@ export function loadToolSettings(storage?: Storage): PersistedToolSettings {
       brushPaintModePreferenceVersion: 1,
       proceduralAntialiasPreferenceVersion: 1,
       brushProfiles,
-      shapeKind: stored.shapeKind === 'ellipse' || stored.shapeKind === 'rectangle' || stored.shapeKind === 'ellipse-outline' || stored.shapeKind === 'rectangle-outline' ? stored.shapeKind : defaultToolSettings.shapeKind,
+      shapeKind: stored.shapeKind === 'ellipse' || stored.shapeKind === 'rectangle' || stored.shapeKind === 'ellipse-outline' || stored.shapeKind === 'rectangle-outline' || stored.shapeKind === 'freeform' || stored.shapeKind === 'polygon' ? stored.shapeKind : defaultToolSettings.shapeKind,
+      lineKind: stored.lineKind === 'curve' ? 'curve' : 'line',
+      curveAnchorCount: Number.isFinite(stored.curveAnchorCount) ? Math.max(1, Math.min(8, Math.round(stored.curveAnchorCount!))) : defaultToolSettings.curveAnchorCount,
       shapeRatio: normalizeShapeRatio(stored.shapeRatio),
       fillMode: stored.fillMode === 'global' || stored.fillMode === 'contiguous' ? stored.fillMode : defaultToolSettings.fillMode,
       fillKind: stored.fillKind === 'gradient' || stored.fillKind === 'bucket' ? stored.fillKind : defaultToolSettings.fillKind,
@@ -175,11 +192,17 @@ export function loadToolSettings(storage?: Storage): PersistedToolSettings {
       wandTolerance: Number.isFinite(stored.wandTolerance) ? Math.max(0, Math.min(255, Math.round(stored.wandTolerance!))) : defaultToolSettings.wandTolerance,
       wandContiguous: typeof stored.wandContiguous === 'boolean' ? stored.wandContiguous : defaultToolSettings.wandContiguous,
       perfectPixels: typeof stored.perfectPixels === 'boolean' ? stored.perfectPixels : defaultToolSettings.perfectPixels,
+      airbrushParticleRadius: Number.isFinite(stored.airbrushParticleRadius) ? Math.max(1, Math.min(16, Math.round(stored.airbrushParticleRadius!))) : defaultToolSettings.airbrushParticleRadius,
+      airbrushParticleShape: stored.airbrushParticleShape === 'square' || stored.airbrushParticleShape === 'line' || stored.airbrushParticleShape === 'round' ? stored.airbrushParticleShape : defaultToolSettings.airbrushParticleShape,
+      airbrushScatterRadius: Number.isFinite(stored.airbrushScatterRadius) ? Math.max(1, Math.min(64, Math.round(stored.airbrushScatterRadius!))) : defaultToolSettings.airbrushScatterRadius,
+      airbrushDensity: Number.isFinite(stored.airbrushDensity) ? Math.max(1, Math.min(128, Math.round(stored.airbrushDensity!))) : defaultToolSettings.airbrushDensity,
+      airbrushIntervalMs: Number.isFinite(stored.airbrushIntervalMs) ? Math.max(16, Math.min(1000, Math.round(stored.airbrushIntervalMs!))) : defaultToolSettings.airbrushIntervalMs,
       symmetryAxes: {
         horizontal: storedSymmetryAxes?.horizontal === true,
         vertical: storedSymmetryAxes?.vertical === true,
         diagonalUp: storedSymmetryAxes?.diagonalUp === true,
-        diagonalDown: storedSymmetryAxes?.diagonalDown === true || storedSymmetryAxes?.diagonal === true
+        diagonalDown: storedSymmetryAxes?.diagonalDown === true || storedSymmetryAxes?.diagonal === true,
+        rotational: storedSymmetryAxes?.rotational === true
       }
     }
   } catch {

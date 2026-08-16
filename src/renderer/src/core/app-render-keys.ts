@@ -36,12 +36,14 @@ export const appCoordinatorRenderKey = (state: AppCoordinatorState): string => {
     session?.tool ?? '',
     session?.selectionKind ?? '',
     session?.shapeKind ?? '',
+    session?.lineKind ?? 'line',
     session?.fillKind ?? 'bucket',
     session?.view.showPixelGrid ? 1 : 0,
     session?.view.showGrid ? 1 : 0,
     session?.view.grid ? `${session.view.grid.x}:${session.view.grid.y}:${session.view.grid.width}:${session.view.grid.height}` : '',
     session?.view.relativeLuminance ? 1 : 0,
     session?.view.showSelectionOutline === false ? 0 : 1,
+    session?.view.showSelectionPivot === false ? 0 : 1,
     preview ? `${preview.width}:${preview.height}:${preview.offsetX}:${preview.offsetY}` : '',
     state.saveProgress ? `${state.saveProgress.title}:${state.saveProgress.value}:${state.saveProgress.label}` : '',
     state.dialog ? `${state.dialog.title}:${state.dialog.message}:${state.dialog.detail ?? ''}:${state.dialog.choices.map((choice) => `${choice.id}:${choice.label}:${choice.tone ?? ''}`).join('|')}` : ''
@@ -49,7 +51,7 @@ export const appCoordinatorRenderKey = (state: AppCoordinatorState): string => {
 }
 
 export const toolRailRenderKey = (session: DocumentSession | null): string => session
-  ? `${session.document.id}:${session.tool}:${session.selectionKind}:${session.shapeKind}:${session.fillKind ?? 'bucket'}`
+  ? `${session.document.id}:${session.tool}:${session.moveKind}:${session.selectionKind}:${session.shapeKind}:${session.lineKind}:${session.fillKind ?? 'bucket'}:${session.activeLayerMaskId ?? ''}:${session.selectedGroupIds.join(',')}:${session.selectedLayerIds.filter((id) => session.document.layers.some((layer) => layer.id === id && layer.kind === 'text')).join(',')}`
   : ''
 
 export const appMenuRenderKey = (session: DocumentSession | null): string => session
@@ -110,6 +112,8 @@ export const toolOptionsRenderKey = (session: DocumentSession | null): string =>
     session.brushPressure.minOpacityPercent,
     session.brushPressure.curve,
     session.shapeKind,
+    session.lineKind,
+    session.curveAnchorCount,
     session.shapeRatio?.width ?? '',
     session.shapeRatio?.height ?? '',
     session.fillMode,
@@ -119,15 +123,31 @@ export const toolOptionsRenderKey = (session: DocumentSession | null): string =>
     session.gradientContiguous ? 1 : 0,
     session.gradientDither ?? 'none',
     session.moveAutoSelect ? 1 : 0,
+    session.moveKind,
+    session.selectedSliceId ?? '',
+    (session.selectedSliceIds ?? []).join(','),
+    (session.document.slices ?? []).map((slice) => `${slice.id}:${slice.name}:${slice.x}:${slice.y}:${slice.width}:${slice.height}`).join('|'),
     session.selectionKind,
     session.selectionMode,
+    session.selection ? `${session.selection.x}:${session.selection.y}:${session.selection.width}:${session.selection.height}` : '',
+    session.selectionPivot ? `${session.selectionPivot.x}:${session.selectionPivot.y}` : '',
+    session.pendingPaste?.transformTarget ? `${session.pendingPaste.transformTarget.x}:${session.pendingPaste.transformTarget.y}:${session.pendingPaste.transformTarget.width}:${session.pendingPaste.transformTarget.height}` : '',
+    session.pendingPaste?.transformAngle ?? 0,
+    session.pendingPaste?.transformShear ? `${session.pendingPaste.transformShear.axis}:${session.pendingPaste.transformShear.edge}:${session.pendingPaste.transformShear.amount}` : '',
+    session.view.showSelectionPivot === false ? 0 : 1,
     session.wandTolerance,
     session.wandContiguous ? 1 : 0,
     session.perfectPixels ? 1 : 0,
+    session.airbrushParticleRadius,
+    session.airbrushParticleShape,
+    session.airbrushScatterRadius,
+    session.airbrushDensity,
+    session.airbrushIntervalMs,
     session.symmetryAxes?.horizontal ? 1 : 0,
     session.symmetryAxes?.vertical ? 1 : 0,
     session.symmetryAxes?.diagonalUp ? 1 : 0,
     session.symmetryAxes?.diagonalDown ? 1 : 0,
+    session.symmetryAxes?.rotational ? 1 : 0,
     session.symmetryCenter?.x ?? '',
     session.symmetryCenter?.y ?? '',
     Math.round(session.view.rotation * 10),

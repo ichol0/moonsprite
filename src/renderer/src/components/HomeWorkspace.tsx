@@ -1,22 +1,30 @@
-import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type WheelEvent as ReactWheelEvent } from 'react'
+import { createPortal } from 'react-dom'
 import { Plus, TriangleAlert } from 'lucide-react'
-import type { RecoveryRecord } from '@shared/types'
+import type { ColorMode, ProjectPreview, RecoveryRecord } from '@shared/types'
 import { APP_CHANNEL_LABEL } from '@/core/app-meta'
-import { readProjectGalleryMetadata } from '@/core/project-format'
 import { decodeDocumentFileAsync } from '@/core/document-files'
-import { exportDocumentImage } from '@/core/png'
+import { loadEditorPreferences, saveEditorPreferences } from '@/core/file-preferences'
+import { readProjectGalleryMetadataAsync } from '@/core/project-gallery'
+import { encodeProjectPreview } from '@/core/project-format'
+import { createRasterImagePreview, rasterImageMimeType } from '@/core/raster-image'
 import { clearRecentProjects, getGalleryPins, getRecentProjects, recordRecentProject, removeGalleryPin, removeRecentProject, reorderRecentProjects, toggleGalleryPin, toggleRecentProjectPinned, type RecentProject } from '@/core/home-history'
+import { createFolderHomeSection, findFolderHomeSection, getHomeSections, saveHomeSections, type HomeSectionDefinition } from '@/core/home-sections'
 import { useWorkspace } from '@/store/workspace'
 import { useI18n } from '@/components/I18nProvider'
-import { translate, type AppLocale } from '@/core/localization'
+import { AVAILABLE_APP_LOCALES, localeDisplayName, translate, type AppLocale } from '@/core/localization'
 import moonspriteLogo from '@/assets/moonsprite-logo.svg'
 import { PixelCloseIcon as X, PixelUtilityIcon } from '@/components/PixelUtilityIcon'
+import { DialogHeader } from '@/components/DialogHeader'
+import { ModalShell } from '@/components/ModalShell'
+import { HomeSectionManagerDialog } from '@/components/HomeSectionManagerDialog'
 
 interface ProjectCard extends RecentProject {
   previewUrl?: string
   width?: number
   height?: number
-  colorMode?: 'rgba' | 'indexed'
+  colorMode?: ColorMode
+  previewLoading?: boolean
   error?: string
 }
 
@@ -27,17 +35,55 @@ interface HomeWorkspaceProps {
   onRestoreRecovery(id: string): Promise<boolean>
 }
 
-type HomeSection = 'recent' | 'gallery' | 'recovery'
+type HomeProjectLayout = 'small' | 'medium' | 'large'
+type HomeLinkIconKind = 'qq' | 'steam' | 'github' | 'language'
 const homeSectionStorageKey = 'moonsprite.home-section.v1'
+const homeProjectLayoutStorageKey = 'moonsprite.home-project-layout.v1'
+const homeRecentPrivacyStorageKey = 'moonsprite.home-recent-privacy.v1'
+const homeProjectLayoutOrder: readonly HomeProjectLayout[] = ['small', 'medium', 'large']
+const recoveryDayMilliseconds = 24 * 60 * 60 * 1_000
+const homeExternalLinks = {
+  qq: 'https://qm.qq.com/q/3OUXtFg4lW',
+  steam: 'https://store.steampowered.com/search/?term=MoonSprite',
+  github: 'https://github.com/MoonPixelTeam/moonsprite'
+} as const
+const homeLinkIconPaths: Record<HomeLinkIconKind, { solid: string; soft: string }> = {
+  qq: {
+    solid: 'M4 0h3v1h-3zM2 1h7v1h-7zM1 2h3v1h-3zM7 2h3v1h-3zM1 3h2v1h-2zM8 3h2v1h-2zM0 4h3v1h-3zM8 4h3v1h-3zM0 5h2v1h-2zM9 5h2v1h-2zM0 6h2v1h-2zM9 6h2v1h-2zM1 7h3v1h-3zM7 7h3v1h-3zM1 8h2v1h-2zM8 8h2v1h-2zM2 9h7v1h-7zM4 10h3v1h-3z',
+    soft: 'M3 0h1v1h-1zM7 0h1v1h-1zM4 2h1v1h-1zM6 2h1v1h-1zM0 3h1v1h-1zM3 3h1v1h-1zM7 3h1v1h-1zM10 3h1v1h-1zM2 5h1v1h-1zM8 5h1v1h-1zM3 6h1v1h-1zM7 6h1v1h-1zM0 7h1v1h-1zM10 7h1v1h-1zM3 8h1v1h-1zM5 8h1v1h-1zM7 8h1v1h-1zM3 10h1v1h-1zM7 10h1v1h-1z'
+  },
+  steam: {
+    solid: 'M4 0h3v1h-3zM2 1h7v1h-7zM1 2h5v1h-5zM9 2h1v1h-1zM1 3h4v1h-4zM7 3h1v1h-1zM9 3h1v1h-1zM0 4h5v1h-5zM6 4h1v1h-1zM8 4h1v1h-1zM10 4h1v1h-1zM3 5h2v1h-2zM7 5h1v1h-1zM10 5h1v1h-1zM9 6h2v1h-2zM1 7h1v1h-1zM7 7h3v1h-3zM1 8h3v1h-3zM6 8h4v1h-4zM2 9h7v1h-7zM4 10h3v1h-3z',
+    soft: 'M3 0h1v1h-1zM7 0h1v1h-1zM0 3h1v1h-1zM6 3h1v1h-1zM8 3h1v1h-1zM10 3h1v1h-1zM2 5h1v1h-1zM6 5h1v1h-1zM8 5h1v1h-1zM3 6h1v1h-1zM0 7h1v1h-1zM2 7h1v1h-1zM6 7h1v1h-1zM10 7h1v1h-1zM4 8h1v1h-1zM3 10h1v1h-1zM7 10h1v1h-1z'
+  },
+  github: {
+    solid: 'M4 0h3v1h-3zM2 1h7v1h-7zM1 2h2v1h-2zM4 2h3v1h-3zM8 2h2v1h-2zM1 3h1v1h-1zM9 3h1v1h-1zM0 4h2v1h-2zM9 4h2v1h-2zM0 5h2v1h-2zM9 5h2v1h-2zM0 6h3v1h-3zM8 6h3v1h-3zM1 7h1v1h-1zM3 7h1v1h-1zM7 7h3v1h-3zM1 8h1v1h-1zM7 8h3v1h-3zM2 9h7v1h-7zM4 10h3v1h-3z',
+    soft: 'M3 0h1v1h-1zM7 0h1v1h-1zM3 2h1v1h-1zM7 2h1v1h-1zM0 3h1v1h-1zM2 3h1v1h-1zM8 3h1v1h-1zM10 3h1v1h-1zM2 5h1v1h-1zM8 5h1v1h-1zM3 6h1v1h-1zM7 6h1v1h-1zM0 7h1v1h-1zM10 7h1v1h-1zM2 8h1v1h-1zM6 8h1v1h-1zM3 10h1v1h-1zM7 10h1v1h-1z'
+  },
+  language: {
+    solid: 'M4 0h3v1h-3zM2 1h3v1h-3zM7 1h2v1h-2zM1 2h5v1h-5zM8 2h2v1h-2zM1 3h5v1h-5zM8 3h2v1h-2zM0 4h5v1h-5zM7 4h4v1h-4zM0 5h2v1h-2zM3 5h2v1h-2zM7 5h4v1h-4zM0 6h1v1h-1zM3 6h2v1h-2zM8 6h3v1h-3zM1 7h1v1h-1zM4 7h2v1h-2zM8 7h2v1h-2zM1 8h1v1h-1zM4 8h2v1h-2zM9 8h1v1h-1zM2 9h2v1h-2zM7 9h2v1h-2zM4 10h3v1h-3z',
+    soft: 'M3 0h1v1h-1zM7 0h1v1h-1zM5 1h1v1h-1zM7 2h1v1h-1zM0 3h1v1h-1zM10 3h1v1h-1zM5 4h1v1h-1zM2 5h1v1h-1zM5 6h1v1h-1zM7 6h1v1h-1zM0 7h1v1h-1zM3 7h1v1h-1zM10 7h1v1h-1zM3 10h1v1h-1zM7 10h1v1h-1z'
+  }
+}
+
+function HomeLinkIcon({ kind }: { kind: HomeLinkIconKind }) {
+  const paths = homeLinkIconPaths[kind]
+  return <svg className="start-screen-link-icon" viewBox="0 0 11 11" width="22" height="22" shapeRendering="crispEdges" aria-hidden="true">
+    <path d={paths.solid} fill="currentColor" />
+    <path d={paths.soft} fill="currentColor" opacity="0.42" />
+  </svg>
+}
 interface CachedProjectPreview {
   bytes: Uint8Array
   width: number
   height: number
-  colorMode: ProjectCard['colorMode']
+  colorMode: ColorMode
 }
 const projectPreviewCache = new Map<string, CachedProjectPreview>()
 const maxCachedProjectPreviews = 48
+let projectPreviewFallbackQueue = Promise.resolve()
 const previewCacheKey = (record: RecentProject): string => `${record.filePath}\u0000${record.lastOpened}`
+const recoveryPreviewCacheKey = (record: RecoveryRecord): string => `recovery\u0000${record.id}\u0000${record.updatedAt}`
 const cacheProjectPreview = (key: string, preview: CachedProjectPreview): void => {
   projectPreviewCache.delete(key)
   projectPreviewCache.set(key, preview)
@@ -47,14 +93,44 @@ const createPreviewUrl = (bytes: Uint8Array): string => {
   const buffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer
   return URL.createObjectURL(new Blob([buffer], { type: 'image/png' }))
 }
-const loadHomeSection = (): HomeSection => {
-  const stored = localStorage.getItem(homeSectionStorageKey)
-  return stored === 'gallery' || stored === 'recovery' ? stored : 'recent'
+const runProjectPreviewFallback = <T,>(task: () => Promise<T>): Promise<T> => {
+  const result = projectPreviewFallbackQueue.then(task, task)
+  projectPreviewFallbackQueue = result.then(() => undefined, () => undefined)
+  return result
+}
+const loadHomeSection = (sections: readonly HomeSectionDefinition[]): string => {
+  try {
+    const stored = localStorage.getItem(homeSectionStorageKey)
+    return stored && sections.some((section) => section.id === stored) ? stored : sections[0]?.id ?? 'recent'
+  } catch {
+    return sections[0]?.id ?? 'recent'
+  }
+}
+const loadHomeProjectLayout = (): HomeProjectLayout => {
+  try {
+    const stored = localStorage.getItem(homeProjectLayoutStorageKey)
+    return stored === 'small' || stored === 'large' ? stored : 'medium'
+  } catch {
+    return 'medium'
+  }
+}
+const loadRecentProjectsHidden = (): boolean => {
+  try {
+    return localStorage.getItem(homeRecentPrivacyStorageKey) === 'hidden'
+  } catch {
+    return false
+  }
 }
 
 const formatTime = (value: number, locale: AppLocale): string => {
   if (!Number.isFinite(value) || value <= 0 || Number.isNaN(new Date(value).getTime())) return translate(locale, 'home.unknownTime')
   return new Intl.DateTimeFormat(locale, { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }).format(new Date(value))
+}
+
+const formatProjectType = (filePath: string): string => {
+  const extension = filePath.match(/\.([^./\\]+)$/)?.[1]
+  if (!extension) return 'FILE'
+  return extension.toLowerCase() === 'moonsprite' ? 'MoonSprite' : extension.toUpperCase()
 }
 
 function parseRecoveryTimestamp(value: string): number {
@@ -72,6 +148,7 @@ function parseRecoveryTimestamp(value: string): number {
 
 interface ProjectFileRowProps {
   project: ProjectCard
+  concealed: boolean
   reorderable: boolean
   dragging: boolean
   removePending: boolean
@@ -80,43 +157,261 @@ interface ProjectFileRowProps {
   onPin(): void
   onDelete?(): void
   onRemoveFromRecent?(): void
+  onOpenFolder(): void
   onReorderStart(event: ReactPointerEvent<HTMLButtonElement>, filePath: string): void
 }
 
-function ProjectFileRow({ project, reorderable, dragging, removePending, onOpen, onOpenInBackground, onPin, onDelete, onRemoveFromRecent, onReorderStart }: ProjectFileRowProps) {
+function ProjectFileRow({ project, concealed, reorderable, dragging, removePending, onOpen, onOpenInBackground, onPin, onDelete, onRemoveFromRecent, onOpenFolder, onReorderStart }: ProjectFileRowProps) {
   const { locale, t } = useI18n()
   const invalid = Boolean(project.error)
-  return <article className={`recent-file-row ${invalid ? 'invalid' : ''} ${project.pinned ? 'pinned' : ''} ${reorderable ? 'reorderable' : ''} ${onDelete ? 'deletable' : ''} ${onRemoveFromRecent ? 'removable' : ''} ${dragging ? 'dragging' : ''} ${removePending ? 'remove-pending' : ''}`} data-recent-path={project.filePath}>
-    <button type="button" className="recent-file-open" onPointerDown={(event) => { if (event.button === 1) event.preventDefault() }} onClick={onOpen} onAuxClick={(event) => { if (event.button !== 1) return; event.preventDefault(); event.stopPropagation(); onOpenInBackground() }} title={invalid ? t('home.previewReadFailedTitle', { error: project.error ?? '' }) : t('home.openProject', { name: project.name })}>
-      <span className="recent-file-preview">{project.previewUrl ? <img src={project.previewUrl} alt="" /> : invalid ? <TriangleAlert size={21} /> : <PixelUtilityIcon kind="image" />}</span>
-      <span className="recent-file-copy"><strong>{project.name}</strong><small>{invalid ? t('home.previewReadFailed') : project.width && project.height ? `${project.width} x ${project.height} · ${project.colorMode === 'indexed' ? t('home.indexedColor') : 'RGBA'}` : t('home.readingPreview')}</small><span>{project.filePath}</span></span>
-      <time>{formatTime(project.lastOpened, locale)}</time>
+  return <article className={`recent-file-row ${concealed ? 'concealed' : ''} ${reorderable ? 'reorderable reorderable-list-row' : ''} ${invalid ? 'invalid' : ''} ${project.pinned ? 'pinned' : ''} ${onDelete ? 'deletable' : ''} ${onRemoveFromRecent ? 'removable' : ''} ${dragging ? 'dragging' : ''} ${removePending ? 'remove-pending' : ''}`} data-recent-path={project.filePath} onContextMenu={(event) => { event.preventDefault(); onOpenFolder() }}>
+    <button type="button" className="recent-file-open" onPointerDown={(event) => { if (event.button === 1) event.preventDefault() }} onClick={onOpen} onAuxClick={(event) => { if (event.button !== 1) return; event.preventDefault(); event.stopPropagation(); onOpenInBackground() }} title={concealed ? t('home.hiddenProject') : invalid ? t('home.previewReadFailedTitle', { error: project.error ?? '' }) : t('home.openProject', { name: project.name })}>
+      <span className="recent-file-preview">{concealed ? <PixelUtilityIcon kind="eyeOff" /> : project.previewUrl ? <img src={project.previewUrl} alt="" /> : invalid ? <TriangleAlert size={21} /> : <PixelUtilityIcon kind="image" />}</span>
+      <span className="recent-file-copy"><strong>{concealed ? t('home.hiddenProject') : project.name}</strong><small>{concealed ? t('home.hiddenProjectDetail') : invalid ? t('home.previewReadFailed') : project.width && project.height ? `${project.width} x ${project.height} · ${t(`colorMode.${project.colorMode ?? 'rgba'}`)}` : project.previewLoading ? t('home.readingPreview') : formatProjectType(project.filePath)}</small><span>{concealed ? '********' : project.filePath}</span></span>
+      <time>{concealed ? '--/-- --:--' : formatTime(project.lastOpened, locale)}</time>
     </button>
     <button className="recent-file-pin" type="button" onClick={onPin} aria-label={t(project.pinned ? 'home.unpinProject' : 'home.pinProject', { name: project.name })} title={t(project.pinned ? 'home.unpin' : 'home.pin')}><PixelUtilityIcon kind="pin" /></button>
     {onDelete && <button className="recent-file-delete" type="button" onClick={onDelete} aria-label={t('home.deleteProjectAria', { name: project.name })} title={t('home.deleteProject')}><PixelUtilityIcon kind="delete" /></button>}
     {onRemoveFromRecent && <button className="recent-file-remove" type="button" onClick={onRemoveFromRecent} aria-label={t('home.removeRecentAria', { name: project.name })} title={t('home.removeRecentHint')}><X size={15} /></button>}
-    {reorderable && <button className="recent-file-reorder" type="button" onPointerDown={(event) => onReorderStart(event, project.filePath)} aria-label={t('home.reorderAria', { name: project.name })} title={t('home.reorderHint')}><PixelUtilityIcon kind="move" /></button>}
+    {reorderable && <button className="recent-file-reorder reorderable-list-handle" type="button" onPointerDown={(event) => onReorderStart(event, project.filePath)} aria-label={t('home.reorderAria', { name: project.name })} title={t('home.reorderHint')}><PixelUtilityIcon kind="move" /></button>}
   </article>
 }
 
-function RecoveryFileRow({ record, onRestore, onDiscard }: { record: RecoveryRecord; onRestore(): void; onDiscard(): void }) {
+interface RecoveryPreviewState {
+  previewUrl?: string
+  width?: number
+  height?: number
+  colorMode?: ColorMode
+  loading: boolean
+  error?: string
+}
+
+function RecoveryFileRow({ record, retentionDays, onRestore, onDiscard }: { record: RecoveryRecord; retentionDays: number; onRestore(): void; onDiscard(): void }) {
   const { locale, t } = useI18n()
   const updatedAt = parseRecoveryTimestamp(record.updatedAt)
+  const remainingDays = Math.max(0, Math.ceil((updatedAt + retentionDays * recoveryDayMilliseconds - Date.now()) / recoveryDayMilliseconds))
+  const [preview, setPreview] = useState<RecoveryPreviewState>({ loading: true })
+  useEffect(() => {
+    let disposed = false
+    let previewUrl: string | undefined
+    const applyPreview = (value: CachedProjectPreview): void => {
+      previewUrl = createPreviewUrl(value.bytes)
+      if (disposed) {
+        URL.revokeObjectURL(previewUrl)
+        return
+      }
+      setPreview({ previewUrl, width: value.width, height: value.height, colorMode: value.colorMode, loading: false })
+    }
+    setPreview({ loading: true })
+    const cacheKey = recoveryPreviewCacheKey(record)
+    const cached = projectPreviewCache.get(cacheKey)
+    if (cached) {
+      projectPreviewCache.delete(cacheKey)
+      projectPreviewCache.set(cacheKey, cached)
+      applyPreview(cached)
+    } else {
+      void runProjectPreviewFallback(async () => {
+        const bytes = await window.moonSprite.readRecovery(record.id)
+        return readProjectGalleryMetadataAsync(bytes)
+      }).then((metadata) => {
+        const cachedPreview = { bytes: metadata.preview.slice(), width: metadata.width, height: metadata.height, colorMode: metadata.colorMode }
+        cacheProjectPreview(cacheKey, cachedPreview)
+        applyPreview(cachedPreview)
+      }).catch((error) => {
+        if (!disposed) setPreview({ loading: false, error: error instanceof Error ? error.message : t('home.projectUnreadable') })
+      })
+    }
+    return () => {
+      disposed = true
+      if (previewUrl) URL.revokeObjectURL(previewUrl)
+    }
+  }, [record.id, record.updatedAt, t])
+  const previewLabel = preview.width && preview.height
+    ? `${preview.width} x ${preview.height} · ${t(`colorMode.${preview.colorMode ?? 'rgba'}`)}`
+    : preview.loading ? t('home.readingPreview') : t('home.recoveryDescription')
   return <article className="recent-file-row recovery-file-row">
     <button type="button" className="recent-file-open" onClick={onRestore} title={t('home.restoreProject', { name: record.name })}>
-      <span className="recent-file-preview"><PixelUtilityIcon kind="refresh" /></span>
-      <span className="recent-file-copy"><strong>{record.name}</strong><small>{t('home.recoveryDescription')}</small><span>{t('home.lastSaved', { time: formatTime(updatedAt, locale) })}</span></span>
+      <span className="recent-file-preview">{preview.previewUrl ? <img src={preview.previewUrl} alt="" /> : preview.error ? <TriangleAlert size={21} /> : <span className="save-progress-animation recovery-preview-spinner" aria-hidden="true" />}</span>
+      <span className="recent-file-copy"><strong>{t('home.recoveryTitle', { name: record.name })}</strong><small>{previewLabel}</small><span>{t('home.lastSaved', { time: formatTime(updatedAt, locale) })}</span><span className="recovery-file-expiry">{t('home.recoveryDaysRemaining', { days: remainingDays })}</span></span>
       <time>{formatTime(updatedAt, locale)}</time>
     </button>
     <button type="button" className="recent-file-discard" onClick={onDiscard} aria-label={t('home.discardRecoveryAria', { name: record.name })} title={t('home.discardRecoveryHint')}><PixelUtilityIcon kind="delete" /></button>
   </article>
 }
 
+function HomeLanguageDialog({ current, onApply, onClose }: { current: AppLocale; onApply(locale: AppLocale): void; onClose(): void }) {
+  const { locale, t } = useI18n()
+  const [selected, setSelected] = useState<AppLocale>(current)
+  return <div className="modal-backdrop" role="presentation" onPointerDown={(event) => { if (event.target === event.currentTarget) onClose() }}>
+    <ModalShell storageKey="home-language-v2" defaultWidth={380} defaultHeight={238} minWidth={340} minHeight={220} maxWidth={480} maxHeight={360} className="home-language-modal" role="dialog" aria-modal="true" aria-labelledby="home-language-title">
+      <DialogHeader title={t('home.languageDialogTitle')} titleId="home-language-title" closeLabel={t('common.close')} onClose={onClose} />
+      <div className="modal-body home-language-dialog-body">
+        <p className="home-language-description">{t('home.languageDialogDescription')}</p>
+        <div className="home-language-options" role="radiogroup" aria-label={t('home.languageOptionsAria')}>
+          {AVAILABLE_APP_LOCALES.map((option) => <button key={option} type="button" role="radio" aria-checked={selected === option} className={selected === option ? 'selected' : ''} onClick={() => setSelected(option)}><span lang={option}>{localeDisplayName(option, locale)}</span><small>{option}</small></button>)}
+        </div>
+      </div>
+      <footer><button type="button" className="quiet-button" onClick={onClose}>{t('common.cancel')}</button><button type="button" className="primary-button" onClick={() => onApply(selected)}>{t('preferences.confirm')}</button></footer>
+    </ModalShell>
+  </div>
+}
+
+interface HomeSectionTabEntry {
+  id: string
+  kind: HomeSectionDefinition['kind']
+  label: string
+  title: string
+  recoveryCount?: number
+}
+
+const sameSectionIds = (left: readonly string[], right: readonly string[]): boolean => left.length === right.length && left.every((id, index) => id === right[index])
+
+function HomeSectionTabs({ entries, activeId, ariaLabel, moreLabel, onSelect }: { entries: readonly HomeSectionTabEntry[]; activeId: string; ariaLabel: string; moreLabel: string; onSelect(id: string): void }) {
+  const navigationRef = useRef<HTMLDivElement>(null)
+  const measurementsRef = useRef<HTMLDivElement>(null)
+  const overflowMeasureRef = useRef<HTMLButtonElement>(null)
+  const overflowButtonRef = useRef<HTMLButtonElement>(null)
+  const overflowMenuRef = useRef<HTMLDivElement>(null)
+  const [visibleIds, setVisibleIds] = useState(() => entries.map((entry) => entry.id))
+  const [overflowMenuOpen, setOverflowMenuOpen] = useState(false)
+  const [overflowMenuPosition, setOverflowMenuPosition] = useState({ left: 8, top: 8 })
+  const entriesSignature = entries.map((entry) => `${entry.id}\u0001${entry.label}\u0001${entry.recoveryCount ?? ''}`).join('\u0002')
+
+  useLayoutEffect(() => {
+    const navigation = navigationRef.current
+    const measurements = measurementsRef.current
+    if (!navigation || !measurements) return
+
+    const updateVisibleSections = (): void => {
+      const allIds = entries.map((entry) => entry.id)
+      const availableWidth = navigation.clientWidth
+      if (availableWidth <= 0) {
+        setVisibleIds((current) => sameSectionIds(current, allIds) ? current : allIds)
+        return
+      }
+
+      const widths = new Map<string, number>()
+      for (const element of measurements.querySelectorAll<HTMLElement>('[data-home-section-measure-id]')) {
+        const id = element.dataset.homeSectionMeasureId
+        if (id) widths.set(id, Math.ceil(element.getBoundingClientRect().width || element.offsetWidth))
+      }
+      if (entries.some((entry) => !widths.get(entry.id))) return
+
+      const totalWidth = entries.reduce((sum, entry) => sum + (widths.get(entry.id) ?? 0), 0)
+      if (totalWidth <= availableWidth) {
+        setVisibleIds((current) => sameSectionIds(current, allIds) ? current : allIds)
+        return
+      }
+
+      const overflowWidth = Math.ceil(overflowMeasureRef.current?.getBoundingClientRect().width || overflowMeasureRef.current?.offsetWidth || 0)
+      const tabBudget = Math.max(0, availableWidth - overflowWidth)
+      const nextVisibleIds: string[] = []
+      let usedWidth = 0
+      for (const entry of entries) {
+        const width = widths.get(entry.id) ?? 0
+        if (usedWidth + width > tabBudget) break
+        nextVisibleIds.push(entry.id)
+        usedWidth += width
+      }
+
+      const activeEntry = entries.find((entry) => entry.id === activeId)
+      if (activeEntry && !nextVisibleIds.includes(activeEntry.id)) {
+        const activeWidth = widths.get(activeEntry.id) ?? 0
+        while (nextVisibleIds.length > 0 && usedWidth + activeWidth > tabBudget) {
+          const removedId = nextVisibleIds.pop()
+          usedWidth -= removedId ? widths.get(removedId) ?? 0 : 0
+        }
+        nextVisibleIds.push(activeEntry.id)
+      }
+
+      setVisibleIds((current) => sameSectionIds(current, nextVisibleIds) ? current : nextVisibleIds)
+    }
+
+    updateVisibleSections()
+    window.addEventListener('resize', updateVisibleSections)
+    if (typeof ResizeObserver === 'undefined') return () => window.removeEventListener('resize', updateVisibleSections)
+    const observer = new ResizeObserver(updateVisibleSections)
+    observer.observe(navigation)
+    observer.observe(measurements)
+    return () => {
+      observer.disconnect()
+      window.removeEventListener('resize', updateVisibleSections)
+    }
+  }, [activeId, entriesSignature])
+
+  const visibleIdSet = new Set(visibleIds)
+  const visibleEntries = entries.filter((entry) => visibleIdSet.has(entry.id))
+  const overflowEntries = entries.filter((entry) => !visibleIdSet.has(entry.id))
+
+  useEffect(() => {
+    if (overflowEntries.length === 0) setOverflowMenuOpen(false)
+  }, [overflowEntries.length])
+
+  useEffect(() => {
+    if (!overflowMenuOpen) return
+    const closeOnOutsidePointer = (event: PointerEvent): void => {
+      const target = event.target as Node | null
+      if (target && (overflowButtonRef.current?.contains(target) || overflowMenuRef.current?.contains(target))) return
+      setOverflowMenuOpen(false)
+    }
+    const closeOnKey = (event: KeyboardEvent): void => {
+      if (event.key !== 'Escape') return
+      setOverflowMenuOpen(false)
+      overflowButtonRef.current?.focus()
+    }
+    const closeOnResize = (): void => setOverflowMenuOpen(false)
+    window.addEventListener('pointerdown', closeOnOutsidePointer, true)
+    window.addEventListener('keydown', closeOnKey)
+    window.addEventListener('resize', closeOnResize)
+    return () => {
+      window.removeEventListener('pointerdown', closeOnOutsidePointer, true)
+      window.removeEventListener('keydown', closeOnKey)
+      window.removeEventListener('resize', closeOnResize)
+    }
+  }, [overflowMenuOpen])
+
+  const toggleOverflowMenu = (): void => {
+    if (overflowMenuOpen) {
+      setOverflowMenuOpen(false)
+      return
+    }
+    const bounds = overflowButtonRef.current?.getBoundingClientRect()
+    if (bounds) {
+      const menuWidth = 240
+      const estimatedHeight = Math.min(320, overflowEntries.length * 33 + 16)
+      const left = Math.max(8, Math.min(bounds.right - menuWidth, window.innerWidth - menuWidth - 8))
+      const belowTop = bounds.bottom + 4
+      const top = belowTop + estimatedHeight <= window.innerHeight - 8 ? belowTop : Math.max(8, bounds.top - estimatedHeight - 4)
+      setOverflowMenuPosition({ left, top })
+    }
+    setOverflowMenuOpen(true)
+  }
+
+  const renderTabContent = (entry: HomeSectionTabEntry) => <><span className="home-section-tab-label">{entry.label}</span>{entry.recoveryCount !== undefined && <span className="recovery-count">{entry.recoveryCount}</span>}</>
+
+  return <div ref={navigationRef} className="home-section-navigation">
+    <div className="home-section-tabs" role="tablist" aria-label={ariaLabel}>
+      {visibleEntries.map((entry) => <button key={entry.id} type="button" role="tab" aria-selected={activeId === entry.id} className={`home-section-tab ${activeId === entry.id ? 'selected' : ''}`} title={entry.title} onClick={() => onSelect(entry.id)}>{renderTabContent(entry)}</button>)}
+    </div>
+    {overflowEntries.length > 0 && <button ref={overflowButtonRef} className="home-section-overflow-button icon-button" type="button" aria-label={moreLabel} title={moreLabel} aria-haspopup="menu" aria-expanded={overflowMenuOpen} onClick={toggleOverflowMenu}><PixelUtilityIcon kind={overflowMenuOpen ? 'up' : 'down'} /></button>}
+    <div ref={measurementsRef} className="home-section-measurements" aria-hidden="true">
+      {entries.map((entry) => <button key={entry.id} type="button" tabIndex={-1} className="home-section-tab" data-home-section-measure-id={entry.id}>{renderTabContent(entry)}</button>)}
+      <button ref={overflowMeasureRef} className="home-section-overflow-button icon-button" type="button" tabIndex={-1}><PixelUtilityIcon kind="down" /></button>
+    </div>
+    {overflowMenuOpen && createPortal(<div ref={overflowMenuRef} className="context-menu home-section-overflow-menu component-scrollbar" role="menu" aria-label={moreLabel} style={overflowMenuPosition} onPointerDown={(event) => event.stopPropagation()}>
+      {overflowEntries.map((entry) => <button key={entry.id} className="context-menu-item" type="button" role="menuitem" title={entry.title} onClick={() => { setOverflowMenuOpen(false); onSelect(entry.id) }}><PixelUtilityIcon kind={entry.kind === 'folder' ? 'folder' : entry.kind === 'recovery' ? 'refresh' : 'image'} /><span className="home-section-overflow-label">{entry.label}</span>{entry.recoveryCount !== undefined && <span className="recovery-count">{entry.recoveryCount}</span>}</button>)}
+    </div>, document.body)}
+  </div>
+}
+
 export function HomeWorkspace({ onNew, onOpen, onOpenProject, onRestoreRecovery }: HomeWorkspaceProps) {
-  const { t } = useI18n()
-  const [section, setSection] = useState<HomeSection>(loadHomeSection)
+  const { locale, t } = useI18n()
+  const [homeSections, setHomeSections] = useState(getHomeSections)
+  const [section, setSection] = useState(() => loadHomeSection(getHomeSections()))
+  const [projectLayout, setProjectLayout] = useState<HomeProjectLayout>(loadHomeProjectLayout)
+  const [recentProjectsHidden, setRecentProjectsHidden] = useState(loadRecentProjectsHidden)
   const [projects, setProjects] = useState<ProjectCard[]>([])
-  const [galleryDirectory, setGalleryDirectory] = useState('')
+  const [sectionDirectory, setSectionDirectory] = useState('')
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState('')
   const objectUrls = useRef<string[]>([])
@@ -126,14 +421,26 @@ export function HomeWorkspace({ onNew, onOpen, onOpenProject, onRestoreRecovery 
   const reorderRef = useRef<{ filePath: string; pointerId: number; outsideList: boolean; captureTarget: HTMLElement | null } | null>(null)
   const [draggingProjectPath, setDraggingProjectPath] = useState('')
   const [removePendingProjectPath, setRemovePendingProjectPath] = useState('')
+  const [languageDialogOpen, setLanguageDialogOpen] = useState(false)
+  const [sectionManagerOpen, setSectionManagerOpen] = useState(false)
+  const [recoveryRetentionDays, setRecoveryRetentionDays] = useState(() => loadEditorPreferences().recoveryRetentionDays)
   const setMessage = useWorkspace((state) => state.setMessage)
   const recoveryRecords = useWorkspace((state) => state.recoveryRecords)
   const discardRecovery = useWorkspace((state) => state.discardRecovery)
   const requestDialog = useWorkspace((state) => state.requestDialog)
+  const activeSection = homeSections.find((candidate) => candidate.id === section) ?? homeSections[0] ?? { id: 'recent', kind: 'recent' }
+  const activeSectionReloadKey = activeSection.kind === 'folder' ? `${activeSection.id}\u0000${activeSection.directoryPath}` : activeSection.id
 
   const releaseObjectUrls = (): void => {
     for (const url of objectUrls.current) URL.revokeObjectURL(url)
     objectUrls.current = []
+  }
+
+  const sectionName = (target: HomeSectionDefinition): string => {
+    if (target.kind === 'recent') return t('home.section.recent')
+    if (target.kind === 'gallery') return t('home.section.galleryTab')
+    if (target.kind === 'recovery') return t('home.section.recovery')
+    return target.name
   }
 
   const readCard = async (record: RecentProject): Promise<ProjectCard> => {
@@ -145,43 +452,58 @@ export function HomeWorkspace({ onNew, onOpen, onOpenProject, onRestoreRecovery 
         projectPreviewCache.set(cacheKey, cached)
         return { ...record, name: record.fileName, previewUrl: createPreviewUrl(cached.bytes), width: cached.width, height: cached.height, colorMode: cached.colorMode }
       }
-      const bytes = await window.moonSprite.readBinary(record.filePath)
-      if (/\.moonsprite$/i.test(record.filePath)) {
-        const metadata = readProjectGalleryMetadata(bytes)
-        const previewBytes = metadata.preview.slice()
-        cacheProjectPreview(cacheKey, { bytes: previewBytes, width: metadata.width, height: metadata.height, colorMode: metadata.colorMode })
-        const previewUrl = createPreviewUrl(previewBytes)
-        return { ...record, name: record.fileName, previewUrl, width: metadata.width, height: metadata.height, colorMode: metadata.colorMode }
+      let metadata: ProjectPreview
+      try {
+        metadata = await window.moonSprite.readProjectPreview(record.filePath)
+      } catch {
+        metadata = await runProjectPreviewFallback(async () => {
+          const bytes = await window.moonSprite.readBinary(record.filePath)
+          const mimeType = rasterImageMimeType(record.filePath)
+          let generated: ProjectPreview
+          if (/\.moonsprite$/i.test(record.filePath)) generated = await readProjectGalleryMetadataAsync(bytes)
+          else if (mimeType) {
+            const preview = await createRasterImagePreview(bytes, mimeType)
+            generated = { ...preview, colorMode: 'rgba' }
+          } else {
+            const document = await decodeDocumentFileAsync(bytes, record.filePath)
+            generated = { preview: encodeProjectPreview(document), width: document.width, height: document.height, colorMode: document.colorMode }
+          }
+          await window.moonSprite.cacheProjectPreview(record.filePath, generated).catch(() => {
+            // A cache write failure must not hide an otherwise valid thumbnail.
+          })
+          return generated
+        })
       }
-      const document = await decodeDocumentFileAsync(bytes, record.filePath)
-      const preview = await exportDocumentImage(document, 100, 'png-auto')
-      const previewBytes = preview.bytes.slice()
-      cacheProjectPreview(cacheKey, { bytes: previewBytes, width: document.width, height: document.height, colorMode: document.colorMode })
+      const previewBytes = metadata.preview.slice()
+      cacheProjectPreview(cacheKey, { bytes: previewBytes, width: metadata.width, height: metadata.height, colorMode: metadata.colorMode })
       const previewUrl = createPreviewUrl(previewBytes)
-      return { ...record, name: record.fileName, previewUrl, width: document.width, height: document.height, colorMode: document.colorMode }
+      return { ...record, name: record.fileName, previewUrl, width: metadata.width, height: metadata.height, colorMode: metadata.colorMode }
     } catch (error) {
       return { ...record, name: record.fileName, error: error instanceof Error ? error.message : t('home.projectUnreadable') }
     }
   }
 
-  const loadSection = async (target: HomeSection): Promise<void> => {
+  const loadSection = async (target: HomeSectionDefinition): Promise<void> => {
     const generation = ++loadGeneration.current
     releaseObjectUrls()
     setProjects([])
     setLoadError('')
-    if (target === 'recovery') { setLoading(false); return }
+    setSectionDirectory(target.kind === 'folder' ? target.directoryPath : '')
+    if (target.kind === 'recovery') { setLoading(false); return }
     setLoading(true)
     try {
       let records: RecentProject[]
-      if (target === 'gallery') {
-        const listing = await window.moonSprite.listGalleryProjects()
+      if (target.kind === 'gallery' || target.kind === 'folder') {
+        const listing = target.kind === 'gallery'
+          ? await window.moonSprite.listGalleryProjects()
+          : await window.moonSprite.listFolderProjects(target.directoryPath)
         const pins = new Set(getGalleryPins())
-        setGalleryDirectory(listing.directoryPath)
+        setSectionDirectory(listing.directoryPath)
         records = listing.projects.map((project) => ({ filePath: project.filePath, fileName: project.fileName, name: project.fileName, lastOpened: project.modifiedAt, pinned: pins.has(project.filePath) }))
           .sort((left, right) => Number(right.pinned) - Number(left.pinned) || right.lastOpened - left.lastOpened)
       } else records = getRecentProjects()
       if (generation !== loadGeneration.current) return
-      const initialCards = records.map((record): ProjectCard => ({ ...record, name: record.fileName }))
+      const initialCards = records.map((record): ProjectCard => ({ ...record, name: record.fileName, previewLoading: true }))
       projectsRef.current = initialCards
       setProjects(initialCards)
       setLoading(false)
@@ -191,25 +513,6 @@ export function HomeWorkspace({ onNew, onOpen, onOpenProject, onRestoreRecovery 
           const index = nextIndex
           nextIndex += 1
           const record = records[index]
-          if (target === 'recent') {
-            let exists = true
-            try {
-              exists = await window.moonSprite.fileExists(record.filePath)
-            } catch {
-              // Retain the record when existence cannot be determined.
-            }
-            if (generation !== loadGeneration.current) return
-            if (!exists) {
-              removeRecentProject(record.filePath)
-              setProjects((items) => {
-                const next = items.filter((item) => item.filePath !== record.filePath)
-                projectsRef.current = next
-                return next
-              })
-              setMessage(t('home.missingRecentRemovedMessage', { name: record.fileName }))
-              continue
-            }
-          }
           const card = await readCard(record)
           if (generation !== loadGeneration.current) {
             if (card.previewUrl) URL.revokeObjectURL(card.previewUrl)
@@ -225,7 +528,7 @@ export function HomeWorkspace({ onNew, onOpen, onOpenProject, onRestoreRecovery 
       }
       await Promise.all(Array.from({ length: Math.min(3, records.length) }, () => loadNext()))
     } catch (error) {
-      if (generation === loadGeneration.current) setLoadError(error instanceof Error ? error.message : t('home.sectionReadFailed', { section: t(target === 'gallery' ? 'home.section.gallery' : 'home.section.recentFiles') }))
+      if (generation === loadGeneration.current) setLoadError(error instanceof Error ? error.message : t('home.sectionReadFailed', { section: sectionName(target) }))
     } finally {
       if (generation === loadGeneration.current) setLoading(false)
     }
@@ -236,9 +539,15 @@ export function HomeWorkspace({ onNew, onOpen, onOpenProject, onRestoreRecovery 
   }, [projects])
 
   useEffect(() => {
-    void loadSection(section)
+    const syncPreferences = (): void => setRecoveryRetentionDays(loadEditorPreferences().recoveryRetentionDays)
+    window.addEventListener('moonsprite:preferences-changed', syncPreferences)
+    return () => window.removeEventListener('moonsprite:preferences-changed', syncPreferences)
+  }, [])
+
+  useEffect(() => {
+    void loadSection(activeSection)
     return () => { loadGeneration.current += 1; releaseObjectUrls() }
-  }, [section])
+  }, [activeSectionReloadKey])
 
   useEffect(() => {
     let disposed = false
@@ -248,7 +557,7 @@ export function HomeWorkspace({ onNew, onOpen, onOpenProject, onRestoreRecovery 
       if (!existing) {
         recordRecentProject(filePath, t('home.exampleName'))
         toggleRecentProjectPinned(filePath)
-        void loadSection(section)
+        void loadSection(activeSection)
       }
     }).catch(() => {
       // A missing bundled example must not block the start screen.
@@ -258,9 +567,97 @@ export function HomeWorkspace({ onNew, onOpen, onOpenProject, onRestoreRecovery 
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  const selectSection = (target: HomeSection): void => {
+  const selectSection = (target: string): void => {
     setSection(target)
     try { localStorage.setItem(homeSectionStorageKey, target) } catch { /* Keep the selected home section for this session. */ }
+  }
+
+  const updateHomeSections = (next: HomeSectionDefinition[]): void => {
+    setHomeSections(saveHomeSections(next))
+  }
+
+  const addHomeFolderSection = async (): Promise<void> => {
+    try {
+      const result = await window.moonSprite.chooseDirectory(activeSection.kind === 'folder' ? activeSection.directoryPath : undefined)
+      if (result.canceled || !result.directoryPath) return
+      const existing = findFolderHomeSection(homeSections, result.directoryPath)
+      if (existing) {
+        selectSection(existing.id)
+        return
+      }
+      const folder = createFolderHomeSection(result.directoryPath)
+      const next = saveHomeSections([...homeSections, folder])
+      setHomeSections(next)
+      selectSection(folder.id)
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : t('home.folderSelectFailed'))
+    }
+  }
+
+  const removeHomeFolderSection = (sectionId: string): void => {
+    const index = homeSections.findIndex((candidate) => candidate.id === sectionId)
+    const next = saveHomeSections(homeSections.filter((candidate) => candidate.id !== sectionId))
+    setHomeSections(next)
+    if (section === sectionId) selectSection(next[Math.min(Math.max(index, 0), next.length - 1)]?.id ?? 'recent')
+  }
+
+  const changeProjectLayout = (direction: -1 | 1): void => {
+    setProjectLayout((current) => {
+      const currentIndex = homeProjectLayoutOrder.indexOf(current)
+      const next = homeProjectLayoutOrder[Math.max(0, Math.min(homeProjectLayoutOrder.length - 1, currentIndex + direction))]
+      if (next === current) return current
+      try { localStorage.setItem(homeProjectLayoutStorageKey, next) } catch { /* Keep the layout for this session. */ }
+      return next
+    })
+  }
+
+  const toggleRecentProjectsHidden = (): void => {
+    setRecentProjectsHidden((current) => {
+      const next = !current
+      try { localStorage.setItem(homeRecentPrivacyStorageKey, next ? 'hidden' : 'visible') } catch { /* Keep privacy mode for this session. */ }
+      return next
+    })
+  }
+
+  const handleProjectLayoutWheel = (event: ReactWheelEvent<HTMLElement>): void => {
+    if ((!event.ctrlKey && !event.metaKey) || event.deltaY === 0) return
+    event.preventDefault()
+    event.stopPropagation()
+    changeProjectLayout(event.deltaY < 0 ? 1 : -1)
+  }
+
+  const openExternalLink = (url: string): void => {
+    void window.moonSprite.openExternalUrl(url).catch((error) => {
+      setMessage(error instanceof Error ? error.message : t('home.openLinkFailed'))
+    })
+  }
+
+  const applyLanguage = (nextLocale: AppLocale): void => {
+    try {
+      saveEditorPreferences({ ...loadEditorPreferences(), language: nextLocale })
+      window.dispatchEvent(new Event('moonsprite:preferences-changed'))
+      setLanguageDialogOpen(false)
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : t('home.switchLanguageFailed'))
+    }
+  }
+
+  const openProjectFolder = (project: ProjectCard): void => {
+    void window.moonSprite.openProjectInFolder(project.filePath).catch((error) => {
+      setMessage(error instanceof Error ? error.message : t('home.openProjectFolderFailed'))
+    })
+  }
+
+  const openSectionFolder = (): void => {
+    const request = activeSection.kind === 'gallery'
+      ? window.moonSprite.openGalleryFolder()
+      : activeSection.kind === 'folder'
+        ? window.moonSprite.openDirectory(activeSection.directoryPath)
+        : null
+    if (!request) return
+    void request.catch((error) => {
+      setMessage(error instanceof Error ? error.message : t('home.openSectionFolderFailed'))
+    })
   }
 
   const clearRecent = (): void => {
@@ -276,7 +673,7 @@ export function HomeWorkspace({ onNew, onOpen, onOpenProject, onRestoreRecovery 
   }
 
   const pinProject = (filePath: string): void => {
-    if (section === 'gallery') {
+    if (activeSection.kind !== 'recent') {
       const pinned = new Set(toggleGalleryPin(filePath))
       setProjects((items) => {
         const next = items.map((item) => ({ ...item, pinned: pinned.has(item.filePath) })).sort((left, right) => Number(right.pinned) - Number(left.pinned) || right.lastOpened - left.lastOpened)
@@ -347,7 +744,7 @@ export function HomeWorkspace({ onNew, onOpen, onOpenProject, onRestoreRecovery 
   }
 
   const startRecentReorder = (event: ReactPointerEvent<HTMLButtonElement>, filePath: string): void => {
-    if (section !== 'recent' || event.button !== 0) return
+    if (activeSection.kind !== 'recent' || event.button !== 0) return
     event.preventDefault()
     event.stopPropagation()
     event.currentTarget.setPointerCapture(event.pointerId)
@@ -382,7 +779,10 @@ export function HomeWorkspace({ onNew, onOpen, onOpenProject, onRestoreRecovery 
     const remaining = items.filter((item) => item.filePath !== drag.filePath)
     const targetIndex = remaining.findIndex((item) => item.filePath === targetPath)
     if (targetIndex < 0) return
-    const insertAfter = clientY >= targetRow.getBoundingClientRect().top + targetRow.offsetHeight / 2
+    const targetBounds = targetRow.getBoundingClientRect()
+    const insertAfter = projectLayout === 'large'
+      ? clientX >= targetBounds.left + targetBounds.width / 2
+      : clientY >= targetBounds.top + targetBounds.height / 2
     remaining.splice(targetIndex + (insertAfter ? 1 : 0), 0, source)
     if (remaining.every((item, index) => item.filePath === items[index]?.filePath)) return
     projectsRef.current = remaining
@@ -426,20 +826,40 @@ export function HomeWorkspace({ onNew, onOpen, onOpenProject, onRestoreRecovery 
       window.removeEventListener('pointerup', end)
       window.removeEventListener('pointercancel', end)
     }
-  }, [section])
+  }, [activeSection.kind, projectLayout])
 
-  const emptyState = section === 'gallery'
+  const emptyState = activeSection.kind === 'gallery'
     ? { icon: <PixelUtilityIcon kind="image" />, title: t('home.emptyGallery'), detail: t('home.emptyGalleryDetail') }
-    : section === 'recovery'
+    : activeSection.kind === 'recovery'
       ? { icon: <PixelUtilityIcon kind="refresh" />, title: t('home.emptyRecovery'), detail: t('home.emptyRecoveryDetail') }
-      : { icon: <PixelUtilityIcon kind="image" />, title: t('home.emptyRecent'), detail: t('home.emptyRecentDetail') }
+      : activeSection.kind === 'folder'
+        ? { icon: <PixelUtilityIcon kind="folder" />, title: t('home.emptyFolder'), detail: t('home.emptyFolderDetail') }
+        : { icon: <PixelUtilityIcon kind="image" />, title: t('home.emptyRecent'), detail: t('home.emptyRecentDetail') }
+  const visibleHomeSections = homeSections.filter((candidate) => candidate.kind !== 'recovery' || recoveryRecords.length > 0)
+  const homeSectionTabEntries: HomeSectionTabEntry[] = visibleHomeSections.map((candidate) => {
+    const label = sectionName(candidate)
+    return {
+      id: candidate.id,
+      kind: candidate.kind,
+      label,
+      title: candidate.kind === 'folder' ? candidate.directoryPath : label,
+      recoveryCount: candidate.kind === 'recovery' ? recoveryRecords.length : undefined
+    }
+  })
 
-  return <section className="aseprite-home" aria-label={t('home.aria')}>
+  return <section className="aseprite-home" aria-label={t('home.aria')} onWheel={handleProjectLayoutWheel}>
     <div className="aseprite-home-inner">
       <header className="start-screen-header">
         <div className="start-screen-mark" aria-hidden="true"><img src={moonspriteLogo} alt="" /></div>
         <div><h1>MOONSPRITE</h1><p>{t('home.tagline')}</p></div>
-        <span className="start-screen-version">{APP_CHANNEL_LABEL}</span>
+        <div className="start-screen-meta">
+          <div className="start-screen-links" aria-label={t('home.linksAria')}>
+            <button className="start-screen-link" type="button" onClick={() => openExternalLink(homeExternalLinks.qq)} aria-label={t('home.qq')} title={t('home.qq')}><HomeLinkIcon kind="qq" /></button>
+            <button className="start-screen-link" type="button" onClick={() => openExternalLink(homeExternalLinks.steam)} aria-label={t('home.steam')} title={t('home.steam')}><HomeLinkIcon kind="steam" /></button>
+            <button className="start-screen-link" type="button" onClick={() => openExternalLink(homeExternalLinks.github)} aria-label={t('home.github')} title={t('home.github')}><HomeLinkIcon kind="github" /></button>
+            <button className="start-screen-link" type="button" onClick={() => setLanguageDialogOpen(true)} aria-label={t('home.language')} title={t('home.language')}><HomeLinkIcon kind="language" /></button>
+          </div>
+        </div>
       </header>
       <div className="start-screen-rule" />
       <div className="start-screen-layout">
@@ -448,29 +868,29 @@ export function HomeWorkspace({ onNew, onOpen, onOpenProject, onRestoreRecovery 
           <button className="start-action quiet-button" type="button" onClick={onOpen}><PixelUtilityIcon kind="folderOpen" /><span><strong>{t('home.openSprite')}</strong><small>{t('home.openSpriteDetail')}</small></span></button>
           <div className="start-action-note"><PixelUtilityIcon kind="image" /><span>{t('home.supportedFormats')}</span></div>
         </aside>
-        <section className="recent-files-panel" aria-label={t(section === 'recent' ? 'home.section.recentFiles' : section === 'gallery' ? 'home.section.galleryTab' : 'home.section.recovery')}>
+        <section className="recent-files-panel" aria-label={sectionName(activeSection)}>
           <header className="recent-files-header">
-            <div className="home-section-tabs" role="tablist" aria-label={t('home.sectionsAria')}>
-              <button role="tab" aria-selected={section === 'recent'} className={section === 'recent' ? 'selected' : ''} onClick={() => selectSection('recent')}>{t('home.section.recent')}</button>
-              <button role="tab" aria-selected={section === 'gallery'} className={section === 'gallery' ? 'selected' : ''} onClick={() => selectSection('gallery')}>{t('home.section.galleryTab')}</button>
-              {recoveryRecords.length > 0 && <button role="tab" aria-selected={section === 'recovery'} className={section === 'recovery' ? 'selected' : ''} onClick={() => selectSection('recovery')}>{t('home.section.recovery')}<span className="recovery-count">{recoveryRecords.length}</span></button>}
-            </div>
+            <HomeSectionTabs entries={homeSectionTabEntries} activeId={section} ariaLabel={t('home.sectionsAria')} moreLabel={t('home.moreSections')} onSelect={selectSection} />
             <div className="recent-file-tools">
-              {section === 'gallery' && <button className="icon-button" type="button" onClick={() => void window.moonSprite.openGalleryFolder()} aria-label={t('home.openGalleryFolder')} title={galleryDirectory || t('home.openGalleryFolder')}><PixelUtilityIcon kind="folderOpen" /></button>}
-              <button className="icon-button" type="button" onClick={() => void loadSection(section)} disabled={loading || section === 'recovery'} aria-label={t('home.refreshSection')} title={t('common.refresh')}><PixelUtilityIcon kind="refresh" /></button>
-              {section === 'recent' && <button className="icon-button" type="button" onClick={clearRecent} disabled={!projects.some((project) => !project.pinned)} aria-label={t('home.clearUnpinned')} title={t('home.clearUnpinned')}><PixelUtilityIcon kind="clearRecords" /></button>}
+              {(activeSection.kind === 'gallery' || activeSection.kind === 'folder') && <button className="icon-button" type="button" onClick={openSectionFolder} aria-label={t('home.openSectionFolder')} title={sectionDirectory || (activeSection.kind === 'folder' ? activeSection.directoryPath : t('home.openGalleryFolder'))}><PixelUtilityIcon kind="folderOpen" /></button>}
+              {activeSection.kind === 'recent' && <button className="icon-button" type="button" aria-pressed={recentProjectsHidden} onClick={toggleRecentProjectsHidden} aria-label={t(recentProjectsHidden ? 'home.showRecentProjects' : 'home.hideRecentProjects')} title={t(recentProjectsHidden ? 'home.showRecentProjects' : 'home.hideRecentProjects')}><PixelUtilityIcon kind={recentProjectsHidden ? 'eyeOff' : 'eye'} /></button>}
+              <button className="icon-button" type="button" onClick={() => void loadSection(activeSection)} disabled={loading || activeSection.kind === 'recovery'} aria-label={t('home.refreshSection')} title={t('common.refresh')}><PixelUtilityIcon kind="refresh" /></button>
+              {activeSection.kind === 'recent' && <button className="icon-button" type="button" onClick={clearRecent} disabled={!projects.some((project) => !project.pinned)} aria-label={t('home.clearUnpinned')} title={t('home.clearUnpinned')}><PixelUtilityIcon kind="clearRecords" /></button>}
+              <button className="icon-button" type="button" onClick={() => setSectionManagerOpen(true)} aria-label={t('home.manageSections')} title={t('home.manageSections')}><PixelUtilityIcon kind="properties" /></button>
             </div>
           </header>
-          <div ref={recentListRef} className="recent-files-list component-scrollbar">
+          <div ref={recentListRef} className={`recent-files-list component-scrollbar home-project-layout-${projectLayout}`}>
             {loading && <div className="start-screen-state"><PixelUtilityIcon kind="refresh" className="spin" /><span>{t('home.readingProjects')}</span></div>}
-            {!loading && loadError && <div className="start-screen-state error"><TriangleAlert size={22} /><strong>{t('home.readSectionFailed')}</strong><span>{loadError}</span><button className="quiet-button" type="button" onClick={() => void loadSection(section)}>{t('home.retry')}</button></div>}
-            {!loading && !loadError && ((section !== 'recovery' && projects.length === 0) || (section === 'recovery' && recoveryRecords.length === 0)) && <div className="start-screen-state">{emptyState.icon}<strong>{emptyState.title}</strong><span>{emptyState.detail}</span></div>}
-            {!loading && !loadError && section === 'recovery' && recoveryRecords.map((record) => <RecoveryFileRow key={record.id} record={record} onRestore={() => void onRestoreRecovery(record.id)} onDiscard={() => void discardRecovery(record.id)} />)}
-             {!loading && !loadError && section !== 'recovery' && projects.map((project) => <ProjectFileRow key={project.filePath} project={project} reorderable={section === 'recent'} dragging={draggingProjectPath === project.filePath} removePending={removePendingProjectPath === project.filePath} onOpen={() => void openProject(project)} onOpenInBackground={() => void openProject(project, true)} onPin={() => pinProject(project.filePath)} onDelete={section === 'gallery' ? () => void deleteGalleryProject(project) : undefined} onRemoveFromRecent={section === 'recent' && project.error ? () => removeFromRecent(project) : undefined} onReorderStart={startRecentReorder} />)}
+            {!loading && loadError && <div className="start-screen-state error"><TriangleAlert size={22} /><strong>{t('home.readSectionFailed')}</strong><span>{loadError}</span><button className="quiet-button" type="button" onClick={() => void loadSection(activeSection)}>{t('home.retry')}</button></div>}
+            {!loading && !loadError && ((activeSection.kind !== 'recovery' && projects.length === 0) || (activeSection.kind === 'recovery' && recoveryRecords.length === 0)) && <div className="start-screen-state">{emptyState.icon}<strong>{emptyState.title}</strong><span>{emptyState.detail}</span></div>}
+            {!loading && !loadError && activeSection.kind === 'recovery' && recoveryRecords.map((record) => <RecoveryFileRow key={record.id} record={record} retentionDays={recoveryRetentionDays} onRestore={() => void onRestoreRecovery(record.id)} onDiscard={() => void discardRecovery(record.id)} />)}
+             {!loading && !loadError && activeSection.kind !== 'recovery' && projects.map((project) => <ProjectFileRow key={project.filePath} project={project} concealed={activeSection.kind === 'recent' && recentProjectsHidden} reorderable={activeSection.kind === 'recent'} dragging={draggingProjectPath === project.filePath} removePending={removePendingProjectPath === project.filePath} onOpen={() => void openProject(project)} onOpenInBackground={() => void openProject(project, true)} onPin={() => pinProject(project.filePath)} onDelete={activeSection.kind === 'gallery' ? () => void deleteGalleryProject(project) : undefined} onRemoveFromRecent={activeSection.kind === 'recent' && project.error ? () => removeFromRecent(project) : undefined} onOpenFolder={() => openProjectFolder(project)} onReorderStart={startRecentReorder} />)}
           </div>
         </section>
       </div>
-      <footer className="start-screen-footer"><span className="start-screen-attribution"><span>{t('home.footer')}</span><span aria-hidden="true">{' · '}</span><span>MIT License</span></span><small className="start-screen-development-notice">{t('home.developmentNotice', { version: APP_CHANNEL_LABEL.toLowerCase() })}</small></footer>
+      <footer className="start-screen-footer"><span className="start-screen-build-status"><span>MoonSprite</span><strong>{APP_CHANNEL_LABEL}</strong></span><small className="start-screen-development-notice"><span>{t('home.internalUseOnly')}</span><span>{t('home.doNotDistribute')}</span></small></footer>
     </div>
+    {languageDialogOpen && <HomeLanguageDialog current={locale} onApply={applyLanguage} onClose={() => setLanguageDialogOpen(false)} />}
+    {sectionManagerOpen && <HomeSectionManagerDialog activeSectionId={section} sections={homeSections} onAddFolder={addHomeFolderSection} onChange={updateHomeSections} onClose={() => setSectionManagerOpen(false)} onRemove={removeHomeFolderSection} onSelect={selectSection} />}
   </section>
 }

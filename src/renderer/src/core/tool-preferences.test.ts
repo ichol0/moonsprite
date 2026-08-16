@@ -22,6 +22,25 @@ describe('tool preferences persistence boundary', () => {
     expect(loadToolSettings(storage).brushPaintMode).toBe(defaultToolSettings.brushPaintMode)
   })
 
+  it('persists every shape child tool and rejects unknown shape kinds', () => {
+    for (const shapeKind of ['freeform', 'polygon'] as const) {
+      const storage = createStorage()
+      saveToolSettings({ ...defaultToolSettings, shapeKind }, storage)
+      expect(loadToolSettings(storage).shapeKind).toBe(shapeKind)
+    }
+    const storage = createStorage()
+    storage.setItem(TOOL_SETTINGS_KEY, JSON.stringify({ shapeKind: 'unknown-shape' }))
+    expect(loadToolSettings(storage).shapeKind).toBe(defaultToolSettings.shapeKind)
+  })
+
+  it('normalizes and persists the curve anchor count', () => {
+    const storage = createStorage()
+    saveToolSettings({ ...defaultToolSettings, lineKind: 'curve', curveAnchorCount: 6 }, storage)
+    expect(loadToolSettings(storage)).toMatchObject({ lineKind: 'curve', curveAnchorCount: 6 })
+    storage.setItem(TOOL_SETTINGS_KEY, JSON.stringify({ curveAnchorCount: 99 }))
+    expect(loadToolSettings(storage).curveAnchorCount).toBe(8)
+  })
+
   it('normalizes old and out-of-range brush values', () => {
     const storage = createStorage()
     storage.setItem(TOOL_SETTINGS_KEY, JSON.stringify({
@@ -45,6 +64,7 @@ describe('tool preferences persistence boundary', () => {
     expect(settings.brushDynamics).toEqual(DEFAULT_BRUSH_DYNAMICS_SETTINGS)
     expect(settings.brushDynamics.effects.gradient).toMatchObject({ sensor: null, outputMin: 0, outputMax: 100 })
     expect(settings.brushProfiles?.pencil?.brushPressure).toEqual(DEFAULT_BRUSH_PRESSURE_SETTINGS)
+    expect(settings).toMatchObject({ airbrushParticleRadius: 1, airbrushParticleShape: 'round', airbrushScatterRadius: 12, airbrushDensity: 8, airbrushIntervalMs: 50 })
   })
 
   it('migrates legacy pressure settings when no version 2 dynamics exist', () => {
@@ -117,7 +137,8 @@ describe('tool preferences persistence boundary', () => {
       brushProfiles: {
         pencil: { ...profile, brushDynamics: pencilGradientDynamics, brushPressure: brushPressureFromDynamics(pencilGradientDynamics) },
         eraser: { ...profile, brushDynamics: eraserDitherDynamics, brushPressure: brushPressureFromDynamics(eraserDitherDynamics) },
-        fill: profile
+        fill: profile,
+        line: { ...profile, brushSize: 7, brushShape: 'square' }
       }
     }, storage)
 
@@ -127,6 +148,7 @@ describe('tool preferences persistence boundary', () => {
     expect(restored.brushProfiles?.pencil?.brushDynamics.gradientDither).toBe('bayer-4')
     expect(restored.brushProfiles?.eraser?.brushDynamics.effects.strength).toMatchObject({ sensor: 'speed', outputMin: 8, inputMax: 900, curve: 'hard' })
     expect(restored.brushProfiles?.eraser?.brushDynamics.gradientDither).toBe('vertical')
+    expect(restored.brushProfiles?.line).toMatchObject({ brushSize: 7, brushShape: 'square' })
   })
 
   it('writes a complete snapshot through the storage boundary', () => {
@@ -142,12 +164,20 @@ describe('tool preferences persistence boundary', () => {
     expect(loadToolSettings(storage)).toMatchObject({ fillKind: 'gradient', gradientDither: 'bayer-4', fillTolerance: 37, gradientTolerance: 82, gradientContiguous: false })
   })
 
+  it('normalizes and persists airbrush settings', () => {
+    const storage = createStorage()
+    saveToolSettings({ ...defaultToolSettings, airbrushParticleRadius: 9, airbrushParticleShape: 'square', airbrushScatterRadius: 48, airbrushDensity: 36, airbrushIntervalMs: 24 }, storage)
+    expect(loadToolSettings(storage)).toMatchObject({ airbrushParticleRadius: 9, airbrushParticleShape: 'square', airbrushScatterRadius: 48, airbrushDensity: 36, airbrushIntervalMs: 24 })
+    storage.setItem(TOOL_SETTINGS_KEY, JSON.stringify({ airbrushParticleRadius: 99, airbrushScatterRadius: 99, airbrushDensity: 0, airbrushIntervalMs: 1 }))
+    expect(loadToolSettings(storage)).toMatchObject({ airbrushParticleRadius: 16, airbrushScatterRadius: 64, airbrushDensity: 1, airbrushIntervalMs: 16 })
+  })
+
   it('persists independent symmetry axes and defaults legacy data to disabled', () => {
     const storage = createStorage()
-    expect(loadToolSettings(storage).symmetryAxes).toEqual({ horizontal: false, vertical: false, diagonalUp: false, diagonalDown: false })
-    saveToolSettings({ ...defaultToolSettings, symmetryAxes: { horizontal: true, vertical: false, diagonalUp: true, diagonalDown: false } }, storage)
-    expect(loadToolSettings(storage).symmetryAxes).toEqual({ horizontal: true, vertical: false, diagonalUp: true, diagonalDown: false })
+    expect(loadToolSettings(storage).symmetryAxes).toEqual({ horizontal: false, vertical: false, diagonalUp: false, diagonalDown: false, rotational: false })
+    saveToolSettings({ ...defaultToolSettings, symmetryAxes: { horizontal: true, vertical: false, diagonalUp: true, diagonalDown: false, rotational: true } }, storage)
+    expect(loadToolSettings(storage).symmetryAxes).toEqual({ horizontal: true, vertical: false, diagonalUp: true, diagonalDown: false, rotational: true })
     storage.setItem(TOOL_SETTINGS_KEY, JSON.stringify({ symmetryAxes: { horizontal: false, vertical: false, diagonal: true } }))
-    expect(loadToolSettings(storage).symmetryAxes).toEqual({ horizontal: false, vertical: false, diagonalUp: false, diagonalDown: true })
+    expect(loadToolSettings(storage).symmetryAxes).toEqual({ horizontal: false, vertical: false, diagonalUp: false, diagonalDown: true, rotational: false })
   })
 })

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { BRUSH_SPEED_STOP_MS, CanvasInputState, SELECTION_CORNER_RESIZE_HIT_RADIUS, SELECTION_RESIZE_HIT_RADIUS, appendPolygonLassoVertex, beginBrushSpeedTracking, canvasGestureForPreview, centeredShapeBounds, clampCanvasZoom, coalescedPointerClientPoints, constrainedTranslation, createCanvasPanDrag, createMarqueeResizeStart, finalizeMarqueeSelection, floatingSelectionCopyMode, polygonLassoClosedPathPoints, polygonLassoPreviewPoints, resizeRotatedMarqueeBounds, resizeSelectionBounds, resizeTransformedSelectionBounds, restoreCanvasDragAfterPan, revertCancelledCanvasDragPixelChanges, rotationHandles, selectionGestureMoved, selectionInteractionHit, selectionMarqueeUsesConstraint, selectionOverlayMaskForDrag, selectionResizeHit, selectionRotationAngle, selectionRotationHit, selectionShearHit, selectionTransformedInteractionHit, selectionTransformModifiers, selectionTransformPreviewChanged, shapeBounds, shouldClosePolygonLasso, shouldRestartFloatingSelectionForCopy, shouldStartCanvasPan, snapSelectionRotation, steppedCanvasZoom, temporaryTransformOffset, translatedSelectionRect, updateBrushSpeedTracking, wheelCanvasZoom, zoomDragModeForModifiers, zoomDragTarget, type CanvasDragState } from './canvas-input'
+import { BRUSH_SPEED_STOP_MS, CanvasInputState, SELECTION_CORNER_RESIZE_HIT_RADIUS, SELECTION_RESIZE_HIT_RADIUS, appendPolygonLassoVertex, beginBrushSpeedTracking, beginTemporaryCenteredMarqueeResize, brushLineConnectionOverridesTemporaryMove, cachedSelectionTransformSource, canvasGestureForPreview, centerMarqueeBoundsAtCreationPoint, centeredShapeBounds, clampCanvasZoom, coalescedPointerClientPoints, constrainedTranslation, createCanvasPanDrag, createMarqueeResizeStart, deferredSelectionCommitInvalidationRects, deferredSelectionPreviewOwner, finalizeMarqueeSelection, floatingSelectionCopyMode, isQuickSelectionSecondPress, marqueeSelectionCommit, normalizeCanvasWheelDelta, paletteSamplingShortcutStartsPrimarySample, polygonLassoClosedPathPoints, polygonLassoPreviewPoints, quickSelectCellDragBounds, quickSelectCellSelection, resizeRotatedMarqueeBounds, resizeSelectionBounds, resizeTransformedSelectionBounds, resolveMarqueeModifierMode, restoreCanvasDragAfterPan, restoreTemporaryCenteredMarqueeResize, revertCancelledCanvasDragPixelChanges, rotationHandles, sampledForegroundColorToAdd, selectionGestureMoved, selectionInteractionHit, selectionInteractionOverridesTemporaryMove, selectionMarqueeUsesConstraint, selectionOverlayMaskForDrag, selectionPivotAfterResize, selectionPivotAtDragPoint, selectionPivotHit, selectionResizeHit, selectionRotationAngle, selectionRotationHit, selectionShearHit, selectionTransformedInteractionHit, selectionTransformDeferredPreviewEnabled, selectionTransformModifiers, selectionTransformPreviewChanged, shapeBounds, shouldClosePolygonLasso, shouldRestartFloatingSelectionForCopy, shouldStartCanvasPan, shouldUseTemporaryMoveForCanvasInteraction, shouldUseTemporaryMoveTool, snapSelectionRotation, steppedCanvasZoom, temporaryMoveSuppressesToolPreview, temporaryTransformOffset, translatedSelectionRect, updateBrushSpeedTracking, wheelCanvasZoom, zoomDragModeForModifiers, zoomDragTarget, type CanvasDragState } from './canvas-input'
 import { balancedStairLinePoints } from './pixel-line'
 import { createDocument, getActiveLayer, readLayerColor } from './document'
 import { beginPixelEdit } from './history'
@@ -8,6 +8,101 @@ import { paintBrush } from './tools'
 const drag = (): CanvasDragState => ({ kind: 'move-content', start: { x: 0, y: 0 }, last: { x: 0, y: 0 } })
 
 describe('canvas input helpers', () => {
+  it('normalizes standard, horizontal, line and legacy wheel input', () => {
+    expect(normalizeCanvasWheelDelta({ deltaY: 120 })).toBe(120)
+    expect(normalizeCanvasWheelDelta({ deltaX: -8, deltaY: 0 })).toBe(-8)
+    expect(normalizeCanvasWheelDelta({ deltaY: 3, deltaMode: 1 })).toBe(48)
+    expect(normalizeCanvasWheelDelta({ wheelDelta: 120 })).toBe(-120)
+    expect(normalizeCanvasWheelDelta({ deltaY: 0, deltaX: 0, wheelDelta: 0 })).toBe(0)
+  })
+  it('adds only the final foreground sample while the palette shortcut remains held', () => {
+    const color = { r: 12, g: 34, b: 56, a: 255 }
+    const foreground = { kind: 'sample-color' as const, sampleSecondary: false, sampledColor: color }
+    const background = { ...foreground, sampleSecondary: true }
+
+    expect(sampledForegroundColorToAdd(foreground, true)).toEqual(color)
+    expect(sampledForegroundColorToAdd(foreground, false)).toBeNull()
+    expect(sampledForegroundColorToAdd(background, true)).toBeNull()
+  })
+
+  it('lets held palette sampling take priority only for primary-button sampling', () => {
+    expect(paletteSamplingShortcutStartsPrimarySample(true, 0)).toBe(true)
+    expect(paletteSamplingShortcutStartsPrimarySample(true, 2)).toBe(false)
+    expect(paletteSamplingShortcutStartsPrimarySample(false, 0)).toBe(false)
+  })
+
+  it('reuses a prepared selection source only for the exact document version and selection', () => {
+    const document = createDocument('cached source', 2, 2, 'rgba')
+    const selection = { x: 0, y: 0, width: 1, height: 1 }
+    const source = {
+      selection,
+      values: new Uint32Array(1),
+      selectedOffsets: new Uint32Array(1),
+      opaqueOffsets: new Uint32Array(0),
+      opaqueIndices: new Uint32Array(0),
+      opaqueValues: new Uint32Array(0)
+    }
+    const cached = {
+      document,
+      contentRevision: 4,
+      layerId: document.activeLayerId,
+      selection,
+      source
+    }
+
+    expect(cachedSelectionTransformSource(cached, document, 4, document.activeLayerId, selection)).toBe(source)
+    expect(cachedSelectionTransformSource(cached, document, 5, document.activeLayerId, selection)).toBeNull()
+    expect(cachedSelectionTransformSource(cached, document, 4, document.activeLayerId, { ...selection })).toBeNull()
+  })
+
+  it('keeps temporary Move active for every other tool while Ctrl remains held', () => {
+    const ctrl = { ctrlKey: true, metaKey: false, altKey: false, shiftKey: false }
+    expect(shouldUseTemporaryMoveTool('pencil', ctrl, 'Ctrl')).toBe(true)
+    expect(shouldUseTemporaryMoveTool('text', ctrl, 'Ctrl')).toBe(true)
+    expect(shouldUseTemporaryMoveTool('selection', ctrl, 'Ctrl')).toBe(true)
+    expect(shouldUseTemporaryMoveTool('move', ctrl, 'Ctrl', 'slice')).toBe(true)
+    expect(shouldUseTemporaryMoveTool('eyedropper', ctrl, 'Ctrl')).toBe(true)
+    expect(shouldUseTemporaryMoveTool('zoom', ctrl, 'Ctrl')).toBe(true)
+    expect(shouldUseTemporaryMoveTool('rotate', ctrl, 'Ctrl')).toBe(true)
+    expect(shouldUseTemporaryMoveTool('shape', ctrl, 'Ctrl')).toBe(true)
+    expect(shouldUseTemporaryMoveTool('move', { ...ctrl, altKey: true }, 'Ctrl', 'slice')).toBe(true)
+    expect(shouldUseTemporaryMoveTool('move', { ...ctrl, shiftKey: true }, 'Ctrl', 'slice')).toBe(true)
+    expect(shouldUseTemporaryMoveTool('move', ctrl, 'Ctrl')).toBe(false)
+    expect(shouldUseTemporaryMoveTool('move', { ...ctrl, ctrlKey: false, altKey: true }, 'Ctrl', 'slice')).toBe(false)
+  })
+
+  it('keeps an anchored pencil or eraser line ahead of temporary Move', () => {
+    const ctrlShift = { ctrlKey: true, metaKey: false, altKey: false, shiftKey: true }
+    expect(brushLineConnectionOverridesTemporaryMove('pencil', ctrlShift, 'Shift', true)).toBe(true)
+    expect(brushLineConnectionOverridesTemporaryMove('eraser', ctrlShift, 'Shift', true)).toBe(true)
+    expect(brushLineConnectionOverridesTemporaryMove('pencil', ctrlShift, 'Shift', false)).toBe(false)
+    expect(brushLineConnectionOverridesTemporaryMove('shape', ctrlShift, 'Shift', true)).toBe(false)
+  })
+
+  it('keeps existing selection interactions ahead of temporary Move', () => {
+    expect(selectionInteractionOverridesTemporaryMove('selection', 'inside')).toBe(true)
+    expect(selectionInteractionOverridesTemporaryMove('selection', 'edge')).toBe(true)
+    expect(selectionInteractionOverridesTemporaryMove('selection', 'se')).toBe(true)
+    expect(selectionInteractionOverridesTemporaryMove('selection', 'rotate-ne')).toBe(true)
+    expect(selectionInteractionOverridesTemporaryMove('selection', 'outside')).toBe(false)
+    expect(selectionInteractionOverridesTemporaryMove('selection', 'outside', true)).toBe(true)
+    expect(selectionInteractionOverridesTemporaryMove('pencil', 'inside')).toBe(false)
+  })
+
+  it('uses Ctrl as temporary Move outside a selection without taking over selection interactions', () => {
+    const ctrl = { ctrlKey: true, metaKey: false, altKey: false, shiftKey: false }
+    expect(shouldUseTemporaryMoveForCanvasInteraction('selection', ctrl, 'Ctrl', 'move', 'outside')).toBe(true)
+    expect(shouldUseTemporaryMoveForCanvasInteraction('selection', ctrl, 'Ctrl', 'move', 'inside')).toBe(false)
+    expect(shouldUseTemporaryMoveForCanvasInteraction('selection', ctrl, 'Ctrl', 'move', 'se')).toBe(false)
+    expect(shouldUseTemporaryMoveForCanvasInteraction('selection', ctrl, 'Ctrl', 'move', 'outside', true)).toBe(false)
+  })
+
+  it('keeps the brush radius preview visible during wheel and pointer sizing', () => {
+    expect(temporaryMoveSuppressesToolPreview(true)).toBe(true)
+    expect(temporaryMoveSuppressesToolPreview(true, true)).toBe(false)
+    expect(temporaryMoveSuppressesToolPreview(false, false)).toBe(false)
+  })
+
   it('preserves coalesced pointer samples in order without duplicate endpoints', () => {
     const points = coalescedPointerClientPoints({
       clientX: 8,
@@ -116,6 +211,47 @@ describe('canvas input helpers', () => {
     expect(finalizeMarqueeSelection(null, null, false, 'replace')).toBeNull()
   })
 
+  it('previews a quick-selected cell on the second press and adds a dragged marquee', () => {
+    const existing = { x: 0, y: 0, width: 1, height: 1 }
+    const cell = { x: 4, y: 4, width: 2, height: 2 }
+    const draggedCells = quickSelectCellDragBounds(cell, { x: 8, y: 6, width: 2, height: 2 })
+    const base = quickSelectCellSelection(existing, cell, 'replace')
+    const expanded = quickSelectCellSelection(existing, draggedCells, 'replace')
+    const drag: CanvasDragState = {
+      kind: 'marquee',
+      start: { x: 4, y: 4 },
+      last: { x: 7, y: 5 },
+      selectionStart: existing,
+      selectionCommitStart: existing,
+      selectionMode: 'replace',
+      previewSelection: expanded,
+      quickSelectCell: cell
+    }
+
+    expect(base).toMatchObject(cell)
+    expect(draggedCells).toEqual({ x: 4, y: 4, width: 6, height: 4 })
+    expect(marqueeSelectionCommit({ ...drag, previewSelection: base }, existing, false, 'replace')).toEqual({ before: existing, after: base })
+    expect(marqueeSelectionCommit(drag, existing, true, 'replace')).toEqual({ before: existing, after: expanded })
+  })
+
+  it('keeps the active selection combination mode while quick-select dragging', () => {
+    const existing = { x: 0, y: 0, width: 8, height: 4 }
+    const incoming = { x: 4, y: 0, width: 4, height: 4 }
+
+    expect(quickSelectCellSelection(existing, incoming, 'add')).toMatchObject({ x: 0, y: 0, width: 8, height: 4 })
+    expect(quickSelectCellSelection(existing, incoming, 'subtract')).toMatchObject({ x: 0, y: 0, width: 4, height: 4 })
+    expect(quickSelectCellSelection(existing, incoming, 'intersect')).toMatchObject({ x: 4, y: 0, width: 4, height: 4 })
+  })
+
+  it('recognizes the second selection press when pointer detail is unavailable', () => {
+    const first = { clientX: 100, clientY: 80, pointerId: 4, timeStamp: 1000 }
+
+    expect(isQuickSelectionSecondPress(first, { ...first, clientX: 103, timeStamp: 1300 }, 0)).toBe(true)
+    expect(isQuickSelectionSecondPress(first, { ...first, clientX: 110, timeStamp: 1300 }, 0)).toBe(false)
+    expect(isQuickSelectionSecondPress(first, { ...first, timeStamp: 1600 }, 0)).toBe(false)
+    expect(isQuickSelectionSecondPress(null, first, 2)).toBe(true)
+  })
+
   it('keeps the existing selection outline visible while add or subtract gestures are being created', () => {
     const before = { x: 2, y: 2, width: 3, height: 3 }
     const incoming = { x: 8, y: 8, width: 2, height: 2 }
@@ -130,6 +266,7 @@ describe('canvas input helpers', () => {
 
     expect(selectionOverlayMaskForDrag(incoming, drag)).toEqual(before)
     expect(selectionOverlayMaskForDrag(incoming, { ...drag, selectionMode: 'subtract' })).toEqual(before)
+    expect(selectionOverlayMaskForDrag(incoming, { ...drag, quickSelectCell: incoming })).toBeNull()
     expect(finalizeMarqueeSelection(before, incoming, false, 'add')).toEqual(before)
   })
 
@@ -185,6 +322,25 @@ describe('canvas input helpers', () => {
     expect(floatingSelectionCopyMode(true, false)).toBe(true)
     expect(floatingSelectionCopyMode(false, true)).toBe(false)
     expect(floatingSelectionCopyMode(null, true)).toBe(true)
+  })
+
+  it('hands the first floating-copy rotation preview to the active transform', () => {
+    const rotating: CanvasDragState = {
+      kind: 'rotate-content',
+      start: { x: 0, y: 0 },
+      last: { x: 0, y: 0 },
+      selectionPreparationPending: true,
+      deferredSelectionPreview: true,
+      selectionSource: {} as NonNullable<CanvasDragState['selectionSource']>,
+      previewTarget: { x: 4, y: 3, width: 2, height: 2 }
+    }
+
+    expect(selectionTransformDeferredPreviewEnabled('rotate-content', true)).toBe(true)
+    expect(selectionTransformDeferredPreviewEnabled('shear-content', true, 45, { axis: 'x', edge: 's', amount: 2 })).toBe(true)
+    expect(selectionTransformDeferredPreviewEnabled('transform-content', true, 45)).toBe(false)
+    expect(deferredSelectionPreviewOwner(rotating, true)).toBe('pending')
+    expect(deferredSelectionPreviewOwner({ ...rotating, selectionPreparationPending: false }, true)).toBe('active')
+    expect(deferredSelectionPreviewOwner({ ...rotating, selectionPreparationPending: false, deferredSelectionPreview: false }, true)).toBeNull()
   })
 
   it('keeps zoom levels within the supported range', () => {
@@ -348,6 +504,8 @@ describe('canvas input helpers', () => {
     expect(selectionMarqueeUsesConstraint({ ctrlKey: false, shiftKey: true }, true, 'add')).toBe(false)
     expect(selectionMarqueeUsesConstraint({ ctrlKey: true, shiftKey: true }, true, 'add')).toBe(true)
     expect(selectionMarqueeUsesConstraint({ ctrlKey: true, shiftKey: false }, true, 'replace')).toBe(true)
+    expect(selectionMarqueeUsesConstraint({ ctrlKey: true, shiftKey: false }, true, 'replace', true)).toBe(false)
+    expect(selectionMarqueeUsesConstraint({ ctrlKey: true, shiftKey: true }, true, 'add', true)).toBe(true)
   })
 
   it('uses Shift for proportional transform and Ctrl for integer scaling without copying', () => {
@@ -443,6 +601,68 @@ describe('canvas input helpers', () => {
     const selection = { x: 0, y: 0, width: 10, height: 10 }
     expect(selectionRotationAngle(selection, { x: 10, y: 5 }, { x: 5, y: 10 })).toBe(90)
     expect(selectionRotationAngle(selection, { x: 10, y: 5 }, { x: 9, y: 8 }, true)).toBe(45)
+    expect(selectionRotationAngle(selection, { x: 4, y: 0 }, { x: 0, y: 4 }, false, { x: 0, y: 0 })).toBe(90)
+  })
+
+  it('uses a larger screen-space hit area around the selection pivot marker', () => {
+    expect(selectionPivotHit({ x: 20, y: 12 }, { x: 30, y: 22 })).toBe(true)
+    expect(selectionPivotHit({ x: 20, y: 12 }, { x: 31, y: 22 })).toBe(false)
+  })
+
+  it('moves the selection pivot in whole document pixels without losing its fractional center', () => {
+    const pivot = selectionPivotAtDragPoint(
+      { x: 5.5, y: 4.5 },
+      { x: 10.2, y: 8.8 },
+      { x: 11.7, y: 6.3 }
+    )
+
+    expect(pivot).toEqual({ x: 7.5, y: 1.5 })
+  })
+
+  it('moves default and custom pivots correctly during resize while Alt keeps the pivot fixed', () => {
+    const source = { x: 0, y: 0, width: 4, height: 4 }
+    const destination = { x: 0, y: 0, width: 8, height: 6 }
+    const pivot = { x: 2.5, y: 2.5 }
+
+    expect(selectionPivotAfterResize(source, destination, pivot)).toEqual({ x: 4.5, y: 3.5 })
+    expect(selectionPivotAfterResize(source, destination, pivot, { custom: true })).toEqual({ x: 5, y: 3.75 })
+    expect(selectionPivotAfterResize(source, destination, pivot, { custom: true, fromCenter: true })).toEqual(pivot)
+  })
+
+  it('lets the most recently pressed marquee modifier take over while Alt and Ctrl remain held', () => {
+    const bothHeld = { fromCenter: true, rotate: true }
+
+    expect(resolveMarqueeModifierMode(bothHeld, 'resize')).toBe('resize')
+    expect(resolveMarqueeModifierMode(bothHeld, 'rotate')).toBe('rotate')
+    expect(resolveMarqueeModifierMode({ fromCenter: false, rotate: true }, 'resize')).toBe('rotate')
+    expect(resolveMarqueeModifierMode({ fromCenter: true, rotate: false }, 'rotate')).toBe('resize')
+  })
+
+  it('returns a rotated marquee center to its original creation point before Ctrl resizing', () => {
+    const centered = centerMarqueeBoundsAtCreationPoint({ x: 12, y: 8, width: 10, height: 6 }, { x: 4, y: 7 })
+
+    expect(centered).toEqual({ x: -1, y: 4, width: 10, height: 6 })
+    expect(centered.x + Math.floor(centered.width / 2)).toBe(4)
+    expect(centered.y + Math.floor(centered.height / 2)).toBe(7)
+  })
+
+  it('restores the pre-Ctrl rotated marquee geometry when temporary centered resizing ends', () => {
+    const beforeCtrl = { x: 12, y: 8, width: 10, height: 6 }
+    const transition = beginTemporaryCenteredMarqueeResize(
+      beforeCtrl,
+      { x: 4, y: 7 },
+      { x: 20, y: 14 },
+      { x: -1, y: 1 },
+      true
+    )
+
+    expect(transition.bounds).toEqual({ x: -1, y: 4, width: 10, height: 6 })
+    expect(transition.resizeStart).toEqual({ pointer: { x: 20, y: 14 }, bounds: transition.bounds, fromCenter: true })
+
+    const restored = restoreTemporaryCenteredMarqueeResize(transition.restore, { x: 27, y: 19 })
+    expect(restored.bounds).toEqual(beforeCtrl)
+    expect(restored.resizeStart).toEqual({ pointer: { x: 27, y: 19 }, bounds: beforeCtrl, fromCenter: true })
+    expect(restored.direction).toEqual({ x: -1, y: 1 })
   })
 
   it('continues resizing along the rotated marquee axes after Alt is released', () => {
@@ -479,6 +699,61 @@ describe('canvas input helpers', () => {
     expect(resized.y + resized.height / 2).toBeCloseTo(start.y + start.height / 2)
   })
 
+  it('keeps an off-center pivot fixed during rotated Alt resizing', () => {
+    const start = { x: 10, y: 20, width: 8, height: 4 }
+    const angle = 37
+    const radians = angle * Math.PI / 180
+    const cosine = Math.cos(radians)
+    const sine = Math.sin(radians)
+    const startCenter = { x: start.x + start.width / 2, y: start.y + start.height / 2 }
+    const localPivot = { x: 2, y: 1 }
+    const pivot = {
+      x: startCenter.x + (localPivot.x - start.width / 2) * cosine - (localPivot.y - start.height / 2) * sine,
+      y: startCenter.y + (localPivot.x - start.width / 2) * sine + (localPivot.y - start.height / 2) * cosine
+    }
+    const localPointerDelta = { x: 6, y: 3 }
+    const pointerDelta = {
+      x: localPointerDelta.x * cosine - localPointerDelta.y * sine,
+      y: localPointerDelta.x * sine + localPointerDelta.y * cosine
+    }
+    const resized = resizeTransformedSelectionBounds(start, pointerDelta, angle, 'se', false, false, true, pivot)
+    const pivotOffset = { x: pivot.x - startCenter.x, y: pivot.y - startCenter.y }
+    const localPivotOffset = {
+      x: pivotOffset.x * cosine + pivotOffset.y * sine,
+      y: -pivotOffset.x * sine + pivotOffset.y * cosine
+    }
+    const resizedCenter = { x: resized.x + resized.width / 2, y: resized.y + resized.height / 2 }
+    const mappedPivot = {
+      x: resizedCenter.x + localPivotOffset.x * (resized.width / start.width) * cosine - localPivotOffset.y * (resized.height / start.height) * sine,
+      y: resizedCenter.y + localPivotOffset.x * (resized.width / start.width) * sine + localPivotOffset.y * (resized.height / start.height) * cosine
+    }
+    const startHandle = {
+      x: startCenter.x + start.width / 2 * cosine - start.height / 2 * sine,
+      y: startCenter.y + start.width / 2 * sine + start.height / 2 * cosine
+    }
+    const resizedHandle = {
+      x: resizedCenter.x + resized.width / 2 * cosine - resized.height / 2 * sine,
+      y: resizedCenter.y + resized.width / 2 * sine + resized.height / 2 * cosine
+    }
+
+    expect(resized.width).toBe(16)
+    expect(resized.height).toBe(8)
+    expect(mappedPivot.x).toBeCloseTo(pivot.x)
+    expect(mappedPivot.y).toBeCloseTo(pivot.y)
+    expect(resizedHandle.x).toBeCloseTo(startHandle.x + pointerDelta.x)
+    expect(resizedHandle.y).toBeCloseTo(startHandle.y + pointerDelta.y)
+  })
+
+  it('flips around an off-center pivot after an Alt resize handle crosses it', () => {
+    const start = { x: 10, y: 20, width: 8, height: 4 }
+    const pivot = { x: 12, y: 21 }
+    const resized = resizeTransformedSelectionBounds(start, { x: -12, y: -6 }, 0, 'se', false, false, true, pivot)
+
+    expect(resized).toMatchObject({ width: 8, height: 4, flipHorizontal: true, flipVertical: true })
+    expect(resized.x + resized.width / 2).toBe(10)
+    expect(resized.y + resized.height / 2).toBe(20)
+  })
+
   it('keeps transform handle and rotation hits on the final rotated rectangle', () => {
     const target = { x: 10, y: 20, width: 40, height: 20 }
     const selection = { x: 20, y: 10, width: 20, height: 40 }
@@ -495,6 +770,23 @@ describe('canvas input helpers', () => {
     expect(selectionTransformPreviewChanged({ ...unchanged, previewAngle: 45 })).toBe(true)
     expect(selectionTransformPreviewChanged({ ...unchanged, previewTarget: { ...selection, x: 4 } })).toBe(true)
     expect(selectionTransformPreviewChanged({ ...unchanged, previewShear: { axis: 'x', edge: 's', amount: 2 } })).toBe(true)
+  })
+
+  it('invalidates the original source when committing a second deferred floating move', () => {
+    const source = { x: 2, y: 3, width: 6, height: 4 }
+    const previousTarget = { ...source, x: 12 }
+    const nextTarget = { ...source, x: 20 }
+    const drag = {
+      selectionSource: { selection: source },
+      selectionStart: previousTarget,
+      previewSelection: nextTarget
+    } as Pick<CanvasDragState, 'selectionSource' | 'selectionStart' | 'previewSelection'>
+
+    expect(deferredSelectionCommitInvalidationRects(drag)).toEqual([
+      source,
+      previousTarget,
+      nextTarget
+    ])
   })
 
   it('keeps a shape ratio and fixed center while resizing after rotation', () => {

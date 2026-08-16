@@ -1,17 +1,21 @@
 import { createPortal } from 'react-dom'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
-import type { RgbaColor } from '@shared/types'
+import type { PaletteEntry, RgbaColor, ToolId } from '@shared/types'
 import { clampByte } from '@/core/raster'
-import { colorFromValues, colorToValues, colorValueFields, displayRgbaHex, parseRgbaHex, type ColorValueMode } from '@/core/color-values'
+import { colorFromValues, colorToValues, colorValueFields, colorValueModeLabel, displayRgbaHex, parseRgbaHex, type ColorValueMode } from '@/core/color-values'
 import { NumberInput } from './NumberInput'
 import { PanelResizeHandles, type ResizeDirection } from './floating-panel'
 import { useI18n } from '@/components/I18nProvider'
 import { loadEditorPreferences } from '@/core/file-preferences'
 import { paletteMarkerColor } from '@/core/palette-layout'
 import { PixelUtilityIcon } from './PixelUtilityIcon'
+import { CANVAS_COLOR_SAMPLED_EVENT, CANVAS_COLOR_SAMPLING_COMPLETED_EVENT, type CanvasColorSampledDetail } from './color-sampling-events'
+import { normalEditorToolIconFor, PixelAssetIcon, TOOL_DEFINITIONS } from './app/editor-tools'
+import { useWorkspace } from '@/store/workspace'
 
 interface ColorValueControlProps {
   color: RgbaColor
+  density?: 'compact' | 'regular' | 'emphasized'
   onChange: (color: RgbaColor) => void
   label: string
   roleLabel?: string
@@ -19,19 +23,36 @@ interface ColorValueControlProps {
   storageKey?: string
   inPalette?: boolean
   onAddToPalette?: () => void
+  addToPaletteShortcut?: string
   fillWithColor?: boolean
   dismissOnFocusLoss?: boolean
   preserveAnimationSelection?: boolean
+  mixed?: boolean
+  disabled?: boolean
 }
 
 const modeLabels: Array<{ value: ColorValueMode; label: string }> = [
-  { value: 'rgb', label: 'RGB' },
-  { value: 'hsv', label: 'HSV' },
-  { value: 'hsl', label: 'HSL' },
-  { value: 'gray', label: 'Gray' },
-  { value: 'lab', label: 'LAB' },
-  { value: 'cmyk', label: 'CMYK' }
-]
+  'hsv', 'rgb', 'lab', 'gray', 'palette', 'hsl', 'cmyk'
+].map((value) => ({ value: value as ColorValueMode, label: colorValueModeLabel(value as ColorValueMode) }))
+
+const eyedropperLargeIcon = TOOL_DEFINITIONS.find((tool) => tool.id === 'eyedropper')?.icon ?? ''
+const eyedropperIcon = normalEditorToolIconFor(eyedropperLargeIcon) ?? eyedropperLargeIcon
+
+const activePaletteEntries = (): PaletteEntry[] => {
+  const workspace = useWorkspace.getState()
+  const session = workspace.sessions.find((candidate) => candidate.document.id === workspace.activeId)
+  if (!session) return []
+  const entries = new Map(session.document.palette.map((entry) => [entry.id, entry]))
+  return session.document.paletteOrder.flatMap((id) => {
+    const entry = entries.get(id)
+    return entry ? [{ ...entry, color: { ...entry.color } }] : []
+  })
+}
+
+const samePaletteEntries = (left: readonly PaletteEntry[], right: readonly PaletteEntry[]): boolean => left.length === right.length && left.every((entry, index) => {
+  const candidate = right[index]
+  return candidate?.id === entry.id && candidate.name === entry.name && sameColor(entry.color, candidate.color)
+})
 
 const COLOR_EDITOR_MIN_WIDTH = 520
 const COLOR_EDITOR_MIN_HEIGHT = 240
@@ -69,11 +90,11 @@ const colorGradient = (mode: ColorValueMode, values: Record<string, number>, fal
   return `linear-gradient(90deg, ${stops.join(', ')})`
 }
 
-export function ColorValueControl({ color, onChange, label, roleLabel, className = '', storageKey, inPalette = true, onAddToPalette, fillWithColor = false, dismissOnFocusLoss = false, preserveAnimationSelection = false }: ColorValueControlProps) {
+export function ColorValueControl({ color, density = 'regular', onChange, label, roleLabel, className = '', storageKey, inPalette = true, onAddToPalette, addToPaletteShortcut, fillWithColor = false, dismissOnFocusLoss = false, preserveAnimationSelection = false, mixed = false, disabled = false }: ColorValueControlProps) {
   const { locale, t } = useI18n()
   const [open, setOpen] = useState(false)
   const [availableModes, setAvailableModes] = useState(() => loadEditorPreferences().colorEditorModes.filter((item) => item.enabled).map((item) => item.mode))
-  const [mode, setMode] = useState<ColorValueMode>(() => loadEditorPreferences().colorEditorModes.find((item) => item.enabled)?.mode ?? 'rgb')
+  const [mode, setMode] = useState<ColorValueMode>(() => loadEditorPreferences().colorEditorModes.find((item) => item.enabled)?.mode ?? 'hsv')
   const modeMinHeight = mode === 'cmyk' ? COLOR_EDITOR_CMYK_MIN_HEIGHT : COLOR_EDITOR_MIN_HEIGHT
   const [hexText, setHexText] = useState(() => displayRgbaHex(color))
   const [previousColor, setPreviousColor] = useState<RgbaColor>(() => copyColor(color))
@@ -85,6 +106,8 @@ export function ColorValueControl({ color, onChange, label, roleLabel, className
   const [size, setSize] = useState({ width: 560, height: 264 })
   const [resident, setResident] = useState(false)
   const [copiedSwatch, setCopiedSwatch] = useState<'previous' | 'current' | null>(null)
+  const [sampling, setSampling] = useState(false)
+  const [paletteEntries, setPaletteEntries] = useState<PaletteEntry[]>(activePaletteEntries)
   const triggerRef = useRef<HTMLButtonElement>(null)
   const popoverRef = useRef<HTMLDivElement>(null)
   const dragRef = useRef<{ pointerX: number; pointerY: number; left: number; top: number } | null>(null)
@@ -97,6 +120,10 @@ export function ColorValueControl({ color, onChange, label, roleLabel, className
   const sizeKey = storageKey ? `moonsprite.color-editor-size.${storageKey}` : null
   const positionedRef = useRef(false)
   const copyFeedbackTimeoutRef = useRef<number | null>(null)
+  const samplingRef = useRef(false)
+  const samplingReturnToolRef = useRef<{ documentId: string; tool: ToolId } | null>(null)
+  const sampledColorHandlerRef = useRef<(color: RgbaColor) => void>(() => undefined)
+  const finishSamplingRef = useRef<(updateState?: boolean) => void>(() => undefined)
 
   useEffect(() => () => {
     if (copyFeedbackTimeoutRef.current !== null) window.clearTimeout(copyFeedbackTimeoutRef.current)
@@ -120,11 +147,21 @@ export function ColorValueControl({ color, onChange, label, roleLabel, className
     const syncModes = (): void => {
       const next = loadEditorPreferences().colorEditorModes.filter((item) => item.enabled).map((item) => item.mode)
       setAvailableModes(next)
-      setMode((current) => next.includes(current) ? current : next[0] ?? 'rgb')
+      setMode((current) => next.includes(current) ? current : next[0] ?? 'hsv')
     }
     window.addEventListener('moonsprite:preferences-changed', syncModes)
     return () => window.removeEventListener('moonsprite:preferences-changed', syncModes)
   }, [])
+
+  useEffect(() => {
+    if (!open) return
+    const syncPalette = (): void => {
+      const next = activePaletteEntries()
+      setPaletteEntries((current) => samePaletteEntries(current, next) ? current : next)
+    }
+    syncPalette()
+    return useWorkspace.subscribe(syncPalette)
+  }, [open])
 
   useLayoutEffect(() => {
     if (!open) return
@@ -228,7 +265,7 @@ export function ColorValueControl({ color, onChange, label, roleLabel, className
   }, [resident])
 
   useEffect(() => {
-    if (!open || (resident && !dismissOnFocusLoss)) return
+    if (!open || sampling || (resident && !dismissOnFocusLoss)) return
     const closeTransient = (event: PointerEvent): void => {
       const target = event.target as Node
       if (!popoverRef.current?.contains(target) && !triggerRef.current?.contains(target)) {
@@ -253,18 +290,89 @@ export function ColorValueControl({ color, onChange, label, roleLabel, className
       window.removeEventListener('pointerdown', closeTransient, true)
       window.removeEventListener('blur', closeOnWindowBlur)
     }
-  }, [dismissOnFocusLoss, open, resident])
+  }, [dismissOnFocusLoss, open, resident, sampling])
 
-  const applyHex = (value: string): boolean => {
-    const next = parseRgbaHex(value, workingColor.a)
-    if (!next) return false
-    setWorkingColor(copyColor(next))
+  const applyEditorColor = (nextColor: RgbaColor): void => {
+    const next = copyColor(nextColor)
+    setWorkingColor(next)
     setConfirmedColor(copyColor(next))
     setDraftMode(mode)
     setDraftValues(colorToValues(next, mode))
     emittedColorRef.current = copyColor(next)
     onChange(next)
     setHexText(displayRgbaHex(next))
+  }
+
+  const finishSampling = (updateState = true): void => {
+    if (!samplingRef.current) return
+    samplingRef.current = false
+    if (updateState) setSampling(false)
+    const returnTarget = samplingReturnToolRef.current
+    samplingReturnToolRef.current = null
+    if (!returnTarget || returnTarget.tool === 'eyedropper') return
+    const workspace = useWorkspace.getState()
+    if (workspace.activeId === returnTarget.documentId) workspace.setTool(returnTarget.tool)
+  }
+  finishSamplingRef.current = finishSampling
+
+  useEffect(() => {
+    if (!disabled) return
+    finishSamplingRef.current()
+    positionedRef.current = false
+    setOpen(false)
+  }, [disabled])
+  sampledColorHandlerRef.current = applyEditorColor
+
+  const beginSampling = (): void => {
+    if (samplingRef.current) {
+      finishSampling()
+      return
+    }
+    const workspace = useWorkspace.getState()
+    const session = workspace.sessions.find((candidate) => candidate.document.id === workspace.activeId)
+    if (!session) return
+    samplingReturnToolRef.current = { documentId: session.document.id, tool: session.tool }
+    samplingRef.current = true
+    residentRef.current = true
+    setResident(true)
+    setSampling(true)
+    workspace.setTool('eyedropper')
+    const active = useWorkspace.getState().sessions.find((candidate) => candidate.document.id === session.document.id)
+    if (active?.tool !== 'eyedropper') finishSampling()
+  }
+
+  useEffect(() => {
+    const sampled = (event: Event): void => {
+      const sample = (event as CustomEvent<CanvasColorSampledDetail>).detail
+      if (samplingRef.current && sample?.color) sampledColorHandlerRef.current(sample.color)
+    }
+    const completed = (): void => finishSamplingRef.current()
+    window.addEventListener(CANVAS_COLOR_SAMPLED_EVENT, sampled)
+    window.addEventListener(CANVAS_COLOR_SAMPLING_COMPLETED_EVENT, completed)
+    return () => {
+      window.removeEventListener(CANVAS_COLOR_SAMPLED_EVENT, sampled)
+      window.removeEventListener(CANVAS_COLOR_SAMPLING_COMPLETED_EVENT, completed)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!sampling) return
+    return useWorkspace.subscribe((workspace) => {
+      const returnTarget = samplingReturnToolRef.current
+      const session = returnTarget ? workspace.sessions.find((candidate) => candidate.document.id === returnTarget.documentId) : null
+      if (returnTarget && workspace.activeId === returnTarget.documentId && session?.tool === 'eyedropper') return
+      samplingRef.current = false
+      samplingReturnToolRef.current = null
+      setSampling(false)
+    })
+  }, [sampling])
+
+  useEffect(() => () => finishSamplingRef.current(false), [])
+
+  const applyHex = (value: string): boolean => {
+    const next = parseRgbaHex(value, workingColor.a)
+    if (!next) return false
+    applyEditorColor(next)
     return true
   }
   const commitHex = (): void => {
@@ -311,16 +419,19 @@ export function ColorValueControl({ color, onChange, label, roleLabel, className
       if (event.button !== 0 || (event.target as HTMLElement).closest('button')) return
       dragRef.current = { pointerX: event.clientX, pointerY: event.clientY, left: position.left, top: position.top }
       event.preventDefault()
-    }}><strong>{t('colorEditor.title')}{roleTitle ? ` ${roleTitle}` : ''}</strong><button type="button" className="icon-button" aria-label={t('colorEditor.close')} onClick={() => { positionedRef.current = false; setOpen(false) }}><PixelUtilityIcon kind="close" /></button></header>
+    }}><strong>{t('colorEditor.title')}{roleTitle ? ` ${roleTitle}` : ''}</strong><button type="button" className="icon-button" aria-label={t('colorEditor.close')} onClick={() => { finishSampling(); positionedRef.current = false; setOpen(false) }}><PixelUtilityIcon kind="close" /></button></header>
     <div className="color-editor-toolbar">
       <div className="color-editor-tabs" role="tablist" aria-label={t('colorEditor.modes')}>
         {availableModes.map((value) => modeLabels.find((option) => option.value === value)).filter((option): option is typeof modeLabels[number] => Boolean(option)).map((option) => <button key={option.value} type="button" role="tab" aria-selected={mode === option.value} className={mode === option.value ? 'selected' : ''} onClick={() => { setMode(option.value); setDraftMode(option.value); setDraftValues(colorToValues(workingColor, option.value)) }}>{option.label}</button>)}
       </div>
       <label className="color-editor-hex"><span>#</span><input aria-label={`${label} HEX`} value={hexText.replace(/^#/, '')} onChange={(event) => setHexText(`#${event.target.value}`)} onBlur={commitHex} onContextMenu={(event) => { event.preventDefault(); void pasteHexFromClipboard() }} onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); commitHex() } }} /></label>
       <div className="color-editor-swatch-comparison" role="group" aria-label={`${t('colorEditor.previous')} / ${t('colorEditor.current')}`}><button type="button" className={`color-editor-previous-swatch ${copiedSwatch === 'previous' ? 'copied' : ''}`} title={`${t('colorEditor.previous')} · ${displayRgbaHex(previousColor)}`} aria-label={t('colorEditor.previous')} onClick={() => { void copySwatch('previous', previousColor) }}><i style={{ background: cssColor(previousColor) }} /></button><button type="button" className={`color-editor-current-swatch ${copiedSwatch === 'current' ? 'copied' : ''}`} title={`${t('colorEditor.current')} · ${displayRgbaHex(confirmedColor)}`} aria-label={t('colorEditor.current')} onClick={() => { void copySwatch('current', confirmedColor) }}><i style={{ background: cssColor(confirmedColor) }} /></button>{copiedSwatch && <span className="color-editor-copy-toast" role="status" aria-live="polite">{t('colorEditor.copied', { hex: displayRgbaHex(copiedSwatch === 'previous' ? previousColor : confirmedColor) })}</span>}</div>
+      <button type="button" className={`icon-button color-editor-eyedropper ${sampling ? 'selected' : ''}`} title={t('colorEditor.eyedropper')} aria-label={t('colorEditor.eyedropper')} aria-pressed={sampling} onClick={beginSampling}><PixelAssetIcon src={eyedropperIcon} /></button>
     </div>
-    <div className="color-editor-fields" style={{ '--color-field-count': fields.length } as React.CSSProperties}>
-      {fields.map((field) => {
+    <div className={`color-editor-fields ${mode === 'palette' ? 'palette-mode' : ''}`} style={{ '--color-field-count': Math.max(1, fields.length) } as React.CSSProperties}>
+      {mode === 'palette' ? <div className="color-editor-palette-grid" role="listbox" aria-label={t('colorEditor.palette')}>
+        {paletteEntries.length > 0 ? paletteEntries.map((entry) => <button key={entry.id} type="button" role="option" aria-selected={sameColor(entry.color, workingColor)} className={`color-editor-palette-swatch ${sameColor(entry.color, workingColor) ? 'selected' : ''}`} title={`${entry.name} · ${displayRgbaHex(entry.color)}`} aria-label={`${entry.name} ${displayRgbaHex(entry.color)}`} onClick={() => applyEditorColor(entry.color)}><i style={{ background: cssColor(entry.color) }} /></button>) : <p className="color-editor-palette-empty">{t('colorEditor.paletteEmpty')}</p>}
+      </div> : fields.map((field) => {
         const gradient = colorGradient(mode, values, color, field)
         const background = field.key === 'a' ? `${gradient}, repeating-conic-gradient(var(--theme-checker-dark) 0 25%, var(--theme-checker-light) 0 50%) 50% / 12px 12px` : gradient
         return <label key={field.key} className="color-editor-field"><span className="color-editor-field-label">{field.label}</span><input aria-label={t('colorEditor.slider', { label, field: field.label })} className="color-editor-range" style={{ background }} type="range" min={field.min} max={field.max} step={field.step} value={values[field.key] ?? 0} onChange={(event) => updateValue(field.key, Number(event.target.value))} onPointerUp={confirmWorkingColor} onBlur={confirmWorkingColor} /><NumberInput aria-label={`${label} ${field.label}`} min={field.min} max={field.max} step={field.step} value={Math.round(values[field.key] ?? 0)} onValueChange={(value) => { updateValue(field.key, value); setConfirmedColor(copyColor(colorFromValues(mode, { ...values, [field.key]: value }, workingColor))) }} /></label>
@@ -336,11 +447,11 @@ export function ColorValueControl({ color, onChange, label, roleLabel, className
   </div> : null
 
   return <>
-    <span className={`color-value-action-row ${onAddToPalette ? 'supports-palette-action' : ''} ${onAddToPalette && !inPalette ? 'has-add-action' : ''}`}><button ref={triggerRef} type="button" className={`color-value-trigger ${fillWithColor ? 'filled-color-trigger' : ''} ${className}`.trim()} style={fillWithColor ? { '--color-value-fill': cssColor(color), '--color-value-contrast': paletteMarkerColor(color) } as React.CSSProperties : undefined} aria-label={`${label}${roleLabel ? ` ${roleLabel}` : ''}`} aria-expanded={open} onClick={() => { setPreviousColor(copyColor(color)); setWorkingColor(copyColor(color)); setConfirmedColor(copyColor(color)); setDraftMode(mode); setDraftValues(colorToValues(color, mode)); setHexText(displayRgbaHex(color)); if (open) positionedRef.current = false; else { residentRef.current = false; setResident(false) }; setOpen((value) => !value) }}>
+    <span className={`color-value-action-row color-value-density-${density} ${onAddToPalette ? 'supports-palette-action' : ''} ${onAddToPalette && !inPalette ? 'has-add-action' : ''}`}><button ref={triggerRef} type="button" className={`color-value-trigger ${fillWithColor && !mixed ? 'filled-color-trigger' : ''} ${mixed ? 'mixed-color-trigger' : ''} ${className}`.trim()} style={fillWithColor && !mixed ? { '--color-value-fill': cssColor(color), '--color-value-contrast': paletteMarkerColor(color) } as React.CSSProperties : undefined} aria-label={`${label}${roleLabel ? ` ${roleLabel}` : ''}`} aria-expanded={open} disabled={disabled} onClick={() => { setPreviousColor(copyColor(color)); setWorkingColor(copyColor(color)); setConfirmedColor(copyColor(color)); setDraftMode(mode); setDraftValues(colorToValues(color, mode)); setHexText(displayRgbaHex(color)); if (open) { finishSampling(); positionedRef.current = false } else { residentRef.current = false; setResident(false) }; setOpen((value) => !value) }}>
       {!fillWithColor && <span className="color-value-swatch"><i style={{ background: `rgba(${color.r}, ${color.g}, ${color.b}, ${clampByte(color.a) / 255})` }} /></span>}
-      <strong>{displayRgbaHex(color)}</strong>
+      <strong>{mixed ? '' : displayRgbaHex(color)}</strong>
       {roleLabel && <small>{roleLabel}</small>}
-    </button>{onAddToPalette && !inPalette && <button type="button" className="color-value-add-button" title={t('palette.addCurrentColor')} aria-label={t('palette.addCurrentColor')} onClick={onAddToPalette}><PixelUtilityIcon kind="plus" /></button>}</span>
+    </button>{onAddToPalette && !inPalette && <button type="button" className="color-value-add-button" title={addToPaletteShortcut ? t('palette.addCurrentColorShortcut', { shortcut: addToPaletteShortcut }) : t('palette.addCurrentColor')} aria-label={addToPaletteShortcut ? t('palette.addCurrentColorShortcut', { shortcut: addToPaletteShortcut }) : t('palette.addCurrentColor')} onClick={onAddToPalette}><PixelUtilityIcon kind="plus" /></button>}</span>
     {editor && createPortal(editor, document.body)}
   </>
 }

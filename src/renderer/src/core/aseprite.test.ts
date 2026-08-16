@@ -35,16 +35,30 @@ const layerChunk = (name = 'Ink', layerType = 0, childLevel = 0, opacity = 255):
   return chunk(0x2004, payload)
 }
 
-const celChunk = (pixels: Uint8Array, compressed = false, layerIndex = 0): Uint8Array => {
+const celChunk = (pixels: Uint8Array, compressed = false, layerIndex = 0, x = 0, y = 0, opacity = 255): Uint8Array => {
   const data = compressed ? zlibSync(pixels) : pixels
   const payload = new Uint8Array(20 + data.length)
   const view = new DataView(payload.buffer)
   view.setUint16(0, layerIndex, true)
-  view.setUint8(6, 255)
+  view.setInt16(2, x, true)
+  view.setInt16(4, y, true)
+  view.setUint8(6, opacity)
   view.setUint16(7, compressed ? 2 : 0, true)
   view.setUint16(16, 2, true)
   view.setUint16(18, 1, true)
   payload.set(data, 20)
+  return chunk(0x2005, payload)
+}
+
+const linkedCelChunk = (linkedFrame: number, layerIndex = 0, x = 0, y = 0, opacity = 255): Uint8Array => {
+  const payload = new Uint8Array(18)
+  const view = new DataView(payload.buffer)
+  view.setUint16(0, layerIndex, true)
+  view.setInt16(2, x, true)
+  view.setInt16(4, y, true)
+  view.setUint8(6, opacity)
+  view.setUint16(7, 1, true)
+  view.setUint16(16, linkedFrame, true)
   return chunk(0x2005, payload)
 }
 
@@ -58,25 +72,31 @@ const paletteChunk = (): Uint8Array => {
   return chunk(0x2019, payload)
 }
 
-const aseprite = (chunks: Uint8Array[], colorDepth = 32, headerFlags = 0): Uint8Array => {
-  const frameSize = 16 + chunks.reduce((size, entry) => size + entry.length, 0)
-  const output = new Uint8Array(128 + frameSize)
+const asepriteFrames = (frames: Uint8Array[][], colorDepth = 32, headerFlags = 0, width = 2, height = 1): Uint8Array => {
+  const frameSizes = frames.map((chunks) => 16 + chunks.reduce((size, entry) => size + entry.length, 0))
+  const output = new Uint8Array(128 + frameSizes.reduce((total, size) => total + size, 0))
   const view = new DataView(output.buffer)
   view.setUint32(0, output.length, true)
   view.setUint16(4, 0xa5e0, true)
-  view.setUint16(6, 1, true)
-  view.setUint16(8, 2, true)
-  view.setUint16(10, 1, true)
+  view.setUint16(6, frames.length, true)
+  view.setUint16(8, width, true)
+  view.setUint16(10, height, true)
   view.setUint16(12, colorDepth, true)
   view.setUint32(14, headerFlags, true)
   view.setUint8(28, 0)
-  view.setUint32(128, frameSize, true)
-  view.setUint16(132, 0xf1fa, true)
-  view.setUint16(134, chunks.length, true)
-  let offset = 144
-  for (const entry of chunks) { output.set(entry, offset); offset += entry.length }
+  let offset = 128
+  for (const [frameIndex, chunks] of frames.entries()) {
+    view.setUint32(offset, frameSizes[frameIndex], true)
+    view.setUint16(offset + 4, 0xf1fa, true)
+    view.setUint16(offset + 6, chunks.length, true)
+    view.setUint16(offset + 8, 100, true)
+    offset += 16
+    for (const entry of chunks) { output.set(entry, offset); offset += entry.length }
+  }
   return output
 }
+
+const aseprite = (chunks: Uint8Array[], colorDepth = 32, headerFlags = 0): Uint8Array => asepriteFrames([chunks], colorDepth, headerFlags)
 
 describe('Aseprite import', () => {
   it('exports a project that can be opened again as an Aseprite file', () => {
@@ -121,6 +141,10 @@ describe('Aseprite import', () => {
     expect(layer.name).toBe('Ink')
     expect(readLayerColor(document, layer, 0)).toEqual({ r: 255, g: 0, b: 0, a: 255 })
     expect(readLayerColor(document, layer, 1)).toEqual({ r: 0, g: 0, b: 255, a: 128 })
+    expect(document.palette.map((entry) => entry.color)).toEqual([
+      { r: 0, g: 0, b: 255, a: 128 },
+      { r: 255, g: 0, b: 0, a: 255 }
+    ])
   })
 
   it('imports zlib-compressed RGBA cels', () => {
@@ -128,6 +152,26 @@ describe('Aseprite import', () => {
     const layer = getActiveLayer(document)
     expect(readLayerColor(document, layer, 0)).toEqual({ r: 8, g: 16, b: 32, a: 255 })
     expect(readLayerColor(document, layer, 1)).toEqual({ r: 255, g: 255, b: 0, a: 255 })
+  })
+
+  it('keeps sparse linked cels shared without expanding them to the canvas size', () => {
+    const document = decodeAseprite(asepriteFrames([
+      [layerChunk(), celChunk(new Uint8Array([255, 0, 0, 255, 0, 0, 255, 128]), false, 0, 3, 4)],
+      [linkedCelChunk(0, 0, 3, 4)]
+    ], 32, 0, 4000, 2000))
+    const timeline = ensureAnimationDocument(document)
+    const [first, second] = timeline.cels
+
+    expect(document).toMatchObject({ width: 4000, height: 2000 })
+    expect(getActiveLayer(document)).toMatchObject({ width: 2, height: 1, offsetX: 3, offsetY: 4 })
+    expect(second.linkedCelId).toBe(first.id)
+    expect(second.surface).toBe(first.surface)
+    expect(second.surface?.pixels).toBe(first.surface?.pixels)
+  })
+
+  it('applies cel opacity with a single owned pixel buffer', () => {
+    const document = decodeAseprite(aseprite([layerChunk(), celChunk(new Uint8Array([12, 24, 36, 200, 0, 0, 0, 0]), false, 0, 0, 0, 128)]))
+    expect(readLayerColor(document, getActiveLayer(document), 0)).toEqual({ r: 12, g: 24, b: 36, a: 100 })
   })
 
   it('uses the transparent color index for indexed cels', () => {

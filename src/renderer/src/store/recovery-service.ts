@@ -1,5 +1,5 @@
 import type { MoonSpriteApi, RecoveryRecord, SpriteDocument } from '@shared/types'
-import { decodeProject, encodeProject } from '@/core/project-format'
+import { decodeProject, encodeProjectAsync } from '@/core/project-format'
 import { translateCurrent as tr } from '@/core/localization'
 
 export class RecoveryService {
@@ -11,8 +11,8 @@ export class RecoveryService {
     return operation
   }
 
-  list(api: MoonSpriteApi): Promise<RecoveryRecord[]> {
-    return api.listRecoveries()
+  list(api: MoonSpriteApi, retentionDays: number): Promise<RecoveryRecord[]> {
+    return api.listRecoveries(retentionDays)
   }
 
   async restore(api: MoonSpriteApi, record: RecoveryRecord): Promise<SpriteDocument> {
@@ -29,7 +29,7 @@ export class RecoveryService {
           // Recovery only needs the manifest and editable layer data. Avoid
           // generating a full-canvas gallery preview and use light compression
           // so autosave cannot monopolize the renderer for large documents.
-          await api.writeRecovery(document.id, document.name, encodeProject(document, { includePreview: false, compressionLevel: 1 }))
+          await api.writeRecovery(document.id, document.name, await encodeProjectAsync(document, { includePreview: false, compressionLevel: 1 }))
         } catch { /* Autosave remains non-blocking per document. */ }
       }))
     })

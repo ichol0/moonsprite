@@ -1,9 +1,9 @@
 {
   "name": "moonsprite",
-  "version": "0.1.0-dev.4",
-  "description": "An original, open-source pixel art workstation for Windows.",
+  "version": "0.1.0-dev.5",
+  "description": "An original, source-available pixel art workstation for Windows.",
   "author": "MoonSprite contributors",
-  "license": "MIT",
+  "license": "SEE LICENSE IN LICENSE",
   "scripts": {
     "dev": "tauri dev --config src-tauri/tauri.dev.conf.json",
     "dev:web": "vite --config vite.config.ts",
@@ -31,7 +31,7 @@
     "bench:canvas": "pnpm build:web:performance && node scripts/canvas-performance.mjs",
     "bench:canvas:full": "pnpm bench:canvas -- --full",
     "bench:canvas:profile": "pnpm build:web:performance-profile && node scripts/canvas-performance.mjs --runtime=profile",
-    "bench:canvas:large": "pnpm bench:canvas -- --size=800,2048,4000 --scenario=large-pan,large-zoom,large-draw,large-shape,large-marquee,large-bucket-fill,large-gradient,large-detail-pan,large-detail-draw",
+    "bench:canvas:large": "pnpm bench:canvas -- --size=800,2048,4000 --scenario=large-pan,large-zoom,large-draw,large-shape,large-marquee,large-bucket-fill,large-gradient,large-detail-pan,large-detail-draw,large-detail-draw-timelapse",
     "bench:selection": "vitest bench src/renderer/src/core/selection-performance.bench.ts --run",
     "bench:document": "vitest bench src/renderer/src/core/document-performance.bench.ts --run",
     "check:performance-scope": "node scripts/performance-scope.mjs",
@@ -39,7 +39,10 @@
     "package": "tauri build && pnpm package:prepare && pnpm package:size",
     "package:prepare": "node scripts/prepare-release.mjs",
     "package:size": "node scripts/check-package-size.mjs",
-    "preview": "vite preview --config vite.config.ts"
+    "preview": "vite preview --config vite.config.ts",
+    "website:dev": "pnpm --dir website dev",
+    "website:build": "pnpm --dir website build",
+    "website:capture": "node website/scripts/capture-product.mjs"
   },
   "dependencies": {},
   "devDependencies": {

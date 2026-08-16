@@ -74,7 +74,7 @@ describe('layer merging', () => {
     expect(Array.from(compositeDocument(document))).toEqual(Array.from(before))
   })
 
-  it('creates an indexed merged layer with stable palette ids', () => {
+  it('maps an indexed merged result to the nearest visible palette color', () => {
     const document = createDocument('indexed', 1, 1, 'indexed')
     const bottom = getActiveLayer(document)
     if (bottom.format !== 'indexed') throw new Error('wrong mode')
@@ -91,7 +91,9 @@ describe('layer merging', () => {
     expect(result.ok).toBe(true)
     expect(document.layers[0].format).toBe('indexed')
     expect(document.palette.some((entry) => entry.id === document.layers[0].pixels[0])).toBe(true)
-    expect(Array.from(compositeDocument(document))).toEqual(Array.from(before))
+    expect(document.layers[0].pixels[0]).toBe(2)
+    expect(Array.from(compositeDocument(document))).toEqual([41, 121, 255, 255])
+    expect(Array.from(compositeDocument(document))).not.toEqual(Array.from(before))
   })
 
   it('bakes selected blend modes into the merged layer', () => {

@@ -4,6 +4,7 @@ import { PROCEDURAL_BRUSH_IDS } from '@/core/brushes'
 import { packColor, unpackColor } from '@/core/raster'
 import {
   cloneProceduralSettings,
+  BRUSH_TOOLS,
   defaultToolSettings,
   loadToolSettings,
   normalizePersistedBrushProfile,
@@ -18,11 +19,20 @@ import { ensureAnimationDocument, refreshActiveAnimationFrame } from '@/core/ani
 import { normalizeProjectDisplaySettings, normalizeProjectStatistics, normalizeTimelapseSettings } from '@/core/project-metadata'
 import { findLayerMask, getActiveLayer } from '@/core/document'
 import { cloneBrushDynamicsSettings, normalizeBrushDynamicsSettings } from '@/core/pressure'
+import { applyProjectLayerPanelState, loadLocalLayerPanelState, normalizeProjectLayerPanelState } from '@/core/layer-panel-state'
 
 const defaultColor: RgbaColor = { r: 41, g: 121, b: 255, a: 255 }
 const defaultSecondary: RgbaColor = { r: 241, g: 244, b: 248, a: 255 }
 
-export const isBrushTool = (tool: ToolId): tool is BrushTool => tool === 'pencil' || tool === 'eraser' || tool === 'fill'
+export const isBrushTool = (tool: ToolId): tool is BrushTool => BRUSH_TOOLS.includes(tool as BrushTool)
+
+const TEXT_LAYER_ALLOWED_TOOLS = new Set<ToolId>(['text', 'move', 'eyedropper', 'hand', 'zoom', 'rotate'])
+
+export const isToolAvailableForSession = (session: DocumentSession, tool: ToolId): boolean => {
+  if (session.activeLayerMaskId || session.selectedGroupIds.length > 0) return true
+  const textLayerSelected = session.selectedLayerIds.some((id) => session.document.layers.some((layer) => layer.id === id && layer.kind === 'text'))
+  return !textLayerSelected || TEXT_LAYER_ALLOWED_TOOLS.has(tool)
+}
 
 export const activeLayerMask = (session: DocumentSession): LayerMask | null => session.activeLayerMaskId
   ? findLayerMask(session.document, session.activeLayerMaskId)
@@ -117,7 +127,7 @@ function brushProfileFromPersisted(profile: PersistedBrushProfile): BrushProfile
 export function persistToolSettings(session: DocumentSession): void {
   const activeProfile = brushProfileFromSession(session)
   if (isBrushTool(session.tool)) session.brushProfiles[session.tool] = activeProfile
-  const profiles = Object.fromEntries((['pencil', 'eraser', 'fill'] as BrushTool[]).map((tool) => [
+  const profiles = Object.fromEntries(BRUSH_TOOLS.map((tool) => [
     tool,
     persistedBrushProfileFromSession(session.brushProfiles[tool])
   ])) as Record<BrushTool, PersistedBrushProfile>
@@ -128,6 +138,8 @@ export function persistToolSettings(session: DocumentSession): void {
     proceduralAntialiasPreferenceVersion: 1,
     brushProfiles: profiles,
     shapeKind: session.shapeKind,
+    lineKind: session.lineKind,
+    curveAnchorCount: session.curveAnchorCount,
     shapeRatio: session.shapeRatio ? { ...session.shapeRatio } : null,
     fillMode: session.fillMode,
     fillKind: session.fillKind ?? 'bucket',
@@ -141,6 +153,11 @@ export function persistToolSettings(session: DocumentSession): void {
     wandTolerance: session.wandTolerance,
     wandContiguous: session.wandContiguous,
     perfectPixels: session.perfectPixels,
+    airbrushParticleRadius: session.airbrushParticleRadius,
+    airbrushParticleShape: session.airbrushParticleShape,
+    airbrushScatterRadius: session.airbrushScatterRadius,
+    airbrushDensity: session.airbrushDensity,
+    airbrushIntervalMs: session.airbrushIntervalMs,
     symmetryAxes: { ...session.symmetryAxes }
   }
   try {
@@ -153,15 +170,20 @@ export function persistToolSettings(session: DocumentSession): void {
 }
 
 export const sessionFromDocument = (document: SpriteDocument): DocumentSession => {
+  if (!document.layers.some((layer) => layer.id === document.activeLayerId)) {
+    const fallbackLayerId = document.layers.at(-1)?.id
+    if (fallbackLayerId) document.activeLayerId = fallbackLayerId
+  }
   ensureAnimationDocument(document)
   refreshActiveAnimationFrame(document)
   document.displaySettings = normalizeProjectDisplaySettings(document.displaySettings)
   document.statistics = normalizeProjectStatistics(document.statistics)
   document.timelapse = normalizeTimelapseSettings(document.timelapse, document.timelapse?.snapshots ?? [])
+  const layerPanelState = loadLocalLayerPanelState(document) ?? normalizeProjectLayerPanelState(document, document.layerPanelState)
   const settings = loadToolSettings()
   const fallbackProfile = normalizePersistedBrushProfile(settings, defaultToolSettings)
-  const persistedProfiles = settings.brushProfiles ?? Object.fromEntries((['pencil', 'eraser', 'fill'] as BrushTool[]).map((tool) => [tool, fallbackProfile])) as Record<BrushTool, PersistedBrushProfile>
-  const brushProfiles = Object.fromEntries((['pencil', 'eraser', 'fill'] as BrushTool[]).map((tool) => [
+  const persistedProfiles = settings.brushProfiles ?? Object.fromEntries(BRUSH_TOOLS.map((tool) => [tool, fallbackProfile])) as Record<BrushTool, PersistedBrushProfile>
+  const brushProfiles = Object.fromEntries(BRUSH_TOOLS.map((tool) => [
     tool,
     brushProfileFromPersisted(persistedProfiles[tool] ?? fallbackProfile)
   ])) as Record<BrushTool, BrushProfile>
@@ -169,6 +191,9 @@ export const sessionFromDocument = (document: SpriteDocument): DocumentSession =
     document,
     history: new HistoryStack(),
     tool: 'pencil',
+    moveKind: 'move',
+    selectedSliceId: null,
+    selectedSliceIds: [],
     primaryColor: document.palette.find((entry) => entry.id !== 0)?.color ?? defaultColor,
     secondaryColor: defaultSecondary,
     brushSize: settings.brushSize,
@@ -187,6 +212,8 @@ export const sessionFromDocument = (document: SpriteDocument): DocumentSession =
     brushDynamics: normalizeBrushDynamicsSettings(settings.brushDynamics),
     brushPressure: { ...settings.brushPressure },
     shapeKind: settings.shapeKind,
+    lineKind: settings.lineKind,
+    curveAnchorCount: settings.curveAnchorCount,
     shapeRatio: typeof settings.shapeRatio === 'number' ? { width: settings.shapeRatio, height: 1 } : settings.shapeRatio ? { ...settings.shapeRatio } : null,
     fillMode: settings.fillMode,
     fillKind: settings.fillKind,
@@ -196,11 +223,17 @@ export const sessionFromDocument = (document: SpriteDocument): DocumentSession =
     gradientDither: settings.gradientDither,
     moveAutoSelect: settings.moveAutoSelect,
     selection: null,
+    selectionPivot: null,
     selectionKind: settings.selectionKind,
     selectionMode: settings.selectionMode,
     wandTolerance: settings.wandTolerance,
     wandContiguous: settings.wandContiguous,
     perfectPixels: settings.perfectPixels,
+    airbrushParticleRadius: settings.airbrushParticleRadius,
+    airbrushParticleShape: settings.airbrushParticleShape,
+    airbrushScatterRadius: settings.airbrushScatterRadius,
+    airbrushDensity: settings.airbrushDensity,
+    airbrushIntervalMs: settings.airbrushIntervalMs,
     symmetryAxes: { ...settings.symmetryAxes },
     symmetryCenter: defaultSymmetryCenter(document.width, document.height),
     lastPencilPoint: null,
@@ -208,6 +241,7 @@ export const sessionFromDocument = (document: SpriteDocument): DocumentSession =
     canvasResizePreview: null,
     outlinePreview: null,
     pendingPaste: null,
+    textBoxTransform: null,
     view: {
       zoom: 16,
       panX: 0,
@@ -219,6 +253,9 @@ export const sessionFromDocument = (document: SpriteDocument): DocumentSession =
       showGrid: document.displaySettings.showGrid,
       relativeLuminance: false,
       showSelectionOutline: true,
+      showSelectionPivot: false,
+      quickCommandBarPositionX: 0.5,
+      quickCommandBarExpanded: false,
       grid: { ...document.displaySettings.grid }
     },
     viewportSize: { width: 0, height: 0 },
@@ -257,6 +294,7 @@ export const sessionFromDocument = (document: SpriteDocument): DocumentSession =
   } as DocumentSession
   applyBrushProfile(session, brushProfiles.pencil)
   session.brushProfiles = brushProfiles
+  applyProjectLayerPanelState(session, layerPanelState)
   return session
 }
 
@@ -273,6 +311,13 @@ export function touch(session: DocumentSession, dirty = true, invalidation: Cont
       : { kind: 'full', fromRevision, revision: session.contentRevision }
     session.recoverySuppressed = false
   }
+}
+
+export function touchMetadata(session: DocumentSession): void {
+  session.document.dirty = true
+  session.document.updatedAt = new Date().toISOString()
+  session.layersPanelRevision += 1
+  session.recoverySuppressed = false
 }
 
 export const cloneSelectionMask = (selection: SelectionMask | null): SelectionMask | null =>

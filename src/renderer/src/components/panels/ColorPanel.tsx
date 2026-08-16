@@ -4,19 +4,26 @@ import { ColorPicker, type ColorPickerConfig, type ColorPickerScheme } from '@/c
 import { FloatingDockPreview, PanelResizeHandles, useFloatingPanel } from '@/components/floating-panel'
 import type { DockDragProps } from '@/components/workspace-panel-types'
 import { parseColorPickerConfig, readStoredString, saveColorPickerConfig } from '@/core/panel-preferences'
+import { visiblePaletteColors } from '@/core/palette-layout'
 import { useWorkspace, type DocumentSession } from '@/store/workspace'
 import { useI18n } from '@/components/I18nProvider'
 import { PixelUtilityIcon } from '@/components/PixelUtilityIcon'
+import { paletteSamplingShortcutActive } from '@/core/palette-sampling-shortcut'
+import { loadShortcuts } from '@/core/shortcuts'
+import { publishCanvasColorSample, publishCanvasColorSamplingCompleted } from '@/components/color-sampling-events'
+import { usePanelColorSampling } from '@/components/usePanelColorSampling'
 
 export function ColorPanel({ session, docked = false, onDockDragStart, onPanelContextMenu, onFloatingDock, onRestoreSquare }: { session: DocumentSession } & DockDragProps) {
   const { t } = useI18n()
   const setPrimary = useWorkspace((state) => state.setPrimaryColor)
   const setSecondary = useWorkspace((state) => state.setSecondaryColor)
   const addPaletteColor = useWorkspace((state) => state.addPaletteColor)
+  const panelColorSampling = usePanelColorSampling(session.tool)
   const floating = useFloatingPanel(null, false, true, 'moonsprite.color-panel.v1', true, onFloatingDock, docked)
   const schemeButtonRef = useRef<HTMLButtonElement>(null)
   const schemeMenuRef = useRef<HTMLSpanElement>(null)
   const [schemeMenuOpen, setSchemeMenuOpen] = useState(false)
+  const [shortcuts, setShortcuts] = useState(loadShortcuts)
   const [schemeMenuPosition, setSchemeMenuPosition] = useState({ left: 8, top: 8 })
   const hueStepPresets = [
     { value: 0, label: t('color.continuous') },
@@ -43,6 +50,7 @@ export function ColorPanel({ session, docked = false, onDockDragStart, onPanelCo
     { value: 'wheel', label: t('color.scheme.wheel') }
   ]
   const currentSchemeName = schemeOptions.find((option) => option.value === pickerConfig.scheme)?.label ?? t('panel.color')
+  const paletteColors = visiblePaletteColors(session.document.palette, session.document.paletteOrder)
 
   useLayoutEffect(() => {
     if (!schemeMenuOpen) return
@@ -73,6 +81,24 @@ export function ColorPanel({ session, docked = false, onDockDragStart, onPanelCo
     return () => window.removeEventListener('pointerdown', close, true)
   }, [schemeMenuOpen])
 
+  useEffect(() => {
+    const refresh = (): void => setShortcuts(loadShortcuts())
+    window.addEventListener('moonsprite:shortcuts-changed', refresh)
+    return () => window.removeEventListener('moonsprite:shortcuts-changed', refresh)
+  }, [])
+
+  const completeColorSampling = (event: React.PointerEvent<HTMLElement>): void => {
+    const target = event.target instanceof Element ? event.target : null
+    if (!target?.closest('.color-field-interaction, .hue-strip-input, .value-strip-input, .alpha-strip-input')) return
+    const active = useWorkspace.getState().sessions.find((candidate) => candidate.document.id === session.document.id)
+    if (!active || !panelColorSampling.activeForEvent(event.nativeEvent)) return
+    const secondary = event.button === 2
+    const sampled = secondary ? active.secondaryColor : active.primaryColor
+    publishCanvasColorSample(sampled, secondary)
+    if (!secondary && paletteSamplingShortcutActive()) useWorkspace.getState().addPaletteColor(sampled)
+    publishCanvasColorSamplingCompleted()
+  }
+
   const updatePickerConfig = (changes: Partial<ColorPickerConfig>): void => {
     setPickerConfig((current) => {
       const next = { ...current, ...changes }
@@ -99,9 +125,9 @@ export function ColorPanel({ session, docked = false, onDockDragStart, onPanelCo
     onRestoreSquare?.()
   }
 
-  return <><section ref={floating.ref} className={`panel color-panel ${floating.style ? 'floating-panel' : ''}`} style={floating.style} onPointerDown={floating.bringToFront} onContextMenu={onPanelContextMenu}>
+  return <><section ref={floating.ref} className={`panel color-panel ${panelColorSampling.active ? 'panel-color-sampling' : ''} ${floating.style ? 'floating-panel' : ''}`} style={floating.style} onPointerDown={floating.bringToFront} onPointerUp={completeColorSampling} onContextMenu={onPanelContextMenu}>
     <header aria-label={t('panel.color')} onPointerDown={(event) => floating.style ? floating.startDrag(event) : onDockDragStart?.(event, floating.startDetachedDrag)}><small>{currentSchemeName}</small><span className="panel-actions color-scheme-control" onPointerDown={(event) => event.stopPropagation()}><button type="button" title={t('color.restoreSquare')} aria-label={t('color.restoreSquare')} onClick={restoreSquare}><PixelUtilityIcon kind="paletteCenter" /></button><button ref={schemeButtonRef} type="button" className={schemeMenuOpen ? 'active' : ''} title={t('color.changeScheme')} aria-label={t('color.changeScheme')} aria-expanded={schemeMenuOpen} onClick={() => setSchemeMenuOpen((open) => !open)}><PixelUtilityIcon kind="moreLines" /></button></span></header>
-    <ColorPicker color={session.primaryColor} secondaryColor={session.secondaryColor} onChange={setPrimary} onSecondaryChange={setSecondary} paletteColors={session.document.palette.map((entry) => entry.color)} onAddPaletteColor={addPaletteColor} config={pickerConfig} />
+    <ColorPicker color={session.primaryColor} secondaryColor={session.secondaryColor} onChange={setPrimary} onSecondaryChange={setSecondary} paletteColors={paletteColors} onAddPaletteColor={addPaletteColor} addToPaletteShortcut={shortcuts.addForegroundToPalette} config={pickerConfig} />
     {floating.style && <PanelResizeHandles onResize={floating.startResize} />}
   </section><FloatingDockPreview style={floating.dockPreview} />
   {schemeMenuOpen && createPortal(<span ref={schemeMenuRef} className="color-scheme-popover" role="menu" aria-label={t('color.schemeAria')} style={schemeMenuPosition}><span className="color-scheme-options">{schemeOptions.map((option) => <button key={option.value} type="button" role="menuitemradio" aria-checked={pickerConfig.scheme === option.value} className={pickerConfig.scheme === option.value ? 'selected' : ''} onClick={() => updatePickerConfig({ scheme: option.value })}><i className={`color-scheme-preview preview-${option.value}`} aria-hidden="true" /><span>{option.label}</span>{pickerConfig.scheme === option.value && <PixelUtilityIcon kind="check" />}</button>)}</span>{pickerConfig.scheme === 'moon-ring' && <span className="color-scheme-settings"><span className="color-preset-group"><span className="color-preset-label">{t('color.moonCenter')}</span><span className="color-preset-options"><button type="button" className={pickerConfig.moonField !== 'hsl-triangle' ? 'selected' : ''} onClick={() => updatePickerConfig({ moonField: 'hsv-square' })}>{t('color.hsvSquare')}</button><button type="button" className={pickerConfig.moonField === 'hsl-triangle' ? 'selected' : ''} onClick={() => updatePickerConfig({ moonField: 'hsl-triangle' })}>{t('color.hslTriangle')}</button></span></span></span>}<span className="color-scheme-settings"><span className="color-preset-group"><span className="color-preset-label color-setting-tooltip" data-tip={t('color.hueSnapHint')}>{t('color.hueSnap')}</span><span className="color-preset-options">{hueStepPresets.map((preset) => <button key={preset.value} type="button" className={pickerConfig.hueSteps === preset.value ? 'selected' : ''} aria-pressed={pickerConfig.hueSteps === preset.value} onClick={() => updatePickerConfig({ hueSteps: preset.value })}>{preset.label}</button>)}</span></span><span className="color-preset-group"><span className="color-preset-label color-setting-tooltip" data-tip={t('color.colorLevelsHint')}>{t('color.colorLevels')}</span><span className="color-preset-options">{colorStepPresets.map((preset) => <button key={preset.value} type="button" className={pickerConfig.colorSteps === preset.value ? 'selected' : ''} aria-pressed={pickerConfig.colorSteps === preset.value} onClick={() => updatePickerConfig({ colorSteps: preset.value })}>{preset.label}</button>)}</span></span></span></span>, document.body)}
