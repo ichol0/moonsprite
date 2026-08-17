@@ -1,4 +1,5 @@
 import { memo, useEffect, useState, type PointerEvent as ReactPointerEvent } from 'react'
+import type { ToolRailSide } from '@shared/types'
 import { PerformanceProfiler } from '@/components/PerformanceProfiler'
 import { PixelUtilityIcon } from '@/components/PixelUtilityIcon'
 import { Tooltip } from '@/components/Tooltip'
@@ -11,7 +12,7 @@ import { isToolAvailableForSession } from '@/store/workspace-session'
 import { ALL_EDITOR_TOOL_ICONS, FILL_KIND_ICONS, PixelAssetIcon, SELECTION_KIND_ICONS, activeToolPresentation, fillKindDefinitions, lineKindDefinitions, moveKindDefinitions, selectionKindDefinitions, shapeKindDefinitions, toolDefinitions } from './editor-tools'
 
 interface EditorToolRailProps {
-  side: 'left' | 'right'
+  side: ToolRailSide
   onGripPointerDown: (event: ReactPointerEvent<HTMLButtonElement>) => void
 }
 

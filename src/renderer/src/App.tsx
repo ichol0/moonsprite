@@ -3,12 +3,13 @@ import { createPortal } from 'react-dom'
 import { CheckCircle2, ExternalLink, FileOutput, GitFork } from 'lucide-react'
 import { PhysicalPosition, PhysicalSize } from '@tauri-apps/api/dpi'
 import { availableMonitors, getCurrentWindow } from '@tauri-apps/api/window'
-import type { ColorMode, ImageResizeInterpolation, StoredWorkspace, TextCelData, WorkspaceLayout } from '@shared/types'
+import type { ColorMode, ImageResizeInterpolation, StoredWorkspace, TextCelData, ToolRailSide, WorkspaceLayout } from '@shared/types'
 import type { AdjustmentKind } from '@/core/adjustments'
 import { compositePixelWithLayerColor, getActiveLayer, isLayerEffectivelyVisible, readLayerColorAt } from '@/core/document'
 import { blendOver, packColor, unpackColor } from '@/core/raster'
 import type { PanelDock, WorkspacePanelId } from '@/components/WorkspacePanels'
 import { AppMenuBar } from '@/components/app/AppMenuBar'
+import { AppWindowTitleBar } from '@/components/app/AppWindowTitleBar'
 import { DocumentTabs, type DocumentTabDockDebugState } from '@/components/app/DocumentTabs'
 import { EditorStatusBar } from '@/components/app/EditorStatusBar'
 import { BrushDynamicsTelemetryCapture } from '@/components/app/BrushDynamicsTelemetryCapture'
@@ -66,7 +67,7 @@ import { readStoredString, writeStoredString } from '@/core/storage'
 import type { FloatingPosition } from '@/core/panel-preferences'
 import { applyCursorPreferences } from '@/platform/cursor-theme'
 import { applyToolIconScale, applyUiScale } from '@/platform/ui-scale'
-import { ACTIVE_WORKSPACE_STORAGE_KEY, BOTTOM_DOCK_HEIGHT_RATIO_STORAGE_KEY, BOTTOM_DOCK_HEIGHT_STORAGE_KEY, COLOR_SQUARE_ANCHOR_STORAGE_KEY, COLOR_SQUARE_DOCK_STORAGE_KEY, constrainBottomDockHeight, constrainInspectorWidth, constrainLeftDockWidth, DEFAULT_BOTTOM_DOCK_HEIGHT_RATIO, DEFAULT_INSPECTOR_WIDTH_RATIO, DEFAULT_LEFT_DOCK_WIDTH_RATIO, DEFAULT_PANEL_DOCKS, dockSizeFromRatio, dockSizeRatio, FLOATING_PANEL_STORAGE_KEYS, INSPECTOR_LAYOUT_STORAGE_KEY, INSPECTOR_WIDTH_RATIO_STORAGE_KEY, INSPECTOR_WIDTH_STORAGE_KEY, LEFT_DOCK_WIDTH_RATIO_STORAGE_KEY, LEFT_DOCK_WIDTH_STORAGE_KEY, PANEL_DOCKS_STORAGE_KEY, resolveDockSizeRatio, TOOL_RAIL_SIDE_STORAGE_KEY, loadBottomDockHeight, loadInspectorWidth, loadLeftDockWidth, loadMainWindowState, loadPanelDocks, loadPanelVisibility, loadToolRailSide, normalizeWorkspaceLayout, readLayoutStorage, saveMainWindowState, savePanelDocks, savePanelVisibility, writeLayoutStorage } from '@/core/workspace-layout-preferences'
+import { ACTIVE_WORKSPACE_STORAGE_KEY, BOTTOM_DOCK_HEIGHT_RATIO_STORAGE_KEY, BOTTOM_DOCK_HEIGHT_STORAGE_KEY, COLOR_SQUARE_ANCHOR_STORAGE_KEY, COLOR_SQUARE_DOCK_STORAGE_KEY, constrainBottomDockHeight, constrainInspectorWidth, constrainLeftDockWidth, DEFAULT_BOTTOM_DOCK_HEIGHT_RATIO, DEFAULT_INSPECTOR_WIDTH_RATIO, DEFAULT_LEFT_DOCK_WIDTH_RATIO, DEFAULT_PANEL_DOCKS, dockSizeRatio, FLOATING_PANEL_STORAGE_KEYS, INSPECTOR_LAYOUT_STORAGE_KEY, INSPECTOR_WIDTH_RATIO_STORAGE_KEY, INSPECTOR_WIDTH_STORAGE_KEY, LEFT_DOCK_WIDTH_RATIO_STORAGE_KEY, LEFT_DOCK_WIDTH_STORAGE_KEY, PANEL_DOCKS_STORAGE_KEY, resolveDockSizeRatio, TOOL_RAIL_SIDE_STORAGE_KEY, loadBottomDockHeight, loadInspectorWidth, loadLeftDockWidth, loadMainWindowState, loadPanelDocks, loadPanelVisibility, loadToolRailSide, normalizeWorkspaceLayout, readLayoutStorage, saveMainWindowState, savePanelDocks, savePanelVisibility, toolRailDockTargetAtPointer, workspaceDockSizesForParent, writeLayoutStorage } from '@/core/workspace-layout-preferences'
 import { type ExportOptions, type SaveAsOptions, type TextCelPreview, type TextLayerDraftTarget, useWorkspace } from '@/store/workspace'
 import { useI18n } from '@/components/I18nProvider'
 import './styles.css'
@@ -76,7 +77,6 @@ const LazyComponentLibrary = lazy(() => import('@/components/ComponentLibrary').
 
 const defaultShortcuts: Record<string, string> = { ...DEFAULT_SHORTCUTS }
 
-type ToolRailSide = 'left' | 'right'
 type AdvancedMode = 'tool-options' | 'canvas-only'
 
 interface FloatingDocumentEntry {
@@ -269,7 +269,7 @@ export default function App() {
   const leftDockResizeStart = useRef<{ x: number; width: number } | null>(null)
   const leftDockWidthRef = useRef(leftDockWidth)
   const preferredLeftDockWidthRef = useRef(leftDockWidth)
-  const leftDockWidthRatioRef = useRef(resolveDockSizeRatio(readStoredString(LEFT_DOCK_WIDTH_RATIO_STORAGE_KEY), leftDockWidth, initialDockParentSize.width, DEFAULT_LEFT_DOCK_WIDTH_RATIO))
+  const leftDockWidthRatioRef = useRef(dockSizeRatio(leftDockWidth, initialDockParentSize.width, DEFAULT_LEFT_DOCK_WIDTH_RATIO))
   const toolRailDrag = useRef<{ startX: number; startY: number; moved: boolean; target: ToolRailSide } | null>(null)
   const activeWorkspaceRef = useRef<StoredWorkspace | null>(null)
   const workspaceApplyInProgress = useRef(false)
@@ -281,7 +281,7 @@ export default function App() {
   const workAreaRef = useRef<HTMLElement>(null)
   const inspectorWidthRef = useRef(inspectorWidth)
   const preferredInspectorWidthRef = useRef(inspectorWidth)
-  const inspectorWidthRatioRef = useRef(resolveDockSizeRatio(readStoredString(INSPECTOR_WIDTH_RATIO_STORAGE_KEY), inspectorWidth, initialDockParentSize.width, DEFAULT_INSPECTOR_WIDTH_RATIO))
+  const inspectorWidthRatioRef = useRef(dockSizeRatio(inspectorWidth, initialDockParentSize.width, DEFAULT_INSPECTOR_WIDTH_RATIO))
   const closeInProgress = useRef(false)
   const session = workspace.sessions.find((item) => item.document.id === workspace.activeId) ?? null
   const floatingDocumentIds = useMemo(() => floatingDocuments.map((item) => item.documentId), [floatingDocuments])
@@ -944,6 +944,8 @@ export default function App() {
         else await appWindow.center()
         if (stored.maximized) await appWindow.maximize()
       } else {
+        await appWindow.setSize(new PhysicalSize(1440, 900))
+        await appWindow.center()
         await persistMainWindowState()
       }
       if (disposed) return
@@ -1047,7 +1049,7 @@ export default function App() {
       if (!drag) return
       if (!drag.moved && Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY) < 4) return
       drag.moved = true
-      drag.target = event.clientX < window.innerWidth / 2 ? 'left' : 'right'
+      drag.target = toolRailDockTargetAtPointer(event.clientX, event.clientY, window.innerWidth, window.innerHeight)
       setToolRailDockPreview(drag.target)
     }
     const up = (): void => {
@@ -1113,8 +1115,7 @@ export default function App() {
       const drag = bottomLayersResizeStart.current
       const workArea = workAreaRef.current?.getBoundingClientRect()
       if (!drag || !workArea) return
-      const maximum = Math.max(120, Math.min(520, workArea.height - 43 - 150))
-      const next = Math.max(120, Math.min(maximum, drag.height - (event.clientY - drag.y)))
+      const next = constrainBottomDockHeight(drag.height - (event.clientY - drag.y), workArea.height)
       bottomLayersHeightRef.current = next
       preferredBottomLayersHeightRef.current = next
       bottomLayersHeightRatioRef.current = dockSizeRatio(next, workArea.height, DEFAULT_BOTTOM_DOCK_HEIGHT_RATIO)
@@ -1138,13 +1139,15 @@ export default function App() {
       frame = window.requestAnimationFrame(() => {
         frame = null
         const parentSize = workspaceDockParentSize(workAreaRef.current)
-        const nextInspector = constrainInspectorWidth(dockSizeFromRatio(inspectorWidthRatioRef.current, parentSize.width, DEFAULT_INSPECTOR_WIDTH_RATIO), parentSize.width)
-        const nextLeft = constrainLeftDockWidth(dockSizeFromRatio(leftDockWidthRatioRef.current, parentSize.width, DEFAULT_LEFT_DOCK_WIDTH_RATIO), parentSize.width)
-        const nextBottom = constrainBottomDockHeight(dockSizeFromRatio(bottomLayersHeightRatioRef.current, parentSize.height, DEFAULT_BOTTOM_DOCK_HEIGHT_RATIO), parentSize.height)
+        const { inspectorWidth: nextInspector, leftDockWidth: nextLeft, bottomDockHeight: nextBottom } = workspaceDockSizesForParent(
+          preferredInspectorWidthRef.current,
+          preferredLeftDockWidthRef.current,
+          bottomLayersHeightRatioRef.current,
+          parentSize.width,
+          parentSize.height
+        )
         inspectorWidthRef.current = nextInspector
-        preferredInspectorWidthRef.current = nextInspector
         leftDockWidthRef.current = nextLeft
-        preferredLeftDockWidthRef.current = nextLeft
         bottomLayersHeightRef.current = nextBottom
         preferredBottomLayersHeightRef.current = nextBottom
         setInspectorWidth(nextInspector)
@@ -1433,6 +1436,8 @@ export default function App() {
       if (runCommand('toggleTimeline', toggleTimelineVisibility)) return
       if (runCommand('toolRailLeft', () => updateToolRailSide('left'))) return
       if (runCommand('toolRailRight', () => updateToolRailSide('right'))) return
+      if (runCommand('toolRailTop', () => updateToolRailSide('top'))) return
+      if (runCommand('toolRailBottom', () => updateToolRailSide('bottom'))) return
       if (runCommand('saveWorkspaceLayout', () => { setWorkspaceSaveName(''); setWorkspaceSaveOpen(true) })) return
       if (runCommand('openWorkspaceManager', () => { void loadSavedWorkspaces(); setWorkspaceManagerOpen(true) })) return
       if (runCommand('openComponentLibrary', () => setComponentLibraryOpen(true))) return
@@ -1707,20 +1712,33 @@ export default function App() {
   }, [inspectorWidth])
   const closePreviewPanel = useCallback((): void => updatePanelVisibility('preview', false), [updatePanelVisibility])
 
-  const editorColumns = [
+  const editorAreaColumns = [
     ...(toolRailSide === 'left' ? ['var(--tool-rail-column-size)'] : []),
     ...(hasLeftDock ? [`${leftDockWidth}px`, '6px'] : []),
     'minmax(0, 1fr)',
     ...(hasRightDock ? ['6px', `${inspectorWidth}px`] : []),
     ...(toolRailSide === 'right' ? ['var(--tool-rail-column-size)'] : [])
-  ].join(' ')
-  const editorAreas = [
+  ]
+  const editorAreaNames = [
     ...(toolRailSide === 'left' ? ['toolrail'] : []),
     ...(hasLeftDock ? ['leftdock', 'leftresize'] : []),
     'work',
     ...(hasRightDock ? ['rightresize', 'rightdock'] : []),
     ...(toolRailSide === 'right' ? ['toolrail'] : [])
-  ].join(' ')
+  ]
+  const editorColumns = editorAreaColumns.join(' ')
+  const editorMainAreaRow = editorAreaNames.join(' ')
+  const editorToolRailAreaRow = editorAreaNames.map(() => 'toolrail').join(' ')
+  const editorRows = toolRailSide === 'top'
+    ? 'var(--tool-rail-row-size) minmax(0, 1fr)'
+    : toolRailSide === 'bottom'
+      ? 'minmax(0, 1fr) var(--tool-rail-row-size)'
+      : 'minmax(0, 1fr)'
+  const editorAreas = toolRailSide === 'top'
+    ? `"${editorToolRailAreaRow}" "${editorMainAreaRow}"`
+    : toolRailSide === 'bottom'
+      ? `"${editorMainAreaRow}" "${editorToolRailAreaRow}"`
+      : `"${editorMainAreaRow}"`
 
   const editorOnly = advancedMode !== null && Boolean(session) && !homeOpen
   const documentPaneDockDebugTargetName = documentPaneDockDebug?.targetDocumentId
@@ -1736,6 +1754,7 @@ export default function App() {
           ? t('app.documentDockDebug.bottom')
           : t('app.documentDockDebug.none')
   return <main className={`app-shell ${session?.view.showPixelGrid ? 'pixel-grid-on' : ''} ${editorOnly ? 'advanced-mode' : ''} ${advancedMode === 'tool-options' ? 'advanced-tool-options' : ''} ${advancedMode === 'canvas-only' ? 'advanced-canvas-only' : ''}`}>
+    <AppWindowTitleBar />
     <BrushDynamicsTelemetryCapture documentId={session?.document.id ?? null} />
     {saveAsOpen && session && <SaveAsDialog initialName={session.document.name.replace(/\.(moonsprite|aseprite|ase|png|jpe?g|webp)$/i, '') || 'MoonSprite-project'} initialFormat={saveAsFormatForPreference(readStoredString(SAVE_FORMAT_PREFERENCE_KEY))} onClose={() => setSaveAsOpen(false)} onSave={(options) => workspace.saveActive(true, options)} />}
     <AppMenuBar
@@ -1787,6 +1806,7 @@ export default function App() {
     {session && !homeOpen ? <EditorWorkspaceShell
       editorOnly={editorOnly}
       editorColumns={editorColumns}
+      editorRows={editorRows}
       editorAreas={editorAreas}
       toolRailSide={toolRailSide}
       toolRailDockPreview={toolRailDockPreview}
@@ -1837,7 +1857,7 @@ export default function App() {
     <SaveProgressOverlay />
     {documentPaneDockDebug ? <div className="advanced-mode-notice" role="status" aria-live="polite"><strong>{documentPaneDockDebugTargetName ? t('app.documentDockDebug.target', { name: documentPaneDockDebugTargetName, direction: documentPaneDockDebugDirection }) : t('app.documentDockDebug.noTarget', { direction: documentPaneDockDebugDirection })}</strong><small>{t(documentPaneDockDebug.magnetVisible ? 'app.documentDockDebug.magnetVisible' : 'app.documentDockDebug.magnetHidden')}</small></div> : advancedModeNotice && <div className="advanced-mode-notice" role="status" aria-live="polite"><strong>{advancedModeNotice}</strong><small>{advancedModeNotice === t('app.advanced.enabled') ? `${advancedModeNoticeShortcut} ${t('app.advanced.restore')}` : advancedModeNoticeShortcut}</small></div>}
     {workspace.saveProgress && createPortal(<div className={`modal-backdrop save-progress-backdrop ${workspace.saveProgress.requiresConfirmation ? 'is-complete' : 'is-running'}`} role="presentation"><ModalShell storageKey="save-progress" defaultWidth={280} defaultHeight={workspace.saveProgress.requiresConfirmation ? 190 : 142} fitContentKey={workspace.saveProgress.requiresConfirmation ? 'complete' : 'progress'} minWidth={250} minHeight={workspace.saveProgress.requiresConfirmation ? 176 : 132} className="save-progress-modal" role="dialog" aria-modal="true" aria-live="polite" aria-labelledby="save-progress-title"><header><div className="save-progress-heading"><span className="save-progress-icon" aria-hidden="true">{workspace.saveProgress.requiresConfirmation ? <CheckCircle2 size={20} /> : <span className="save-progress-animation" />}</span><div><span className="eyebrow">FILE OPERATION</span><h2 id="save-progress-title">{workspace.saveProgress.title}</h2></div></div>{!workspace.saveProgress.requiresConfirmation && <button type="button" className="icon-button" aria-label={t('app.progress.close', { title: workspace.saveProgress.title })} onClick={() => workspace.dismissSaveProgress()}><PixelUtilityIcon kind="close" /></button>}</header><div className="save-progress-body"><strong>{workspace.saveProgress.label}</strong><div className={`save-progress-track ${workspace.saveProgress.value >= 100 ? 'is-full' : ''}`} aria-label={t('app.progress.aria', { title: workspace.saveProgress.title, value: workspace.saveProgress.value })}><i style={{ width: `${workspace.saveProgress.value}%` }} /></div><div className="save-progress-meta"><span>{t(workspace.saveProgress.requiresConfirmation ? 'app.progress.complete' : 'app.progress.processing')}</span><small>{workspace.saveProgress.value}%</small></div></div>{workspace.saveProgress.requiresConfirmation && <footer><button type="button" className="primary-button" onClick={() => workspace.dismissSaveProgress()}>{t('timelapse.confirmExport')}</button></footer>}</ModalShell></div>, document.body)}
-    {workspace.dialog && <div className="modal-backdrop dialog-backdrop" role="presentation"><ModalShell storageKey="confirm-content-v2" defaultWidth={420} defaultHeight={180} minHeight={0} resizable={false} className="confirm-modal" role="alertdialog" aria-modal="true" aria-labelledby="app-dialog-title"><DialogHeader eyebrow="MOONSPRITE" title={workspace.dialog.title} titleId="app-dialog-title" /><div className="confirm-content"><strong>{workspace.dialog.message}</strong>{workspace.dialog.detail && <p>{workspace.dialog.detail}</p>}</div><footer>{workspace.dialog.choices.map((choice) => <button key={choice.id} className={choice.tone === 'primary' ? 'primary-button' : choice.tone === 'danger' ? 'danger-button' : 'quiet-button'} onClick={() => workspace.resolveDialog(choice.id)}>{choice.label}</button>)}</footer></ModalShell></div>}
+    {workspace.dialog && <div className="modal-backdrop dialog-backdrop" role="presentation"><ModalShell storageKey="confirm-content-v2" fitContentKey={`${workspace.dialog.title}:${workspace.dialog.choices.length}`} defaultWidth={420} defaultHeight={180} minHeight={0} resizable={false} className="confirm-modal" role="alertdialog" aria-modal="true" aria-labelledby="app-dialog-title"><DialogHeader eyebrow="MOONSPRITE" title={workspace.dialog.title} titleId="app-dialog-title" /><div className="confirm-content"><strong>{workspace.dialog.message}</strong>{workspace.dialog.detail && <p>{workspace.dialog.detail}</p>}</div><footer>{workspace.dialog.choices.map((choice) => <button key={choice.id} className={choice.tone === 'primary' ? 'primary-button' : choice.tone === 'danger' ? 'danger-button' : 'quiet-button'} onClick={() => workspace.resolveDialog(choice.id)}>{choice.label}</button>)}</footer></ModalShell></div>}
     {exportOpen && <div className="modal-backdrop" role="presentation" onPointerDown={(event) => { if (event.target === event.currentTarget) setExportOpen(false) }}>
       <ModalShell as="form" storageKey="export-layout-v2" fitContentKey={`${exportForm.format}:${exportForm.gifFrameRange ?? 'all'}`} defaultWidth={520} defaultHeight={520} minWidth={420} minHeight={360} maxWidth={640} maxHeight={760} className="export-modal" onSubmit={(event) => {
         event.preventDefault()

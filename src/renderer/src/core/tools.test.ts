@@ -500,6 +500,35 @@ describe('pixel tools', () => {
     expect(readLayerColorAt(document, layer, 511, 511)).toEqual(red)
   })
 
+  it('keeps a large enclosed bucket fill dirty region exact across undo and redo', () => {
+    const document = createDocument('large enclosed fill', 514, 514, 'rgba')
+    const layer = getActiveLayer(document)
+    for (let x = 0; x < 514; x += 1) {
+      writeLayerColor(document, layer, x, red)
+      writeLayerColor(document, layer, 513 * layer.width + x, red)
+    }
+    for (let y = 1; y < 513; y += 1) {
+      writeLayerColor(document, layer, y * layer.width, red)
+      writeLayerColor(document, layer, y * layer.width + 513, red)
+    }
+
+    const edit = floodFill(document, layer, 257, 257, blue)!
+
+    expect(edit.before.size).toBe(0)
+    expect(edit.runs).toHaveLength(512)
+    expect(edit.dirtyRect).toEqual({ x: 1, y: 1, width: 512, height: 512 })
+    const entry = commitPixelEdit(document, edit, 'large enclosed fill')!
+    expect(entry.invalidation).toEqual({
+      kind: 'region',
+      frameId: document.animation?.activeFrameId,
+      rect: { x: 1, y: 1, width: 512, height: 512 }
+    })
+    entry.undo()
+    expect(readLayerColorAt(document, layer, 257, 257).a).toBe(0)
+    entry.redo()
+    expect(readLayerColorAt(document, layer, 257, 257)).toEqual(blue)
+  })
+
   it('fills a selected region using canvas coordinates on an offset layer', () => {
     const document = createDocument('offset fill', 6, 4, 'rgba')
     const layer = getActiveLayer(document)
@@ -660,6 +689,66 @@ describe('pixel tools', () => {
     expect(readLayerColorAt(document, layer, 0, 0)).toEqual(blue)
     expect(readLayerColorAt(document, layer, 2, 1)).toEqual(blue)
     expect(readLayerColorAt(document, layer, 1, 0).a).toBe(0)
+  })
+
+  it('stores large masked selection fills as dense history without changing unselected pixels', () => {
+    const document = createDocument('dense foreground fill', 512, 512, 'rgba')
+    const layer = getActiveLayer(document)
+    layer.pixels.fill(255)
+    const mask = new Uint8Array(512 * 512).fill(1)
+    mask[1] = 0
+    const selection = { x: 0, y: 0, width: 512, height: 512, mask }
+
+    const edit = fillSelectionOrCanvas(document, layer, blue, selection)!
+
+    expect(edit.before.size).toBe(0)
+    expect(edit.denseRegion?.count).toBe(512 * 512 - 1)
+    expect(edit.dirtyRect).toEqual({ x: 0, y: 0, width: 512, height: 512 })
+    expect(readLayerColorAt(document, layer, 0, 0)).toEqual(blue)
+    expect(readLayerColorAt(document, layer, 1, 0)).toEqual({ r: 255, g: 255, b: 255, a: 255 })
+    const entry = commitPixelEdit(document, edit, 'dense selection fill')!
+    entry.undo()
+    expect(readLayerColorAt(document, layer, 0, 0)).toEqual({ r: 255, g: 255, b: 255, a: 255 })
+    expect(readLayerColorAt(document, layer, 1, 0)).toEqual({ r: 255, g: 255, b: 255, a: 255 })
+    entry.redo()
+    expect(readLayerColorAt(document, layer, 0, 0)).toEqual(blue)
+    expect(readLayerColorAt(document, layer, 1, 0)).toEqual({ r: 255, g: 255, b: 255, a: 255 })
+  })
+
+  it('keeps sparse large selection fills on the compact point path', () => {
+    const document = createDocument('sparse foreground fill', 512, 512, 'rgba')
+    const layer = getActiveLayer(document)
+    const mask = new Uint8Array(512 * 512)
+    mask[0] = 1
+    mask[mask.length - 1] = 1
+
+    const edit = fillSelectionOrCanvas(document, layer, blue, { x: 0, y: 0, width: 512, height: 512, mask })!
+
+    expect(edit.denseRegion).toBeUndefined()
+    expect(edit.before.size).toBe(2)
+    expect(edit.dirtyRect).toEqual({ x: 0, y: 0, width: 512, height: 512 })
+  })
+
+  it('preserves indexed and grayscale fill semantics on the dense path', () => {
+    const indexedDocument = createDocument('dense indexed fill', 512, 512, 'indexed')
+    const indexedLayer = getActiveLayer(indexedDocument)
+    const indexedEdit = fillSelectionOrCanvas(indexedDocument, indexedLayer, blue)!
+    expect(indexedEdit.denseRegion?.count).toBe(512 * 512)
+    expect(readLayerColorAt(indexedDocument, indexedLayer, 511, 511)).toEqual(blue)
+    const indexedEntry = commitPixelEdit(indexedDocument, indexedEdit, 'dense indexed fill')!
+    indexedEntry.undo()
+    expect(readLayerColorAt(indexedDocument, indexedLayer, 511, 511).a).toBe(0)
+    indexedEntry.redo()
+    expect(readLayerColorAt(indexedDocument, indexedLayer, 511, 511)).toEqual(blue)
+
+    const grayscaleDocument = createDocument('dense grayscale fill', 512, 512, 'grayscale')
+    const grayscaleLayer = getActiveLayer(grayscaleDocument)
+    const grayscaleEdit = fillSelectionOrCanvas(grayscaleDocument, grayscaleLayer, blue)!
+    expect(grayscaleEdit.denseRegion?.count).toBe(512 * 512)
+    const grayscale = readLayerColorAt(grayscaleDocument, grayscaleLayer, 511, 511)
+    expect(grayscale.r).toBe(grayscale.g)
+    expect(grayscale.g).toBe(grayscale.b)
+    expect(grayscale.a).toBe(255)
   })
 
   it('fills an indexed canvas without changing its color mode', () => {

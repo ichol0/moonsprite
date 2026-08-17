@@ -119,6 +119,8 @@ describe('shortcut persistence boundary', () => {
     expect(DEFAULT_SHORTCUTS.toggleCustomGrid).toBe("Ctrl+'")
     expect(DEFAULT_SHORTCUTS.toggleGrid).toBe("Ctrl+Shift+'")
     expect(DEFAULT_SHORTCUTS.toolRailLeft).toBe('')
+    expect(DEFAULT_SHORTCUTS.toolRailTop).toBe('')
+    expect(DEFAULT_SHORTCUTS.toolRailBottom).toBe('')
     expect(DEFAULT_SHORTCUTS.swapForegroundBackground).toBe('X')
     expect(DEFAULT_SHORTCUTS.addForegroundToPalette).toBe('Alt+S')
     expect(SHORTCUT_GROUPS.color).toContain('addForegroundToPalette')

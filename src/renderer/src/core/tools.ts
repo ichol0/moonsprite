@@ -1149,6 +1149,11 @@ export function rotatedShapePixelPoints(
 
 const insideSelection = (selection: SelectionMask, x: number, y: number): boolean => selectionContains(selection, x, y)
 const COMPACT_FILL_MIN_PIXELS = 512 * 512
+const DENSE_SELECTION_FILL_MIN_PIXELS = 512 * 512
+
+export interface PixelOperationProfiler {
+  record(stage: string, duration: number, detail?: Record<string, number | string | boolean>): void
+}
 
 const floodFillSolidRuns = (document: SpriteDocument, layer: RasterLayer, startX: number, startY: number, target: number, next: number, selection: SelectionMask | null | undefined, contiguous: boolean): PixelEdit | null => {
   const edit = beginPixelEdit(layer.id)
@@ -1417,11 +1422,18 @@ export function floodFill(document: SpriteDocument, layer: RasterLayer, startX: 
   return edit.before.size > 0 ? edit : null
 }
 
-export function floodFillSymmetric(document: SpriteDocument, layer: RasterLayer, startX: number, startY: number, color: RgbaColor, selection: SelectionMask | null | undefined, contiguous: boolean, imageBrush: ImageBrush | null, brushSize: number, imageBrushSettings: ImageBrushSettings | undefined, brushTexture: BrushTexture, brushTextureScale: number, proceduralAntialiasStrength: number, brushPaintMode: BrushPaintMode, symmetryAxes?: SymmetryAxes, symmetryCenter?: SymmetryCenter, tolerance = 0): PixelEdit | null {
+export function floodFillSymmetric(document: SpriteDocument, layer: RasterLayer, startX: number, startY: number, color: RgbaColor, selection: SelectionMask | null | undefined, contiguous: boolean, imageBrush: ImageBrush | null, brushSize: number, imageBrushSettings: ImageBrushSettings | undefined, brushTexture: BrushTexture, brushTextureScale: number, proceduralAntialiasStrength: number, brushPaintMode: BrushPaintMode, symmetryAxes?: SymmetryAxes, symmetryCenter?: SymmetryCenter, tolerance = 0, profiler?: PixelOperationProfiler): PixelEdit | null {
   const merged = beginPixelEdit(layer.id)
   for (const seed of symmetryPoints({ x: startX, y: startY }, document.width, document.height, symmetryAxes, symmetryCenter)) {
+    const fillStartedAt = profiler ? performance.now() : 0
     const edit = floodFill(document, layer, seed.x, seed.y, color, selection, contiguous, imageBrush, brushSize, imageBrushSettings, brushTexture, brushTextureScale, proceduralAntialiasStrength, brushPaintMode, tolerance)
+    profiler?.record('bucket.flood-fill', performance.now() - fillStartedAt, {
+      points: edit?.before.size ?? 0,
+      runs: edit?.runs?.length ?? 0,
+      dirtyPixels: edit?.dirtyRect ? edit.dirtyRect.width * edit.dirtyRect.height : 0
+    })
     if (!edit) continue
+    const mergeStartedAt = profiler ? performance.now() : 0
     merged.frameId ??= edit.frameId
     if (edit.runs?.length) (merged.runs ??= []).push(...edit.runs)
     for (const [index, value] of edit.before) if (!merged.before.has(index)) merged.before.set(index, value)
@@ -1436,6 +1448,10 @@ export function floodFillSymmetric(document: SpriteDocument, layer: RasterLayer,
         merged.dirtyRect = { x: left, y: top, width: right - left, height: bottom - top }
       }
     }
+    profiler?.record('bucket.pixel-edit-merge', performance.now() - mergeStartedAt, {
+      points: merged.before.size,
+      runs: merged.runs?.length ?? 0
+    })
   }
   return merged.before.size > 0 || merged.runs?.length ? merged : null
 }
@@ -1462,7 +1478,68 @@ export function fillSelectionOrCanvas(document: SpriteDocument, layer: RasterLay
   if (!bounds) return null
   const edit = beginPixelEdit(layer.id)
   if (!ensureLayerCoversEditRect(document, layer, edit, bounds, selection ? EDIT_EXPANSION_PADDING : 0)) return null
-  const value = layer.format === 'rgba' ? packColor(color) : paletteColorIdForCanvas(document, color)
+  const value = normalizeLayerPackedValue(document, layer, layer.format === 'rgba' ? packColor(color) : paletteColorIdForCanvas(document, color))
+  const denseArea = bounds.width * bounds.height
+  let useDenseEdit = denseArea >= DENSE_SELECTION_FILL_MIN_PIXELS
+  if (useDenseEdit && selection?.mask) {
+    let selectedCount = 0
+    for (let y = bounds.y; y < bounds.y + bounds.height; y += 1) {
+      for (let x = bounds.x; x < bounds.x + bounds.width; x += 1) {
+        if (selectionContains(selection, x, y)) selectedCount += 1
+      }
+    }
+    useDenseEdit = selectedCount * 3 >= denseArea
+  }
+  if (useDenseEdit) {
+    const before = new Uint32Array(bounds.width * bounds.height)
+    const after = new Uint32Array(bounds.width * bounds.height)
+    const changed = new Uint8Array(bounds.width * bounds.height)
+    const storageOrigin = getLayerStorageOrigin(layer)
+    const rgbaWords = layer.format === 'rgba' && layer.pixels.byteOffset % 4 === 0
+      ? new Uint32Array(layer.pixels.buffer as ArrayBuffer, layer.pixels.byteOffset, layer.pixels.byteLength / 4)
+      : null
+    let count = 0
+    let dirtyLeft = bounds.x + bounds.width
+    let dirtyTop = bounds.y + bounds.height
+    let dirtyRight = bounds.x
+    let dirtyBottom = bounds.y
+    preparePixelEdit(document, edit)
+    for (let y = bounds.y; y < bounds.y + bounds.height; y += 1) {
+      for (let x = bounds.x; x < bounds.x + bounds.width; x += 1) {
+        const denseOffset = (y - bounds.y) * bounds.width + x - bounds.x
+        const index = layerIndexAt(layer, x, y)
+        if (index === null) continue
+        const current = rgbaWords ? rgbaWords[index] : readLayerPacked(document, layer, index)
+        before[denseOffset] = current
+        after[denseOffset] = current
+        if (selection && !selectionContains(selection, x, y)) continue
+        if (current === value) continue
+        if (count === 0) markLayerContentChanged(layer)
+        after[denseOffset] = value
+        changed[denseOffset] = 1
+        count += 1
+        dirtyLeft = Math.min(dirtyLeft, x)
+        dirtyTop = Math.min(dirtyTop, y)
+        dirtyRight = Math.max(dirtyRight, x + 1)
+        dirtyBottom = Math.max(dirtyBottom, y + 1)
+        if (rgbaWords) rgbaWords[index] = value
+        else writeLayerPacked(document, layer, index, value)
+      }
+    }
+    if (count === 0) return null
+    edit.denseRegion = {
+      x: bounds.x - layer.offsetX + storageOrigin.x,
+      y: bounds.y - layer.offsetY + storageOrigin.y,
+      width: bounds.width,
+      height: bounds.height,
+      before,
+      after,
+      changed,
+      count
+    }
+    edit.dirtyRect = { x: dirtyLeft, y: dirtyTop, width: dirtyRight - dirtyLeft, height: dirtyBottom - dirtyTop }
+    return edit
+  }
   for (let y = bounds.y; y < bounds.y + bounds.height; y += 1) {
     for (let x = bounds.x; x < bounds.x + bounds.width; x += 1) {
       if (selection && !selectionContains(selection, x, y)) continue

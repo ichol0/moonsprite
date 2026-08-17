@@ -13,6 +13,14 @@
 
 ## 2026-08-16 DEV.5 自动性能审计
 
+审计编号：`2026-08-16_15-21-05-056`。性能等级为 P4，结果为“用户批准不改代码”。候选相对历史基线已改善18.72%，且与本次单实例和Worker兼容修复无关；按用户要求先打包验证，不扩大动画核心改动范围。
+
+候选热点：1024x1024 complex-playback 主绘制 p95；初始值 106.800，测量噪声 1.40%。
+本次没有执行代码复测。
+执行套件：canvas-standard、canvas-profile、canvas-complex、canvas-large-800、canvas-large-2048、canvas-large-4000、canvas-large-sentinel、selection、document-composite、project-format、bundle、desktop。
+
+## 2026-08-16 DEV.5 自动性能审计
+
 审计编号：`2026-08-16_13-51-24-452`。性能等级为 P4，结果为“用户批准不改代码”。候选为大画布油漆桶慢帧比例，测量噪声 57.86%，无法确认稳定退化；像素填充算法属于高风险关键路径，用户明确批准 DEV.5 本次不改代码直接发布。
 
 候选热点：2048x2048 large-bucket-fill >25 ms 比例；初始值 3.390，测量噪声 57.86%。

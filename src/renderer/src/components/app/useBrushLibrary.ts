@@ -57,7 +57,7 @@ export function useBrushLibrary(session: DocumentSession | null) {
     const loaded = await Promise.all(listing.brushes.map(async (stored): Promise<LoadedBrush | null> => {
       try {
         const bytes = await window.moonSprite.readBinary(stored.filePath)
-        return { stored, brush: decodeImageBrush(stored, bytes) }
+        return { stored, brush: await decodeImageBrush(stored, bytes) }
       } catch (error) {
         useWorkspace.getState().setMessage(error instanceof Error ? t('brush.loadError', { name: stored.name, error: error.message }) : t('brush.loadErrorSimple', { name: stored.name }))
         return null
@@ -85,7 +85,7 @@ export function useBrushLibrary(session: DocumentSession | null) {
     try {
       const bytes = encodeBrushPng(session.brushImage)
       const stored = await window.moonSprite.saveBrush(name, bytes, session.brushImage.intrinsicSize, session.brushImage.sourceX, session.brushImage.sourceY)
-      workspace.setBrushImage(decodeImageBrush(stored, bytes))
+      workspace.setBrushImage(await decodeImageBrush(stored, bytes))
       setBrushSaveName(t('brush.defaultName'))
       await loadLocalBrushes()
       workspace.setMessage(t('brush.saved', { name }))

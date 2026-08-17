@@ -6,6 +6,7 @@ import { animationMaskAt, animationMaskSlotAt, captureDocumentImageResizeSnapsho
 import { decodeProject, encodeProject } from '@/core/project-format'
 import { activateAnimationFrame, addBlankAnimationFrame, animationCelContentSelection, animationCelHasContent, animationCelKey, animationGroupMaskAt, animationLayerAtFrame, cloneAnimationCel, cloneAnimationCelSurface, cloneAnimationCelsForLayer, cloneAnimationGroupMask, cloneDocumentForAnimationFrame, connectAnimationCels, deleteAnimationFrame, disconnectAnimationCels, duplicateAnimationFrame, ensureAnimationDocument, mapAnimationCelBlock, nextAnimationFrameId, parseAnimationCelKey, refreshActiveAnimationFrame, removeAnimationCelsForLayers, resolveAnimationCel, resizeAnimationCelsAt, restoreAnimationCels, setAnimationFrameDuration, setAnimationLoop, syncActiveAnimationFrame, syncActiveAnimationLayer } from '@/core/animation'
 import { flushViewPreview } from '@/core/view-preview-lifecycle'
+import { consumePendingCanvasGestureHistory } from '@/core/canvas-input'
 import { directSourceImageSaveTarget, fileNameFromPath } from '@/core/document-files'
 import { openProgress } from '@/core/open-progress'
 import { saveProgress } from '@/core/save-progress'
@@ -1957,13 +1958,30 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
         set({ message: tr('workspace.text.convertToEditPixels') })
         return
       }
+      const operationProbe = window.__moonSpriteCanvasProbe
+      const historyStartedAt = operationProbe?.recordOperationStage ? performance.now() : 0
       const entry = commitPixelEdit(session.document, edit, label)
+      operationProbe?.recordOperationStage?.('commit.history-record', performance.now() - historyStartedAt, {
+        points: edit.before.size + (edit.points?.count ?? 0),
+        runs: edit.runs?.length ?? 0,
+        densePixels: edit.denseRegion?.count ?? 0
+      })
       if (entry) {
         committed = entry
+        const historyPushStartedAt = operationProbe?.recordOperationStage ? performance.now() : 0
         session.history.push(entry)
+        operationProbe?.recordOperationStage?.('commit.history-push', performance.now() - historyPushStartedAt)
+        const animationSyncStartedAt = operationProbe?.recordOperationStage ? performance.now() : 0
         syncActiveAnimationLayer(session.document, edit.layerId)
+        operationProbe?.recordOperationStage?.('commit.animation-sync', performance.now() - animationSyncStartedAt)
+        const invalidationStartedAt = operationProbe?.recordOperationStage ? performance.now() : 0
         touch(session, true, entry.invalidation)
+        operationProbe?.recordOperationStage?.('commit.cache-invalidation', performance.now() - invalidationStartedAt, {
+          dirtyPixels: edit.dirtyRect ? edit.dirtyRect.width * edit.dirtyRect.height : 0
+        })
+        const documentRecordStartedAt = operationProbe?.recordOperationStage ? performance.now() : 0
         recordDocumentOperation(session, activity)
+        operationProbe?.recordOperationStage?.('commit.document-record', performance.now() - documentRecordStartedAt)
       }
     }, false)
     return committed
@@ -2040,6 +2058,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     let session = activeSession(get())
     if (session) flushViewPreview(session.document.id)
     session = activeSession(get())
+    if (session && consumePendingCanvasGestureHistory(session.document.id, 'undo')) return
     if (session?.pendingPaste) { get().cancelFloatingPaste(); return }
     if (session?.textBoxTransform) get().cancelTextBoxTransform()
     if (!session?.history.canUndo) return
@@ -2067,6 +2086,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     let session = activeSession(get())
     if (session) flushViewPreview(session.document.id)
     session = activeSession(get())
+    if (session && consumePendingCanvasGestureHistory(session.document.id, 'redo')) return
     if (!session?.history.canRedo) return
     get().mutateActive((session) => {
       const view = { ...session.view }
@@ -4623,9 +4643,19 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     const layer = activePaintLayer(session)
     if (!isLayerEffectivelyVisible(session.document, layer)) { set({ message: tr('workspace.fill.invisible') }); return }
     if (isLayerEffectivelyLocked(session.document, layer)) { set({ message: tr('workspace.fill.locked') }); return }
+    const operationProbe = window.__moonSpriteCanvasProbe
+    const editStartedAt = operationProbe?.recordOperationStage ? performance.now() : 0
     const edit = fillSelectionOrCanvas(session.document, layer, session.primaryColor, session.selection)
+    operationProbe?.recordOperationStage?.('selection-fill.build-edit', performance.now() - editStartedAt, {
+      points: edit?.before.size ?? 0,
+      runs: edit?.runs?.length ?? 0,
+      densePixels: edit?.denseRegion?.count ?? 0,
+      dirtyPixels: edit?.dirtyRect ? edit.dirtyRect.width * edit.dirtyRect.height : 0
+    })
     if (!edit) { set({ message: tr('workspace.fill.empty') }); return }
+    const commitStartedAt = operationProbe?.recordOperationStage ? performance.now() : 0
     get().commitPixelEdit(edit, session.selection ? tr('workspace.history.fillSelectionForeground') : tr('workspace.history.fillCanvasForeground'))
+    operationProbe?.recordOperationStage?.('selection-fill.commit-total', performance.now() - commitStartedAt)
   },
 
   outlineActiveSelection(color, thickness, position, directions, kernel = 'round', previewEnabled = true) {

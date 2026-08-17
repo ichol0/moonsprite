@@ -54,6 +54,17 @@ function summarize(label, canvasSize, samples) {
     const durations = samples.reactCommits.filter((sample) => sample.region === region).map((sample) => sample.duration)
     return [region, { count: durations.length, p95: percentile(durations, 0.95), longest: Math.max(0, ...durations) }]
   }))
+  const operationByStage = Object.fromEntries([...new Set(samples.operationStages.map((sample) => sample.stage))].map((stage) => {
+    const stageSamples = samples.operationStages.filter((sample) => sample.stage === stage)
+    const durations = stageSamples.map((sample) => sample.duration)
+    return [stage, {
+      count: durations.length,
+      p50: percentile(durations, 0.5),
+      p95: percentile(durations, 0.95),
+      longest: Math.max(0, ...durations),
+      detail: stageSamples.at(-1)?.detail ?? {}
+    }]
+  }))
   return {
     canvasSize,
     scenario: label,
@@ -76,13 +87,14 @@ function summarize(label, canvasSize, samples) {
     reactCommitCount: rootReactCommits.length,
     reactCommitP95: percentile(rootReactCommits, 0.95),
     longestReactCommit: Math.max(0, ...rootReactCommits),
-    reactByRegion
+    reactByRegion,
+    operationByStage
   }
 }
 
 async function startFrameProbe(page) {
   await page.evaluate(() => {
-    const samples = { frames: [], longTasks: [], draws: [], inputs: [], reactCommits: [] }
+    const samples = { frames: [], longTasks: [], draws: [], inputs: [], reactCommits: [], operationStages: [] }
     let lastFrame = 0
     let running = true
     let observer = null
@@ -112,6 +124,9 @@ async function startFrameProbe(page) {
       },
       recordReactCommit(region, duration, phase) {
         samples.reactCommits.push({ region, duration, phase })
+      },
+      recordOperationStage(stage, duration, detail = {}) {
+        samples.operationStages.push({ stage, duration, detail })
       },
       stop() {
         running = false
@@ -327,6 +342,18 @@ async function benchmarkScenarioPage(page, size, scenario) {
     if (initialView) await prepareToolScenario(page, initialView, 'fill', 'bucket')
     results.push(await runScenario(page, size, scenario, async () => {
       await page.mouse.click(center.x, center.y, { button: 'left' })
+    }))
+  }
+
+  if (actionKind === 'selection-fill') {
+    if (initialView) await resetSimpleScenario(page, initialView)
+    await page.evaluate(() => {
+      const harness = window.__moonSpritePerformanceHarness
+      if (!harness) throw new Error('Performance harness is unavailable.')
+      harness.prepareCenteredSelection(1024)
+    })
+    results.push(await runScenario(page, size, scenario, async () => {
+      await page.keyboard.press('F')
     }))
   }
 

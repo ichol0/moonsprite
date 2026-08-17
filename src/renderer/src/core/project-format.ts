@@ -5,7 +5,7 @@ import { createDefaultAnimationTimeline, ensureAnimationDocument, normalizeAnima
 import { normalizeOutlineSettings } from './outline-settings'
 import { normalizeProjectDisplaySettings, normalizeProjectStatistics, normalizeTimelapseSettings } from './project-metadata'
 import { MAX_TIMELAPSE_SNAPSHOTS } from './timelapse'
-import { encodePng } from './png'
+import { encodePng } from './png-encode'
 import { translateCurrent as tr } from './localization'
 import { normalizePaletteColumns, normalizePaletteSlots } from './palette-layout'
 import { normalizeProjectLayerPanelState } from './layer-panel-state'

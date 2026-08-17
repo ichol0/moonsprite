@@ -6,6 +6,11 @@ import { transformedSelectionBounds, type SelectionShearTransform } from '@/core
 import { initialDocumentCompositePending, initialDocumentCompositeSurface, registerInitialDocumentCompositeSurface } from '@/core/initial-document-composite'
 import type { RasterContext2D } from './canvas-selection-renderer'
 
+const recordCanvasStage = (stage: string, startedAt: number, detail?: Record<string, number | string | boolean>): void => {
+  if (typeof window === 'undefined' || !window.__moonSpriteCanvasProbe?.recordOperationStage) return
+  window.__moonSpriteCanvasProbe.recordOperationStage(stage, performance.now() - startedAt, detail)
+}
+
 interface CompositeSurface {
   canvas: OffscreenCanvas
   revision: number
@@ -590,6 +595,7 @@ export class CanvasCompositeCache {
       this.remember(this.surfaces, key, surface)
       this.dirtyRects.delete(frameId)
     } else {
+      const invalidationStartedAt = window.__moonSpriteCanvasProbe?.recordOperationStage ? performance.now() : 0
       const visibleRect = visibleDocumentRect(document, fromX, fromY, toX, toY)
       const invalidRects = mergeOverlappingRects([
         ...(surface.pendingDirtyRects ?? []),
@@ -607,13 +613,21 @@ export class CanvasCompositeCache {
         pendingDirtyRects.push(...subtractRect(rect, visibleDirtyRect))
       }
       surface.pendingDirtyRects = pendingDirtyRects.length > 0 ? mergeOverlappingRects(pendingDirtyRects) : undefined
+      recordCanvasStage('canvas.cache-invalidation', invalidationStartedAt, {
+        dirtyRects: dirtyRects.length,
+        dirtyPixels: dirtyRects.reduce((sum, rect) => sum + rect.width * rect.height, 0)
+      })
       const surfaceContext = surface.canvas.getContext('2d')
       if (surfaceContext) for (const rect of mergeOverlappingRects(dirtyRects)) {
+        const compositeStartedAt = window.__moonSpriteCanvasProbe?.recordOperationStage ? performance.now() : 0
         const pixels = isolatedLayerMask
           ? renderLayerMaskRegion(isolatedLayerMask, rect.x, rect.y, rect.width, rect.height)
           : compositeRegion(document, rect.x, rect.y, rect.width, rect.height, this.compositeCache, contentRevision, rect)
         if (!isolatedLayerMask && view.relativeLuminance) applyRelativeLuminance(pixels)
+        recordCanvasStage('canvas.recompose', compositeStartedAt, { pixels: rect.width * rect.height })
+        const uploadStartedAt = window.__moonSpriteCanvasProbe?.recordOperationStage ? performance.now() : 0
         surfaceContext.putImageData(imageData(pixels, rect.width, rect.height), rect.x, rect.y)
+        recordCanvasStage('canvas.pixel-upload', uploadStartedAt, { pixels: rect.width * rect.height })
       }
       this.dirtyRects.delete(frameId)
     }
@@ -656,6 +670,7 @@ export class CanvasCompositeCache {
       this.remember(this.regions, key, region)
       this.dirtyRects.delete(frameId)
     } else if (region) {
+      const invalidationStartedAt = window.__moonSpriteCanvasProbe?.recordOperationStage ? performance.now() : 0
       const invalidationRect = invalidation?.kind === 'region' ? invalidation.rect : undefined
       const canApplyInvalidation = region.revision !== contentRevision
         && invalidation?.revision === contentRevision
@@ -677,13 +692,21 @@ export class CanvasCompositeCache {
       const dirtyRects = mergeOverlappingRects(this.dirtyRects.get(frameId) ?? [])
         .map((rect) => intersectRect(rect, visibleRect))
         .filter((rect): rect is SelectionRect => Boolean(rect))
+      recordCanvasStage('canvas.cache-invalidation', invalidationStartedAt, {
+        dirtyRects: dirtyRects.length,
+        dirtyPixels: dirtyRects.reduce((sum, rect) => sum + rect.width * rect.height, 0)
+      })
       const regionContext = region.canvas.getContext('2d')
       if (regionContext) for (const rect of dirtyRects) {
+        const compositeStartedAt = window.__moonSpriteCanvasProbe?.recordOperationStage ? performance.now() : 0
         const pixels = isolatedLayerMask
           ? renderLayerMaskRegion(isolatedLayerMask, rect.x, rect.y, rect.width, rect.height)
           : compositeRegion(document, rect.x, rect.y, rect.width, rect.height, this.compositeCache, contentRevision, rect)
         if (!isolatedLayerMask && view.relativeLuminance) applyRelativeLuminance(pixels)
+        recordCanvasStage('canvas.recompose', compositeStartedAt, { pixels: rect.width * rect.height })
+        const uploadStartedAt = window.__moonSpriteCanvasProbe?.recordOperationStage ? performance.now() : 0
         regionContext.putImageData(imageData(pixels, rect.width, rect.height), rect.x - x, rect.y - y)
+        recordCanvasStage('canvas.pixel-upload', uploadStartedAt, { pixels: rect.width * rect.height })
       }
       this.dirtyRects.delete(frameId)
     }

@@ -169,7 +169,7 @@ export function parseRelativeLuminanceScope(value: string | null): RelativeLumin
 }
 
 export function parseZoomToolDragMode(value: string | null): ZoomToolDragMode {
-  return value === 'stepped' ? 'stepped' : 'smooth'
+  return value === 'smooth' ? 'smooth' : 'stepped'
 }
 
 export function parseWheelZoomMode(value: string | null): WheelZoomMode {
@@ -377,7 +377,7 @@ export const DEFAULT_EDITOR_PREFERENCES: EditorPreferences = {
   rotationIndicatorPosition: 'view',
   drawingBrushPreviewEnabled: true,
   relativeLuminanceScope: 'canvas',
-  zoomToolDragMode: 'smooth',
+  zoomToolDragMode: 'stepped',
   brushShiftLineEnabled: true,
   useLocalCursors: false,
   cursorScale: 1,

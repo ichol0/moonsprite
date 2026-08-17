@@ -73,10 +73,11 @@ describe('canvas preferences', () => {
     expect(parseRelativeLuminanceScope('unexpected')).toBe('canvas')
   })
 
-  it('defaults zoom-tool dragging to smooth and restores stepped zoom', () => {
-    expect(parseZoomToolDragMode(null)).toBe('smooth')
+  it('defaults zoom-tool dragging to percentage steps and restores smooth zoom', () => {
+    expect(parseZoomToolDragMode(null)).toBe('stepped')
+    expect(parseZoomToolDragMode('smooth')).toBe('smooth')
     expect(parseZoomToolDragMode('stepped')).toBe('stepped')
-    expect(parseZoomToolDragMode('unexpected')).toBe('smooth')
+    expect(parseZoomToolDragMode('unexpected')).toBe('stepped')
   })
 
   it('defaults wheel zoom to percentage steps and restores smooth zoom', () => {
@@ -154,6 +155,7 @@ describe('editor preferences persistence boundary', () => {
     expect(defaults.sliceOutlinesVisible).toBe(true)
     expect(defaults.wheelZoomEnabled).toBe(true)
     expect(defaults.wheelZoomMode).toBe('stepped')
+    expect(defaults.zoomToolDragMode).toBe('stepped')
     expect(defaults.lassoPreviewClosed).toBe(false)
     expect(defaults.eyedropperSwitchToPencil).toBe(false)
     expect(defaults.eyedropperMagnifierEnabled).toBe(true)

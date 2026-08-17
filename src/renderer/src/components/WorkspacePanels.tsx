@@ -9,7 +9,7 @@ import { PreviewPanel } from '@/components/panels/PreviewPanel'
 import { PixelUtilityIcon } from '@/components/PixelUtilityIcon'
 import type { DockDragProps } from '@/components/workspace-panel-types'
 import { readStoredString, removeStoredValue, saveFloatingPosition, writeStoredString } from '@/core/panel-preferences'
-import { COLOR_SQUARE_ANCHOR_STORAGE_KEY, COLOR_SQUARE_DOCK_STORAGE_KEY, DEFAULT_BOTTOM_WIDTHS, DEFAULT_INSPECTOR_ORDER, DEFAULT_INSPECTOR_SIZES, INSPECTOR_LAYOUT_STORAGE_KEY, MINIMUM_BOTTOM_WIDTHS, MINIMUM_INSPECTOR_SIZES, loadInspectorLayout, moveInspectorPanel, proportionalPanelFlex, type WorkspacePanelId } from '@/core/panel-layout'
+import { bottomPanelFlex, COLOR_SQUARE_ANCHOR_STORAGE_KEY, COLOR_SQUARE_DOCK_STORAGE_KEY, DEFAULT_BOTTOM_WIDTHS, DEFAULT_INSPECTOR_ORDER, DEFAULT_INSPECTOR_SIZES, INSPECTOR_LAYOUT_STORAGE_KEY, MINIMUM_BOTTOM_WIDTHS, MINIMUM_INSPECTOR_SIZES, loadInspectorLayout, moveInspectorPanel, proportionalPanelFlex, type WorkspacePanelId } from '@/core/panel-layout'
 import { FLOATING_PANEL_STORAGE_KEYS } from '@/core/workspace-layout-preferences'
 import { colorPanelRenderKey, layersPanelRenderKey, palettePanelRenderKey, previewPanelRenderKey } from '@/core/panel-render-keys'
 import { FloatingDockPreview, panelDockZoneAt } from './floating-panel'
@@ -423,11 +423,16 @@ export function InspectorPanels({ session, panelVisibility, onClosePreview, pane
   const renderDock = (dock: FixedPanelDock) => {
     const dockOrder = activeOrder.filter((id) => dockFor(id) === dock)
     const horizontal = dock === 'bottom'
+    const bottomFillId = horizontal
+      ? dockOrder.includes('layers')
+        ? 'layers'
+        : dockOrder.find((id) => id !== 'color' || colorSquareDock !== 'bottom') ?? dockOrder[0]
+      : undefined
     return <div className={horizontal ? 'bottom-panel-stack' : 'inspector-stack'} data-panel-dock-content={dock}>{dockOrder.map((id, index) => {
       const dropPreview = dockDropTarget?.kind === 'dock' && dockDropTarget.dock === dock && dockDropTarget.id === id ? dockDropTarget : null
       const nextId = dockOrder[index + 1]
       const squareLocked = id === 'color' && colorSquareDock === dock
-      return <Fragment key={id}><div className={`${horizontal ? 'bottom-panel-group' : 'inspector-panel-group'} ${draggingPanel === id ? 'dock-dragging' : ''} ${squareLocked && (horizontal || dockOrder.length > 1) ? 'square-locked' : ''}`} data-inspector-panel-id={id} style={horizontal ? { flex: squareLocked ? `0 0 ${bottomWeights[id]}px` : proportionalPanelFlex(bottomWeights[id]), minWidth: MINIMUM_BOTTOM_WIDTHS[id], '--locked-size': `${bottomWeights[id]}px` } as React.CSSProperties : { flex: squareLocked ? `0 0 ${verticalWeights[id]}px` : proportionalPanelFlex(verticalWeights[id]), minHeight: MINIMUM_INSPECTOR_SIZES[id] + (index < dockOrder.length - 1 ? 7 : 0), '--locked-size': `${verticalWeights[id]}px` } as React.CSSProperties}>
+      return <Fragment key={id}><div className={`${horizontal ? 'bottom-panel-group' : 'inspector-panel-group'} ${draggingPanel === id ? 'dock-dragging' : ''} ${squareLocked && (horizontal || dockOrder.length > 1) ? 'square-locked' : ''}`} data-inspector-panel-id={id} style={horizontal ? { flex: squareLocked ? `0 0 ${bottomWeights[id]}px` : bottomPanelFlex(bottomWeights[id], id === bottomFillId), minWidth: MINIMUM_BOTTOM_WIDTHS[id], '--locked-size': `${bottomWeights[id]}px` } as React.CSSProperties : { flex: squareLocked ? `0 0 ${verticalWeights[id]}px` : proportionalPanelFlex(verticalWeights[id]), minHeight: MINIMUM_INSPECTOR_SIZES[id] + (index < dockOrder.length - 1 ? 7 : 0), '--locked-size': `${verticalWeights[id]}px` } as React.CSSProperties}>
         <div className="inspector-panel-slot">{panelFor(id, true, dock)}</div>
         {!horizontal && index < dockOrder.length - 1 && <div className="panel-resizer" role="separator" aria-orientation="horizontal" aria-label={t('panel.resizeHeight', { panel: panelLabels[id] })} onPointerDown={(event) => {
           const measured = { ...verticalWeightsRef.current }

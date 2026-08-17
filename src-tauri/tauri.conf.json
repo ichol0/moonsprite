@@ -12,13 +12,12 @@
   "app": {
     "windows": [
       {
-        "title": "MoonSprite",
+        "title": "MoonSprite DEV.5",
         "width": 1440,
         "height": 900,
         "visible": true,
-        "minWidth": 1024,
-        "minHeight": 640,
         "resizable": true,
+        "decorations": false,
         "dragDropEnabled": true,
         "backgroundColor": "#0f1116"
       }

@@ -31,6 +31,7 @@ import cursorShearHorizontal from '@/assets/pixel-icons/cursor-selection-shear-h
 import cursorShearVertical from '@/assets/pixel-icons/cursor-selection-shear-vertical.png'
 import cursorShearNesw from '@/assets/pixel-icons/cursor-selection-shear-nesw.png'
 import cursorShearNwse from '@/assets/pixel-icons/cursor-selection-shear-nwse.png'
+import { normalizeDisplayScaleFactor, observeDisplayScaleFactor } from './display-scale'
 
 export interface CursorDefinition {
   variable: string
@@ -105,9 +106,19 @@ export const cursorPreferenceSource = (variable: string, useLocalCursors: boolea
 
 const scaledCursorCache = new Map<string, Promise<string>>()
 let applicationGeneration = 0
+let requestedCursorPreferences: { useLocalCursors: boolean; scale: CursorScale } | null = null
 
-const scaledCursorUrl = (source: string, scale: CursorScale): Promise<string> => {
-  const key = `${source}:${scale}`
+const formatCursorNumber = (value: number): string => String(Math.round(value * 1_000_000) / 1_000_000)
+
+const cursorImageValue = (source: string, resolution: number): string => {
+  const normalizedResolution = normalizeDisplayScaleFactor(resolution)
+  return normalizedResolution === 1
+    ? `url('${source}')`
+    : `image-set(url('${source}') ${formatCursorNumber(normalizedResolution)}x)`
+}
+
+const scaledCursorUrl = (source: string, scale: number): Promise<string> => {
+  const key = `${source}:${scale.toFixed(6)}`
   const cached = scaledCursorCache.get(key)
   if (cached) return cached
   const pending = new Promise<string>((resolve, reject) => {
@@ -129,9 +140,10 @@ const scaledCursorUrl = (source: string, scale: CursorScale): Promise<string> =>
   return pending
 }
 
-export async function applyCursorPreferences(useLocalCursors: boolean, scale: CursorScale): Promise<void> {
+async function applyCursorPreferencesForDisplayScale(useLocalCursors: boolean, scale: CursorScale, displayScaleFactor: number, preserveCurrentValues: boolean): Promise<void> {
   const generation = ++applicationGeneration
   const root = document.documentElement.style
+  const displayResolution = normalizeDisplayScaleFactor(displayScaleFactor)
   // Install an unscaled value synchronously so a preference refresh never falls
   // back to the browser cursor while scaled assets are loading.
   for (const definition of cursorDefinitions) {
@@ -141,9 +153,12 @@ export async function applyCursorPreferences(useLocalCursors: boolean, scale: Cu
     }
     const builtinSource = definition.builtinSource ?? definition.source
     const preferredSource = useLocalCursors ? builtinSource : definition.source
-    const hotspotX = definition.hotspot[0]
-    const hotspotY = definition.hotspot[1]
-    root.setProperty(definition.variable, `url('${preferredSource}') ${hotspotX} ${hotspotY}, url('${builtinSource}') ${hotspotX} ${hotspotY}, ${definition.fallback}`)
+    const fallbackResolution = displayResolution / scale
+    const hotspotX = definition.hotspot[0] / fallbackResolution
+    const hotspotY = definition.hotspot[1] / fallbackResolution
+    if (!preserveCurrentValues || !root.getPropertyValue(definition.variable)) {
+      root.setProperty(definition.variable, `${cursorImageValue(preferredSource, fallbackResolution)} ${formatCursorNumber(hotspotX)} ${formatCursorNumber(hotspotY)}, ${cursorImageValue(builtinSource, fallbackResolution)} ${formatCursorNumber(hotspotX)} ${formatCursorNumber(hotspotY)}, ${definition.fallback}`)
+    }
   }
   const values = await Promise.all(cursorDefinitions.map(async (definition) => {
     if (cursorPreferenceSource(definition.variable, useLocalCursors) === 'system') {
@@ -155,11 +170,25 @@ export async function applyCursorPreferences(useLocalCursors: boolean, scale: Cu
       ? preferredSource
       : await scaledCursorUrl(preferredSource, scale).catch(() => scaledCursorUrl(builtinSource, scale))
     const builtin = scale === 1 ? builtinSource : await scaledCursorUrl(builtinSource, scale)
-    const hotspotX = Math.round(definition.hotspot[0] * scale)
-    const hotspotY = Math.round(definition.hotspot[1] * scale)
-    const builtinValue = `url('${builtin}') ${hotspotX} ${hotspotY}`
-    return [definition.variable, `url('${source}') ${hotspotX} ${hotspotY}, ${builtinValue}, ${definition.fallback}`] as const
+    const hotspotX = Math.round(definition.hotspot[0] * scale) / displayResolution
+    const hotspotY = Math.round(definition.hotspot[1] * scale) / displayResolution
+    const builtinValue = `${cursorImageValue(builtin, displayResolution)} ${formatCursorNumber(hotspotX)} ${formatCursorNumber(hotspotY)}`
+    return [definition.variable, `${cursorImageValue(source, displayResolution)} ${formatCursorNumber(hotspotX)} ${formatCursorNumber(hotspotY)}, ${builtinValue}, ${definition.fallback}`] as const
   }))
   if (generation !== applicationGeneration) return
   for (const [variable, value] of values) root.setProperty(variable, value)
+}
+
+function handleDisplayScaleChange(displayScaleFactor: number): void {
+  const preferences = requestedCursorPreferences
+  if (!preferences) return
+  void applyCursorPreferencesForDisplayScale(preferences.useLocalCursors, preferences.scale, displayScaleFactor, true).catch(() => undefined)
+}
+
+export async function applyCursorPreferences(useLocalCursors: boolean, scale: CursorScale): Promise<void> {
+  const request = { useLocalCursors, scale }
+  requestedCursorPreferences = request
+  const displayScaleFactor = await observeDisplayScaleFactor(handleDisplayScaleChange)
+  if (requestedCursorPreferences !== request) return
+  await applyCursorPreferencesForDisplayScale(useLocalCursors, scale, displayScaleFactor, false)
 }

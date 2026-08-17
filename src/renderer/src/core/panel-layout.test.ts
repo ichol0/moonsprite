@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { DEFAULT_BOTTOM_WIDTHS, DEFAULT_INSPECTOR_ORDER, DEFAULT_INSPECTOR_SIZES, MINIMUM_BOTTOM_WIDTHS, MINIMUM_INSPECTOR_SIZES, loadInspectorLayout, moveInspectorPanel, proportionalPanelFlex } from './panel-layout'
+import { bottomPanelFlex, DEFAULT_BOTTOM_WIDTHS, DEFAULT_INSPECTOR_ORDER, DEFAULT_INSPECTOR_SIZES, MINIMUM_BOTTOM_WIDTHS, MINIMUM_INSPECTOR_SIZES, loadInspectorLayout, moveInspectorPanel, proportionalPanelFlex } from './panel-layout'
 
 describe('panel layout', () => {
   it('repairs duplicate, unknown and missing panel ids', () => {
@@ -41,9 +41,12 @@ describe('panel layout', () => {
     expect(moveInspectorPanel([...order], 'palette')).toEqual(['color', 'layers', 'preview', 'palette'])
   })
 
-  it('uses zero-basis flex weights so every dock keeps its proportions while resizing', () => {
+  it('keeps side heights proportional while one bottom panel fills unused width', () => {
     expect(proportionalPanelFlex(720)).toBe('720 1 0px')
     expect(proportionalPanelFlex(280)).toBe('280 1 0px')
     expect(proportionalPanelFlex(0)).toBe('1 1 0px')
+    expect(bottomPanelFlex(720, true)).toBe('1 1 720px')
+    expect(bottomPanelFlex(280, false)).toBe('0 1 280px')
+    expect(bottomPanelFlex(0, false)).toBe('0 1 1px')
   })
 })

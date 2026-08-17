@@ -1,4 +1,5 @@
 import { memo, type CSSProperties, type PointerEvent as ReactPointerEvent, type RefObject } from 'react'
+import type { ToolRailSide } from '@shared/types'
 import type { DocumentSession } from '@/store/workspace'
 import { InspectorPanels, type PanelDock, type WorkspacePanelId } from '@/components/WorkspacePanels'
 import { PerformanceProfiler } from '@/components/PerformanceProfiler'
@@ -13,9 +14,10 @@ import type { QuickCommandSettingsTarget } from './quick-command-registry'
 interface EditorWorkspaceShellProps {
   editorOnly: boolean
   editorColumns: string
+  editorRows: string
   editorAreas: string
-  toolRailSide: 'left' | 'right'
-  toolRailDockPreview: 'left' | 'right' | null
+  toolRailSide: ToolRailSide
+  toolRailDockPreview: ToolRailSide | null
   onToolRailGrip: (event: ReactPointerEvent<HTMLButtonElement>) => void
   hasLeftDock: boolean
   leftDockHost: HTMLElement | null
@@ -56,6 +58,7 @@ interface EditorWorkspaceShellProps {
 export const EditorWorkspaceShell = memo(function EditorWorkspaceShell({
   editorOnly,
   editorColumns,
+  editorRows,
   editorAreas,
   toolRailSide,
   toolRailDockPreview,
@@ -97,7 +100,7 @@ export const EditorWorkspaceShell = memo(function EditorWorkspaceShell({
 }: EditorWorkspaceShellProps) {
   const { t } = useI18n()
   useAnimationPlaybackClock(session.document.id)
-  return <PerformanceProfiler id="EditorWorkspaceShell"><section className="editor-layout" style={{ gridTemplateColumns: editorOnly ? 'minmax(0, 1fr)' : editorColumns, gridTemplateAreas: editorOnly ? '"work"' : `"${editorAreas}"` }}>
+  return <PerformanceProfiler id="EditorWorkspaceShell"><section className="editor-layout" style={{ gridTemplateColumns: editorOnly ? 'minmax(0, 1fr)' : editorColumns, gridTemplateRows: editorOnly ? 'minmax(0, 1fr)' : editorRows, gridTemplateAreas: editorOnly ? '"work"' : editorAreas }}>
     <EditorToolRail side={toolRailSide} onGripPointerDown={onToolRailGrip} />
     {hasLeftDock && <aside ref={setLeftDockHost} className="left-panel-dock" data-panel-dock-zone="left" />}
     {hasLeftDock && <div className="left-dock-resizer" role="separator" aria-orientation="vertical" aria-label={t('workspaceDock.resizeLeft')} onPointerDown={onLeftDockResize}><span aria-hidden="true" /></div>}

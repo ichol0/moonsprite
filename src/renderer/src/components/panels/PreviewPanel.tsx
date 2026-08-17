@@ -7,13 +7,14 @@ import { CanvasCompositeCache } from '@/components/canvas-composite-cache'
 import type { DockDragProps } from '@/components/workspace-panel-types'
 import { cloneDocumentForAnimationFrame, ensureAnimationDocument, nextAnimationFrameId } from '@/core/animation'
 import { anchoredPreviewPan, followPreviewPosition, previewCheckerCellSize } from '@/core/preview-geometry'
-import { steppedCanvasZoom } from '@/core/canvas-input'
+import { normalizeCanvasWheelDelta, steppedCanvasZoom } from '@/core/canvas-input'
 import { loadEditorPreferences, type CheckerboardPreferences } from '@/core/file-preferences'
 import { registerViewPreviewListener } from '@/core/view-preview-lifecycle'
 import { useWorkspace, type DocumentSession } from '@/store/workspace'
 import { useI18n } from '@/components/I18nProvider'
 import { resolveTheme } from '@/core/theme'
 import { initialDocumentCompositePending, subscribeInitialDocumentComposite } from '@/core/initial-document-composite'
+import { pixelSamplingMode } from '@/core/pixel-display'
 
 interface FollowViewportSnapshot {
   viewportSize: { width: number; height: number }
@@ -226,6 +227,7 @@ export function PreviewPanel({ session, onClose, docked = false, onDockDragStart
         baseFitRef.current = baseFit
       }
       const scale = baseFit.scale * zoom
+      const smoothPixelSampling = pixelSamplingMode(scale) === 'smooth'
       const followSnapshot = followSnapshotRef.current
       const effectivePan = followViewport ? followPreviewPosition({
         documentSize: { width: session.document.width, height: session.document.height },
@@ -261,7 +263,8 @@ export function PreviewPanel({ session, onClose, docked = false, onDockDragStart
           context.fillRect(originX + column * checkerCell, originY + row * checkerCell, checkerCell, checkerCell)
         }
       }
-      context.imageSmoothingEnabled = false
+      context.imageSmoothingEnabled = smoothPixelSampling
+      if (smoothPixelSampling) context.imageSmoothingQuality = 'high'
       const fromX = Math.max(0, Math.floor((0 - originX) / scale))
       const fromY = Math.max(0, Math.floor((0 - originY) / scale))
       const toX = Math.min(session.document.width, Math.ceil((displayWidth - originX) / scale))
@@ -282,7 +285,7 @@ export function PreviewPanel({ session, onClose, docked = false, onDockDragStart
         contentRevision: session.contentRevision,
         contentInvalidation: session.contentInvalidation,
         frameId: previewFrameId,
-        imageSmoothingEnabled: context.imageSmoothingEnabled
+        imageSmoothingEnabled: smoothPixelSampling
       })
       context.restore()
     }
@@ -353,6 +356,30 @@ export function PreviewPanel({ session, onClose, docked = false, onDockDragStart
     }))
     setZoom(nextZoom)
   }
+  const adjustWheelZoom = (event: React.WheelEvent<HTMLDivElement>): void => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+    const bounds = canvas.getBoundingClientRect()
+    if (bounds.width < 1 || bounds.height < 1) return
+    const delta = normalizeCanvasWheelDelta(event.nativeEvent)
+    if (delta === 0) return
+    event.preventDefault()
+    const nextZoom = steppedCanvasZoom(zoom, delta < 0)
+    if (nextZoom === zoom) return
+    if (followViewport) {
+      setZoom(nextZoom)
+      return
+    }
+    setPan(anchoredPreviewPan({
+      documentSize: { width: session.document.width, height: session.document.height },
+      viewportSize: { width: bounds.width, height: bounds.height },
+      pointer: { x: event.clientX - bounds.left, y: event.clientY - bounds.top },
+      pan,
+      zoom,
+      nextZoom
+    }))
+    setZoom(nextZoom)
+  }
   const toggleFollowViewport = (): void => {
     if (followViewport) {
       const followedPan = currentFollowPan()
@@ -383,7 +410,7 @@ export function PreviewPanel({ session, onClose, docked = false, onDockDragStart
   }
   return <section ref={floating.ref} className={`panel preview-panel ${floating.style ? 'floating-panel' : ''}`} style={floating.style} onPointerDown={floating.bringToFront} onContextMenu={onPanelContextMenu}>
     <header onPointerDown={(event) => floating.style ? floating.startDrag(event) : onDockDragStart?.(event, floating.startDetachedDrag)}><span>{t('panel.preview')}</span><span className="panel-actions"><button className={followViewport ? 'active' : ''} title={t('preview.followViewport')} aria-label={t('preview.followViewport')} aria-pressed={followViewport} onClick={toggleFollowViewport}><PixelUtilityIcon kind="follow" /></button><button title={t('preview.zoomOut')} aria-label={t('preview.zoomOut')} onClick={() => adjustZoom(false)}><PixelUtilityIcon kind="minus" /></button><button title={t('preview.zoomIn')} aria-label={t('preview.zoomIn')} onClick={() => adjustZoom(true)}><PixelUtilityIcon kind="plus" /></button><button className={previewPlaying ? 'active' : ''} disabled={timelineHidden || timeline.frames.length <= 1} title={t(previewPlaying ? 'timeline.pause' : 'timeline.play')} aria-label={t(previewPlaying ? 'timeline.pause' : 'timeline.play')} onClick={() => setPreviewPlayingState(!previewPlaying)} onContextMenu={(event) => { event.preventDefault(); event.stopPropagation(); if (!timelineHidden) setPlaybackMenu({ x: event.clientX, y: event.clientY }) }}><PlaybackPixelIcon kind={previewPlaying ? 'pause' : 'play'} /></button><button title={t('preview.close')} aria-label={t('preview.close')} onClick={onClose}><PixelUtilityIcon kind="close" /></button></span></header>
-    <div className={`preview-canvas-wrap ${panning ? 'space-panning' : ''}`} onWheel={(event) => { const bounds = canvasRef.current?.getBoundingClientRect(); if (!bounds) return; event.preventDefault(); adjustZoom(event.deltaY < 0, { x: event.clientX - bounds.left, y: event.clientY - bounds.top }) }} onPointerDown={startPan} onPointerMove={(event) => { const drag = panDrag.current; if (!drag) return; schedulePan({ x: drag.panX + event.clientX - drag.x, y: drag.panY + event.clientY - drag.y }) }} onPointerUp={finishPan} onPointerCancel={finishPan}><div className="preview-canvas-frame"><canvas ref={canvasRef} aria-label={t('preview.canvasAria')} /></div></div>
+    <div className={`preview-canvas-wrap ${panning ? 'space-panning' : ''}`} onWheel={adjustWheelZoom} onPointerDown={startPan} onPointerMove={(event) => { const drag = panDrag.current; if (!drag) return; schedulePan({ x: drag.panX + event.clientX - drag.x, y: drag.panY + event.clientY - drag.y }) }} onPointerUp={finishPan} onPointerCancel={finishPan}><div className="preview-canvas-frame"><canvas ref={canvasRef} aria-label={t('preview.canvasAria')} /></div></div>
     {floating.style && <PanelResizeHandles onResize={floating.startResize} />}
     <FloatingDockPreview style={floating.dockPreview} />
     {playbackMenu && <AnimationPlaybackMenu session={session} x={playbackMenu.x} y={playbackMenu.y} playback={previewPlayback} onClose={() => setPlaybackMenu(null)} />}

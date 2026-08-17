@@ -10,6 +10,7 @@ import { addBlankAnimationFrame, animationCelAt, animationCelKey, ensureAnimatio
 import { buildLayerPanelTree } from '@/core/layer-panel-layout'
 import { transformedSelectionBounds, transformSelectionMask } from '@/core/selection'
 import { registerViewPreviewFlusher } from '@/core/view-preview-lifecycle'
+import { registerPendingCanvasGestureHistory } from '@/core/canvas-input'
 import { RECENT_EXPORT_PATHS_STORAGE_KEY } from '@/core/export-settings'
 import { decodeProject, encodeProject, registerProjectSaveBaseline } from '@/core/project-format'
 import { LAYER_PANEL_STATE_STORAGE_KEY } from '@/core/layer-panel-state'
@@ -77,6 +78,43 @@ beforeEach(() => {
   localStorage.clear()
   saveProgress.dismiss()
   useWorkspace.setState({ sessions: [], activeId: null, message: null, saveProgress: null, dialog: null })
+})
+
+describe('pending canvas gesture history', () => {
+  it('consumes path undo and redo before the committed document history', () => {
+    const document = createDocument('pending path history', 4, 4, 'rgba')
+    useWorkspace.getState().addSession(document)
+    const session = useWorkspace.getState().sessions[0]
+    let documentUndo = 0
+    let documentRedo = 0
+    let gestureUndo = 0
+    let gestureRedo = 0
+    session.history.push({
+      label: 'committed edit',
+      bytes: 0,
+      undo: () => { documentUndo += 1 },
+      redo: () => { documentRedo += 1 },
+      documentChanged: false
+    })
+    const unregister = registerPendingCanvasGestureHistory(document.id, {
+      undo: () => { gestureUndo += 1; return true },
+      redo: () => { gestureRedo += 1; return true }
+    })
+
+    try {
+      useWorkspace.getState().undo()
+      useWorkspace.getState().redo()
+      expect({ gestureUndo, gestureRedo }).toEqual({ gestureUndo: 1, gestureRedo: 1 })
+      expect({ documentUndo, documentRedo }).toEqual({ documentUndo: 0, documentRedo: 0 })
+      expect(session.history.canUndo).toBe(true)
+    } finally {
+      unregister()
+    }
+
+    useWorkspace.getState().undo()
+    useWorkspace.getState().redo()
+    expect({ documentUndo, documentRedo }).toEqual({ documentUndo: 1, documentRedo: 1 })
+  })
 })
 
 describe('editable text layers', () => {
@@ -1737,6 +1775,40 @@ describe('layer duplication', () => {
 })
 
 describe('selection clipboard', () => {
+  it('moves a transformed selection boundary without moving the committed pixels again', () => {
+    const document = createDocument('transformed selection boundary move', 10, 10, 'rgba')
+    const layer = getActiveLayer(document)
+    writeLayerColor(document, layer, 1 + layer.width, red)
+    writeLayerColor(document, layer, 2 + layer.width, blue)
+    useWorkspace.getState().addSession(document)
+    const original = { x: 1, y: 1, width: 2, height: 1 }
+    const target = { x: 4, y: 3, width: 4, height: 2 }
+    const angle = 45
+    const source = captureSelectionTransform(document, original, layer)!
+    const preview = applySelectionTransform(document, source, target, angle)!
+    const transformed = transformSelectionMask(source.selection, target, document.width, document.height, angle, undefined, false)!
+
+    useWorkspace.getState().beginFloatingSelectionTransform(source, preview, original, transformed, false, 'transform', null, target, angle)
+    useWorkspace.getState().commitFloatingPaste()
+    const committedPixels = layer.pixels.slice()
+    const committedSelection = useWorkspace.getState().sessions[0].selection!
+    const movedSelection = { ...committedSelection, x: committedSelection.x + 1 }
+
+    useWorkspace.getState().commitSelectionChange(committedSelection, movedSelection, 'move selection box')
+
+    const session = useWorkspace.getState().sessions[0]
+    expect(session.pendingPaste).toBeNull()
+    expect(session.selection).toEqual(movedSelection)
+    expect(layer.pixels).toEqual(committedPixels)
+    useWorkspace.getState().undo()
+    expect(session.selection).toEqual(committedSelection)
+    expect(layer.pixels).toEqual(committedPixels)
+    useWorkspace.getState().undo()
+    expect(session.selection).toEqual(original)
+    expect(readLayerColorAt(document, layer, 1, 1)).toEqual(red)
+    expect(readLayerColorAt(document, layer, 2, 1)).toEqual(blue)
+  })
+
   it('nudges selection content by one pixel and restores both pixels and bounds on undo', () => {
     const document = createDocument('selection nudge', 4, 2, 'rgba')
     const layer = getActiveLayer(document)

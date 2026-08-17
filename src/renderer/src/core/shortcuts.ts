@@ -109,6 +109,8 @@ export const DEFAULT_SHORTCUTS = {
   openGridSettings: '',
   toolRailLeft: '',
   toolRailRight: '',
+  toolRailTop: '',
+  toolRailBottom: '',
   saveWorkspaceLayout: '',
   openWorkspaceManager: '',
   openComponentLibrary: '',
@@ -161,7 +163,7 @@ export const SHORTCUT_GROUPS = {
   layers: ['newLayer', 'createLayerGroup', 'toggleClippingMask', 'toggleSelectedLayerVisibility', 'toggleSelectedLayerLock', 'toggleSelectedGroupCollapsed', 'duplicateLayer', 'mergeLayerDown', 'mergeSelectedLayers', 'mergeLayerGroup', 'mergeVisibleLayers', 'ungroupLayers', 'deleteLayer'],
   animation: ['toggleAnimationPlayback', 'previousAnimationFrame', 'nextAnimationFrame', 'addAnimationFrame', 'addBlankAnimationFrame', 'deleteAnimationFrame', 'copyAnimationCel'],
   view: ['relativeLuminance', 'toggleGrid', 'toggleCustomGrid', 'openGridSettings', 'mirrorView', 'mirrorViewVertical', 'rotateViewClockwise90', 'rotateViewCounterClockwise90', 'resetView'],
-  interface: ['popupColorPanel', 'popupPalettePanel', 'popupLayersPanel', 'popupPreviewPanel', 'toggleColorPanel', 'togglePalettePanel', 'toggleLayersPanel', 'togglePreviewPanel', 'toggleTimeline', 'toolRailLeft', 'toolRailRight', 'saveWorkspaceLayout', 'openWorkspaceManager', 'advancedMode', 'openShortcutSettings', 'openPreferences'],
+  interface: ['popupColorPanel', 'popupPalettePanel', 'popupLayersPanel', 'popupPreviewPanel', 'toggleColorPanel', 'togglePalettePanel', 'toggleLayersPanel', 'togglePreviewPanel', 'toggleTimeline', 'toolRailLeft', 'toolRailRight', 'toolRailTop', 'toolRailBottom', 'saveWorkspaceLayout', 'openWorkspaceManager', 'advancedMode', 'openShortcutSettings', 'openPreferences'],
   tools: ['tool.pencil', 'tool.airbrush', 'tool.eraser', 'tool.fill', 'tool.fill.gradient', 'tool.eyedropper', 'tool.selection', 'tool.selection.ellipse', 'lasso', 'polygonLasso', 'magic', 'tool.move', 'tool.slice', 'tool.shape', 'tool.shape.rectangleOutline', 'tool.shape.rectangle', 'tool.shape.ellipseOutline', 'tool.shape.ellipse', 'tool.line', 'tool.curve', 'tool.text', 'tool.hand', 'tool.zoom', 'tool.rotate', 'brushSizeDecrease', 'brushSizeIncrease'],
   modifiers: ['temporaryEyedropper', 'temporaryMove', 'brushSizeAdjust', 'brushSizeWheelAdjust', 'lineConnectionMode', 'constrainLineDirections', 'copySelectionContent', 'addToSelection', 'proportionalSelectionTransform', 'integerSelectionScale', 'snapSelectionRotation', 'copyLayerOnDrag', 'constrainAxis', 'temporaryPan', 'snapViewRotation', 'resetViewRotation'],
   help: ['openComponentLibrary', 'openLatestRelease', 'openRoadmap', 'openAbout']

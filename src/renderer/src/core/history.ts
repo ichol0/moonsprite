@@ -251,12 +251,8 @@ const regionPatchFromDenseEdit = (layer: RasterLayer, dense: PixelEditDenseRegio
     before: dense.before,
     after: dense.after
   }
-  const before = new Uint8ClampedArray(dense.before.length * 4)
-  const after = new Uint8ClampedArray(dense.after.length * 4)
-  for (let index = 0; index < dense.before.length; index += 1) {
-    writePackedToPatch(before, layer.format, index, dense.before[index])
-    writePackedToPatch(after, layer.format, index, dense.after[index])
-  }
+  const before = new Uint8ClampedArray(dense.before.buffer as ArrayBuffer, dense.before.byteOffset, dense.before.byteLength)
+  const after = new Uint8ClampedArray(dense.after.buffer as ArrayBuffer, dense.after.byteOffset, dense.after.byteLength)
   return { format: layer.format, x: dense.x, y: dense.y, width: dense.width, height: dense.height, before, after }
 }
 

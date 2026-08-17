@@ -1,6 +1,6 @@
 import type { ImageBrush, ProceduralBrushId, ProceduralBrushSettings, SelectionMask, SpriteDocument, StoredBrush } from '@shared/types'
 import { getActiveLayer, readLayerColor, readLayerColorAt } from './document'
-import { decodePng, encodePng } from './png'
+import { encodePng } from './png-encode'
 import { selectionContains } from './selection'
 import { packColor, unpackColor } from './raster'
 import { translateCurrent as tr, type TranslationKey } from './localization'
@@ -54,7 +54,8 @@ export function encodeBrushPng(brush: ImageBrush): Uint8Array {
   return encodePng(rgba, brush.width, brush.height, true).bytes
 }
 
-export function decodeImageBrush(stored: StoredBrush, bytes: Uint8Array): ImageBrush {
+export async function decodeImageBrush(stored: StoredBrush, bytes: Uint8Array): Promise<ImageBrush> {
+  const { decodePng } = await import('./png')
   const document = decodePng(bytes, stored.name)
   if (document.width * document.height > MAX_SOURCE_PIXELS) throw new Error(tr('core.brush.sourceTooLarge', { name: stored.name }))
   const layer = getActiveLayer(document)

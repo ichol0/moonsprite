@@ -631,7 +631,7 @@ export interface PaletteListing {
 
 export type WorkspacePanelId = 'color' | 'palette' | 'layers' | 'preview'
 export type WorkspacePanelDock = 'right' | 'left' | 'bottom' | 'floating'
-export type ToolRailSide = 'left' | 'right'
+export type ToolRailSide = 'left' | 'right' | 'top' | 'bottom'
 
 export interface WorkspaceLayout {
   panelDocks: Record<WorkspacePanelId, WorkspacePanelDock>
@@ -640,7 +640,7 @@ export interface WorkspaceLayout {
   inspectorWidth: number
   leftDockWidth: number
   bottomDockHeight: number
-  /** Preferred dock proportions within the editor layout. Pixel fields remain for older workspaces. */
+  /** Side ratios are retained for legacy migration; bottom height continues to use its ratio. */
   inspectorWidthRatio?: number
   leftDockWidthRatio?: number
   bottomDockHeightRatio?: number

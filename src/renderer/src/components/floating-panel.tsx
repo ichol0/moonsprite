@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { CSSProperties, PointerEvent as ReactPointerEvent, RefObject } from 'react'
-import { loadFloatingPosition, resizeFloatingPosition, saveFloatingPosition, type FloatingAnchor, type FloatingPosition } from '@/core/panel-preferences'
+import { loadFloatingPosition, resizeFloatingPosition, saveFloatingPosition, type FloatingPosition } from '@/core/panel-preferences'
 
 let floatingZIndex = 40
 
@@ -17,13 +17,6 @@ interface PanelDockZone {
 }
 
 const notifyWorkspaceLayoutChanged = (): void => { window.dispatchEvent(new Event('moonsprite-workspace-layout-change')) }
-
-const currentFloatingAnchor = (): FloatingAnchor => {
-  const stage = document.querySelector<HTMLElement>('.stage-wrap')?.getBoundingClientRect()
-  return stage && stage.width > 0 && stage.height > 0
-    ? { left: stage.left, top: stage.top, width: stage.width, height: stage.height }
-    : { left: 0, top: 0, width: window.innerWidth, height: window.innerHeight }
-}
 
 export function panelDockZoneAt(clientX: number, clientY: number): PanelDockZone | null {
   const contains = (bounds: DOMRect): boolean => clientX >= bounds.left && clientX <= bounds.right && clientY >= bounds.top && clientY <= bounds.bottom
@@ -94,7 +87,6 @@ export function useFloatingPanel(initialPosition: FloatingPosition | null = null
   const pointerCaptureRef = useRef<{ element: HTMLElement; pointerId: number } | null>(null)
   const positionRef = useRef(position)
   const viewportRef = useRef({ width: window.innerWidth, height: window.innerHeight })
-  const anchorRef = useRef(currentFloatingAnchor())
   const userPositioned = useRef(false)
   const initialRightOffset = useRef(initialPosition ? window.innerWidth - initialPosition.x : 0)
 
@@ -166,11 +158,8 @@ export function useFloatingPanel(initialPosition: FloatingPosition | null = null
     }
     const resize = (): void => {
       const previousViewport = viewportRef.current
-      const previousAnchor = anchorRef.current
       const viewport = { width: window.innerWidth, height: window.innerHeight }
-      const nextAnchor = currentFloatingAnchor()
       viewportRef.current = viewport
-      anchorRef.current = nextAnchor
       updatePosition((current) => {
         if (!current) return current
         const next = resizeFloatingPosition(current, previousViewport, viewport, {
@@ -180,7 +169,7 @@ export function useFloatingPanel(initialPosition: FloatingPosition | null = null
           initialRightOffset: initialRightOffset.current,
           minWidth: minimumWidth,
           minHeight: minimumHeight
-        }, ref.current?.getBoundingClientRect(), previousAnchor, nextAnchor)
+        }, ref.current?.getBoundingClientRect())
         window.requestAnimationFrame(() => persistPosition(next))
         return next
       })

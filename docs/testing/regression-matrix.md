@@ -38,6 +38,7 @@
 | 单动作单历史 | 图层批处理、选区变换、调整、画布尺寸和动画编辑每个用户动作只产生一个可完整恢复的历史条目 | `workspace.test.ts`、`layer-operations.test.ts`、`CanvasResizeDialog.test.tsx` |
 | 视图状态隔离 | 平移、缩放、旋转、镜像、栏目布局、播放位置和工具切换不进入文档历史，不改变 dirty | `view-preview-lifecycle.test.ts`、`workspace.test.ts`、`animation.test.ts` |
 | 临时预览隔离 | 画布尺寸、视图和颜色调整预览可取消或内部撤销，确认前不污染文档历史 | `CanvasResizeDialog.test.tsx`、`AdjustmentDialog.test.tsx`、`adjustment-preview-lifecycle.test.ts` |
+| 进行中路径历史 | 自由形状、多边形形状与两种套索在完成前逐点 Undo/Redo；撤销最后一点后退出手势并继续文档历史，完成后仍只提交一次 | `canvas-input.test.ts`、`workspace.test.ts` |
 | 历史失败恢复 | 撤销或重做执行失败时原条目和内存计数保持，可在修复条件后重试 | `history.test.ts` |
 | 跨帧历史定位 | 在其他帧执行 Undo/Redo 时仍修改原操作所属 frame/cel，不误写当前帧 | `animation.test.ts`、`workspace.test.ts` |
 | 跨文档图层剪贴板 | 复制图层和组保留层级、顺序、偏移和属性；目标粘贴独立像素并作为一次历史 | `workspace.test.ts`、`layer-operations.test.ts` |

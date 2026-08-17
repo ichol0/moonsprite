@@ -186,6 +186,19 @@ const prepareTool = (tool: ToolId, fillKind: FillKind | null = null, shapeKind: 
   state.setGradientDither('none')
 }
 
+const prepareCenteredSelection = (size: number) => {
+  const session = activeSession()
+  if (!session) return
+  const width = Math.max(1, Math.min(session.document.width, Math.trunc(size)))
+  const height = Math.max(1, Math.min(session.document.height, Math.trunc(size)))
+  useWorkspace.getState().setSelection({
+    x: Math.floor((session.document.width - width) / 2),
+    y: Math.floor((session.document.height - height) / 2),
+    width,
+    height
+  })
+}
+
 const setTimelapseRecording = (enabled: boolean) => {
   useWorkspace.getState().setTimelapseSettings({ enabled, quality: 'low', fps: 12, speed: 8 })
 }
@@ -232,6 +245,7 @@ export function installPerformanceHarness() {
     activeView,
     resetScenario,
     prepareTool,
+    prepareCenteredSelection,
     setTimelapseRecording,
     timelapseSnapshotCount,
     undoRedo,

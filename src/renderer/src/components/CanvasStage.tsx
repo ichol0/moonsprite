@@ -17,7 +17,7 @@ import { CANVAS_RESIZE_PREVIEW_EVENT, drawCanvasResizePreviewLayers } from '@/co
 import { SLICE_PREVIEW_EVENT } from '@/core/slice-preview'
 import { loadShortcuts, modifierShortcutHeld } from '@/core/shortcuts'
 import { paletteSamplingShortcutActive } from '@/core/palette-sampling-shortcut'
-import { CanvasInputState, appendPolygonLassoVertex, beginBrushSpeedTracking, beginTemporaryCenteredMarqueeResize, brushLineConnectionOverridesTemporaryMove, canvasGestureForPreview, centerMarqueeBoundsAtCreationPoint, centeredShapeBounds, clampCanvasZoom as clampZoom, coalescedPointerClientPoints, constrainedTranslation, createCanvasPanDrag, createMarqueeResizeStart, deferredSelectionCommitInvalidationRects, deferredSelectionPreviewOwner, floatingSelectionCopyMode, isQuickSelectionSecondPress, marqueeSelectionCommit, normalizeCanvasWheelDelta, paletteSamplingShortcutStartsPrimarySample, polygonLassoClosedPathPoints, polygonLassoPreviewPoints, quickSelectCellDragBounds, quickSelectCellSelection, resizeRotatedMarqueeBounds, resizeSelectionBounds, resizeTransformedSelectionBounds, resolveMarqueeModifierMode, restoreCanvasDragAfterPan, restoreTemporaryCenteredMarqueeResize, revertCancelledCanvasDragPixelChanges, sampledForegroundColorToAdd, selectionGestureMoved, selectionInteractionHit, selectionMarqueeUsesConstraint, selectionOverlayMaskForDrag, selectionPivotAfterResize, selectionPivotAtDragPoint, selectionPivotHit, selectionResizeHit, selectionRotationAngle, selectionTransformedInteractionHit, selectionTransformDeferredPreviewEnabled, selectionTransformModifiers, selectionTransformPreviewChanged, shapeBounds, shouldClosePolygonLasso, shouldRestartFloatingSelectionForCopy, shouldStartCanvasPan, shouldUseTemporaryMoveForCanvasInteraction, shouldUseTemporaryMoveTool, snapSelectionRotation, steppedCanvasZoom as steppedZoom, temporaryMoveSuppressesToolPreview, temporaryTransformOffset, translatedSelectionRect, updateBrushSpeedTracking, wheelCanvasZoom, zoomDragModeForModifiers, zoomDragTarget, type CanvasDragState as DragState, type CanvasPoint as Point, type QuickSelectionPress, type SelectionHandle, type SelectionHit, type SelectionRotationHandle, type SelectionShearHandle } from '@/core/canvas-input'
+import { CanvasInputState, appendCanvasPathStep, beginBrushSpeedTracking, beginTemporaryCenteredMarqueeResize, brushLineConnectionOverridesTemporaryMove, canvasGestureForPreview, centerMarqueeBoundsAtCreationPoint, centeredShapeBounds, clampCanvasZoom as clampZoom, coalescedPointerClientPoints, constrainedTranslation, createCanvasPanDrag, createMarqueeResizeStart, deferredSelectionCommitInvalidationRects, deferredSelectionPreviewOwner, floatingSelectionCopyMode, isPendingCanvasPathGesture, isQuickSelectionSecondPress, marqueeSelectionCommit, normalizeCanvasWheelDelta, paletteSamplingShortcutStartsPrimarySample, polygonLassoClosedPathPoints, polygonLassoPreviewPoints, quickSelectCellDragBounds, quickSelectCellSelection, redoCanvasPathStep, registerPendingCanvasGestureHistory, resizeRotatedMarqueeBounds, resizeSelectionBounds, resizeTransformedSelectionBounds, resolveMarqueeModifierMode, restoreCanvasDragAfterPan, restoreTemporaryCenteredMarqueeResize, revertCancelledCanvasDragPixelChanges, sampledForegroundColorToAdd, selectionGestureMoved, selectionInteractionHit, selectionMarqueeUsesConstraint, selectionOverlayMaskForDrag, selectionPivotAfterResize, selectionPivotAtDragPoint, selectionPivotHit, selectionResizeHit, selectionRotationAngle, selectionTransformedInteractionHit, selectionTransformDeferredPreviewEnabled, selectionTransformModifiers, selectionTransformPreviewChanged, shapeBounds, shouldClosePolygonLasso, shouldRestartFloatingSelectionForCopy, shouldStartCanvasPan, shouldUseTemporaryMoveForCanvasInteraction, shouldUseTemporaryMoveTool, snapSelectionRotation, steppedCanvasZoom as steppedZoom, temporaryMoveSuppressesToolPreview, temporaryTransformOffset, translatedSelectionRect, undoActiveCanvasPathGesture, updateBrushSpeedTracking, wheelCanvasZoom, zoomDragModeForModifiers, zoomDragTarget, type CanvasDragState as DragState, type CanvasPoint as Point, type QuickSelectionPress, type SelectionHandle, type SelectionHit, type SelectionRotationHandle, type SelectionShearHandle } from '@/core/canvas-input'
 import { canvasCursors, canvasStatusTextColor, canvasToolCursor, colorLuminance, directionalResizeCursors, directionalShearCursors, previewCursorTools, resizeCursors, rotationCursors, selectionCornerResizeCursorForPoints, selectionResizeCursorForHandle, selectionRotationCursorForPosition, selectionShearCursorForDirection, shearCursors, selectionCreationCursor, selectionCursorCornerRects, selectionPathPreviewPixelVisible, selectionPreviewPixels, selectionTransformDragCursor, transparencyColorAt } from '@/core/canvas-visuals'
 import { defaultSymmetryCenter, hasSymmetry, moveSymmetryCenter, symmetryAxisSegment, symmetryPoints, symmetrySelection, symmetrySelectionDragDelta, transformSymmetrySelection, type SymmetryAxes, type SymmetryAxis } from '@/core/symmetry'
 import { beginAdjustmentPreviewEdit, endAdjustmentPreviewEdit, hasAdjustmentPreviewController, prepareAdjustmentPreviewEdit, renderAdjustmentPreviewEdit } from '@/core/adjustment-preview-lifecycle'
@@ -2161,6 +2161,20 @@ export function CanvasStage({ session }: { session: DocumentSession }) {
     })
   }
 
+  useEffect(() => registerPendingCanvasGestureHistory(session.document.id, {
+    undo: () => {
+      if (!undoActiveCanvasPathGesture(inputRef.current)) return false
+      scheduleDraw()
+      return true
+    },
+    redo: () => {
+      const drag = inputRef.current.drag
+      if (!isPendingCanvasPathGesture(drag)) return false
+      if (redoCanvasPathStep(drag)) scheduleDraw()
+      return true
+    }
+  }), [session.document.id])
+
   useEffect(() => {
     const updateTextPreview = (event: Event): void => {
       const detail = (event as CustomEvent<TextToolPreviewDetail>).detail
@@ -3419,7 +3433,7 @@ export function CanvasStage({ session }: { session: DocumentSession }) {
         commitPolygonLasso()
         return
       }
-      activePolygon.path = appendPolygonLassoVertex(path, point)
+      appendCanvasPathStep(activePolygon, point)
       activePolygon.last = point
       scheduleDraw()
       return
@@ -3430,7 +3444,7 @@ export function CanvasStage({ session }: { session: DocumentSession }) {
         commitPolygonShape()
         return
       }
-      activePolygon.path = appendPolygonLassoVertex(path, point)
+      appendCanvasPathStep(activePolygon, point)
       activePolygon.last = point
       scheduleDraw()
       return
@@ -3745,17 +3759,12 @@ export function CanvasStage({ session }: { session: DocumentSession }) {
         return
       }
       if (hit === 'edge' && session.selection) {
-        if (session.pendingPaste) {
-          const selectionStart = cloneSelection(session.selection)
-          const transformTarget = session.pendingPaste.transformTarget ?? { x: selectionStart!.x, y: selectionStart!.y, width: selectionStart!.width, height: selectionStart!.height }
-          const transformAngle = session.pendingPaste.transformAngle ?? 0
-          const transformShear = session.pendingPaste.transformShear
-          inputRef.current.drag = { kind: 'move-content', start: point, last: point, selectionStart, selectionSource: session.pendingPaste.source, selectionSourceCacheKey: session.selection, selectionPreparationPending: true, previewEdit: session.pendingPaste.previewEdit, translationPreview: session.pendingPaste.translationPreview, deferredSelectionPreview: selectionTransformDeferredPreviewEnabled('move-content', canUseDeferredSelectionPreview(editableLayer), transformAngle, transformShear), copy: session.pendingPaste.copy, floatingPaste: true, previewSelection: selectionStart, appliedSelection: selectionStart, selectionPivotStart: customSelectionPivot, previewPivot: customSelectionPivot, transformStartTarget: { ...transformTarget }, startAngle: transformAngle, transformStartShear: transformShear ? { ...transformShear } : undefined, previewTarget: { ...transformTarget }, previewAngle: transformAngle, previewShear: transformShear ? { ...transformShear } : undefined }
-          event.currentTarget.style.cursor = canvasCursors.selectionMove
-          return
-        }
-        const selectionStart = cloneSelection(session.selection)
-        inputRef.current.drag = { kind: 'move-selection', start: point, last: point, selectionStart, previewSelection: selectionStart, selectionPivotStart: customSelectionPivot, previewPivot: customSelectionPivot }
+        if (session.pendingPaste) state.commitFloatingPaste()
+        const current = useWorkspace.getState().sessions.find((item) => item.document.id === session.document.id) ?? session
+        const selectionStart = cloneSelection(current.selection)
+        if (!selectionStart) return
+        const selectionPivotStart = current.selectionPivot ? { ...current.selectionPivot } : undefined
+        inputRef.current.drag = { kind: 'move-selection', start: point, last: point, selectionStart, previewSelection: selectionStart, selectionPivotStart, previewPivot: selectionPivotStart }
         event.currentTarget.style.cursor = canvasCursors.selectionMove
         return
       }
@@ -3840,8 +3849,19 @@ export function CanvasStage({ session }: { session: DocumentSession }) {
         draw()
         return
       }
-      const edit = floodFillSymmetric(session.document, editableLayer, point.x, point.y, activeColor(event.button), session.selection, session.fillMode === 'contiguous', activeBrushImage, session.brushSize, session.brushImageSettings, activeBrushTexture, Math.max(1, Math.round(session.brushSize / 8)), proceduralAntialiasStrength, activeBrushPaintMode, session.symmetryAxes, symmetryCenter, session.fillTolerance)
-      if (edit) state.commitPixelEdit(edit, activeBrushImage || activeBrushTexture !== 'solid' ? t('canvas.history.brushFill') : session.fillMode === 'contiguous' ? t('canvas.history.contiguousFill') : t('canvas.history.nonContiguousFill'))
+      const operationProbe = window.__moonSpriteCanvasProbe
+      const profiler = operationProbe?.recordOperationStage
+        ? { record: (stage: string, duration: number, detail?: Record<string, number | string | boolean>) => operationProbe.recordOperationStage?.(stage, duration, detail) }
+        : undefined
+      const edit = floodFillSymmetric(session.document, editableLayer, point.x, point.y, activeColor(event.button), session.selection, session.fillMode === 'contiguous', activeBrushImage, session.brushSize, session.brushImageSettings, activeBrushTexture, Math.max(1, Math.round(session.brushSize / 8)), proceduralAntialiasStrength, activeBrushPaintMode, session.symmetryAxes, symmetryCenter, session.fillTolerance, profiler)
+      if (edit) {
+        const commitStartedAt = operationProbe?.recordOperationStage ? performance.now() : 0
+        state.commitPixelEdit(edit, activeBrushImage || activeBrushTexture !== 'solid' ? t('canvas.history.brushFill') : session.fillMode === 'contiguous' ? t('canvas.history.contiguousFill') : t('canvas.history.nonContiguousFill'))
+        operationProbe?.recordOperationStage?.('bucket.commit-total', performance.now() - commitStartedAt, {
+          points: edit.before.size,
+          runs: edit.runs?.length ?? 0
+        })
+      }
       return
     }
     if (session.tool === 'eyedropper') { sampleAtPoint(false); return }
@@ -4238,9 +4258,7 @@ export function CanvasStage({ session }: { session: DocumentSession }) {
       return
     }
     if (drag.kind === 'freeform-shape') {
-      const path = drag.path ?? []
-      const last = path.at(-1)
-      if (!last || last.x !== point.x || last.y !== point.y) drag.path = [...path, point]
+      appendCanvasPathStep(drag, point)
       drag.last = point
       scheduleDraw()
       return
@@ -4311,9 +4329,7 @@ export function CanvasStage({ session }: { session: DocumentSession }) {
       return
     }
     if (drag.kind === 'lasso') {
-      const path = drag.path ?? []
-      const last = path.at(-1)
-      if (!last || last.x !== point.x || last.y !== point.y) drag.path = [...path, point]
+      appendCanvasPathStep(drag, point)
       scheduleDraw()
       return
     }

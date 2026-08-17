@@ -12,7 +12,10 @@ export const shouldUseTemporaryMoveTool = (
   event: Pick<KeyboardEvent, 'ctrlKey' | 'metaKey' | 'altKey' | 'shiftKey'>,
   shortcut: string,
   moveKind: MoveKind = 'move'
-): boolean => (tool !== 'move' || moveKind !== 'move') && modifierShortcutHeld(event, shortcut)
+): boolean => tool !== 'selection'
+  && tool !== 'shape'
+  && (tool !== 'move' || moveKind !== 'move')
+  && modifierShortcutHeld(event, shortcut)
 
 export const brushLineConnectionOverridesTemporaryMove = (
   tool: ToolId,
@@ -252,6 +255,7 @@ export interface CanvasDragState {
   patternOrigin?: CanvasPoint
   constrain?: boolean
   path?: CanvasStrokePoint[]
+  pathRedo?: CanvasStrokePoint[]
   curvePhase?: 'endpoint' | 'anchors'
   curveEnd?: CanvasPoint
   curveControls?: CanvasPoint[]
@@ -466,6 +470,61 @@ export const appendPolygonLassoVertex = (path: readonly CanvasPoint[], point: Ca
   return last?.x === point.x && last.y === point.y ? [...path] : [...path, { ...point }]
 }
 
+const PENDING_CANVAS_PATH_KINDS = new Set<CanvasDragState['kind']>(['freeform-shape', 'polygon-shape', 'lasso', 'polygon-lasso'])
+
+export const isPendingCanvasPathGesture = (drag: CanvasDragState | null | undefined): drag is CanvasDragState =>
+  Boolean(drag && PENDING_CANVAS_PATH_KINDS.has(drag.kind))
+
+export const appendCanvasPathStep = (drag: CanvasDragState, point: CanvasStrokePoint): boolean => {
+  if (!isPendingCanvasPathGesture(drag)) return false
+  const path = drag.path ?? []
+  const nextPath = appendPolygonLassoVertex(path, point)
+  if (nextPath.length === path.length) return false
+  drag.path = nextPath
+  drag.pathRedo = undefined
+  return true
+}
+
+export const undoCanvasPathStep = (drag: CanvasDragState | null | undefined): boolean => {
+  if (!isPendingCanvasPathGesture(drag)) return false
+  const path = drag.path ?? []
+  const point = path.at(-1)
+  if (!point) return false
+  drag.path = path.slice(0, -1)
+  drag.pathRedo = [...(drag.pathRedo ?? []), { ...point }]
+  return true
+}
+
+export const redoCanvasPathStep = (drag: CanvasDragState | null | undefined): boolean => {
+  if (!isPendingCanvasPathGesture(drag)) return false
+  const redo = drag.pathRedo ?? []
+  const point = redo.at(-1)
+  if (!point) return false
+  drag.path = [...(drag.path ?? []), { ...point }]
+  drag.pathRedo = redo.length > 1 ? redo.slice(0, -1) : undefined
+  return true
+}
+
+export interface PendingCanvasGestureHistoryController {
+  undo(): boolean
+  redo(): boolean
+}
+
+const pendingCanvasGestureHistory = new Map<string, PendingCanvasGestureHistoryController>()
+
+export const registerPendingCanvasGestureHistory = (
+  documentId: string,
+  controller: PendingCanvasGestureHistoryController
+): (() => void) => {
+  pendingCanvasGestureHistory.set(documentId, controller)
+  return () => {
+    if (pendingCanvasGestureHistory.get(documentId) === controller) pendingCanvasGestureHistory.delete(documentId)
+  }
+}
+
+export const consumePendingCanvasGestureHistory = (documentId: string, direction: 'undo' | 'redo'): boolean =>
+  pendingCanvasGestureHistory.get(documentId)?.[direction]() ?? false
+
 export const shouldClosePolygonLasso = (path: readonly CanvasPoint[], point: CanvasPoint, clickCount: number): boolean =>
   path.length >= 3 && (clickCount >= 2 || (path[0].x === point.x && path[0].y === point.y))
 
@@ -643,9 +702,17 @@ export class CanvasInputState {
   }
 }
 
+export const undoActiveCanvasPathGesture = (input: CanvasInputState): boolean => {
+  const drag = input.drag
+  if (!isPendingCanvasPathGesture(drag)) return false
+  const changed = undoCanvasPathStep(drag)
+  if (!changed || (drag.path?.length ?? 0) === 0) input.finish()
+  return true
+}
+
 export const clampCanvasZoom = (zoom: number): number => Math.max(0.0625, Math.min(64, zoom))
 
-export const CANVAS_ZOOM_LEVELS = [0.0625, 0.083333, 0.125, 0.166667, 0.25, 0.333333, 0.5, 0.666667, 1, 1.25, 1.5, 2, 3, 4, 5, 6, 8, 10, 12, 16, 20, 24, 32, 48, 64] as const
+export const CANVAS_ZOOM_LEVELS = [0.0625, 0.083333, 0.125, 0.166667, 0.25, 0.333333, 0.5, 0.666667, 1, 2, 3, 4, 5, 6, 8, 10, 12, 16, 20, 24, 32, 48, 64] as const
 
 export const steppedCanvasZoom = (zoom: number, zoomIn: boolean): number => {
   const epsilon = 0.000001
@@ -1010,8 +1077,7 @@ export const selectionMarqueeUsesConstraint = (
   mode: SelectionMode,
   afterRotation = false
 ): boolean => {
-  if (afterRotation && (modifiers.ctrlKey || modifiers.metaKey) && !modifiers.shiftKey) return false
-  if (modifiers.ctrlKey || modifiers.metaKey) return true
+  if (afterRotation && !modifiers.shiftKey) return false
   return modifiers.shiftKey && (!hasSelection || mode !== 'add')
 }
 

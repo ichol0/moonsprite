@@ -1312,6 +1312,8 @@ const compositeNormalLayers = (document: SpriteDocument, layers: readonly Raster
   const paletteById = new Map(document.palette.map((entry) => [entry.id, entry.color]))
   for (const layer of layers) {
     const runtime = lazyRuntimeRasterForSurface(layer)
+    const rgbaPixels = !runtime && layer.format === 'rgba' ? layer.pixels : null
+    const indexedPixels = !runtime && layer.format === 'indexed' ? layer.pixels : null
     const runtimeOpaqueIds = layer.format === 'indexed' ? new Set(document.palette.filter((entry) => entry.color.a > 0).map((entry) => entry.id)) : undefined
     const layerLeft = Math.max(startX, layer.offsetX)
     const top = Math.max(startY, layer.offsetY)
@@ -1349,26 +1351,34 @@ const compositeNormalLayers = (document: SpriteDocument, layers: readonly Raster
         let sourceG: number
         let sourceB: number
         let sourceA: number
-        let packed: number
-        if (runtime) {
+        if (rgbaPixels) {
+          const sourceOffset = sourceIndex * 4
+          sourceR = rgbaPixels[sourceOffset]
+          sourceG = rgbaPixels[sourceOffset + 1]
+          sourceB = rgbaPixels[sourceOffset + 2]
+          sourceA = rgbaPixels[sourceOffset + 3]
+        } else {
+          let packed: number
+          if (runtime) {
           const localX = documentX - layer.offsetX
           const localY = documentY - layer.offsetY
           const tileWidth = Math.min(runtime.tileSize, runtime.width - tileX * runtime.tileSize)
           const dataOffset = runtime.tileOffsets[tileY * Math.ceil(runtime.width / runtime.tileSize) + tileX] - 1
             + (((localY - tileY * runtime.tileSize) * tileWidth + localX - tileX * runtime.tileSize) * 4)
           packed = (runtime.data[dataOffset] | (runtime.data[dataOffset + 1] << 8) | (runtime.data[dataOffset + 2] << 16) | (runtime.data[dataOffset + 3] << 24)) >>> 0
-        } else packed = readSurfacePackedLocal(layer, sourceIndex % layer.width, Math.floor(sourceIndex / layer.width))
-        if (layer.format === 'rgba') {
-          sourceR = packed & 0xff
-          sourceG = (packed >>> 8) & 0xff
-          sourceB = (packed >>> 16) & 0xff
-          sourceA = (packed >>> 24) & 0xff
-        } else {
-          const source = paletteById.get(packed) ?? TRANSPARENT
-          sourceR = source.r
-          sourceG = source.g
-          sourceB = source.b
-          sourceA = source.a
+          } else packed = indexedPixels?.[sourceIndex] ?? readSurfacePackedLocal(layer, sourceIndex % layer.width, Math.floor(sourceIndex / layer.width))
+          if (layer.format === 'rgba') {
+            sourceR = packed & 0xff
+            sourceG = (packed >>> 8) & 0xff
+            sourceB = (packed >>> 16) & 0xff
+            sourceA = (packed >>> 24) & 0xff
+          } else {
+            const source = paletteById.get(packed) ?? TRANSPARENT
+            sourceR = source.r
+            sourceG = source.g
+            sourceB = source.b
+            sourceA = source.a
+          }
         }
         if (sourceA === 0) continue
         const bottomA = output[outputOffset + 3]

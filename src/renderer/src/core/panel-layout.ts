@@ -60,3 +60,7 @@ export function moveInspectorPanel(order: WorkspacePanelId[], movingId: Workspac
 export function proportionalPanelFlex(weight: number): string {
   return `${Math.max(1, weight)} 1 0px`
 }
+
+export function bottomPanelFlex(width: number, fillRemaining: boolean): string {
+  return `${fillRemaining ? 1 : 0} 1 ${Math.max(1, width)}px`
+}
