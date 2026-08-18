@@ -1,6 +1,7 @@
 export type ColorMode = 'rgba' | 'indexed' | 'grayscale'
 export type RasterFormat = 'rgba' | 'indexed'
 export type ImageResizeInterpolation = 'nearest' | 'smooth'
+export type TileRepeatMode = 'off' | 'x' | 'y' | 'both'
 export type ToolId = 'pencil' | 'airbrush' | 'eraser' | 'fill' | 'eyedropper' | 'selection' | 'shape' | 'line' | 'text' | 'move' | 'hand' | 'zoom' | 'rotate'
 export type MoveKind = 'move' | 'slice'
 export type BrushShape = 'round' | 'square' | 'line'
@@ -204,6 +205,40 @@ export interface RuntimeRasterTiles {
   visibleBounds?: { x: number; y: number; width: number; height: number } | null
 }
 
+export type TilemapQuarterTurns = 0 | 1 | 2 | 3
+
+export interface TilemapCell {
+  tilesetId: string
+  tileId: string
+  flipHorizontal?: boolean
+  flipVertical?: boolean
+  /** Clockwise quarter turns applied after flips. */
+  rotation?: TilemapQuarterTurns
+}
+
+export interface TilemapCelData {
+  tileWidth: number
+  tileHeight: number
+  columns: number
+  rows: number
+  cells: Array<TilemapCell | null>
+}
+
+export interface Tileset {
+  id: string
+  name: string
+  tileWidth: number
+  tileHeight: number
+  columns: number
+  rows: number
+  /** Stable IDs in row-major sheet order. */
+  tileIds: string[]
+  /** Nullable row-major positions used by the Tileset panel; omitted legacy data is compact. */
+  tileSlots?: Array<string | null>
+  /** Padded RGBA sheet sized columns * tileWidth by rows * tileHeight. */
+  pixels: Uint8ClampedArray
+}
+
 export interface LayerStyleStroke {
   enabled: boolean
   color: RgbaColor
@@ -267,7 +302,9 @@ export interface RgbaLayer {
   /** Optional user-facing note shown when hovering the layer row. */
   description?: string
   /** Editable text layers retain raster surfaces for the existing compositor. */
-  kind?: 'text'
+  kind?: 'text' | 'tilemap'
+  /** Project Tileset owned by this Tilemap layer. */
+  tilemapTilesetId?: string
   visible: boolean
   locked: boolean
   opacity: number
@@ -298,7 +335,9 @@ export interface IndexedLayer {
   /** Optional user-facing note shown when hovering the layer row. */
   description?: string
   /** Editable text layers retain raster surfaces for the existing compositor. */
-  kind?: 'text'
+  kind?: 'text' | 'tilemap'
+  /** Project Tileset owned by this Tilemap layer. */
+  tilemapTilesetId?: string
   visible: boolean
   locked: boolean
   opacity: number
@@ -397,6 +436,8 @@ export interface AnimationCel {
   surface?: AnimationCelSurface
   /** Editable source data for text cels. The surface remains the rendered cache. */
   text?: TextCelData
+  /** Editable tile references for Tilemap cels. The surface remains the rendered cache. */
+  tilemap?: TilemapCelData
   /** Independent grayscale surface for this cell; transparent pixels are neutral/unpainted. */
   mask?: LayerMask
 }
@@ -461,7 +502,7 @@ export interface DocumentSlice {
 }
 
 export interface SpriteDocument {
-  schemaVersion: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12
+  schemaVersion: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13
   id: string
   name: string
   width: number
@@ -479,6 +520,8 @@ export interface SpriteDocument {
   nextColorId: number
   /** Project-owned brushes are stored in the .moonsprite container. */
   customBrushes?: ProjectBrush[]
+  /** Project-owned tile sheets referenced by Tilemap cells. */
+  tilesets?: Tileset[]
   /** Animation metadata is independent from layer ordering and optional for v1 compatibility. */
   animation?: AnimationTimeline
   /** Project-owned defaults for the selection outline dialog. */
@@ -550,6 +593,8 @@ export interface ViewState {
   /** View-only configurable grid origin and cell size. */
   grid?: GridSettings
   relativeLuminance: boolean
+  /** View-only repeated canvas preview and wrapped painting mode. */
+  tileRepeatMode?: TileRepeatMode
   /** View-only selection outline visibility. The selection itself remains active. */
   showSelectionOutline?: boolean
   /** View-only transform pivot visibility. The configured pivot still affects transforms while hidden. */
@@ -629,7 +674,7 @@ export interface PaletteListing {
   palettes: StoredPalette[]
 }
 
-export type WorkspacePanelId = 'color' | 'palette' | 'layers' | 'preview'
+export type WorkspacePanelId = 'color' | 'palette' | 'layers' | 'preview' | 'tileset'
 export type WorkspacePanelDock = 'right' | 'left' | 'bottom' | 'floating'
 export type ToolRailSide = 'left' | 'right' | 'top' | 'bottom'
 

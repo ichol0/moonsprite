@@ -1,4 +1,4 @@
-import type { BackgroundLayerSettings, ClipboardImage, LayerGroup, RasterLayer, TextCelData } from '@shared/types'
+import type { BackgroundLayerSettings, ClipboardImage, LayerGroup, RasterLayer, TextCelData, TilemapCelData, Tileset } from '@shared/types'
 import { unpackColor } from '@/core/raster'
 import { cloneLayerStyles } from '@/core/layer-styles'
 
@@ -13,7 +13,8 @@ export interface SelectionClipboard {
 
 export interface LayerClipboard {
   name: string
-  kind?: 'text'
+  kind?: 'text' | 'tilemap'
+  tilemapTilesetId?: string
   width: number
   height: number
   offsetX: number
@@ -39,6 +40,7 @@ export interface LayerClipboard {
     storageOriginY?: number
     opacity?: number
     text?: TextCelData
+    tilemap?: TilemapCelData
     pixels: Uint8ClampedArray
     mask?: LayerMaskClipboard
   }>
@@ -71,6 +73,7 @@ export interface LayerMaskClipboard {
 export interface LayerCollectionClipboard {
   sourceDocumentId?: string
   animationFrames?: Array<{ duration: number }>
+  tilesets?: Tileset[]
   layers: LayerClipboard[]
   groups: LayerGroupClipboard[]
 }
@@ -92,12 +95,18 @@ const cloneLayerClipboard = (clipboard: LayerClipboard): LayerClipboard => ({
   background: clipboard.background ? { ...clipboard.background } : undefined,
   displayColor: clipboard.displayColor ? { ...clipboard.displayColor } : undefined,
   pixels: clipboard.pixels.slice(),
-  animationCels: clipboard.animationCels?.map((cel) => ({ ...cel, pixels: cel.pixels.slice(), mask: cel.mask ? { ...cel.mask, pixels: cel.mask.pixels.slice() } : undefined }))
+  animationCels: clipboard.animationCels?.map((cel) => ({
+    ...cel,
+    tilemap: cel.tilemap ? { ...cel.tilemap, cells: cel.tilemap.cells.map((cell) => cell ? { ...cell } : null) } : undefined,
+    pixels: cel.pixels.slice(),
+    mask: cel.mask ? { ...cel.mask, pixels: cel.mask.pixels.slice() } : undefined
+  }))
 })
 
 const cloneLayerCollectionClipboard = (clipboard: LayerCollectionClipboard): LayerCollectionClipboard => ({
   sourceDocumentId: clipboard.sourceDocumentId,
   animationFrames: clipboard.animationFrames?.map((frame) => ({ ...frame })),
+  tilesets: clipboard.tilesets?.map((tileset) => ({ ...tileset, tileIds: [...tileset.tileIds], tileSlots: tileset.tileSlots ? [...tileset.tileSlots] : undefined, pixels: tileset.pixels.slice() })),
   layers: clipboard.layers.map(cloneLayerClipboard),
   groups: clipboard.groups.map((group) => ({ ...group, layerStyles: cloneLayerStyles(group.layerStyles), displayColor: group.displayColor ? { ...group.displayColor } : undefined }))
 })

@@ -1,11 +1,12 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { strFromU8, unzipSync, zipSync, type Zippable } from 'fflate'
-import { activateAnimationFrame, addBlankAnimationFrame, connectAnimationCels, duplicateAnimationFrame, ensureAnimationDocument, resizeAnimationCelsAt, syncActiveAnimationFrame } from './animation'
+import { activateAnimationFrame, addBlankAnimationFrame, connectAnimationCels, duplicateAnimationFrame, ensureAnimationDocument, refreshActiveAnimationFrame, resizeAnimationCelsAt, syncActiveAnimationFrame } from './animation'
 import { animationMaskAt, createDocument, createLayerMask, getActiveLayer, getLayerStorageOrigin, readLayerColorAt, resizeDocumentAt, writeLayerColor } from './document'
 import { applySelectionTranslationPreview, captureSelectionTransform, restoreSelectionTranslationPreview } from './tools'
 import { acceptProjectSaveBaseline, compactProjectRasterStorage, decodeProject, encodeProject, encodeProjectAsync, encodeProjectSaveAsync, PROJECT_SCHEMA_VERSION, migrateProjectManifest, readProjectGalleryMetadata, registerProjectSaveBaseline } from './project-format'
 import { runtimeRasterForSurface, surfacePixelsMaterialized } from './runtime-raster'
 import { createDefaultLayerStyles } from './layer-styles'
+import { createSolidTileset, createTilemapCelData, createTilesetFromRgba, deleteTilesetTile, renderTilemapSurface } from './tilemap'
 
 const zipCompressionMethods = (data: Uint8Array): Map<string, number> => {
   const view = new DataView(data.buffer, data.byteOffset, data.byteLength)
@@ -62,9 +63,10 @@ interface TestProjectManifest {
   schemaVersion: number
   document: {
     schemaVersion: number
-    layers: Array<TestRasterManifestEntry & { kind?: 'text' }>
+    layers: Array<TestRasterManifestEntry & { kind?: 'text' | 'tilemap'; tilemapTilesetId?: string }>
     groups?: Array<{ layerStyles?: unknown }>
-    animation: { cels: TestRasterManifestEntry[] }
+    tilesets?: Array<{ id: string; dataFile: string; tileSlots?: Array<string | null> }>
+    animation: { cels: Array<TestRasterManifestEntry & { tilemap?: { cells: Array<{ index: number; tilesetId: string; tileId: string }> } }> }
   }
 }
 
@@ -124,6 +126,106 @@ describe('project manifest migration boundary', () => {
 
     expect(reopened.layers[0].background).toEqual({ mode: 'preset', pattern: 'solid' })
     expect(reopened.schemaVersion).toBe(PROJECT_SCHEMA_VERSION)
+  })
+
+  it('round-trips v13 tilesets and editable tilemap cells', () => {
+    const document = createDocument('tilemap project', 4, 2, 'rgba')
+    const layer = getActiveLayer(document)
+    const cel = ensureAnimationDocument(document).cels[0]
+    const tileset = createSolidTileset('tileset-1', 'Solid', 2, 2, { r: 10, g: 20, b: 30, a: 255 }, 'tile-1')
+    tileset.tileSlots = [null, null, 'tile-1']
+    const tilemap = createTilemapCelData(document.width, document.height, 2, 2)
+    tilemap.cells[1] = { tilesetId: tileset.id, tileId: tileset.tileIds[0] }
+    document.tilesets = [tileset]
+    layer.kind = 'tilemap'
+    layer.tilemapTilesetId = tileset.id
+    cel.tilemap = tilemap
+    cel.surface = renderTilemapSurface(tilemap, document.tilesets, document.colorMode)
+    refreshActiveAnimationFrame(document)
+
+    const files = unzipSync(encodeProject(document))
+    const manifest = readTestManifest(files)
+    expect(manifest.document.layers[0].kind).toBe('tilemap')
+    expect(manifest.document.layers[0].tilemapTilesetId).toBe('tileset-1')
+    expect(manifest.document.tilesets).toEqual([expect.objectContaining({ id: 'tileset-1', tileSlots: [null, null, 'tile-1'], dataFile: 'tilesets/tileset-1.rgba' })])
+    expect(manifest.document.animation.cels[0].tilemap?.cells).toEqual([{ index: 1, tilesetId: 'tileset-1', tileId: 'tile-1' }])
+
+    const reopened = decodeProject(zipSync(files))
+    const reopenedCel = ensureAnimationDocument(reopened).cels[0]
+    expect(reopened.layers[0].kind).toBe('tilemap')
+    expect(reopened.layers[0].tilemapTilesetId).toBe('tileset-1')
+    expect(reopened.tilesets?.[0]).toMatchObject({ id: 'tileset-1', tileWidth: 2, tileHeight: 2, tileIds: ['tile-1'], tileSlots: [null, null, 'tile-1'] })
+    expect(reopenedCel.tilemap?.cells[1]).toEqual({ tilesetId: 'tileset-1', tileId: 'tile-1' })
+    expect(readLayerColorAt(reopened, getActiveLayer(reopened), 2, 0)).toEqual({ r: 10, g: 20, b: 30, a: 255 })
+  })
+
+  it('round-trips a tileset whose sheet has spare trailing capacity', () => {
+    const document = createDocument('sparse tileset project', 2, 2, 'rgba')
+    const source = new Uint8ClampedArray(4 * 2 * 4)
+    source.fill(255)
+    const full = createTilesetFromRgba('tileset-sparse', 'Sparse', 4, 2, source, 2, 2, (index) => `tile-${index + 1}`)
+    const sparse = deleteTilesetTile(full, 'tile-1')!
+    expect(sparse.tileIds).toEqual(['tile-2'])
+    expect(sparse.columns * sparse.rows).toBe(2)
+    document.tilesets = [sparse]
+
+    const reopened = decodeProject(encodeProject(document))
+    expect(reopened.tilesets?.[0]).toMatchObject({ columns: 2, rows: 1, tileIds: ['tile-2'] })
+  })
+
+  it('opens earlier v13 Tilesets without explicit layout slots as compact rows', () => {
+    const document = createDocument('legacy tileset layout', 2, 2, 'rgba')
+    document.tilesets = [createSolidTileset('tileset-legacy', 'Legacy', 1, 1, { r: 20, g: 40, b: 60, a: 255 }, 'tile-1')]
+    const files = unzipSync(encodeProject(document))
+    const manifest = readTestManifest(files)
+    delete manifest.document.tilesets![0].tileSlots
+    files['manifest.json'] = new TextEncoder().encode(JSON.stringify(manifest))
+
+    expect(decodeProject(zipSync(files)).tilesets?.[0].tileSlots).toEqual(['tile-1'])
+  })
+
+  it('migrates v12 projects with an empty tileset collection', () => {
+    const migrated = migrateProjectManifest({
+      app: 'MoonSprite',
+      schemaVersion: 12,
+      document: { schemaVersion: 12, width: 4, height: 4, layers: [], animation: { frames: [], cels: [] } }
+    })
+    expect(migrated).toMatchObject({
+      schemaVersion: PROJECT_SCHEMA_VERSION,
+      sourceSchemaVersion: 12,
+      document: { schemaVersion: PROJECT_SCHEMA_VERSION, tilesets: [] }
+    })
+  })
+
+  it('rejects tilemap cells that reference a missing tile', () => {
+    const document = createDocument('broken tilemap project', 2, 2, 'rgba')
+    const layer = getActiveLayer(document)
+    const cel = ensureAnimationDocument(document).cels[0]
+    const tileset = createSolidTileset('tileset-1', 'Solid', 2, 2, { r: 255, g: 0, b: 0, a: 255 }, 'tile-1')
+    const tilemap = createTilemapCelData(2, 2, 2, 2)
+    tilemap.cells[0] = { tilesetId: 'tileset-1', tileId: 'tile-1' }
+    document.tilesets = [tileset]
+    layer.kind = 'tilemap'
+    cel.tilemap = tilemap
+    cel.surface = renderTilemapSurface(tilemap, document.tilesets, document.colorMode)
+    refreshActiveAnimationFrame(document)
+    const files = unzipSync(encodeProject(document))
+    const manifest = readTestManifest(files)
+    manifest.document.animation.cels[0].tilemap!.cells[0].tileId = 'missing'
+    files['manifest.json'] = new TextEncoder().encode(JSON.stringify(manifest))
+
+    expect(() => decodeProject(zipSync(files))).toThrow()
+  })
+
+  it('rejects Tileset layouts that omit or duplicate stable tile IDs', () => {
+    const document = createDocument('broken tileset layout', 2, 2, 'rgba')
+    document.tilesets = [createSolidTileset('tileset-1', 'Solid', 1, 1, { r: 255, g: 0, b: 0, a: 255 }, 'tile-1')]
+    const files = unzipSync(encodeProject(document))
+    const manifest = readTestManifest(files)
+    manifest.document.tilesets![0].tileSlots = [null, null]
+    files['manifest.json'] = new TextEncoder().encode(JSON.stringify(manifest))
+
+    expect(() => decodeProject(zipSync(files))).toThrow()
   })
 
   it('keeps v11 layer styles without accepting future background metadata', () => {

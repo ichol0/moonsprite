@@ -45,6 +45,7 @@ describe('export settings persistence', () => {
         name: 'walk.gif',
         format: 'gif',
         scalePercent: 400,
+        target: 'slices',
         directory: 'D:/exports/animation',
         gifFrameRange: 'range',
         gifFrameStart: 2,

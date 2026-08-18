@@ -1,5 +1,6 @@
 import type { FillKind, LayerGroup, ShapeKind, ToolId, ViewState } from '@shared/types'
 import { createDocument, createLayer } from '@/core/document'
+import { createDefaultLayerStyles, resolveLayerStyles } from '@/core/layer-styles'
 import { useWorkspace } from '@/store/workspace'
 import { largeProjectPlan, MAX_LARGE_PROJECT_PIXEL_BYTES } from './benchmark-plan'
 
@@ -199,6 +200,34 @@ const prepareCenteredSelection = (size: number) => {
   })
 }
 
+const prepareActiveLayerStyle = (shadowBlur: number, innerGlowSize: number) => {
+  const session = activeSession()
+  if (!session) return
+  const layer = session.document.layers.find((candidate) => candidate.id === session.document.activeLayerId)
+  if (!layer) return
+  const styles = createDefaultLayerStyles()
+  styles.shadow.enabled = shadowBlur > 0
+  styles.shadow.blur = Math.max(0, Math.trunc(shadowBlur))
+  styles.innerGlow.enabled = innerGlowSize > 0
+  styles.innerGlow.size = Math.max(1, Math.trunc(innerGlowSize || 1))
+  useWorkspace.getState().previewLayerStyles('layer', layer.id, styles)
+}
+
+const previewActiveLayerStyleSize = (effect: 'shadow' | 'innerGlow', size: number) => {
+  const session = activeSession()
+  if (!session) return
+  const layer = session.document.layers.find((candidate) => candidate.id === session.document.activeLayerId)
+  if (!layer) return
+  const styles = resolveLayerStyles(layer.layerStyles)
+  if (effect === 'shadow') styles.shadow = { ...styles.shadow, enabled: true, blur: Math.max(0, Math.trunc(size)) }
+  else styles.innerGlow = { ...styles.innerGlow, enabled: true, size: Math.max(1, Math.trunc(size)) }
+  useWorkspace.getState().previewLayerStyles('layer', layer.id, styles)
+}
+
+const setMoveAutoSelect = (enabled: boolean) => {
+  useWorkspace.getState().setMoveAutoSelect(enabled)
+}
+
 const setTimelapseRecording = (enabled: boolean) => {
   useWorkspace.getState().setTimelapseSettings({ enabled, quality: 'low', fps: 12, speed: 8 })
 }
@@ -246,6 +275,9 @@ export function installPerformanceHarness() {
     resetScenario,
     prepareTool,
     prepareCenteredSelection,
+    prepareActiveLayerStyle,
+    previewActiveLayerStyleSize,
+    setMoveAutoSelect,
     setTimelapseRecording,
     timelapseSnapshotCount,
     undoRedo,

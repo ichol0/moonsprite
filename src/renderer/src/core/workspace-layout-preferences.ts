@@ -22,21 +22,37 @@ export const FLOATING_PANEL_STORAGE_KEYS: Record<WorkspacePanelId, string> = {
   color: 'moonsprite.color-panel.v1',
   palette: 'moonsprite.palette-panel.v1',
   layers: 'moonsprite.layers-panel.v1',
-  preview: 'moonsprite.preview-panel.v1'
+  preview: 'moonsprite.preview-panel.v1',
+  tileset: 'moonsprite.tileset-panel.v1'
 }
 export const POPUP_PANEL_STORAGE_KEYS: Record<WorkspacePanelId, string> = {
   color: 'moonsprite.popup-color-panel.v1',
   palette: 'moonsprite.popup-palette-panel.v1',
   layers: 'moonsprite.popup-layers-panel.v1',
-  preview: 'moonsprite.popup-preview-panel.v1'
+  preview: 'moonsprite.popup-preview-panel.v1',
+  tileset: 'moonsprite.popup-tileset-panel.v1'
 }
 
 export const DEFAULT_PANEL_DOCKS: Record<WorkspacePanelId, WorkspacePanelDock> = {
-  color: 'left', palette: 'left', layers: 'bottom', preview: 'bottom'
+  color: 'left', palette: 'left', layers: 'bottom', preview: 'bottom', tileset: 'right'
 }
 export const DEFAULT_PANEL_VISIBILITY: Record<WorkspacePanelId, boolean> = {
-  color: true, palette: true, layers: true, preview: true
+  color: true, palette: true, layers: true, preview: true, tileset: false
 }
+
+export function workspacePanelDockPresence(
+  panelDocks: Partial<Record<WorkspacePanelId, WorkspacePanelDock>>,
+  panelVisibility: Partial<Record<WorkspacePanelId, boolean>>
+): Record<Exclude<WorkspacePanelDock, 'floating'>, boolean> {
+  const visiblePanelIds = (Object.keys(DEFAULT_PANEL_DOCKS) as WorkspacePanelId[]).filter((id) => panelVisibility[id])
+  const dockFor = (id: WorkspacePanelId): WorkspacePanelDock => panelDocks[id] ?? DEFAULT_PANEL_DOCKS[id]
+  return {
+    left: visiblePanelIds.some((id) => dockFor(id) === 'left'),
+    right: visiblePanelIds.some((id) => dockFor(id) === 'right'),
+    bottom: visiblePanelIds.some((id) => dockFor(id) === 'bottom')
+  }
+}
+
 export const DEFAULT_INSPECTOR_WIDTH = 300
 export const DEFAULT_LEFT_DOCK_WIDTH = 280
 export const DEFAULT_BOTTOM_DOCK_HEIGHT = 220

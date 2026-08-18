@@ -17,9 +17,10 @@ import type { BrushProfile, DocumentSession } from './workspace-types'
 import { defaultSymmetryCenter } from '@/core/symmetry'
 import { ensureAnimationDocument, refreshActiveAnimationFrame } from '@/core/animation'
 import { normalizeProjectDisplaySettings, normalizeProjectStatistics, normalizeTimelapseSettings } from '@/core/project-metadata'
-import { findLayerMask, getActiveLayer } from '@/core/document'
+import { findLayerMask, getActiveLayer, getLayerIdsInGroup, isLayerEffectivelyLocked, isLayerEffectivelyVisible } from '@/core/document'
 import { cloneBrushDynamicsSettings, normalizeBrushDynamicsSettings } from '@/core/pressure'
 import { applyProjectLayerPanelState, loadLocalLayerPanelState, normalizeProjectLayerPanelState } from '@/core/layer-panel-state'
+import { ensureTilemapTilesetOwnership } from '@/core/tilemap-document'
 
 const defaultColor: RgbaColor = { r: 41, g: 121, b: 255, a: 255 }
 const defaultSecondary: RgbaColor = { r: 241, g: 244, b: 248, a: 255 }
@@ -27,11 +28,16 @@ const defaultSecondary: RgbaColor = { r: 241, g: 244, b: 248, a: 255 }
 export const isBrushTool = (tool: ToolId): tool is BrushTool => BRUSH_TOOLS.includes(tool as BrushTool)
 
 const TEXT_LAYER_ALLOWED_TOOLS = new Set<ToolId>(['text', 'move', 'eyedropper', 'hand', 'zoom', 'rotate'])
+const TILEMAP_LAYER_ALLOWED_TOOLS = new Set<ToolId>(['pencil', 'eraser', 'selection', 'move', 'eyedropper', 'hand', 'zoom', 'rotate'])
 
 export const isToolAvailableForSession = (session: DocumentSession, tool: ToolId): boolean => {
-  if (session.activeLayerMaskId || session.selectedGroupIds.length > 0) return true
+  const groupSelected = session.selectedGroupIds.length > 0 || Boolean(session.selectedGroupId)
+  if (groupSelected && tool === 'fill') return false
+  if (session.activeLayerMaskId || groupSelected) return true
   const textLayerSelected = session.selectedLayerIds.some((id) => session.document.layers.some((layer) => layer.id === id && layer.kind === 'text'))
-  return !textLayerSelected || TEXT_LAYER_ALLOWED_TOOLS.has(tool)
+  if (textLayerSelected) return TEXT_LAYER_ALLOWED_TOOLS.has(tool)
+  const tilemapLayerSelected = session.selectedLayerIds.some((id) => session.document.layers.some((layer) => layer.id === id && layer.kind === 'tilemap'))
+  return !tilemapLayerSelected || session.tilemapMode !== 'paint' || TILEMAP_LAYER_ALLOWED_TOOLS.has(tool)
 }
 
 export const activeLayerMask = (session: DocumentSession): LayerMask | null => session.activeLayerMaskId
@@ -39,6 +45,23 @@ export const activeLayerMask = (session: DocumentSession): LayerMask | null => s
   : null
 
 export const activePaintLayer = (session: DocumentSession): RasterLayer => activeLayerMask(session) ?? getActiveLayer(session.document)
+
+export const selectedTransformLayersForSession = (session: DocumentSession): RasterLayer[] => {
+  const mask = activeLayerMask(session)
+  if (mask) return [mask]
+  const selectedIds = new Set(session.selectedLayerIds)
+  const selectedGroupIds = new Set(session.selectedGroupIds)
+  if (session.selectedGroupId) selectedGroupIds.add(session.selectedGroupId)
+  for (const groupId of selectedGroupIds) for (const layerId of getLayerIdsInGroup(session.document, groupId)) selectedIds.add(layerId)
+  return session.document.layers.filter((layer) => selectedIds.has(layer.id))
+}
+
+export const selectedTransformLayersAreEditable = (
+  session: DocumentSession,
+  layers = selectedTransformLayersForSession(session)
+): boolean => layers.length > 0
+  && (layers.length === 1 || layers.every((layer) => !layer.kind))
+  && layers.every((layer) => isLayerEffectivelyVisible(session.document, layer) && !isLayerEffectivelyLocked(session.document, layer))
 
 export const brushProfileFromSession = (session: DocumentSession): BrushProfile => ({
   brushSize: session.brushSize,
@@ -176,6 +199,7 @@ export const sessionFromDocument = (document: SpriteDocument): DocumentSession =
   }
   ensureAnimationDocument(document)
   refreshActiveAnimationFrame(document)
+  ensureTilemapTilesetOwnership(document)
   document.displaySettings = normalizeProjectDisplaySettings(document.displaySettings)
   document.statistics = normalizeProjectStatistics(document.statistics)
   document.timelapse = normalizeTimelapseSettings(document.timelapse, document.timelapse?.snapshots ?? [])
@@ -187,6 +211,8 @@ export const sessionFromDocument = (document: SpriteDocument): DocumentSession =
     tool,
     brushProfileFromPersisted(persistedProfiles[tool] ?? fallbackProfile)
   ])) as Record<BrushTool, BrushProfile>
+  const activeLayer = document.layers.find((layer) => layer.id === document.activeLayerId)
+  const initialTileset = document.tilesets?.find((tileset) => tileset.id === activeLayer?.tilemapTilesetId) ?? document.tilesets?.[0]
   const session = {
     document,
     history: new HistoryStack(),
@@ -194,6 +220,10 @@ export const sessionFromDocument = (document: SpriteDocument): DocumentSession =
     moveKind: 'move',
     selectedSliceId: null,
     selectedSliceIds: [],
+    selectedTilesetId: initialTileset?.id ?? null,
+    selectedTileId: initialTileset?.tileIds[0] ?? null,
+    secondaryTileId: initialTileset?.tileIds[0] ?? null,
+    tilemapMode: 'hybrid',
     primaryColor: document.palette.find((entry) => entry.id !== 0)?.color ?? defaultColor,
     secondaryColor: defaultSecondary,
     brushSize: settings.brushSize,
@@ -254,6 +284,7 @@ export const sessionFromDocument = (document: SpriteDocument): DocumentSession =
       relativeLuminance: false,
       showSelectionOutline: true,
       showSelectionPivot: false,
+      tileRepeatMode: 'off',
       quickCommandBarPositionX: 0.5,
       quickCommandBarExpanded: false,
       grid: { ...document.displaySettings.grid }

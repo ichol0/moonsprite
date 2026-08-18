@@ -74,9 +74,9 @@ describe('shortcut persistence boundary', () => {
       key: (index: number) => [...values.keys()][index] ?? null,
       get length() { return values.size }
     } as Storage
-    values.set(SHORTCUTS_KEY, JSON.stringify({ popupColorPanel: '', popupPalettePanel: '', popupLayersPanel: '', popupPreviewPanel: 'Alt+4' }))
+    values.set(SHORTCUTS_KEY, JSON.stringify({ popupColorPanel: '', popupPalettePanel: '', popupLayersPanel: '', popupPreviewPanel: 'Alt+4', popupTilesetPanel: '' }))
 
-    expect(loadShortcuts(storage)).toMatchObject({ popupColorPanel: '1', popupPalettePanel: '2', popupLayersPanel: '3', popupPreviewPanel: 'Alt+4' })
+    expect(loadShortcuts(storage)).toMatchObject({ popupColorPanel: '1', popupPalettePanel: '2', popupLayersPanel: '3', popupPreviewPanel: 'Alt+4', popupTilesetPanel: '5' })
     expect(values.get(POPUP_PANEL_SHORTCUT_MIGRATION_KEY)).toBe('done')
     saveShortcuts({ ...DEFAULT_SHORTCUTS, popupColorPanel: '' }, storage)
     expect(loadShortcuts(storage).popupColorPanel).toBe('')
@@ -130,13 +130,16 @@ describe('shortcut persistence boundary', () => {
     expect(SHORTCUT_GROUPS.file).toContain('exportSpriteSheet')
     expect(SHORTCUT_GROUPS.animation).toContain('toggleAnimationPlayback')
     expect(DEFAULT_SHORTCUTS.toggleAnimationPlayback).toBe('Enter')
+    expect(DEFAULT_SHORTCUTS.addLinkedAnimationFrame).toBe('Alt+M')
+    expect(SHORTCUT_GROUPS.animation).toContain('addLinkedAnimationFrame')
     expect(SHORTCUT_GROUPS.interface).toContain('toggleColorPanel')
-    expect(SHORTCUT_GROUPS.interface).toEqual(expect.arrayContaining(['popupColorPanel', 'popupPalettePanel', 'popupLayersPanel', 'popupPreviewPanel']))
-    expect(SHORTCUT_GROUPS.interface.slice(0, 4)).toEqual(['popupColorPanel', 'popupPalettePanel', 'popupLayersPanel', 'popupPreviewPanel'])
+    expect(SHORTCUT_GROUPS.interface).toEqual(expect.arrayContaining(['popupColorPanel', 'popupPalettePanel', 'popupLayersPanel', 'popupPreviewPanel', 'popupTilesetPanel']))
+    expect(SHORTCUT_GROUPS.interface.slice(0, 5)).toEqual(['popupColorPanel', 'popupPalettePanel', 'popupLayersPanel', 'popupPreviewPanel', 'popupTilesetPanel'])
     expect(DEFAULT_SHORTCUTS.popupColorPanel).toBe('1')
     expect(DEFAULT_SHORTCUTS.popupPalettePanel).toBe('2')
     expect(DEFAULT_SHORTCUTS.popupLayersPanel).toBe('3')
     expect(DEFAULT_SHORTCUTS.popupPreviewPanel).toBe('4')
+    expect(DEFAULT_SHORTCUTS.popupTilesetPanel).toBe('5')
     expect(SHORTCUT_GROUPS.interface).toContain('toggleTimeline')
     expect(SHORTCUT_GROUPS.tools).toContain('tool.shape.rectangle')
     expect(DEFAULT_SHORTCUTS.toggleTimeline).toBe('')

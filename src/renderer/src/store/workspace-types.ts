@@ -33,10 +33,11 @@ import type {
 } from '@shared/types'
 import type { ContentInvalidationHint, HistoryStack, PixelEdit } from '@/core/history'
 import type { SelectionShearTransform } from '@/core/selection'
-import type { SelectionTransformSource, SelectionTranslationPreview } from '@/core/tools'
+import type { SelectionTransformLayerState, SelectionTransformSource, SelectionTranslationPreview } from '@/core/tools'
 import type { SymmetryAxes, SymmetryCenter } from '@/core/symmetry'
 import type { BrushTool } from '@/core/tool-preferences'
 import type { BrushDynamicsSettings, BrushPressureSettings } from '@/core/pressure'
+import type { TilemapDrawingMode } from '@/core/tilemap'
 
 export interface CanvasResizePreview {
   width: number
@@ -88,6 +89,7 @@ export interface SelectionPivot {
 
 export interface FloatingPaste {
   layerId: string
+  layers?: SelectionTransformLayerState[]
   beforeSelection: SelectionMask | null
   beforeSelectionPivot?: SelectionPivot | null
   source: SelectionTransformSource
@@ -98,6 +100,7 @@ export interface FloatingPaste {
   previewEdit: PixelEdit | null
   translationPreview: SelectionTranslationPreview | null
   previewDeferred?: boolean
+  tilemapEditCellIndex?: number
   copy: boolean
   label: string
 }
@@ -139,6 +142,10 @@ export interface DocumentSession {
   moveKind: MoveKind
   selectedSliceId: string | null
   selectedSliceIds: string[]
+  selectedTilesetId: string | null
+  selectedTileId: string | null
+  secondaryTileId: string | null
+  tilemapMode: TilemapDrawingMode
   primaryColor: RgbaColor
   secondaryColor: RgbaColor
   brushSize: number

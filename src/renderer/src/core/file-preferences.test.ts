@@ -118,6 +118,7 @@ describe('canvas preferences', () => {
     const parsed = parseQuickCommandPreferences(JSON.stringify([{ id: 'resetView', enabled: true }, { id: 'customGrid', enabled: false }, { id: 'resetView', enabled: false }, { id: 'unknown', enabled: true }]))
     expect(parsed.slice(0, 2)).toEqual([{ id: 'resetView', enabled: true }, { id: 'customGrid', enabled: false }])
     expect(parsed).toHaveLength(DEFAULT_QUICK_COMMAND_PREFERENCES.length)
+    expect(parsed.filter((item) => item.id === 'tileRepeatX' || item.id === 'tileRepeatY' || item.id === 'tileRepeatBoth').every((item) => item.enabled)).toBe(true)
     expect(parsed.slice(-6).every((item) => item.enabled === false)).toBe(true)
     expect(parseQuickCommandPreferences('[]')).toEqual(DEFAULT_QUICK_COMMAND_PREFERENCES)
   })
@@ -171,7 +172,7 @@ describe('editor preferences persistence boundary', () => {
     expect(defaults.timelapseRecordingEnabled).toBe(false)
     expect(defaults.quickCommandBarEnabled).toBe(true)
     expect(defaults.quickCommandBarTranslucent).toBe(true)
-    expect(defaults.quickCommandPreferences.filter((item) => item.enabled).map((item) => item.id)).toEqual(['selectionFlipHorizontal', 'selectionFlipVertical', 'canvasMirrorHorizontal', 'canvasMirrorVertical', 'invertSelection', 'customGrid', 'relativeLuminance'])
+    expect(defaults.quickCommandPreferences.filter((item) => item.enabled).map((item) => item.id)).toEqual(['selectionFlipHorizontal', 'selectionFlipVertical', 'canvasMirrorHorizontal', 'canvasMirrorVertical', 'invertSelection', 'customGrid', 'tileRepeatX', 'tileRepeatY', 'tileRepeatBoth', 'relativeLuminance'])
 
     storage.set(RECOVERY_MINUTES_PREFERENCE_KEY, '999')
     expect(loadEditorPreferences(adapter).recoveryMinutes).toBe(60)

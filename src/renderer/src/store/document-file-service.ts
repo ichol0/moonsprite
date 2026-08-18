@@ -150,7 +150,6 @@ export async function exportDocumentFile(api: MoonSpriteApi, document: SpriteDoc
   const requestedName = sanitizeFileStem(options?.name ?? fallbackName, fallbackName)
   const format = options?.format ?? 'png-auto'
   if (options?.target === 'slices') {
-    if (format === 'gif') throw new Error(translate(loadEditorPreferences().language, 'file.export.slicesGifUnsupported'))
     const slices = document.slices ?? []
     if (slices.length === 0) throw new Error(translate(loadEditorPreferences().language, 'file.export.noSlices'))
     const directoryResult = await api.chooseDirectory(options.directory?.trim() || loadEditorPreferences().exportDirectory)
@@ -163,7 +162,9 @@ export async function exportDocumentFile(api: MoonSpriteApi, document: SpriteDoc
       const height = Math.max(1, Math.round(slice.height * scalePercent / 100))
       const check = checkResourceLimit(width, height, 1, 'rgba', resources)
       if (!check.allowed) throw new Error(check.reason)
-      const output = await exportDocumentSliceImage(document, slice, scalePercent, format)
+      const output = format === 'gif'
+        ? { ...exportAnimationGif(document, { scalePercent, frameStart: options?.gifFrameRange === 'range' ? options.gifFrameStart : undefined, frameEnd: options?.gifFrameRange === 'range' ? options.gifFrameEnd : undefined, direction: options?.gifDirection ?? 'forward', crop: slice }), extension: 'gif' as const, indexed: false }
+        : await exportDocumentSliceImage(document, slice, scalePercent, format)
       const fileName = sliceExportFileName(slice, output.extension, used)
       lastPath = joinDirectoryPath(directoryResult.directoryPath, fileName)
       lifecycle?.onWriteStart?.()

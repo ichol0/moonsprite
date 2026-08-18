@@ -18,6 +18,7 @@ import { PixelCloseIcon as X, PixelUtilityIcon } from '@/components/PixelUtility
 import { DialogHeader } from '@/components/DialogHeader'
 import { ModalShell } from '@/components/ModalShell'
 import { HomeSectionManagerDialog } from '@/components/HomeSectionManagerDialog'
+import { Tooltip } from '@/components/Tooltip'
 
 interface ProjectCard extends RecentProject {
   previewUrl?: string
@@ -49,20 +50,20 @@ const homeExternalLinks = {
 } as const
 const homeLinkIconPaths: Record<HomeLinkIconKind, { solid: string; soft: string }> = {
   qq: {
-    solid: 'M4 0h3v1h-3zM2 1h7v1h-7zM1 2h3v1h-3zM7 2h3v1h-3zM1 3h2v1h-2zM8 3h2v1h-2zM0 4h3v1h-3zM8 4h3v1h-3zM0 5h2v1h-2zM9 5h2v1h-2zM0 6h2v1h-2zM9 6h2v1h-2zM1 7h3v1h-3zM7 7h3v1h-3zM1 8h2v1h-2zM8 8h2v1h-2zM2 9h7v1h-7zM4 10h3v1h-3z',
-    soft: 'M3 0h1v1h-1zM7 0h1v1h-1zM4 2h1v1h-1zM6 2h1v1h-1zM0 3h1v1h-1zM3 3h1v1h-1zM7 3h1v1h-1zM10 3h1v1h-1zM2 5h1v1h-1zM8 5h1v1h-1zM3 6h1v1h-1zM7 6h1v1h-1zM0 7h1v1h-1zM10 7h1v1h-1zM3 8h1v1h-1zM5 8h1v1h-1zM7 8h1v1h-1zM3 10h1v1h-1zM7 10h1v1h-1z'
+    solid: 'M4 0h3v1h-3zM2 1h2v1h-2zM7 1h2v1h-2zM1 2h2v1h-2zM8 2h2v1h-2zM1 3h2v1h-2zM8 3h2v1h-2zM0 4h3v1h-3zM8 4h3v1h-3zM0 5h2v1h-2zM5 5h2v1h-2zM9 5h2v1h-2zM0 6h2v1h-2zM4 6h3v1h-3zM9 6h2v1h-2zM1 7h2v1h-2zM4 7h1v1h-1zM6 7h1v1h-1zM8 7h2v1h-2zM1 8h1v1h-1zM9 8h1v1h-1zM2 9h7v1h-7zM4 10h3v1h-3z',
+    soft: 'M3 0h1v1h-1zM7 0h1v1h-1zM4 2h1v1h-1zM6 2h1v1h-1zM0 3h1v1h-1zM4 3h3v1h-3zM10 3h1v1h-1zM3 4h5v1h-5zM4 5h1v1h-1zM2 6h1v1h-1zM8 6h1v1h-1zM0 7h1v1h-1zM5 7h1v1h-1zM10 7h1v1h-1zM2 8h1v1h-1zM5 8h1v1h-1zM8 8h1v1h-1zM3 10h1v1h-1zM7 10h1v1h-1z'
   },
   steam: {
-    solid: 'M4 0h3v1h-3zM2 1h7v1h-7zM1 2h5v1h-5zM9 2h1v1h-1zM1 3h4v1h-4zM7 3h1v1h-1zM9 3h1v1h-1zM0 4h5v1h-5zM6 4h1v1h-1zM8 4h1v1h-1zM10 4h1v1h-1zM3 5h2v1h-2zM7 5h1v1h-1zM10 5h1v1h-1zM9 6h2v1h-2zM1 7h1v1h-1zM7 7h3v1h-3zM1 8h3v1h-3zM6 8h4v1h-4zM2 9h7v1h-7zM4 10h3v1h-3z',
-    soft: 'M3 0h1v1h-1zM7 0h1v1h-1zM0 3h1v1h-1zM6 3h1v1h-1zM8 3h1v1h-1zM10 3h1v1h-1zM2 5h1v1h-1zM6 5h1v1h-1zM8 5h1v1h-1zM3 6h1v1h-1zM0 7h1v1h-1zM2 7h1v1h-1zM6 7h1v1h-1zM10 7h1v1h-1zM4 8h1v1h-1zM3 10h1v1h-1zM7 10h1v1h-1z'
+    solid: 'M4 0h3v1h-3zM2 1h7v1h-7zM1 2h5v1h-5zM9 2h1v1h-1zM1 3h4v1h-4zM7 3h1v1h-1zM0 4h5v1h-5zM6 4h1v1h-1zM8 4h1v1h-1zM10 4h1v1h-1zM1 5h4v1h-4zM7 5h1v1h-1zM10 5h1v1h-1zM3 6h1v1h-1zM9 6h2v1h-2zM8 7h2v1h-2zM1 8h1v1h-1zM6 8h4v1h-4zM2 9h1v1h-1zM5 9h4v1h-4zM4 10h3v1h-3z',
+    soft: 'M3 0h1v1h-1zM7 0h1v1h-1zM0 3h1v1h-1zM6 3h1v1h-1zM8 3h1v1h-1zM10 3h1v1h-1zM8 5h1v1h-1zM4 6h1v1h-1zM0 7h1v1h-1zM4 7h2v1h-2zM7 7h1v1h-1zM10 7h1v1h-1zM5 8h1v1h-1zM4 9h1v1h-1zM3 10h1v1h-1zM7 10h1v1h-1z'
   },
   github: {
-    solid: 'M4 0h3v1h-3zM2 1h7v1h-7zM1 2h2v1h-2zM4 2h3v1h-3zM8 2h2v1h-2zM1 3h1v1h-1zM9 3h1v1h-1zM0 4h2v1h-2zM9 4h2v1h-2zM0 5h2v1h-2zM9 5h2v1h-2zM0 6h3v1h-3zM8 6h3v1h-3zM1 7h1v1h-1zM3 7h1v1h-1zM7 7h3v1h-3zM1 8h1v1h-1zM7 8h3v1h-3zM2 9h7v1h-7zM4 10h3v1h-3z',
-    soft: 'M3 0h1v1h-1zM7 0h1v1h-1zM3 2h1v1h-1zM7 2h1v1h-1zM0 3h1v1h-1zM2 3h1v1h-1zM8 3h1v1h-1zM10 3h1v1h-1zM2 5h1v1h-1zM8 5h1v1h-1zM3 6h1v1h-1zM7 6h1v1h-1zM0 7h1v1h-1zM10 7h1v1h-1zM2 8h1v1h-1zM6 8h1v1h-1zM3 10h1v1h-1zM7 10h1v1h-1z'
+    solid: 'M4 0h3v1h-3zM2 1h7v1h-7zM1 2h2v1h-2zM4 2h3v1h-3zM8 2h2v1h-2zM1 3h1v1h-1zM9 3h1v1h-1zM0 4h2v1h-2zM9 4h2v1h-2zM0 5h2v1h-2zM9 5h2v1h-2zM0 6h2v1h-2zM9 6h2v1h-2zM1 7h2v1h-2zM8 7h2v1h-2zM1 8h1v1h-1zM3 8h1v1h-1zM7 8h3v1h-3zM7 9h2v1h-2z',
+    soft: 'M3 0h1v1h-1zM7 0h1v1h-1zM0 3h1v1h-1zM2 3h1v1h-1zM8 3h1v1h-1zM10 3h1v1h-1zM2 6h1v1h-1zM8 6h1v1h-1zM0 7h1v1h-1zM3 7h1v1h-1zM7 7h1v1h-1zM10 7h1v1h-1zM2 9h1v1h-1zM3 10h1v1h-1zM7 10h1v1h-1z'
   },
   language: {
-    solid: 'M4 0h3v1h-3zM2 1h3v1h-3zM7 1h2v1h-2zM1 2h5v1h-5zM8 2h2v1h-2zM1 3h5v1h-5zM8 3h2v1h-2zM0 4h5v1h-5zM7 4h4v1h-4zM0 5h2v1h-2zM3 5h2v1h-2zM7 5h4v1h-4zM0 6h1v1h-1zM3 6h2v1h-2zM8 6h3v1h-3zM1 7h1v1h-1zM4 7h2v1h-2zM8 7h2v1h-2zM1 8h1v1h-1zM4 8h2v1h-2zM9 8h1v1h-1zM2 9h2v1h-2zM7 9h2v1h-2zM4 10h3v1h-3z',
-    soft: 'M3 0h1v1h-1zM7 0h1v1h-1zM5 1h1v1h-1zM7 2h1v1h-1zM0 3h1v1h-1zM10 3h1v1h-1zM5 4h1v1h-1zM2 5h1v1h-1zM5 6h1v1h-1zM7 6h1v1h-1zM0 7h1v1h-1zM3 7h1v1h-1zM10 7h1v1h-1zM3 10h1v1h-1zM7 10h1v1h-1z'
+    solid: 'M7 1h2v1h-2zM1 2h3v1h-3zM7 2h3v1h-3zM1 3h1v1h-1zM6 3h4v1h-4zM1 4h3v1h-3zM6 4h1v1h-1zM8 4h3v1h-3zM1 5h1v1h-1zM10 5h1v1h-1zM1 6h3v1h-3zM6 6h1v1h-1zM8 6h1v1h-1zM10 6h1v1h-1zM4 8h3v1h-3zM8 8h2v1h-2zM4 9h3v1h-3zM8 9h1v1h-1zM4 10h3v1h-3z',
+    soft: 'M3 0h5v1h-5zM2 1h1v1h-1zM6 2h1v1h-1zM0 3h1v1h-1zM10 3h1v1h-1zM0 4h1v1h-1zM5 4h1v1h-1zM0 5h1v1h-1zM4 5h1v1h-1zM0 6h1v1h-1zM4 6h1v1h-1zM0 7h1v1h-1zM4 7h1v1h-1zM10 7h1v1h-1zM1 8h1v1h-1zM2 9h1v1h-1zM3 10h1v1h-1zM7 10h1v1h-1z'
   }
 }
 
@@ -70,7 +71,7 @@ function HomeLinkIcon({ kind }: { kind: HomeLinkIconKind }) {
   const paths = homeLinkIconPaths[kind]
   return <svg className="start-screen-link-icon" viewBox="0 0 11 11" width="22" height="22" shapeRendering="crispEdges" aria-hidden="true">
     <path d={paths.solid} fill="currentColor" />
-    <path d={paths.soft} fill="currentColor" opacity="0.42" />
+    <path d={paths.soft} fill="currentColor" opacity={107 / 255} />
   </svg>
 }
 interface CachedProjectPreview {
@@ -854,10 +855,18 @@ export function HomeWorkspace({ onNew, onOpen, onOpenProject, onRestoreRecovery 
         <div><h1>MOONSPRITE</h1><p>{t('home.tagline')}</p></div>
         <div className="start-screen-meta">
           <div className="start-screen-links" aria-label={t('home.linksAria')}>
-            <button className="start-screen-link" type="button" onClick={() => openExternalLink(homeExternalLinks.qq)} aria-label={t('home.qq')} title={t('home.qq')}><HomeLinkIcon kind="qq" /></button>
-            <button className="start-screen-link" type="button" onClick={() => openExternalLink(homeExternalLinks.steam)} aria-label={t('home.steam')} title={t('home.steam')}><HomeLinkIcon kind="steam" /></button>
-            <button className="start-screen-link" type="button" onClick={() => openExternalLink(homeExternalLinks.github)} aria-label={t('home.github')} title={t('home.github')}><HomeLinkIcon kind="github" /></button>
-            <button className="start-screen-link" type="button" onClick={() => setLanguageDialogOpen(true)} aria-label={t('home.language')} title={t('home.language')}><HomeLinkIcon kind="language" /></button>
+            <Tooltip content={<><strong>{t('home.qq')}</strong><span>{t('home.qqDescription')}</span></>}>
+              <button className="start-screen-link" type="button" onClick={() => openExternalLink(homeExternalLinks.qq)} aria-label={t('home.qq')}><HomeLinkIcon kind="qq" /></button>
+            </Tooltip>
+            <Tooltip content={<><strong>{t('home.steam')}</strong><span>{t('home.steamDescription')}</span></>}>
+              <button className="start-screen-link" type="button" onClick={() => openExternalLink(homeExternalLinks.steam)} aria-label={t('home.steam')}><HomeLinkIcon kind="steam" /></button>
+            </Tooltip>
+            <Tooltip content={<><strong>{t('home.github')}</strong><span>{t('home.githubDescription')}</span></>}>
+              <button className="start-screen-link" type="button" onClick={() => openExternalLink(homeExternalLinks.github)} aria-label={t('home.github')}><HomeLinkIcon kind="github" /></button>
+            </Tooltip>
+            <Tooltip content={<><strong>{t('home.language')}</strong><span>{t('home.languageDescription')}</span></>}>
+              <button className="start-screen-link" type="button" onClick={() => setLanguageDialogOpen(true)} aria-label={t('home.language')}><HomeLinkIcon kind="language" /></button>
+            </Tooltip>
           </div>
         </div>
       </header>

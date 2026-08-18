@@ -4,7 +4,7 @@ import { bottomPanelFlex, DEFAULT_BOTTOM_WIDTHS, DEFAULT_INSPECTOR_ORDER, DEFAUL
 describe('panel layout', () => {
   it('repairs duplicate, unknown and missing panel ids', () => {
     const layout = loadInspectorLayout(JSON.stringify({ order: ['layers', 'unknown', 'layers'] }))
-    expect(layout.order).toEqual(['layers', 'color', 'palette', 'preview'])
+    expect(layout.order).toEqual(['layers', 'color', 'palette', 'tileset', 'preview'])
   })
 
   it('clamps old or undersized persisted panel dimensions', () => {
@@ -35,10 +35,10 @@ describe('panel layout', () => {
   })
 
   it('moves a panel before, after or to the end without duplication', () => {
-    const order = ['color', 'palette', 'layers', 'preview'] as const
-    expect(moveInspectorPanel([...order], 'layers', 'color', false)).toEqual(['layers', 'color', 'palette', 'preview'])
-    expect(moveInspectorPanel([...order], 'color', 'layers', true)).toEqual(['palette', 'layers', 'color', 'preview'])
-    expect(moveInspectorPanel([...order], 'palette')).toEqual(['color', 'layers', 'preview', 'palette'])
+    const order = ['color', 'palette', 'layers', 'tileset', 'preview'] as const
+    expect(moveInspectorPanel([...order], 'layers', 'color', false)).toEqual(['layers', 'color', 'palette', 'tileset', 'preview'])
+    expect(moveInspectorPanel([...order], 'color', 'layers', true)).toEqual(['palette', 'layers', 'color', 'tileset', 'preview'])
+    expect(moveInspectorPanel([...order], 'palette')).toEqual(['color', 'layers', 'tileset', 'preview', 'palette'])
   })
 
   it('keeps side heights proportional while one bottom panel fills unused width', () => {

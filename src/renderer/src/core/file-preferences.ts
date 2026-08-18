@@ -77,6 +77,9 @@ export const QUICK_COMMAND_IDS = [
   'canvasMirrorVertical',
   'invertSelection',
   'customGrid',
+  'tileRepeatX',
+  'tileRepeatY',
+  'tileRepeatBoth',
   'undo',
   'redo',
   'selectAll',
@@ -107,6 +110,9 @@ const DEFAULT_ENABLED_QUICK_COMMAND_IDS = new Set<QuickCommandId>([
   'canvasMirrorVertical',
   'invertSelection',
   'customGrid',
+  'tileRepeatX',
+  'tileRepeatY',
+  'tileRepeatBoth',
   'relativeLuminance'
 ])
 
@@ -130,7 +136,7 @@ export function parseQuickCommandPreferences(value: string | null): QuickCommand
       preferences.push({ id: id as QuickCommandId, enabled: (candidate as { enabled?: unknown }).enabled === true })
     }
     if (preferences.length === 0) return fallback()
-    for (const item of DEFAULT_QUICK_COMMAND_PREFERENCES) if (!seen.has(item.id)) preferences.push({ ...item, enabled: false })
+    for (const item of DEFAULT_QUICK_COMMAND_PREFERENCES) if (!seen.has(item.id)) preferences.push({ ...item })
     if (!preferences.some((item) => item.enabled)) preferences[0] = { ...preferences[0], enabled: true }
     return preferences
   } catch {

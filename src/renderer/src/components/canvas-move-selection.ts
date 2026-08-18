@@ -8,6 +8,18 @@ interface CanvasMoveAnimationCellSelection {
   moveAllSelectedLayers: boolean
 }
 
+interface CanvasMoveLayerSelection {
+  selectedLayerIds: readonly string[]
+  selectedGroupIds: readonly string[]
+  layerIdsForGroup: (groupId: string) => readonly string[]
+}
+
+export function resolveCanvasMoveLayerIds({ selectedLayerIds, selectedGroupIds, layerIdsForGroup }: CanvasMoveLayerSelection): string[] {
+  const resolved = new Set(selectedLayerIds)
+  for (const groupId of selectedGroupIds) for (const layerId of layerIdsForGroup(groupId)) resolved.add(layerId)
+  return [...resolved]
+}
+
 export function resolveCanvasMoveAnimationCellKeys({
   selectedAnimationCellKeys,
   selectedLayerIds,

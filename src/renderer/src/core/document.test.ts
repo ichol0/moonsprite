@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { blendWithMode, packColor } from './raster'
+import { createDefaultLayerStyles } from './layer-styles'
 import { activateAnimationFrame, duplicateAnimationFrame, ensureAnimationDocument } from './animation'
 import { captureDocumentImageResizeSnapshot, compositePixelWithLayerColor, compositeRegion, createCompositePointReplacementSampler, createCompositePointSampler, createCompositeSampler, createDocument, createLayer, createLayerMask, createNormalCompositePointReplacementSampler, createNormalCompositePointSampler, DocumentCompositeCache, getPaletteEntry, layerContentBounds, markLayerContentChanged, normalCompositeLayers, paletteColorIdForCanvas, readLayerColor, readLayerColorAt, readLayerMaskDisplayColorAt, renderLayerMaskRegion, resizeDocumentAt, resizeDocumentImage, resolveLayerCanvasColor, restoreDocumentImageResizeSnapshot, writeLayerColor, writeLayerPackedRun } from './document'
 import { installRuntimeRaster, surfacePixelsMaterialized } from './runtime-raster'
@@ -8,6 +9,71 @@ const red = { r: 255, g: 0, b: 0, a: 255 }
 const blue = { r: 0, g: 0, b: 255, a: 128 }
 
 describe('document compositing', () => {
+  it('keeps binary-alpha cached shadow and inner glow pixel-identical', () => {
+    const document = createDocument('binary style cache', 18, 14, 'rgba')
+    const layer = document.layers[0]
+    for (let y = 4; y < 10; y += 1) for (let x = 5; x < 13; x += 1) {
+      if (x === 8 && y >= 6 && y <= 8) continue
+      writeLayerColor(document, layer, y * layer.width + x, red)
+    }
+    const styles = createDefaultLayerStyles()
+    styles.shadow = { ...styles.shadow, enabled: true, offsetX: 2, offsetY: -1, blur: 4 }
+    styles.innerGlow = { ...styles.innerGlow, enabled: true, size: 3 }
+    layer.layerStyles = styles
+
+    const cached = compositeRegion(document, 0, 0, document.width, document.height, new DocumentCompositeCache(), 1)
+    const direct = compositeRegion(document, 0, 0, document.width, document.height)
+
+    expect(Array.from(cached)).toEqual(Array.from(direct))
+  })
+
+  it('keeps the center of a large hollow binary shadow pixel-identical', () => {
+    const document = createDocument('large hollow style cache', 520, 520, 'rgba')
+    const layer = document.layers[0]
+    for (let x = 0; x < layer.width; x += 1) {
+      writeLayerColor(document, layer, x, red)
+      writeLayerColor(document, layer, (layer.height - 1) * layer.width + x, red)
+    }
+    for (let y = 1; y < layer.height - 1; y += 1) {
+      writeLayerColor(document, layer, y * layer.width, red)
+      writeLayerColor(document, layer, y * layer.width + layer.width - 1, red)
+    }
+    const styles = createDefaultLayerStyles()
+    styles.shadow = { ...styles.shadow, enabled: true, offsetX: 0, offsetY: 0, blur: 4 }
+    layer.layerStyles = styles
+
+    const cached = compositeRegion(document, 260, 260, 1, 1, new DocumentCompositeCache(), 1)
+    const direct = compositeRegion(document, 260, 260, 1, 1)
+
+    expect(Array.from(cached)).toEqual(Array.from(direct))
+  })
+
+  it('keeps cached styled-layer compositing pixel-identical while the layer moves', () => {
+    const document = createDocument('cached styled layer', 12, 10, 'rgba')
+    const background = document.layers[0]
+    const styled = createLayer('styled', 6, 5, 'rgba')
+    styled.offsetX = 2
+    styled.offsetY = 2
+    document.layers.push(styled)
+    writeLayerColor(document, background, 4 * background.width + 5, { r: 24, g: 32, b: 48, a: 255 })
+    writeLayerColor(document, styled, 2 * styled.width + 2, blue)
+    const styles = createDefaultLayerStyles()
+    styles.shadow.enabled = true
+    styles.shadow.offsetX = 1
+    styles.shadow.offsetY = 1
+    styles.shadow.blur = 2
+    styles.innerGlow.enabled = true
+    styles.innerGlow.size = 2
+    styled.layerStyles = styles
+    const cache = new DocumentCompositeCache()
+
+    expect(Array.from(compositeRegion(document, 0, 0, 12, 10, cache, 1))).toEqual(Array.from(compositeRegion(document, 0, 0, 12, 10)))
+
+    styled.offsetX += 2
+    styled.offsetY -= 1
+    expect(Array.from(compositeRegion(document, 0, 0, 12, 10, cache, 1))).toEqual(Array.from(compositeRegion(document, 0, 0, 12, 10)))
+  })
+
   it('creates layers without a display color marker by default', () => {
     expect(createLayer('plain', 1, 1, 'rgba').displayColor).toBeUndefined()
   })

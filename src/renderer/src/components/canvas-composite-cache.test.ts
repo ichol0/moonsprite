@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { compositeRegion, createDocument, createLayer, createLayerMask, createSparseLayer, DocumentCompositeCache, readLayerColor, writeLayerColor } from '@/core/document'
-import { applySelectionTransform, brushStrokeInvalidationRects, captureSelectionTransform, paintBrush } from '@/core/tools'
+import { applySelectionTransform, applySelectionTranslationCommit, brushStrokeInvalidationRects, captureSelectionTransform, paintBrush } from '@/core/tools'
 import { beginPixelEdit, revertPixelEdit } from '@/core/history'
 import { addBlankAnimationFrame, ensureAnimationDocument } from '@/core/animation'
 import { CanvasCompositeCache, shouldCacheFullCompositeSurface } from './canvas-composite-cache'
@@ -305,6 +305,71 @@ describe('CanvasCompositeCache', () => {
     expect(Array.from(rendered.data)).toEqual(Array.from(compositeRegion(document, 0, 0, 16, 16)))
   })
 
+  it('shows moved layer pixels across enabled tile-repeat boundaries', () => {
+    const context = {
+      save: vi.fn(), restore: vi.fn(), beginPath: vi.fn(), rect: vi.fn(), clip: vi.fn(),
+      translate: vi.fn(), scale: vi.fn(), drawImage: vi.fn(), imageSmoothingEnabled: true
+    }
+    const document = createDocument('repeated moved layer', 4, 1, 'rgba')
+    const moving = createLayer('moving', 4, 1, 'rgba')
+    document.layers.push(moving)
+    writeLayerColor(document, moving, 3, { r: 255, g: 0, b: 0, a: 255 })
+    moving.offsetX = 1
+    const cache = new CanvasCompositeCache()
+    const draw = (tileRepeatMode: 'off' | 'x') => cache.draw({
+      context: context as never,
+      document,
+      view: { zoom: 8, panX: 0, panY: 0, rotation: 0, mirrored: false, mirroredVertical: false, showGrid: false, relativeLuminance: false, tileRepeatMode },
+      originX: 0, originY: 0, canvasWidth: 32, canvasHeight: 8,
+      fromX: 0, fromY: 0, toX: 4, toY: 1,
+      revision: 1, contentRevision: 1, movingLayerIds: [moving.id]
+    })
+
+    draw('off')
+    const clippedCanvas = context.drawImage.mock.calls.at(-1)?.[0] as MockOffscreenCanvas
+    const clipped = clippedCanvas.context.putImageData.mock.calls.at(-1)?.[0] as MockImageData
+    expect(Array.from(clipped.data)).toEqual(new Array(16).fill(0))
+
+    draw('x')
+    const repeatedCanvas = context.drawImage.mock.calls.at(-1)?.[0] as MockOffscreenCanvas
+    const repeated = repeatedCanvas.context.putImageData.mock.calls.at(-1)?.[0] as MockImageData
+    expect(Array.from(repeated.data.slice(0, 4))).toEqual([255, 0, 0, 255])
+  })
+
+  it('reuses the exact static backdrop while moving a supported styled top layer', () => {
+    const context = {
+      save: vi.fn(), restore: vi.fn(), beginPath: vi.fn(), rect: vi.fn(), clip: vi.fn(),
+      translate: vi.fn(), scale: vi.fn(), drawImage: vi.fn(), imageSmoothingEnabled: true
+    }
+    const document = createDocument('styled moving preview', 12, 10, 'rgba')
+    const moving = createLayer('styled moving', 6, 5, 'rgba')
+    document.layers.push(moving)
+    writeLayerColor(document, document.layers[0], 4 * 12 + 5, { r: 20, g: 40, b: 60, a: 255 })
+    writeLayerColor(document, moving, 2 * moving.width + 2, { r: 255, g: 0, b: 0, a: 255 })
+    const styles = createDefaultLayerStyles()
+    styles.shadow = { ...styles.shadow, enabled: true, blur: 3 }
+    styles.innerGlow = { ...styles.innerGlow, enabled: true, size: 2 }
+    moving.layerStyles = styles
+    const cache = new CanvasCompositeCache()
+    const draw = () => cache.draw({
+      context: context as never,
+      document,
+      view: { zoom: 4, panX: 0, panY: 0, rotation: 0, mirrored: false, mirroredVertical: false, showGrid: false, relativeLuminance: false },
+      originX: 0, originY: 0, canvasWidth: 48, canvasHeight: 40,
+      fromX: 0, fromY: 0, toX: 12, toY: 10,
+      revision: 1, contentRevision: 1, movingLayerIds: [moving.id]
+    })
+
+    draw()
+    const previewCanvas = context.drawImage.mock.calls.at(-1)?.[0] as MockOffscreenCanvas
+    moving.offsetX = 2
+    moving.offsetY = 1
+    draw()
+
+    const rendered = previewCanvas.context.putImageData.mock.calls.at(-1)?.[0] as MockImageData
+    expect(Array.from(rendered.data)).toEqual(Array.from(compositeRegion(document, 0, 0, 12, 10)))
+  })
+
   it('renders a moved selection patch without mutating document pixels', () => {
     const context = {
       save: vi.fn(), restore: vi.fn(), beginPath: vi.fn(), rect: vi.fn(), clip: vi.fn(),
@@ -351,6 +416,82 @@ describe('CanvasCompositeCache', () => {
     expect(context.drawImage).toHaveBeenCalledTimes(1)
     expect(context.drawImage).toHaveBeenCalledWith(previewCanvas, 0, 0, 6, 2, 0, 0, 96, 32)
     expect(MockOffscreenCanvas.instances.filter((canvas) => canvas.width === 6 && canvas.height === 2)).toHaveLength(2)
+  })
+
+  it('shows selection transform pixels across enabled tile-repeat boundaries', () => {
+    const context = {
+      save: vi.fn(), restore: vi.fn(), beginPath: vi.fn(), rect: vi.fn(), clip: vi.fn(),
+      translate: vi.fn(), scale: vi.fn(), drawImage: vi.fn(), imageSmoothingEnabled: true
+    }
+    const document = createDocument('repeated selection transform', 4, 1, 'rgba')
+    const layer = document.layers[0]
+    writeLayerColor(document, layer, 3, { r: 255, g: 0, b: 0, a: 255 })
+    const source = captureSelectionTransform(document, { x: 3, y: 0, width: 1, height: 1 }, layer)!
+
+    new CanvasCompositeCache().draw({
+      context: context as never,
+      document,
+      view: { zoom: 8, panX: 0, panY: 0, rotation: 0, mirrored: false, mirroredVertical: false, showGrid: false, relativeLuminance: false, tileRepeatMode: 'x' },
+      originX: 0, originY: 0, canvasWidth: 32, canvasHeight: 8,
+      fromX: 0, fromY: 0, toX: 4, toY: 1,
+      revision: 1, contentRevision: 1,
+      selectionPreview: { layerId: layer.id, source, target: { x: 4, y: 0, width: 1, height: 1 }, angle: 0, copy: false }
+    })
+
+    const previewCanvas = context.drawImage.mock.calls.at(-1)?.[0] as MockOffscreenCanvas
+    const patches = previewCanvas.context.putImageData.mock.calls.map(([patch, patchX, patchY]) => ({
+      patch: patch as MockImageData,
+      patchX,
+      patchY
+    }))
+    const wrappedPatch = patches.find(({ patchX, patchY }) => patchX === 0 && patchY === 0)
+    const clearedSourcePatch = patches.find(({ patchX, patchY }) => patchX === 3 && patchY === 0)
+    expect(Array.from(wrappedPatch?.patch.data ?? [])).toEqual([255, 0, 0, 255])
+    expect(Array.from(clearedSourcePatch?.patch.data ?? [])).toEqual([0, 0, 0, 0])
+  })
+
+  it('matches the final tiled commit while an irregular selection crosses both canvas seams', () => {
+    const context = {
+      save: vi.fn(), restore: vi.fn(), beginPath: vi.fn(), rect: vi.fn(), clip: vi.fn(),
+      translate: vi.fn(), scale: vi.fn(), drawImage: vi.fn(), imageSmoothingEnabled: true
+    }
+    const document = createDocument('repeated irregular selection preview', 4, 4, 'rgba')
+    const layer = document.layers[0]
+    const selected = [
+      0, 1, 4, 5,
+      7, 10, 11, 14, 15
+    ]
+    for (const index of selected) writeLayerColor(document, layer, index, { r: 41, g: 121, b: 255, a: 255 })
+    const selection = {
+      x: 0,
+      y: 0,
+      width: 4,
+      height: 4,
+      mask: Uint8Array.from(Array.from({ length: 16 }, (_, index) => selected.includes(index) ? 1 : 0))
+    }
+    const initialTarget = { ...selection }
+    const target = { ...selection, x: 5, y: 5 }
+    const source = captureSelectionTransform(document, selection, layer)!
+    const cache = new CanvasCompositeCache()
+    const drawPreview = (previewTarget: typeof target, fromX: number, fromY: number, toX: number, toY: number) => cache.draw({
+      context: context as never,
+      document,
+      view: { zoom: 8, panX: 0, panY: 0, rotation: 0, mirrored: false, mirroredVertical: false, showGrid: false, relativeLuminance: false, tileRepeatMode: 'both' },
+      originX: 0, originY: 0, canvasWidth: 32, canvasHeight: 32,
+      fromX, fromY, toX, toY,
+      revision: 1, contentRevision: 1,
+      selectionPreview: { layerId: layer.id, source, target: previewTarget, angle: 0, copy: false }
+    })
+
+    drawPreview(initialTarget, 0, 0, 4, 4)
+    drawPreview(target, 2, 2, 4, 4)
+
+    const previewCanvas = context.drawImage.mock.calls.at(-1)?.[0] as MockOffscreenCanvas
+    const previewPatchCall = previewCanvas.context.putImageData.mock.calls.at(-1)
+    expect(previewPatchCall?.slice(1)).toEqual([0, 0])
+    const previewPatch = previewPatchCall?.[0] as MockImageData
+    applySelectionTranslationCommit(document, source, target, false, layer, 'both')
+    expect(Array.from(previewPatch.data)).toEqual(Array.from(compositeRegion(document, 0, 0, 4, 4)))
   })
 
   it('uploads an Aseprite-style clipboard patch once and reuses it while zooming', () => {

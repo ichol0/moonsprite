@@ -21,6 +21,9 @@ declare global {
       resetScenario(view: ViewState): void
       prepareTool(tool: ToolId, fillKind?: FillKind | null, shapeKind?: ShapeKind | null): void
       prepareCenteredSelection(size: number): void
+      prepareActiveLayerStyle(shadowBlur: number, innerGlowSize: number): void
+      previewActiveLayerStyleSize(effect: 'shadow' | 'innerGlow', size: number): void
+      setMoveAutoSelect(enabled: boolean): void
       setTimelapseRecording(enabled: boolean): void
       timelapseSnapshotCount(): number
       undoRedo(count: number): Promise<number>

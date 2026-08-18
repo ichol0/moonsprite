@@ -1,10 +1,16 @@
 import type { RgbaColor, SpriteDocument } from '@shared/types'
+import { getRasterContentRevision } from './document'
+import type { TilemapDrawingMode } from './tilemap'
 
 interface PanelSessionState {
   document: SpriteDocument
   primaryColor: RgbaColor
   secondaryColor: RgbaColor
   selectedPaletteIds: number[]
+  selectedTilesetId?: string | null
+  selectedTileId?: string | null
+  secondaryTileId?: string | null
+  tilemapMode?: TilemapDrawingMode
   selectedLayerIds: string[]
   selectedGroupId: string | null
   selectedGroupIds: string[]
@@ -25,8 +31,19 @@ interface PanelSessionState {
 
 const colorKey = (color: RgbaColor): string => `${color.r},${color.g},${color.b},${color.a}`
 
-export const colorPanelRenderKey = (session: PanelSessionState): string =>
-  `${session.document.id}:${colorKey(session.primaryColor)}:${colorKey(session.secondaryColor)}:${session.document.paletteOrder.join(',')}:${session.document.palette.map((entry) => `${entry.id}:${colorKey(entry.color)}`).join('|')}`
+export const colorPanelRenderKey = (session: PanelSessionState): string => [
+  session.document.id,
+  session.document.activeLayerId,
+  colorKey(session.primaryColor),
+  colorKey(session.secondaryColor),
+  session.document.paletteOrder.join(','),
+  session.document.palette.map((entry) => `${entry.id}:${colorKey(entry.color)}`).join('|'),
+  session.selectedTilesetId ?? '',
+  session.selectedTileId ?? '',
+  session.secondaryTileId ?? '',
+  session.tilemapMode ?? '',
+  (session.document.tilesets ?? []).map((tileset) => `${tileset.id}:${tileset.tileIds.join(',')}:${getRasterContentRevision(tileset.pixels)}`).join('|')
+].join(':')
 
 export const palettePanelRenderKey = (session: PanelSessionState): string => [
   session.document.id,
@@ -64,3 +81,15 @@ export const layersPanelRenderKey = (session: PanelSessionState): string => [
 
 export const previewPanelRenderKey = (session: PanelSessionState): string =>
   `${session.document.id}:${session.contentRevision ?? session.revision}:${session.view.relativeLuminance ? 1 : 0}:${session.animationPlaying ? 1 : 0}:${session.animationPlaybackRate ?? 1}:${session.animationReturnToStart ? 1 : 0}:${session.document.animation?.loop === false ? 0 : 1}`
+
+export const tilesetPanelRenderKey = (session: PanelSessionState): string => [
+  session.document.id,
+  session.document.activeLayerId,
+  session.selectedTilesetId ?? '',
+  session.selectedTileId ?? '',
+  session.secondaryTileId ?? '',
+  session.tilemapMode ?? '',
+  colorKey(session.primaryColor),
+  session.document.layers.filter((layer) => layer.kind === 'tilemap').map((layer) => `${layer.id}:${layer.name}:${layer.tilemapTilesetId ?? ''}`).join('|'),
+  (session.document.tilesets ?? []).map((tileset) => `${tileset.id}:${tileset.name}:${tileset.tileWidth}:${tileset.tileHeight}:${tileset.columns}:${tileset.rows}:${tileset.tileIds.join(',')}:${getRasterContentRevision(tileset.pixels)}`).join('|')
+].join(';')

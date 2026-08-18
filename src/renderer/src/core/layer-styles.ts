@@ -317,6 +317,9 @@ const gradientColorAt = (geometry: LayerStyleGeometry, style: LayerStyles['gradi
 
 export type LayerStyleSourceReader = (x: number, y: number) => RgbaColor
 export type LayerStyleColorResolver = (color: RgbaColor) => RgbaColor
+export interface LayerStyleCoverageOverrides {
+  shadow?: number
+}
 
 export function applyLayerStylesAt(
   geometry: LayerStyleGeometry | RasterLayer,
@@ -325,11 +328,12 @@ export function applyLayerStylesAt(
   y: number,
   source: RgbaColor,
   readGeometry: LayerStyleSourceReader,
-  resolveDynamicColor: LayerStyleColorResolver = (color) => color
+  resolveDynamicColor: LayerStyleColorResolver = (color) => color,
+  coverageOverrides?: LayerStyleCoverageOverrides
 ): RgbaColor {
   let backdrop = TRANSPARENT
   if (styles.shadow.enabled) {
-    const coverage = shadowCoverage(readGeometry, x - styles.shadow.offsetX, y - styles.shadow.offsetY, styles.shadow.blur)
+    const coverage = coverageOverrides?.shadow ?? shadowCoverage(readGeometry, x - styles.shadow.offsetX, y - styles.shadow.offsetY, styles.shadow.blur)
     if (coverage > 0) backdrop = blendWithMode(backdrop, withCoverage(shadowColor(styles.shadow), coverage), 1, 'normal')
   }
   if (styles.stroke.enabled && styles.stroke.position !== 'inside' && source.a === 0) {

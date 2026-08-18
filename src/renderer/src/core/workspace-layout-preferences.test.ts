@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { WorkspaceLayout } from '@shared/types'
-import { BOTTOM_DOCK_HEIGHT_STORAGE_KEY, constrainBottomDockHeight, constrainInspectorWidth, constrainLeftDockWidth, DEFAULT_BOTTOM_DOCK_HEIGHT_RATIO, DEFAULT_INSPECTOR_WIDTH_RATIO, dockSizeFromRatio, dockSizeRatio, INSPECTOR_WIDTH_STORAGE_KEY, LEFT_DOCK_WIDTH_STORAGE_KEY, LEGACY_LAYERS_DOCK_STORAGE_KEY, PANEL_VISIBILITY_STORAGE_KEY, TOOL_RAIL_SIDE_STORAGE_KEY, loadBottomDockHeight, loadInspectorWidth, loadLeftDockWidth, loadMainWindowState, loadPanelDocks, loadPanelVisibility, loadToolRailSide, normalizeWorkspaceLayout, resolveDockSizeRatio, saveMainWindowState, savePanelVisibility, toolRailDockTargetAtPointer, workspaceDockSizesForParent } from './workspace-layout-preferences'
+import { BOTTOM_DOCK_HEIGHT_STORAGE_KEY, constrainBottomDockHeight, constrainInspectorWidth, constrainLeftDockWidth, DEFAULT_BOTTOM_DOCK_HEIGHT_RATIO, DEFAULT_INSPECTOR_WIDTH_RATIO, dockSizeFromRatio, dockSizeRatio, INSPECTOR_WIDTH_STORAGE_KEY, LEFT_DOCK_WIDTH_STORAGE_KEY, LEGACY_LAYERS_DOCK_STORAGE_KEY, PANEL_VISIBILITY_STORAGE_KEY, TOOL_RAIL_SIDE_STORAGE_KEY, loadBottomDockHeight, loadInspectorWidth, loadLeftDockWidth, loadMainWindowState, loadPanelDocks, loadPanelVisibility, loadToolRailSide, normalizeWorkspaceLayout, resolveDockSizeRatio, saveMainWindowState, savePanelVisibility, toolRailDockTargetAtPointer, workspaceDockSizesForParent, workspacePanelDockPresence } from './workspace-layout-preferences'
 
 function createStorage(): Storage {
   const values = new Map<string, string>()
@@ -15,17 +15,17 @@ function createStorage(): Storage {
 }
 
 const layout = (changes: Partial<WorkspaceLayout> = {}): WorkspaceLayout => ({
-  panelDocks: { color: 'left', palette: 'left', layers: 'right', preview: 'right' },
+  panelDocks: { color: 'left', palette: 'left', layers: 'right', preview: 'right', tileset: 'right' },
   inspectorWidth: 300,
   leftDockWidth: 280,
   bottomDockHeight: 180,
   toolRailSide: 'left',
-  panelVisibility: { color: true, palette: true, layers: true, preview: true },
+  panelVisibility: { color: true, palette: true, layers: true, preview: true, tileset: false },
   previewOpen: true,
   inspectorLayout: null,
   colorSquareDock: null,
   colorSquareAnchor: null,
-  floatingPanels: { color: null, palette: null, layers: null, preview: null },
+  floatingPanels: { color: null, palette: null, layers: null, preview: null, tileset: null },
   mainWindow: null,
   ...changes
 })
@@ -33,7 +33,7 @@ const layout = (changes: Partial<WorkspaceLayout> = {}): WorkspaceLayout => ({
 describe('workspace layout preferences', () => {
   it('uses the built-in workspace arrangement when layout storage is empty', () => {
     const storage = createStorage()
-    expect(loadPanelDocks(storage)).toEqual({ color: 'left', palette: 'left', layers: 'bottom', preview: 'bottom' })
+    expect(loadPanelDocks(storage)).toEqual({ color: 'left', palette: 'left', layers: 'bottom', preview: 'bottom', tileset: 'right' })
     expect(loadToolRailSide(storage)).toBe('right')
     expect(loadInspectorWidth(1440, storage)).toBe(300)
     expect(loadLeftDockWidth(storage)).toBe(280)
@@ -124,14 +124,21 @@ describe('workspace layout preferences', () => {
 
   it('persists independent visibility for every workspace panel', () => {
     const storage = createStorage()
-    savePanelVisibility({ color: true, palette: false, layers: true, preview: false }, storage)
+    savePanelVisibility({ color: true, palette: false, layers: true, preview: false, tileset: true }, storage)
     expect(storage.getItem(PANEL_VISIBILITY_STORAGE_KEY)).not.toBeNull()
-    expect(loadPanelVisibility(storage)).toEqual({ color: true, palette: false, layers: true, preview: false })
+    expect(loadPanelVisibility(storage)).toEqual({ color: true, palette: false, layers: true, preview: false, tileset: true })
   })
 
   it('migrates legacy preview visibility and repairs incomplete workspace layouts', () => {
     const legacy = layout({ panelVisibility: undefined, previewOpen: false })
-    expect(normalizeWorkspaceLayout(legacy, 1200).panelVisibility).toEqual({ color: true, palette: true, layers: true, preview: false })
-    expect(normalizeWorkspaceLayout(layout({ panelVisibility: { color: false, layers: false } }), 1200).panelVisibility).toEqual({ color: false, palette: true, layers: false, preview: true })
+    expect(normalizeWorkspaceLayout(legacy, 1200).panelVisibility).toEqual({ color: true, palette: true, layers: true, preview: false, tileset: false })
+    expect(normalizeWorkspaceLayout(layout({ panelVisibility: { color: false, layers: false } }), 1200).panelVisibility).toEqual({ color: false, palette: true, layers: false, preview: true, tileset: false })
+  })
+
+  it('shows a newly added panel even when the live dock state still has legacy keys', () => {
+    expect(workspacePanelDockPresence(
+      { color: 'left', palette: 'left', layers: 'bottom', preview: 'bottom' },
+      { color: false, palette: false, layers: false, preview: false, tileset: true }
+    )).toEqual({ left: false, right: true, bottom: false })
   })
 })

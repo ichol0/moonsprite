@@ -357,6 +357,62 @@ async function benchmarkScenarioPage(page, size, scenario) {
     }))
   }
 
+  if (actionKind === 'selection-delete') {
+    if (initialView) await resetSimpleScenario(page, initialView)
+    await page.evaluate((selectionSize) => {
+      const harness = window.__moonSpritePerformanceHarness
+      if (!harness) throw new Error('Performance harness is unavailable.')
+      harness.prepareCenteredSelection(selectionSize)
+    }, size)
+    results.push(await runScenario(page, size, scenario, async () => {
+      await page.keyboard.press('Delete')
+    }))
+  }
+
+  if (actionKind === 'layer-style-move') {
+    if (initialView) await resetSimpleScenario(page, initialView)
+    await page.evaluate(() => {
+      const harness = window.__moonSpritePerformanceHarness
+      if (!harness) throw new Error('Performance harness is unavailable.')
+      harness.prepareActiveLayerStyle(0, 2)
+      harness.prepareTool('move')
+      harness.setMoveAutoSelect(false)
+    })
+    await page.waitForTimeout(1_000)
+    results.push(await runScenario(page, size, scenario, async () => {
+      await page.mouse.move(center.x, center.y)
+      await page.mouse.down({ button: 'left' })
+      for (let index = 0; index < 8; index += 1) {
+        const progress = index / 7
+        await page.mouse.move(center.x - 100 + progress * 200, center.y - 60 + progress * 120)
+        await page.waitForTimeout(12)
+      }
+      await page.mouse.up({ button: 'left' })
+    }))
+  }
+
+  if (actionKind === 'layer-style-shadow-size' || actionKind === 'layer-style-inner-glow-size') {
+    if (initialView) await resetSimpleScenario(page, initialView)
+    const effect = actionKind === 'layer-style-shadow-size' ? 'shadow' : 'innerGlow'
+    await page.evaluate((targetEffect) => {
+      const harness = window.__moonSpritePerformanceHarness
+      if (!harness) throw new Error('Performance harness is unavailable.')
+      harness.prepareActiveLayerStyle(targetEffect === 'shadow' ? 2 : 0, targetEffect === 'innerGlow' ? 2 : 0)
+    }, effect)
+    await page.waitForTimeout(1_000)
+    results.push(await runScenario(page, size, scenario, async () => {
+      for (let index = 0; index < 4; index += 1) {
+        const value = 2 + index
+        await page.evaluate(({ targetEffect, nextValue }) => {
+          const harness = window.__moonSpritePerformanceHarness
+          if (!harness) throw new Error('Performance harness is unavailable.')
+          harness.previewActiveLayerStyleSize(targetEffect, nextValue)
+        }, { targetEffect: effect, nextValue: value })
+        await page.waitForTimeout(12)
+      }
+    }))
+  }
+
   if (actionKind === 'gradient') {
     if (initialView) await prepareToolScenario(page, initialView, 'fill', 'gradient')
     results.push(await runScenario(page, size, scenario, async () => {

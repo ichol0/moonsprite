@@ -28,6 +28,7 @@
 | 文件拖放去重 | Windows 路径与 `file://` 路径统一规范化；HTML、Webview、Window 与 Rust 重复事件只打开一次并可重新订阅 | `document-drop.test.ts`、`document-drop-events.test.ts`、`document-drop-service.test.ts` |
 | 最近文件清理边界 | 路径确实不存在时移除最近记录；文件仍存在但解析失败时保留，不能把读取错误当成用户删除 | `HomeWorkspace.test.tsx`、Rust `platform_files` 测试 |
 | 剪贴板快照隔离 | 系统剪贴板不可读时回退内部快照；粘贴、变换和跨文档操作不得改写复制来源像素 | `clipboard-service.test.ts`、`workspace.test.ts` |
+| Tileset 槽位兼容 | 空槽布局保存重开后保持；旧 v13 紧凑布局可读取；重复、缺失或越界槽位明确拒绝，槽位移动不改变瓦片像素和稳定引用 | `project-format.test.ts`、`tilemap.test.ts`、`workspace-tilemap.test.ts` |
 | 偏好与语言回退 | 损坏、未知或旧版偏好安全回退；切换语言不翻译工程名、图层名和用户输入 | `file-preferences.test.ts`、`localization.test.ts` |
 
 ## 历史与会话
@@ -55,6 +56,8 @@
 | 套索与组合边界 | 套索闭合不丢右边或下边像素；新建、加选、减选、交集和比例修饰键使用统一规则 | `tools.test.ts`、`selection.test.ts`、`canvas-input.test.ts` |
 | 画布外选区内容 | 浮动内容移出画布再移回时像素完整保留，确认时才按文档边界写入 | `tools.test.ts`、`workspace.test.ts` |
 | 浮动选区镜像缓存 | 粘贴或移动后反复水平/垂直镜像再移动，像素、掩码与快速路径缓存同步，不恢复旧方向、生成重复像素或留下无法撤销的画布内容 | `tools.test.ts`、`workspace.test.ts` |
+| 平铺选区移动 | 任一可见平铺副本都能命中原选区；拖动跨越副本接缝或最外侧副本时按连续文档坐标逐像素移动，内部坐标跨过画布周期后实时预览仍不反向跳变、停住或裁掉接缝内容；确认后越界像素与选区按启用轴折回原画布，Undo/Redo 保持一致 | `canvas-input.test.ts`、`tilemap.test.ts`、`canvas-composite-cache.test.ts`、`tools.test.ts`、`workspace.test.ts` |
+| 平铺工具预览 | 铅笔、橡皮擦、直线、形状、渐变、喷枪和瓦片绘制预览同步出现在全部可见平铺副本；大笔刷越界轮廓保持连续几何，采样坐标按启用轴折回，边缘不裁断、不错误重组且不复制鼠标指针 | `tilemap.test.ts` |
 | 跨轴缩放翻转 | 选区缩放越过对侧边界时切换对应镜像，预览与提交一致并只产生一次撤销 | `canvas-input.test.ts`、`tools.test.ts`、`selection.test.ts` |
 | 多帧画布尺寸 | 调整画布尺寸时所有 frame/cel 使用同一偏移；扩大、裁切、Undo/Redo 后保持相对位置 | `animation.test.ts`、`workspace.test.ts`、`document.test.ts` |
 | 调整预览基线 | 调整期间移动、变换或加减选时始终从未调整基线计算，不闪回、不重复叠加、不污染范围外像素 | `AdjustmentDialog.test.tsx`、`adjustment-preview-lifecycle.test.ts` |

@@ -1,13 +1,15 @@
-export type EditorCommandScope = 'canvas' | 'layers' | 'palette'
+export type EditorCommandScope = 'canvas' | 'layers' | 'palette' | 'tileset'
 
 export const COMMAND_SCOPE_EVENT = 'moonsprite:command-scope'
+export const TILESET_DELETE_COMMAND_EVENT = 'moonsprite:delete-tileset-selection'
 
-export type DeleteCommandTarget = 'selection' | 'layers' | 'palette' | null
+export type DeleteCommandTarget = 'selection' | 'layers' | 'palette' | 'tileset' | null
 export type CopyCommandTarget = 'selection' | 'layers' | null
 
 export function resolveDeleteCommand(scope: EditorCommandScope, hasSelection: boolean): DeleteCommandTarget {
   if (scope === 'layers') return 'layers'
   if (scope === 'palette') return 'palette'
+  if (scope === 'tileset') return 'tileset'
   return hasSelection ? 'selection' : null
 }
 
@@ -46,3 +48,23 @@ export const shouldHandleAnimationPlaybackShortcut = (context: AnimationPlayback
   && !context.hasTextBoxTransform
   && !context.isInteractiveTarget
   && !context.hasBlockingSurface
+
+export interface AnimationFrameStepKeyContext {
+  key: string
+  hasSelection: boolean
+  ctrlKey: boolean
+  metaKey: boolean
+  shiftKey: boolean
+  altKey: boolean
+}
+
+export const animationFrameStepDirection = (context: AnimationFrameStepKeyContext): -1 | 1 | null => {
+  if (context.ctrlKey || context.metaKey || context.altKey) return null
+  const key = context.key.toLowerCase()
+  if (key === ',') return -1
+  if (key === '.') return 1
+  if (context.hasSelection || context.shiftKey) return null
+  if (key === 'arrowleft') return -1
+  if (key === 'arrowright') return 1
+  return null
+}

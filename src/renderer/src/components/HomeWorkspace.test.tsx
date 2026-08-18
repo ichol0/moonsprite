@@ -45,11 +45,35 @@ describe('HomeWorkspace', () => {
 
     expect(screen.getByText('DEV.5')).toBeInTheDocument()
     expect(document.querySelector('.start-screen-version')).not.toBeInTheDocument()
-    expect(document.querySelectorAll('.start-screen-links > button')).toHaveLength(4)
+    expect(document.querySelectorAll('.start-screen-links .start-screen-link')).toHaveLength(4)
     expect(document.querySelectorAll('.start-screen-links svg.start-screen-link-icon')).toHaveLength(4)
     expect(document.querySelector('.start-screen-attribution')).not.toBeInTheDocument()
     expect(screen.getByText('仅供内部使用')).toBeInTheDocument()
     expect(screen.getByText('未经允许请勿分发')).toBeInTheDocument()
+  })
+
+  it('shows descriptions for the homepage shortcut buttons', async () => {
+    installApi({})
+
+    render(<HomeWorkspace onNew={vi.fn()} onOpen={vi.fn()} onOpenProject={vi.fn(async () => true)} onRestoreRecovery={vi.fn(async () => true)} />)
+
+    const shortcuts = [
+      ['QQ 群', '加入月球像素社区（MoonPX）QQ 群，交流像素画与软件使用。'],
+      ['Steam', '打开 MoonSprite 的 Steam 页面。'],
+      ['GitHub', '打开 MoonSprite 的 GitHub 项目仓库。'],
+      ['语言', '打开界面语言选择弹窗。']
+    ] as const
+
+    for (const [name, description] of shortcuts) {
+      const button = screen.getByRole('button', { name })
+      const anchor = button.closest('.moon-tooltip-anchor')
+      expect(anchor).not.toBeNull()
+      expect(button).not.toHaveAttribute('title')
+      fireEvent.pointerEnter(anchor!)
+      expect(await screen.findByRole('tooltip')).toHaveTextContent(description)
+      fireEvent.pointerLeave(anchor!)
+      await waitFor(() => expect(screen.queryByRole('tooltip')).not.toBeInTheDocument())
+    }
   })
 
   it('opens homepage community links and changes language through a dialog', () => {

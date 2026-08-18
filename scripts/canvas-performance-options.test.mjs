@@ -44,10 +44,10 @@ test('画布性能参数支持独立运行复杂工程场景', () => {
 })
 
 test('大画布场景支持 800 至 4000 并可选择 Profiler 运行模式', () => {
-  assert.deepEqual(parseCanvasPerformanceOptions(['--size=800,2048,4000', '--scenario=large-pan,large-draw,large-selection-fill,large-gradient', '--runtime=profile']), {
+  assert.deepEqual(parseCanvasPerformanceOptions(['--size=800,2048,4000', '--scenario=large-pan,large-draw,large-selection-fill,large-selection-delete,large-layer-style-move,large-layer-style-shadow-size,large-layer-style-inner-glow-size,large-gradient', '--runtime=profile']), {
     full: false,
     sizes: [800, 2048, 4000],
-    scenarios: ['large-pan', 'large-draw', 'large-selection-fill', 'large-gradient'],
+    scenarios: ['large-pan', 'large-draw', 'large-selection-fill', 'large-selection-delete', 'large-layer-style-move', 'large-layer-style-shadow-size', 'large-layer-style-inner-glow-size', 'large-gradient'],
     repetitions: 1,
     outputJson: undefined,
     runtime: 'profile',

@@ -1,9 +1,10 @@
-import type { MoveKind, RasterLayer, RgbaColor, SelectionMask, SelectionMode, SelectionRect, ShapeRatio, SpriteDocument, ToolId } from '@shared/types'
+import type { AnimationCel, MoveKind, RasterLayer, RgbaColor, SelectionMask, SelectionMode, SelectionRect, ShapeRatio, SpriteDocument, TilemapCell, ToolId } from '@shared/types'
 import { revertPixelEdit, type PixelEdit } from './history'
-import { restoreSelectionTranslationPreview, type BrushGradientSample, type SelectionTransformSource, type SelectionTranslationPreview } from './tools'
+import { restoreSelectionTranslationPreview, type BrushGradientSample, type SelectionTransformLayerState, type SelectionTransformSource, type SelectionTranslationPreview } from './tools'
 import { combineSelection, inverseTransformedSelectionPoint, rasterLinePoints, rectSelection, remapTransformedSelectionPoint, selectionBoundarySegments, selectionContains, transformedSelectionPivotPreset, type SelectionShearTransform } from './selection'
 import { balancedStairLinePoints } from './pixel-line'
 import { modifierShortcutHeld } from './shortcuts'
+import type { TilemapEdit, TilemapSelectionMoveSource } from './tilemap'
 
 const selectionHitBoundaryCache = new WeakMap<SelectionMask, Int32Array>()
 
@@ -231,10 +232,19 @@ export const selectionResizeHit = (
 }
 
 export interface CanvasDragState {
-  kind: 'draw' | 'airbrush' | 'shape' | 'freeform-shape' | 'polygon-shape' | 'line-shape' | 'curve-shape' | 'gradient' | 'marquee' | 'lasso' | 'polygon-lasso' | 'magic-preview' | 'sample-color' | 'move-content' | 'move-selection' | 'move-selection-pivot' | 'transform-content' | 'rotate-content' | 'shear-content' | 'move-layer' | 'create-text-box' | 'transform-text-box' | 'create-slice' | 'move-slice' | 'resize-slice' | 'brush-size' | 'canvas-resize' | 'canvas-move' | 'zoom-drag' | 'rotate-view' | 'pan'
+  kind: 'draw' | 'tile-draw' | 'airbrush' | 'shape' | 'freeform-shape' | 'polygon-shape' | 'line-shape' | 'curve-shape' | 'gradient' | 'marquee' | 'lasso' | 'polygon-lasso' | 'magic-preview' | 'sample-color' | 'move-content' | 'move-selection' | 'move-selection-pivot' | 'transform-content' | 'rotate-content' | 'shear-content' | 'move-layer' | 'create-text-box' | 'transform-text-box' | 'create-slice' | 'move-slice' | 'resize-slice' | 'brush-size' | 'canvas-resize' | 'canvas-move' | 'zoom-drag' | 'rotate-view' | 'pan'
   start: CanvasPoint
   last: CanvasPoint
   edit?: PixelEdit
+  tilemapEdit?: TilemapEdit
+  tilemapCell?: TilemapCell | null
+  tilemapCellIndex?: number
+  tilemapEditCellIndex?: number
+  tilemapEditSelection?: SelectionMask
+  tilemapSelectionMoveSource?: TilemapSelectionMoveSource
+  tilemapSelectionMoveDelta?: { columns: number; rows: number }
+  tileRepeatPoint?: CanvasPoint
+  tileRepeatStart?: CanvasPoint
   selectionStart?: SelectionMask | null
   selectionMode?: SelectionMode
   startPan?: CanvasPoint
@@ -243,6 +253,7 @@ export interface CanvasDragState {
   shearAmount?: number
   angle?: number
   selectionSource?: SelectionTransformSource
+  selectionLayers?: SelectionTransformLayerState[]
   selectionSourceCacheKey?: SelectionMask
   previewEdit?: PixelEdit | null
   copy?: boolean
@@ -284,6 +295,7 @@ export interface CanvasDragState {
   marqueeTemporaryCenterRestore?: MarqueeTemporaryCenterRestore
   marqueeDirection?: { x: -1 | 1; y: -1 | 1 }
   marqueePreviewSelection?: SelectionMask | null
+  marqueeDisplaySelection?: SelectionMask | null
   quickSelectCell?: SelectionRect
   selectionCommitStart?: SelectionMask | null
   previewPending?: boolean
@@ -306,6 +318,7 @@ export interface CanvasDragState {
   duplicateOnDrag?: boolean
   duplicatedLayerId?: string
   duplicatedLayer?: RasterLayer
+  duplicatedAnimationCels?: AnimationCel[]
   duplicatedLayerIndex?: number
   originalSelectedLayerIds?: string[]
   clickLayerId?: string
@@ -327,6 +340,7 @@ export interface CanvasDragState {
   gradientPaintRegion?: SelectionMask | null
   axisLock?: 'x' | 'y'
   sampleSecondary?: boolean
+  tileSampling?: boolean
   temporarySampling?: boolean
   sampledColor?: RgbaColor
   moved?: boolean
@@ -1134,6 +1148,20 @@ export const constrainedTranslation = (drag: CanvasDragState, deltaX: number, de
   if (drag.axisLock === 'x' && absoluteY > absoluteX * 1.2) drag.axisLock = 'y'
   if (drag.axisLock === 'y' && absoluteX > absoluteY * 1.2) drag.axisLock = 'x'
   return drag.axisLock === 'x' ? { x: deltaX, y: 0 } : { x: 0, y: deltaY }
+}
+
+export const selectionMovePointerDelta = (
+  drag: Pick<CanvasDragState, 'start' | 'tileRepeatStart'>,
+  point: CanvasPoint,
+  repeatedPoint?: CanvasPoint | null
+): CanvasPoint => {
+  const useRepeatedPoint = Boolean(drag.tileRepeatStart && repeatedPoint)
+  const start = useRepeatedPoint ? drag.tileRepeatStart! : drag.start
+  const current = useRepeatedPoint ? repeatedPoint! : point
+  return {
+    x: Math.floor(current.x) - Math.floor(start.x),
+    y: Math.floor(current.y) - Math.floor(start.y)
+  }
 }
 
 export const resizeSelectionBounds = (

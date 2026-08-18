@@ -1,12 +1,17 @@
 import { describe, expect, it } from 'vitest'
 import { createDocument, createLayer } from './document'
-import { colorPanelRenderKey, layersPanelRenderKey, palettePanelRenderKey, previewPanelRenderKey } from './panel-render-keys'
+import { colorPanelRenderKey, layersPanelRenderKey, palettePanelRenderKey, previewPanelRenderKey, tilesetPanelRenderKey } from './panel-render-keys'
+import type { TilemapDrawingMode } from './tilemap'
 
 const session = () => ({
   document: createDocument('render keys', 4, 4, 'rgba'),
   primaryColor: { r: 0, g: 0, b: 0, a: 255 },
   secondaryColor: { r: 255, g: 255, b: 255, a: 255 },
   selectedPaletteIds: [] as number[],
+  selectedTilesetId: null as string | null,
+  selectedTileId: null as string | null,
+  secondaryTileId: null as string | null,
+  tilemapMode: 'create' as TilemapDrawingMode,
   selectedLayerIds: [] as string[],
   selectedGroupId: null as string | null,
   selectedGroupIds: [] as string[],
@@ -83,5 +88,21 @@ describe('panel render keys', () => {
     const before = layersPanelRenderKey(current)
     current.layerMaskIsolatedView = true
     expect(layersPanelRenderKey(current)).not.toBe(before)
+  })
+
+  it('invalidates the Tileset panel when its drawing mode changes', () => {
+    const current = session()
+    const before = tilesetPanelRenderKey(current)
+    current.tilemapMode = 'edit'
+    expect(tilesetPanelRenderKey(current)).not.toBe(before)
+  })
+
+  it('invalidates tile-aware panels when the background tile changes', () => {
+    const current = session()
+    const colorBefore = colorPanelRenderKey(current)
+    const tilesetBefore = tilesetPanelRenderKey(current)
+    current.secondaryTileId = 'tile-background'
+    expect(colorPanelRenderKey(current)).not.toBe(colorBefore)
+    expect(tilesetPanelRenderKey(current)).not.toBe(tilesetBefore)
   })
 })

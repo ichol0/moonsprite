@@ -3,6 +3,8 @@ import { compositeRegion, DocumentCompositeCache, expandLayerStyleInvalidationRe
 import { applyRelativeLuminance } from '@/core/raster'
 import { selectionTransformPreviewPacked, type SelectionTransformSource } from '@/core/tools'
 import { transformedSelectionBounds, type SelectionShearTransform } from '@/core/selection'
+import { translatedSelectionRect } from '@/core/canvas-input'
+import { normalizeSelectionForTileRepeatPreview, tileRepeatDocumentOffsets } from '@/core/tilemap'
 import { initialDocumentCompositePending, initialDocumentCompositeSurface, registerInitialDocumentCompositeSurface } from '@/core/initial-document-composite'
 import type { RasterContext2D } from './canvas-selection-renderer'
 
@@ -156,7 +158,7 @@ const visibleDocumentRect = (document: SpriteDocument, fromX: number, fromY: num
   return right > x && bottom > y ? { x, y, width: right - x, height: bottom - y } : null
 }
 
-const selectionPreviewTransformKey = (selection: SelectionTransformCompositePreview): string => {
+const selectionPreviewTransformKey = (selection: SelectionTransformCompositePreview, tileRepeatMode: NonNullable<ViewState['tileRepeatMode']>): string => {
   const { target, shear } = selection
   return [
     target.x, target.y, target.width, target.height,
@@ -168,8 +170,38 @@ const selectionPreviewTransformKey = (selection: SelectionTransformCompositePrev
     shear?.axis ?? '',
     shear?.edge ?? '',
     shear?.amount ?? '',
-    selection.copy ? 1 : 0
+    selection.copy ? 1 : 0,
+    tileRepeatMode
   ].join(':')
+}
+
+const repeatedSelectionTargets = (
+  selection: SelectionTransformCompositePreview,
+  document: SpriteDocument,
+  view: ViewState
+): SelectionRect[] => {
+  const tileRepeatMode = view.tileRepeatMode ?? 'off'
+  const normalizedTarget = tileRepeatMode === 'off'
+    ? selection.target
+    : normalizeSelectionForTileRepeatPreview(selection.target, document.width, document.height, tileRepeatMode) ?? selection.target
+  return tileRepeatDocumentOffsets(document.width, document.height, tileRepeatMode)
+    .map((offset) => translatedSelectionRect(normalizedTarget, offset))
+}
+
+const repeatedLayers = (
+  layers: readonly SpriteDocument['layers'][number][],
+  document: SpriteDocument,
+  view: ViewState
+): SpriteDocument['layers'] => {
+  const repeated: SpriteDocument['layers'] = []
+  for (const offset of tileRepeatDocumentOffsets(document.width, document.height, view.tileRepeatMode ?? 'off')) {
+    for (const layer of layers) {
+      repeated.push(offset.x === 0 && offset.y === 0
+        ? layer
+        : { ...layer, offsetX: layer.offsetX + offset.x, offsetY: layer.offsetY + offset.y })
+    }
+  }
+  return repeated
 }
 
 export const shouldCacheFullCompositeSurface = (width: number, height: number, maxCacheBytes = DEFAULT_MAX_CACHE_BYTES): boolean =>
@@ -325,17 +357,19 @@ export class CanvasCompositeCache {
     } else {
       this.drawRegion(context, document, view, originX, originY, fromX, fromY, toX, toY, frameKey, frameId, contentRevision, contentInvalidation)
     }
-    context.drawImage(
-      preview.canvas,
-      0,
-      0,
-      preview.canvas.width,
-      preview.canvas.height,
-      originX + target.x * view.zoom,
-      originY + target.y * view.zoom,
-      target.width * view.zoom,
-      target.height * view.zoom
-    )
+    for (const repeatedTarget of repeatedSelectionTargets(selection, document, view)) {
+      context.drawImage(
+        preview.canvas,
+        0,
+        0,
+        preview.canvas.width,
+        preview.canvas.height,
+        originX + repeatedTarget.x * view.zoom,
+        originY + repeatedTarget.y * view.zoom,
+        repeatedTarget.width * view.zoom,
+        repeatedTarget.height * view.zoom
+      )
+    }
     return true
   }
 
@@ -404,13 +438,15 @@ export class CanvasCompositeCache {
       }
       this.selectionPreview = preview
     }
-    const transformKey = selectionPreviewTransformKey(selection)
+    const tileRepeatMode = view.tileRepeatMode ?? 'off'
+    const transformKey = selectionPreviewTransformKey(selection, tileRepeatMode)
     const previewChanged = preview.source !== selection.source || preview.transformKey !== transformKey
-    const currentBounds = transformedSelectionBounds(selection.target, selection.angle, selection.shear)
+    const selectionTargets = repeatedSelectionTargets(selection, document, view)
+    const currentBounds = selectionTargets.map((target) => transformedSelectionBounds(target, selection.angle, selection.shear))
     const sourceSelection = selection.source.selection
     const patchRects = mergeOverlappingRects([
       ...(!selection.copy ? [sourceSelection] : []),
-      currentBounds
+      ...currentBounds
     ].map((rect) => ({
       x: Math.floor(rect.x),
       y: Math.floor(rect.y),
@@ -418,8 +454,11 @@ export class CanvasCompositeCache {
       height: Math.ceil(rect.y + rect.height) - Math.floor(rect.y)
     })))
     const visibleRect = { x, y, width, height }
+    const patchUpdateRect = tileRepeatMode === 'off'
+      ? visibleRect
+      : { x: preview.x, y: preview.y, width: preview.width, height: preview.height }
     const visiblePatchRects = patchRects
-      .map((rect) => intersectRect(rect, visibleRect))
+      .map((rect) => intersectRect(rect, patchUpdateRect))
       .filter((rect): rect is SelectionRect => Boolean(rect))
     const previewContext = preview.canvas.getContext('2d')
     if (!previewContext) return false
@@ -473,30 +512,33 @@ export class CanvasCompositeCache {
           patchPixels[outputOffset + 2] = Math.round((color.b * topAlpha + patchPixels[outputOffset + 2] * baseAlpha * (1 - topAlpha)) / outputAlpha)
           patchPixels[outputOffset + 3] = Math.round(outputAlpha * 255)
         }
-        const transformed = selectionTransformPreviewPacked(document, selection.source, selection.target, patchRect.x, patchRect.y, patchRect.width, patchRect.height, selection.angle, selection.shear, activeLayer)
-        for (let offset = 0; offset < transformed.length; offset += 1) {
-          const packed = transformed[offset]
-          const color = activeLayer.format === 'indexed'
-            ? palette?.get(packed)
-            : { r: packed & 0xff, g: packed >>> 8 & 0xff, b: packed >>> 16 & 0xff, a: packed >>> 24 & 0xff }
-          if (!color || color.a === 0) continue
-          const outputOffset = offset * 4
-          const bottomAlpha = patchPixels[outputOffset + 3]
-          if (activeLayer.opacity === 1 && (bottomAlpha === 0 || color.a === 255)) {
-            patchPixels[outputOffset] = color.r
-            patchPixels[outputOffset + 1] = color.g
-            patchPixels[outputOffset + 2] = color.b
-            patchPixels[outputOffset + 3] = color.a
-            continue
+        for (let targetIndex = 0; targetIndex < selectionTargets.length; targetIndex += 1) {
+          if (!intersectRect(currentBounds[targetIndex], patchRect)) continue
+          const transformed = selectionTransformPreviewPacked(document, selection.source, selectionTargets[targetIndex], patchRect.x, patchRect.y, patchRect.width, patchRect.height, selection.angle, selection.shear, activeLayer)
+          for (let offset = 0; offset < transformed.length; offset += 1) {
+            const packed = transformed[offset]
+            const color = activeLayer.format === 'indexed'
+              ? palette?.get(packed)
+              : { r: packed & 0xff, g: packed >>> 8 & 0xff, b: packed >>> 16 & 0xff, a: packed >>> 24 & 0xff }
+            if (!color || color.a === 0) continue
+            const outputOffset = offset * 4
+            const bottomAlpha = patchPixels[outputOffset + 3]
+            if (activeLayer.opacity === 1 && (bottomAlpha === 0 || color.a === 255)) {
+              patchPixels[outputOffset] = color.r
+              patchPixels[outputOffset + 1] = color.g
+              patchPixels[outputOffset + 2] = color.b
+              patchPixels[outputOffset + 3] = color.a
+              continue
+            }
+            const topAlpha = color.a / 255 * activeLayer.opacity
+            const baseAlpha = bottomAlpha / 255
+            const outputAlpha = topAlpha + baseAlpha * (1 - topAlpha)
+            if (outputAlpha <= 0) continue
+            patchPixels[outputOffset] = Math.round((color.r * topAlpha + patchPixels[outputOffset] * baseAlpha * (1 - topAlpha)) / outputAlpha)
+            patchPixels[outputOffset + 1] = Math.round((color.g * topAlpha + patchPixels[outputOffset + 1] * baseAlpha * (1 - topAlpha)) / outputAlpha)
+            patchPixels[outputOffset + 2] = Math.round((color.b * topAlpha + patchPixels[outputOffset + 2] * baseAlpha * (1 - topAlpha)) / outputAlpha)
+            patchPixels[outputOffset + 3] = Math.round(outputAlpha * 255)
           }
-          const topAlpha = color.a / 255 * activeLayer.opacity
-          const baseAlpha = bottomAlpha / 255
-          const outputAlpha = topAlpha + baseAlpha * (1 - topAlpha)
-          if (outputAlpha <= 0) continue
-          patchPixels[outputOffset] = Math.round((color.r * topAlpha + patchPixels[outputOffset] * baseAlpha * (1 - topAlpha)) / outputAlpha)
-          patchPixels[outputOffset + 1] = Math.round((color.g * topAlpha + patchPixels[outputOffset + 1] * baseAlpha * (1 - topAlpha)) / outputAlpha)
-          patchPixels[outputOffset + 2] = Math.round((color.b * topAlpha + patchPixels[outputOffset + 2] * baseAlpha * (1 - topAlpha)) / outputAlpha)
-          patchPixels[outputOffset + 3] = Math.round(outputAlpha * 255)
         }
         if (preview.upperLayers.length > 0) this.compositeCache.compositeNormalLayersInto(document, preview.upperLayers, patchRect.x, patchRect.y, patchRect.width, patchRect.height, contentRevision, patchPixels)
         previewContext.putImageData(imageData(patchPixels, patchRect.width, patchRect.height), patchRect.x - preview.x, patchRect.y - preview.y)
@@ -529,7 +571,7 @@ export class CanvasCompositeCache {
     const width = right - x
     const height = bottom - y
     if (width <= 0 || height <= 0) return true
-    const layers = this.compositeCache.normalLayersFor(document, contentRevision)
+    const layers = this.compositeCache.renderLayersFor(document, contentRevision)
     if (!layers) return false
     const movingIds = new Set(movingLayerIds)
     const movingLayers = layers.filter((layer) => movingIds.has(layer.id))
@@ -537,7 +579,7 @@ export class CanvasCompositeCache {
     const firstMovingIndex = layers.findIndex((layer) => movingIds.has(layer.id))
     if (firstMovingIndex < 0 || layers.slice(firstMovingIndex).some((layer) => !movingIds.has(layer.id))) return false
     if (width * height * 8 > this.maxCacheBytes) return false
-    const key = `${document.id}:${frameId}:${contentRevision}:${x}:${y}:${width}:${height}:${movingLayers.map((layer) => layer.id).join(',')}`
+    const key = `${document.id}:${frameId}:${contentRevision}:${x}:${y}:${width}:${height}:${view.tileRepeatMode ?? 'off'}:${movingLayers.map((layer) => layer.id).join(',')}`
     let preview = this.movePreview
     if (!preview || preview.key !== key) {
       const basePixels = this.compositeCache.normalLayerRegion(document, layers.slice(0, firstMovingIndex), x, y, width, height, contentRevision)
@@ -550,7 +592,7 @@ export class CanvasCompositeCache {
       this.movePreview = preview
     }
     preview.outputPixels.set(preview.basePixels)
-    this.compositeCache.compositeNormalLayersInto(document, preview.movingLayers, x, y, width, height, contentRevision, preview.outputPixels)
+    this.compositeCache.compositeNormalLayersInto(document, repeatedLayers(preview.movingLayers, document, view), x, y, width, height, contentRevision, preview.outputPixels)
     preview.canvas.getContext('2d')?.putImageData(imageData(preview.outputPixels, width, height), 0, 0)
     context.drawImage(preview.canvas, 0, 0, width, height, originX + x * view.zoom, originY + y * view.zoom, width * view.zoom, height * view.zoom)
     return true

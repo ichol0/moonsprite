@@ -40,6 +40,7 @@ export const appCoordinatorRenderKey = (state: AppCoordinatorState): string => {
     session?.fillKind ?? 'bucket',
     session?.view.showPixelGrid ? 1 : 0,
     session?.view.showGrid ? 1 : 0,
+    session?.view.tileRepeatMode ?? 'off',
     session?.view.grid ? `${session.view.grid.x}:${session.view.grid.y}:${session.view.grid.width}:${session.view.grid.height}` : '',
     session?.view.relativeLuminance ? 1 : 0,
     session?.view.showSelectionOutline === false ? 0 : 1,
@@ -51,7 +52,7 @@ export const appCoordinatorRenderKey = (state: AppCoordinatorState): string => {
 }
 
 export const toolRailRenderKey = (session: DocumentSession | null): string => session
-  ? `${session.document.id}:${session.tool}:${session.moveKind}:${session.selectionKind}:${session.shapeKind}:${session.lineKind}:${session.fillKind ?? 'bucket'}:${session.activeLayerMaskId ?? ''}:${session.selectedGroupIds.join(',')}:${session.selectedLayerIds.filter((id) => session.document.layers.some((layer) => layer.id === id && layer.kind === 'text')).join(',')}`
+  ? `${session.document.id}:${session.tool}:${session.moveKind}:${session.selectionKind}:${session.shapeKind}:${session.lineKind}:${session.fillKind ?? 'bucket'}:${session.activeLayerMaskId ?? ''}:${session.selectedGroupIds.join(',')}:${session.selectedLayerIds.filter((id) => session.document.layers.some((layer) => layer.id === id && layer.kind)).join(',')}:${session.tilemapMode}`
   : ''
 
 export const appMenuRenderKey = (session: DocumentSession | null): string => session
@@ -69,6 +70,7 @@ export const appMenuRenderKey = (session: DocumentSession | null): string => ses
       session.selectedLayerIds.join(','),
       session.view.showPixelGrid ? 1 : 0,
       session.view.showGrid ? 1 : 0,
+      session.view.tileRepeatMode ?? 'off',
       session.view.grid ? `${session.view.grid.x}:${session.view.grid.y}:${session.view.grid.width}:${session.view.grid.height}` : '',
       session.view.relativeLuminance ? 1 : 0,
       session.view.showSelectionOutline === false ? 0 : 1,

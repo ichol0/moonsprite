@@ -4,6 +4,11 @@ const utilityIconPaths = {
   eye: 'M3 2h4v1H3zM2 3h3v1H2zM6 3h2v1H6zM1 4h1v2H1zM3 4h4v1H3zM8 4h1v2H8zM4 5h2v1H4zM2 6h1v1H2zM7 6h1v1H7zM3 7h4v1H3z',
   eyeOff: 'M1 4h1v2H1zM8 4h1v2H8zM2 6h1v1H2zM7 6h1v1H7zM3 7h4v1H3z',
   properties: 'M2 2h3v1H2zM2 3h1v1H2zM4 3h4v1H4zM2 4h3v1H2zM6 5h3v1H6zM3 6h4v1H3zM8 6h1v1H8zM6 7h3v1H6z',
+  pencil: 'M8 1h2v1H8zM7 2h3v2H7zM6 3h3v2H6zM5 4h3v2H5zM4 5h3v2H4zM3 6h3v2H3zM2 7h3v2H2zM1 8h3v2H1zM1 10h2v1H1z',
+  tilePaint: 'M6 2h2v1H6zM5 3h2v1H5zM8 3h1v1H8zM4 4h1v1H4zM6 4h3v1H6zM3 5h1v1H3zM6 5h2v1H6zM2 6h1v1H2zM5 6h2v1H5zM2 7h4v1H2zM2 8h3v1H2z',
+  tileModeEdit: 'M3 3h5v1H3zM3 4h1v3H3zM7 4h1v3H7zM3 7h5v1H3z',
+  tileModeCreate: 'M2 3h7v1H2zM2 4h1v4H2zM8 4h1v1H8zM7 5h1v1H7zM6 6h3v1H6zM3 7h3v1H3zM7 7h1v1H7z',
+  tileModeHybrid: 'M2 3h5v1H2zM2 4h1v2H2zM6 4h3v1H6zM2 5h5v1H2zM8 5h1v3H8zM3 6h1v1H3zM3 7h6v1H3z',
   autoSlice: 'M2 2h7v7H2zM4 2h1v7H4zM7 2h1v7H7zM2 4h7v1H2zM2 7h7v1H2z',
   delete: 'M4 2h3v1H4zM2 3h7v1H2zM3 4h5v1H3zM3 5h1v3H3zM5 5h1v3H5zM7 5h1v3H7zM3 8h5v1H3z',
   newFolder: 'M2 2h3v1H2zM1 3h7v1H1zM1 4h4v1H1zM6 4h3v1H6zM1 5h3v1H1zM7 5h2v1H7zM1 6h4v1H1zM6 6h3v1H6zM1 7h8v2H1z',
@@ -72,6 +77,11 @@ const utilityIconPaths = {
   deleteSelection: 'M2 1h1v1H2zM4 1h3v1H4zM8 1h1v1H8zM1 2h1v1H1zM9 2h1v1H9zM5 3h1v1H5zM1 4h1v1H1zM3 4h5v1H3zM9 4h1v1H9zM1 5h1v1H1zM4 5h1v1H4zM6 5h1v1H6zM9 5h1v1H9zM1 6h1v1H1zM4 6h1v1H4zM6 6h1v1H6zM9 6h1v1H9zM4 7h3v1H4zM1 8h1v1H1zM9 8h1v1H9zM2 9h1v1H2zM4 9h3v1H4zM8 9h1v1H8z',
   rotateClockwise90: 'M2 2h5v1H2zM7 3h1v1H7zM2 4h3v1H2zM8 4h1v1H8zM1 5h1v1H1zM5 5h1v1H5zM8 5h1v1H8zM1 6h1v1H1zM5 6h1v1H5zM8 6h1v1H8zM1 7h1v1H1zM5 7h1v1H5zM7 7h3v1H7zM2 8h3v1H2zM8 8h1v1H8z',
   rotateCounterClockwise90: 'M4 2h5v1H4zM3 3h1v1H3zM2 4h1v1H2zM6 4h3v1H6zM2 5h1v1H2zM5 5h1v1H5zM9 5h1v1H9zM2 6h1v1H2zM5 6h1v1H5zM9 6h1v1H9zM1 7h3v1H1zM5 7h1v1H5zM9 7h1v1H9zM2 8h1v1H2zM6 8h3v1H6z',
+  tileRepeatX: 'M4 4h3v1h-3zM4 5h1v1h-1zM6 5h1v1h-1zM4 6h3v1h-3z',
+  tileRepeatY: 'M4 4h3v1h-3zM4 5h1v1h-1zM6 5h1v1h-1zM4 6h3v1h-3z',
+  tileRepeatBoth: 'M4 4h3v1h-3zM4 5h1v1h-1zM6 5h1v1h-1zM4 6h3v1h-3z',
+  tilemap: 'M2 2h7v1H2zM2 5h7v1H2zM2 8h7v1H2zM2 2h1v7H2zM5 2h1v7H5zM8 2h1v7H8z',
+  timelapse: 'M3 2h5v1H3zM1 4h3v1H1zM7 4h1v1H7zM9 4h1v1H9zM1 5h3v1H1zM5 5h1v1H5zM7 5h3v1H7zM1 6h3v1H1zM7 6h3v1H7zM1 7h9v1H1zM2 8h7v1H2z',
   grid: 'M1 1h9v1H1zM1 4h9v1H1zM1 7h9v1H1zM1 9h9v1H1zM1 1h1v9H1zM4 1h1v9H4zM7 1h1v9H7zM9 1h1v9H9z'
 } as const
 
@@ -79,6 +89,7 @@ const utilityIconTranslucentPaths: Partial<Record<PixelUtilityIconKind, string>>
   lock: 'M2 4h1v1H2zM8 4h1v1H8zM6 7h1v1H6z',
   unlock: 'M2 4h1v1H2zM8 4h1v1H8zM6 7h1v1H6z',
   properties: 'M8 3h1v1H8zM2 6h1v1H2z',
+  tilePaint: 'M7 3h1v1H7zM5 5h1v1H5zM4 6h1v1H4z',
   delete: 'M4 5h1v1H4zM6 5h1v1H6z',
   newFolder: 'M1 2h1v1H1zM5 2h1v1H5zM8 3h1v1H8z',
   ungroupFolder: 'M1 2h1v1H1zM5 2h1v1H5zM8 3h1v1H8z',
@@ -113,7 +124,11 @@ const utilityIconTranslucentPaths: Partial<Record<PixelUtilityIconKind, string>>
   resetView: 'M1 1h1v1H1zM9 1h1v1H9zM4 4h1v1H4zM6 4h1v1H6zM4 6h1v1H4zM6 6h1v1H6zM1 9h1v1H1zM9 9h1v1H9z',
   deleteSelection: 'M1 1h1v1H1zM9 1h1v1H9zM4 3h1v1H4zM6 3h1v1H6zM5 5h1v1H5zM1 9h1v1H1zM9 9h1v1H9z',
   rotateClockwise90: 'M1 2h1v1H1zM7 2h1v1H7zM8 3h1v1H8zM1 4h1v1H1zM5 4h1v1H5zM1 8h1v1H1zM5 8h1v1H5z',
-  rotateCounterClockwise90: 'M3 2h1v1H3zM9 2h1v1H9zM2 3h1v1H2zM5 4h1v1H5zM9 4h1v1H9zM5 8h1v1H5zM9 8h1v1H9z'
+  rotateCounterClockwise90: 'M3 2h1v1H3zM9 2h1v1H9zM2 3h1v1H2zM5 4h1v1H5zM9 4h1v1H9zM5 8h1v1H5zM9 8h1v1H9z',
+  tileRepeatX: 'M2 4h2v1h-2zM7 4h2v1h-2zM2 5h1v1h-1zM8 5h1v1h-1zM2 6h2v1h-2zM7 6h2v1h-2z',
+  tileRepeatY: 'M4 2h3v1h-3zM4 3h1v1h-1zM6 3h1v1h-1zM4 7h1v1h-1zM6 7h1v1h-1zM4 8h3v1h-3z',
+  tileRepeatBoth: 'M2 2h7v1h-7zM2 3h1v1h-1zM4 3h1v1h-1zM6 3h1v1h-1zM8 3h1v1h-1zM2 4h2v1h-2zM7 4h2v1h-2zM2 5h1v1h-1zM8 5h1v1h-1zM2 6h2v1h-2zM7 6h2v1h-2zM2 7h1v1h-1zM4 7h1v1h-1zM6 7h1v1h-1zM8 7h1v1h-1zM2 8h7v1h-7z',
+  timelapse: 'M1 3h9v1H1zM1 8h1v1H1zM9 8h1v1H9z'
 }
 
 export type PixelUtilityIconKind = keyof typeof utilityIconPaths

@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom'
 import type { CSSProperties, PointerEvent as ReactPointerEvent, RefObject } from 'react'
 import { loadFloatingPosition, resizeFloatingPosition, saveFloatingPosition, type FloatingPosition } from '@/core/panel-preferences'
 
-let floatingZIndex = 40
+let floatingZIndex = 220
 
 export type PanelDock = 'right' | 'left' | 'bottom' | 'floating'
 export type FixedPanelDock = Exclude<PanelDock, 'floating'>

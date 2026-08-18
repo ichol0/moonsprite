@@ -1,6 +1,6 @@
 import { inflateSync, strFromU8, strToU8, unzipSync, zipSync, type Zippable } from 'fflate'
-import { BLEND_MODES, type AnimationCelSurface, type AnimationFrame, type BackgroundLayerSettings, type BlendMode, type ColorMode, type LayerGroup, type LayerMask, type LayerStyles, type PaletteEntry, type ProjectBrush, type RasterFormat, type RasterLayer, type RgbaColor, type RuntimeRasterTiles, type SpriteDocument, type TextCelData, type TimelapseSettings } from '@shared/types'
-import { compositeDocument, createCompositePointSampler, createId, createNormalCompositePointSampler, getLayerStorageOrigin, getRasterContentRevision, remapIndexedDocumentToVisiblePalette, setLayerStorageOrigin } from './document'
+import { BLEND_MODES, type AnimationCelSurface, type AnimationFrame, type BackgroundLayerSettings, type BlendMode, type ColorMode, type LayerGroup, type LayerMask, type LayerStyles, type PaletteEntry, type ProjectBrush, type RasterFormat, type RasterLayer, type RgbaColor, type RuntimeRasterTiles, type SpriteDocument, type TextCelData, type TilemapCelData, type TilemapCell, type Tileset, type TimelapseSettings } from '@shared/types'
+import { compositeDocument, createCompositePointSampler, createId, createNormalCompositePointSampler, getLayerStorageOrigin, getRasterContentRevision, paletteColorIdForCanvas, remapIndexedDocumentToVisiblePalette, setLayerStorageOrigin } from './document'
 import { createDefaultAnimationTimeline, ensureAnimationDocument, normalizeAnimationTimeline, refreshActiveAnimationFrame, syncActiveAnimationLayers } from './animation'
 import { normalizeOutlineSettings } from './outline-settings'
 import { normalizeProjectDisplaySettings, normalizeProjectStatistics, normalizeTimelapseSettings } from './project-metadata'
@@ -14,13 +14,15 @@ import { normalizeDocumentSlices } from './slices'
 import { normalizeTextCelData } from './text-raster'
 import { cloneLayerStyles, normalizeLayerStyles } from './layer-styles'
 import { normalizeBackgroundLayerSettings } from './background-patterns'
+import { MAX_TILE_SIZE, MAX_TILEMAP_CELLS, MAX_TILEMAP_SURFACE_PIXELS, MAX_TILESET_LAYOUT_SLOTS, MAX_TILESET_PIXELS, compactTilesetTileSlots, normalizeTilemapCell, renderTilemapSurface } from './tilemap'
 
 interface ManifestLayer {
   id: string
   name: string
   displayColor?: RgbaColor
   description?: string
-  kind?: 'text'
+  kind?: 'text' | 'tilemap'
+  tilemapTilesetId?: string
   visible: boolean
   locked: boolean
   opacity: number
@@ -58,6 +60,30 @@ interface ManifestProjectBrush {
   sourceY?: number
 }
 
+interface ManifestTileset {
+  id: string
+  name: string
+  tileWidth: number
+  tileHeight: number
+  columns: number
+  rows: number
+  tileIds: string[]
+  tileSlots?: Array<string | null>
+  dataFile: string
+}
+
+interface ManifestTilemapCell extends TilemapCell {
+  index: number
+}
+
+interface ManifestTilemapCelData {
+  tileWidth: number
+  tileHeight: number
+  columns: number
+  rows: number
+  cells: ManifestTilemapCell[]
+}
+
 interface ManifestCel {
   id: string
   layerId: string
@@ -73,6 +99,7 @@ interface ManifestCel {
   dataEncoding?: RasterDataEncoding
   mask?: ManifestMask
   text?: TextCelData
+  tilemap?: ManifestTilemapCelData
 }
 
 interface ManifestGroupMask {
@@ -104,7 +131,9 @@ interface ManifestTimelapse extends Omit<TimelapseSettings, 'snapshots'> {
 
 type RasterDataEncoding = 'raw' | 'sparse-tiles-v1'
 
-export const PROJECT_SCHEMA_VERSION = 12
+export const PROJECT_SCHEMA_VERSION = 13
+const TILEMAP_PROJECT_SCHEMA_VERSION = 13
+const BACKGROUND_LAYER_PROJECT_SCHEMA_VERSION = 12
 const LAYER_STYLES_PROJECT_SCHEMA_VERSION = 11
 const DOCUMENT_COLOR_MODE_PROJECT_SCHEMA_VERSION = 10
 const TEXT_BOX_PROJECT_SCHEMA_VERSION = 9
@@ -121,7 +150,7 @@ const SPARSE_TILE_ENTRY_BYTES = 16
 interface ProjectManifest {
   schemaVersion: typeof PROJECT_SCHEMA_VERSION
   app: 'MoonSprite'
-  document: Omit<SpriteDocument, 'layers' | 'groups' | 'palette' | 'customBrushes' | 'animation' | 'timelapse' | 'filePath' | 'sourceFilePath' | 'dirty'> & { schemaVersion: typeof PROJECT_SCHEMA_VERSION; layers: ManifestLayer[]; groups: LayerGroup[]; palette: PaletteEntry[]; customBrushes: ManifestProjectBrush[]; animation: ManifestAnimation; timelapse?: ManifestTimelapse }
+  document: Omit<SpriteDocument, 'layers' | 'groups' | 'palette' | 'customBrushes' | 'tilesets' | 'animation' | 'timelapse' | 'filePath' | 'sourceFilePath' | 'dirty'> & { schemaVersion: typeof PROJECT_SCHEMA_VERSION; layers: ManifestLayer[]; groups: LayerGroup[]; palette: PaletteEntry[]; customBrushes: ManifestProjectBrush[]; tilesets: ManifestTileset[]; animation: ManifestAnimation; timelapse?: ManifestTimelapse }
   sourceSchemaVersion?: number
 }
 
@@ -475,8 +504,8 @@ const normalizeManifestAnimation = (value: unknown): ManifestAnimation => {
     loop: normalized.loop,
     cels: normalized.cels.map((cel) => {
       const raw = rawCels.find((candidate) => candidate && typeof candidate === 'object' && (candidate as { id?: unknown }).id === cel.id) as Partial<ManifestCel> | undefined
-      const { mask: _runtimeMask, surface: _runtimeSurface, ...normalizedCel } = cel
-      return { ...normalizedCel, ...(Number.isFinite(raw?.opacity) ? { opacity: Math.max(0, Math.min(1, Number(raw!.opacity))) } : {}), ...(raw?.format === 'rgba' || raw?.format === 'indexed' ? { format: raw.format } : {}), ...(Number.isSafeInteger(raw?.width) ? { width: raw!.width } : {}), ...(Number.isSafeInteger(raw?.height) ? { height: raw!.height } : {}), ...(Number.isFinite(raw?.offsetX) ? { offsetX: Math.trunc(raw!.offsetX!) } : {}), ...(Number.isFinite(raw?.offsetY) ? { offsetY: Math.trunc(raw!.offsetY!) } : {}), ...(typeof raw?.dataFile === 'string' ? { dataFile: raw.dataFile } : {}), ...(raw?.dataEncoding === 'raw' || raw?.dataEncoding === 'sparse-tiles-v1' ? { dataEncoding: raw.dataEncoding } : {}), ...(raw?.mask ? { mask: raw.mask } : {}), ...(raw?.text && typeof raw.text === 'object' ? { text: normalizeTextCelData(raw.text) } : {}) }
+      const { mask: _runtimeMask, surface: _runtimeSurface, tilemap: _runtimeTilemap, ...normalizedCel } = cel
+      return { ...normalizedCel, ...(Number.isFinite(raw?.opacity) ? { opacity: Math.max(0, Math.min(1, Number(raw!.opacity))) } : {}), ...(raw?.format === 'rgba' || raw?.format === 'indexed' ? { format: raw.format } : {}), ...(Number.isSafeInteger(raw?.width) ? { width: raw!.width } : {}), ...(Number.isSafeInteger(raw?.height) ? { height: raw!.height } : {}), ...(Number.isFinite(raw?.offsetX) ? { offsetX: Math.trunc(raw!.offsetX!) } : {}), ...(Number.isFinite(raw?.offsetY) ? { offsetY: Math.trunc(raw!.offsetY!) } : {}), ...(typeof raw?.dataFile === 'string' ? { dataFile: raw.dataFile } : {}), ...(raw?.dataEncoding === 'raw' || raw?.dataEncoding === 'sparse-tiles-v1' ? { dataEncoding: raw.dataEncoding } : {}), ...(raw?.mask ? { mask: raw.mask } : {}), ...(raw?.text && typeof raw.text === 'object' ? { text: normalizeTextCelData(raw.text) } : {}), ...(raw?.tilemap && typeof raw.tilemap === 'object' ? { tilemap: raw.tilemap } : {}) }
     }),
     groupMasks: value && typeof value === 'object' && Array.isArray((value as { groupMasks?: unknown }).groupMasks)
       ? (value as { groupMasks: unknown[] }).groupMasks.flatMap((item) => {
@@ -489,6 +518,14 @@ const normalizeManifestAnimation = (value: unknown): ManifestAnimation => {
       : []
   }
 }
+
+const manifestTilemapFromData = (tilemap: TilemapCelData): ManifestTilemapCelData => ({
+  tileWidth: tilemap.tileWidth,
+  tileHeight: tilemap.tileHeight,
+  columns: tilemap.columns,
+  rows: tilemap.rows,
+  cells: tilemap.cells.flatMap((cell, index) => cell ? [{ index, ...cell }] : [])
+})
 
 export interface ProjectEncodeOptions {
   /** Recovery snapshots do not need a gallery preview and can skip its full-canvas composite. */
@@ -594,7 +631,8 @@ const createProjectArchiveFiles = (document: SpriteDocument, options: ProjectEnc
       name: layer.name,
       ...(layer.displayColor ? { displayColor: layer.displayColor } : {}),
       ...(layer.description ? { description: layer.description } : {}),
-      ...(layer.kind === 'text' ? { kind: 'text' as const } : {}),
+      ...(layer.kind === 'text' || layer.kind === 'tilemap' ? { kind: layer.kind } : {}),
+      ...(layer.kind === 'tilemap' && layer.tilemapTilesetId ? { tilemapTilesetId: layer.tilemapTilesetId } : {}),
       visible: layer.visible,
       locked: layer.locked,
       opacity: layer.opacity,
@@ -618,6 +656,22 @@ const createProjectArchiveFiles = (document: SpriteDocument, options: ProjectEnc
     const colorsFile = brush.colors && brush.colors.length === brush.width * brush.height ? `brushes/${brush.id}.rgba` : undefined
     if (colorsFile) files[colorsFile] = toU8(brush.colors!)
     return { id: brush.id, name: brush.name, width: brush.width, height: brush.height, dataFile, colorsFile, sourceX: brush.sourceX, sourceY: brush.sourceY }
+  })
+  const tilesets: ManifestTileset[] = (document.tilesets ?? []).map((tileset) => {
+    const dataFile = `tilesets/${tileset.id}.rgba`
+    files[dataFile] = toU8(tileset.pixels)
+    resources.push({ path: dataFile, resource: tileset.pixels, revision: getRasterContentRevision(tileset.pixels) })
+    return {
+      id: tileset.id,
+      name: tileset.name,
+      tileWidth: tileset.tileWidth,
+      tileHeight: tileset.tileHeight,
+      columns: tileset.columns,
+      rows: tileset.rows,
+      tileIds: [...tileset.tileIds],
+      tileSlots: compactTilesetTileSlots(tileset.tileIds, tileset.tileSlots),
+      dataFile
+    }
   })
   const timeline = ensureAnimationDocument(document)
   const animation: ManifestAnimation = {
@@ -644,7 +698,8 @@ const createProjectArchiveFiles = (document: SpriteDocument, options: ProjectEnc
           dataEncoding: encoded.dataEncoding
         } : {}),
         ...(cel.mask ? { mask: encodeMask(cel.mask) } : {}),
-        ...(cel.text ? { text: normalizeTextCelData(cel.text) } : {})
+        ...(cel.text ? { text: normalizeTextCelData(cel.text) } : {}),
+        ...(cel.tilemap && !cel.linkedCelId ? { tilemap: manifestTilemapFromData(cel.tilemap) } : {})
       }]
     })
   }
@@ -661,7 +716,7 @@ const createProjectArchiveFiles = (document: SpriteDocument, options: ProjectEnc
       return { id: snapshot.id, capturedAt: snapshot.capturedAt, elapsedMs: snapshot.elapsedMs, width: snapshot.width, height: snapshot.height, dataFile }
     })
   }
-  const { schemaVersion: _schemaVersion, layers: _layers, groups: _groups, palette: _palette, customBrushes: _customBrushes, animation: _animation, timelapse: _timelapse, filePath: _filePath, sourceFilePath: _sourceFilePath, dirty: _dirty, ...serializable } = document
+  const { schemaVersion: _schemaVersion, layers: _layers, groups: _groups, palette: _palette, customBrushes: _customBrushes, tilesets: _tilesets, animation: _animation, timelapse: _timelapse, filePath: _filePath, sourceFilePath: _sourceFilePath, dirty: _dirty, ...serializable } = document
   const manifest: ProjectManifest = {
     schemaVersion: PROJECT_SCHEMA_VERSION,
     app: 'MoonSprite',
@@ -674,6 +729,7 @@ const createProjectArchiveFiles = (document: SpriteDocument, options: ProjectEnc
       paletteColumns: normalizePaletteColumns(document.paletteColumns),
       paletteSlots: normalizePaletteSlots(document.palette.map((entry) => entry.id), document.paletteOrder, document.paletteSlots, normalizePaletteColumns(document.paletteColumns)),
       customBrushes,
+      tilesets,
       animation,
       timelapse,
       slices: normalizeDocumentSlices(document.slices, document.width, document.height)
@@ -815,6 +871,10 @@ const projectResourcesFromManifest = (document: SpriteDocument, manifest: Projec
       activeCel ?? rasterFromMetadata(metadata, manifest.document.width, manifest.document.height)
     )
   }
+  const tilesetMetadata = new Map((manifest.document.tilesets ?? []).map((tileset) => [tileset.id, tileset]))
+  for (const tileset of document.tilesets ?? []) {
+    add(tileset.pixels, tilesetMetadata.get(tileset.id)?.dataFile, getRasterContentRevision(tileset.pixels))
+  }
   const timeline = ensureAnimationDocument(document)
   const celMetadata = new Map(manifest.document.animation.cels.map((cel) => [cel.id, cel]))
   for (const cel of timeline.cels) {
@@ -902,7 +962,7 @@ export function migrateProjectManifest(input: unknown): ProjectManifest {
   const candidate = input as { app?: unknown; schemaVersion?: unknown; document?: Record<string, unknown> }
   if (candidate.app !== 'MoonSprite' || !candidate.document) throw new Error(tr('core.project.unsupportedVersion'))
   const version = Number(candidate.schemaVersion)
-  if (![1, 2, 3, LEGACY_PROJECT_SCHEMA_VERSION, SPARSE_RASTER_PROJECT_SCHEMA_VERSION, SLICES_PROJECT_SCHEMA_VERSION, EDITABLE_TEXT_PROJECT_SCHEMA_VERSION, STYLED_TEXT_PROJECT_SCHEMA_VERSION, TEXT_BOX_PROJECT_SCHEMA_VERSION, DOCUMENT_COLOR_MODE_PROJECT_SCHEMA_VERSION, LAYER_STYLES_PROJECT_SCHEMA_VERSION, PROJECT_SCHEMA_VERSION].includes(version) || candidate.document.schemaVersion !== candidate.schemaVersion) throw new Error(tr('core.project.unsupportedVersion'))
+  if (![1, 2, 3, LEGACY_PROJECT_SCHEMA_VERSION, SPARSE_RASTER_PROJECT_SCHEMA_VERSION, SLICES_PROJECT_SCHEMA_VERSION, EDITABLE_TEXT_PROJECT_SCHEMA_VERSION, STYLED_TEXT_PROJECT_SCHEMA_VERSION, TEXT_BOX_PROJECT_SCHEMA_VERSION, DOCUMENT_COLOR_MODE_PROJECT_SCHEMA_VERSION, LAYER_STYLES_PROJECT_SCHEMA_VERSION, BACKGROUND_LAYER_PROJECT_SCHEMA_VERSION, PROJECT_SCHEMA_VERSION].includes(version) || candidate.document.schemaVersion !== candidate.schemaVersion) throw new Error(tr('core.project.unsupportedVersion'))
   if (version >= SPARSE_RASTER_PROJECT_SCHEMA_VERSION) {
     const layers = Array.isArray(candidate.document.layers) ? candidate.document.layers : []
     const animation = candidate.document.animation && typeof candidate.document.animation === 'object' ? candidate.document.animation as { cels?: unknown } : null
@@ -923,7 +983,7 @@ export function migrateProjectManifest(input: unknown): ProjectManifest {
         const layerStyles = version >= LAYER_STYLES_PROJECT_SCHEMA_VERSION ? normalizeLayerStyles(next.layerStyles) : undefined
         if (layerStyles) next.layerStyles = layerStyles
         else delete next.layerStyles
-        const background = version >= PROJECT_SCHEMA_VERSION ? normalizeBackgroundLayerSettings(next.background) : undefined
+        const background = version >= BACKGROUND_LAYER_PROJECT_SCHEMA_VERSION ? normalizeBackgroundLayerSettings(next.background) : undefined
         if (background) next.background = background
         else delete next.background
         return next as unknown as ManifestLayer
@@ -939,7 +999,14 @@ export function migrateProjectManifest(input: unknown): ProjectManifest {
         return next as unknown as LayerGroup
       })
     : candidate.document.groups
-  const cels = animation.cels.map((cel) => legacy && cel.dataFile ? { ...cel, dataEncoding: 'raw' as const } : cel)
+  const cels = animation.cels.map((cel) => {
+    const next = legacy && cel.dataFile ? { ...cel, dataEncoding: 'raw' as const } : { ...cel }
+    if (version < TILEMAP_PROJECT_SCHEMA_VERSION) delete next.tilemap
+    return next
+  })
+  const tilesets = version >= TILEMAP_PROJECT_SCHEMA_VERSION && Array.isArray(candidate.document.tilesets)
+    ? candidate.document.tilesets as unknown as ManifestTileset[]
+    : []
   return {
     ...(candidate as Omit<ProjectManifest, 'schemaVersion' | 'document'>),
     schemaVersion: PROJECT_SCHEMA_VERSION,
@@ -949,6 +1016,7 @@ export function migrateProjectManifest(input: unknown): ProjectManifest {
       schemaVersion: PROJECT_SCHEMA_VERSION,
       ...(layers ? { layers: layers as ManifestLayer[] } : {}),
       ...(groups ? { groups: groups as LayerGroup[] } : {}),
+      tilesets,
       animation: { ...animation, cels },
       slices: normalizeDocumentSlices(candidate.document.slices, Number(candidate.document.width) || 1, Number(candidate.document.height) || 1)
     }
@@ -987,6 +1055,12 @@ export function readProjectExpandedRasterBytes(input: Uint8Array): number | null
       resources.set(dataFile, bytes)
     }
     for (const layer of source.layers ?? []) add(layer.dataFile, layer.width ?? source.width, layer.height ?? source.height)
+    for (const tileset of source.tilesets ?? []) {
+      const width = tileset.columns * tileset.tileWidth
+      const height = tileset.rows * tileset.tileHeight
+      if (!Number.isSafeInteger(width * height) || width * height > MAX_TILESET_PIXELS) throw new Error('invalid tileset size')
+      add(tileset.dataFile, width, height)
+    }
     for (const cel of source.animation.cels ?? []) {
       if (cel.dataFile) add(cel.dataFile, cel.width, cel.height)
       if (cel.mask) add(cel.mask.dataFile, cel.mask.width, cel.mask.height)
@@ -1047,6 +1121,7 @@ const requiredProjectDataFiles = (manifest: ProjectManifest, activeCelFiles: Rea
     required.add(brush.dataFile)
     if (brush.colorsFile) required.add(brush.colorsFile)
   }
+  for (const tileset of source.tilesets ?? []) required.add(tileset.dataFile)
   for (const cel of source.animation.cels) {
     if (cel.dataFile) required.add(cel.dataFile)
     if (cel.mask?.dataFile) required.add(cel.mask.dataFile)
@@ -1167,6 +1242,90 @@ export function readProjectGalleryMetadata(input: Uint8Array, options: ProjectGa
   }
 }
 
+const decodeManifestTilesets = (metadata: readonly ManifestTileset[], files: Readonly<Record<string, Uint8Array>>): Tileset[] => {
+  const ids = new Set<string>()
+  return metadata.map((candidate) => {
+    const id = typeof candidate?.id === 'string' ? candidate.id : ''
+    const name = typeof candidate?.name === 'string' ? candidate.name : ''
+    const tileWidth = Number(candidate?.tileWidth)
+    const tileHeight = Number(candidate?.tileHeight)
+    const columns = Number(candidate?.columns)
+    const rows = Number(candidate?.rows)
+    const tileCount = columns * rows
+    const sheetPixels = columns * tileWidth * rows * tileHeight
+    const tileIds = Array.isArray(candidate?.tileIds) ? candidate.tileIds : []
+    const uniqueTileIds = new Set(tileIds)
+    const tileSlots = candidate?.tileSlots === undefined ? [...tileIds] : candidate.tileSlots
+    const slotTileIds = Array.isArray(tileSlots) ? tileSlots.filter((tileId): tileId is string => tileId !== null) : []
+    if (!id || ids.has(id)
+      || !Number.isSafeInteger(tileWidth) || tileWidth < 1 || tileWidth > MAX_TILE_SIZE
+      || !Number.isSafeInteger(tileHeight) || tileHeight < 1 || tileHeight > MAX_TILE_SIZE
+      || !Number.isSafeInteger(columns) || columns < 1
+      || !Number.isSafeInteger(rows) || rows < 1
+      || !Number.isSafeInteger(tileCount) || tileCount < 1
+      || !Number.isSafeInteger(sheetPixels) || sheetPixels > MAX_TILESET_PIXELS
+      || tileIds.length < 1 || tileIds.length > tileCount
+      || uniqueTileIds.size !== tileIds.length
+      || tileIds.some((tileId) => typeof tileId !== 'string' || !tileId)
+      || !Array.isArray(tileSlots) || tileSlots.length < 1 || tileSlots.length > MAX_TILESET_LAYOUT_SLOTS
+      || tileSlots.some((tileId) => tileId !== null && (typeof tileId !== 'string' || !tileId))
+      || slotTileIds.length !== tileIds.length || new Set(slotTileIds).size !== slotTileIds.length
+      || slotTileIds.some((tileId) => !uniqueTileIds.has(tileId))
+      || typeof candidate.dataFile !== 'string' || !candidate.dataFile) {
+      throw new Error(tr('core.project.layerCorrupt', { name: name || id || 'Tileset' }))
+    }
+    const bytes = files[candidate.dataFile]
+    if (!bytes || bytes.byteLength !== sheetPixels * 4) throw new Error(tr('core.project.layerCorrupt', { name: name || id }))
+    ids.add(id)
+    return {
+      id,
+      name: name.trim() || 'Tileset',
+      tileWidth,
+      tileHeight,
+      columns,
+      rows,
+      tileIds: [...tileIds],
+      tileSlots: [...tileSlots],
+      pixels: new Uint8ClampedArray(bytes.slice().buffer)
+    }
+  })
+}
+
+const decodeManifestTilemap = (
+  value: ManifestTilemapCelData,
+  tilesets: ReadonlyMap<string, Tileset>,
+  name: string
+): TilemapCelData => {
+  const tileWidth = Number(value?.tileWidth)
+  const tileHeight = Number(value?.tileHeight)
+  const columns = Number(value?.columns)
+  const rows = Number(value?.rows)
+  const count = columns * rows
+  const surfacePixels = columns * tileWidth * rows * tileHeight
+  if (!Number.isSafeInteger(tileWidth) || tileWidth < 1 || tileWidth > MAX_TILE_SIZE
+    || !Number.isSafeInteger(tileHeight) || tileHeight < 1 || tileHeight > MAX_TILE_SIZE
+    || !Number.isSafeInteger(columns) || columns < 1
+    || !Number.isSafeInteger(rows) || rows < 1
+    || !Number.isSafeInteger(count) || count > MAX_TILEMAP_CELLS
+    || !Number.isSafeInteger(surfacePixels) || surfacePixels > MAX_TILEMAP_SURFACE_PIXELS
+    || !Array.isArray(value?.cells)) throw new Error(tr('core.project.layerCorrupt', { name }))
+  const cells: Array<TilemapCell | null> = Array.from({ length: count }, () => null)
+  const indexes = new Set<number>()
+  for (const entry of value.cells) {
+    if (!entry || typeof entry !== 'object' || !Number.isSafeInteger(entry.index) || entry.index < 0 || entry.index >= count || indexes.has(entry.index)) {
+      throw new Error(tr('core.project.layerCorrupt', { name }))
+    }
+    const normalized = normalizeTilemapCell(entry, tilesets)
+    const tileset = normalized ? tilesets.get(normalized.tilesetId) : undefined
+    if (!normalized || !tileset || tileset.tileWidth !== tileWidth || tileset.tileHeight !== tileHeight) {
+      throw new Error(tr('core.project.layerCorrupt', { name }))
+    }
+    indexes.add(entry.index)
+    cells[entry.index] = normalized
+  }
+  return { tileWidth, tileHeight, columns, rows, cells }
+}
+
 export function decodeProject(input: Uint8Array, onProgress?: (value: number) => void): SpriteDocument {
   const reportProgress = (value: number): void => onProgress?.(Math.max(0, Math.min(1, value)))
   reportProgress(0)
@@ -1271,6 +1430,7 @@ export function decodeProject(input: Uint8Array, onProgress?: (value: number) =>
   const totalItems = Math.max(1,
     source.layers.length
     + (source.customBrushes?.length ?? 0)
+    + (source.tilesets?.length ?? 0)
     + source.animation.cels.length
     + (source.animation.groupMasks?.length ?? 0)
     + (source.timelapse?.snapshots?.length ?? 0)
@@ -1280,6 +1440,9 @@ export function decodeProject(input: Uint8Array, onProgress?: (value: number) =>
     completedItems += 1
     reportProgress(0.45 + (completedItems / totalItems) * 0.48)
   }
+  const tilesets = decodeManifestTilesets(Array.isArray(source.tilesets) ? source.tilesets : [], files)
+  const tilesetsById = new Map(tilesets.map((tileset) => [tileset.id, tileset]))
+  for (let index = 0; index < tilesets.length; index += 1) reportItem()
   const layers: RasterLayer[] = source.layers.map((metadata) => {
     const width = Number.isSafeInteger(metadata.width) && metadata.width! > 0 ? metadata.width! : source.width
     const height = Number.isSafeInteger(metadata.height) && metadata.height! > 0 ? metadata.height! : source.height
@@ -1298,7 +1461,8 @@ export function decodeProject(input: Uint8Array, onProgress?: (value: number) =>
       ...(metadata.clippingMask === true ? { clippingMask: true } : {}),
       ...(layerStyles ? { layerStyles } : {}),
       ...(background ? { background } : {}),
-      ...(metadata.kind === 'text' ? { kind: 'text' as const } : {}),
+      ...(metadata.kind === 'text' || metadata.kind === 'tilemap' ? { kind: metadata.kind } : {}),
+      ...(metadata.kind === 'tilemap' && typeof metadata.tilemapTilesetId === 'string' ? { tilemapTilesetId: metadata.tilemapTilesetId } : {}),
       groupId: typeof metadata.groupId === 'string' ? metadata.groupId : null,
       ...(normalizeDisplayColor(metadata.displayColor) ? { displayColor: normalizeDisplayColor(metadata.displayColor)! } : {}),
       width: decoded.width,
@@ -1352,9 +1516,16 @@ export function decodeProject(input: Uint8Array, onProgress?: (value: number) =>
   const timelapse = normalizeTimelapseSettings(manifestTimelapse, timelapseSnapshots)
   const animation = normalizeAnimationTimeline(source.animation)
   const manifestCels = Array.isArray(source.animation?.cels) ? source.animation.cels : []
+  const layersById = new Map(layers.map((layer) => [layer.id, layer]))
   animation.cels = animation.cels.flatMap((cel) => {
     const metadata = manifestCels.find((candidate) => candidate.id === cel.id)
     if (!metadata) return []
+    const layer = layersById.get(cel.layerId)
+    if (!layer) return []
+    const tilemap = metadata.tilemap ? decodeManifestTilemap(metadata.tilemap, tilesetsById, cel.id) : undefined
+    if (layer.kind === 'tilemap') {
+      if (metadata.text || (!cel.linkedCelId && !tilemap)) throw new Error(tr('core.project.layerCorrupt', { name: cel.id }))
+    } else if (tilemap) throw new Error(tr('core.project.layerCorrupt', { name: cel.id }))
     const mask = decodeMask(metadata.mask, cel.id)
     if (!metadata.dataFile) {
       reportItem()
@@ -1370,7 +1541,7 @@ export function decodeProject(input: Uint8Array, onProgress?: (value: number) =>
       : { format: 'indexed' as const, width: decoded.width, height: decoded.height, offsetX: Math.trunc(metadata.offsetX ?? 0) + decoded.storageOffsetX, offsetY: Math.trunc(metadata.offsetY ?? 0) + decoded.storageOffsetY, storageOriginX: decoded.storageOffsetX, storageOriginY: decoded.storageOffsetY, pixels: decoded.pixels as Uint32Array }
     if (decoded.runtimeRaster) installRuntimeRaster(surface, decoded.runtimeRaster)
     reportItem()
-    return [{ ...cel, text: metadata.text ? normalizeTextCelData(metadata.text) : cel.text, surface, mask }]
+    return [{ ...cel, text: metadata.text ? normalizeTextCelData(metadata.text) : cel.text, ...(tilemap ? { tilemap } : {}), surface, mask }]
   })
   const manifestGroupMasks = Array.isArray(source.animation?.groupMasks) ? source.animation.groupMasks : []
   const decodedGroupMaskSlots = new Set<string>()
@@ -1419,6 +1590,7 @@ export function decodeProject(input: Uint8Array, onProgress?: (value: number) =>
     paletteSlots: normalizePaletteSlots(palette.map((entry) => entry.id), paletteOrder, Array.isArray(source.paletteSlots) ? source.paletteSlots : undefined, paletteColumns),
     nextColorId: Math.max(1, source.nextColorId ?? 1),
     customBrushes,
+    tilesets,
     animation,
     ...(outlineSettings ? { outlineSettings } : {}),
     displaySettings,
@@ -1431,6 +1603,17 @@ export function decodeProject(input: Uint8Array, onProgress?: (value: number) =>
     updatedAt: new Date().toISOString()
   }
   document.layerPanelState = normalizeProjectLayerPanelState(document, source.layerPanelState)
+  for (const cel of animation.cels) {
+    if (!cel.tilemap || !cel.surface) continue
+    cel.surface = renderTilemapSurface(
+      cel.tilemap,
+      tilesets,
+      document.colorMode,
+      cel.surface.offsetX,
+      cel.surface.offsetY,
+      document.colorMode === 'indexed' ? (color) => paletteColorIdForCanvas(document, color) : undefined
+    )
+  }
   rgbaPixelsByFile.clear()
   indexedPixelsByFile.clear()
   decodedRasterByKey.clear()

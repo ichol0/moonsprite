@@ -93,6 +93,41 @@ describe('QuickCommandBar', () => {
     expect([...document.querySelectorAll<HTMLButtonElement>('.quick-command-actions .quick-command-button:not(.quick-command-settings):not(.quick-command-move)')].map((button) => button.getAttribute('aria-label'))).toEqual(['重置视图', '像素网格'])
   })
 
+  it('switches the three tiled preview modes with their dedicated SVG buttons', () => {
+    const current = loadEditorPreferences()
+    const tileCommands = new Set(['tileRepeatX', 'tileRepeatY', 'tileRepeatBoth'])
+    saveEditorPreferences({
+      ...current,
+      quickCommandPreferences: current.quickCommandPreferences.map((item) => ({ ...item, enabled: tileCommands.has(item.id) }))
+    })
+    render(<QuickCommandBar documentId={documentId} shortcutFor={() => ''} onToggleMirror={vi.fn()} onOpenPreferences={vi.fn()} />)
+    fireEvent.click(screen.getByRole('button', { name: '展开快捷指令栏' }))
+
+    const tileX = screen.getByRole('button', { name: 'X轴平铺' })
+    const tileY = screen.getByRole('button', { name: 'Y轴平铺' })
+    const tileBoth = screen.getByRole('button', { name: '包围平铺' })
+    expect(tileX.querySelector('[data-pixel-icon="tileRepeatX"]')).toBeInTheDocument()
+    expect(tileY.querySelector('[data-pixel-icon="tileRepeatY"]')).toBeInTheDocument()
+    expect(tileBoth.querySelector('[data-pixel-icon="tileRepeatBoth"]')).toBeInTheDocument()
+
+    fireEvent.click(tileX)
+    expect(useWorkspace.getState().sessions[0].view.tileRepeatMode).toBe('x')
+    expect(tileX).toHaveAttribute('aria-pressed', 'true')
+
+    fireEvent.click(tileY)
+    expect(useWorkspace.getState().sessions[0].view.tileRepeatMode).toBe('y')
+    expect(tileX).toHaveAttribute('aria-pressed', 'false')
+    expect(tileY).toHaveAttribute('aria-pressed', 'true')
+
+    fireEvent.click(tileY)
+    expect(useWorkspace.getState().sessions[0].view.tileRepeatMode).toBe('off')
+    expect(tileY).toHaveAttribute('aria-pressed', 'false')
+
+    fireEvent.click(tileBoth)
+    expect(useWorkspace.getState().sessions[0].view.tileRepeatMode).toBe('both')
+    expect(tileBoth).toHaveAttribute('aria-pressed', 'true')
+  })
+
   it('hides the entire control when disabled in preferences', () => {
     render(<QuickCommandBar documentId={documentId} shortcutFor={() => ''} onToggleMirror={vi.fn()} onOpenPreferences={vi.fn()} />)
     expect(screen.getByRole('toolbar', { name: '快捷指令栏' })).toBeInTheDocument()

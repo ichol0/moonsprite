@@ -1,8 +1,16 @@
 import { describe, expect, it } from 'vitest'
 import { animationCelKey } from '@/core/animation'
-import { resolveCanvasMoveAnimationCellKeys } from './canvas-move-selection'
+import { resolveCanvasMoveAnimationCellKeys, resolveCanvasMoveLayerIds } from './canvas-move-selection'
 
 describe('canvas move animation cell selection', () => {
+  it('expands selected groups into every descendant layer for canvas movement', () => {
+    expect(resolveCanvasMoveLayerIds({
+      selectedLayerIds: ['outside-layer'],
+      selectedGroupIds: ['group-a'],
+      layerIdsForGroup: (groupId) => groupId === 'group-a' ? ['group-layer-a', 'nested-layer'] : []
+    })).toEqual(['outside-layer', 'group-layer-a', 'nested-layer'])
+  })
+
   it('preserves an explicit cross-frame cell selection', () => {
     const selectedAnimationCellKeys = [
       animationCelKey('layer-a', 'frame-a'),
