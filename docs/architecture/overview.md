@@ -27,15 +27,17 @@ platform/tauri-api ----> Tauri commands ----> Windows/file system
 - 计划状态：已完成
 - 未完成高风险拆分项：0
 
-五个原高风险入口已完成计划内的分阶段拆分与验证，已从集中式高风险入口降为边界明确的受控维护点：
+前一轮已经拆出多个高风险入口，但审计确认“拆文件”没有彻底解决写入所有权、历史快照、持久化主线程准备和根 Store 膨胀。本轮升级以数据流和职责所有权为单位，完成以下收口：
 
-- `App.tsx` 保留全局命令、模态框和工作区布局编排；文档标签、工具栏、工具属性栏、状态栏、画布主机和编辑器布局外壳已迁入 `components/app/`。
-- `CanvasStage.tsx` 保留画布事件编排和工具预览；选区轮廓、视图预览调度与文档合成缓存已迁入独立模块。
-- `workspace.ts` 保留 Zustand 公共 API 和命令编排；公开类型、会话构造、工具设置、历史快照与调色板命令已迁入 `workspace-*` 模块。
-- `WorkspacePanels.tsx` 仅负责编排停靠栏目，颜色、调色板、图层和预览均为独立组件。
-- Rust `lib.rs` 仅保留应用状态、命令注册、setup 和窗口生命周期协调；调色板、工作区、笔刷、图库、恢复和文件对话框分别位于 `platform_*` 模块。
+- 文档写入由 Store 领域命令和文档事务拥有，组件只负责输入与展示。
+- 撤销历史使用领域差量，不再压缩完整 `.moonsprite` 工程。
+- 保存与恢复按变更资源生成计划，归档准备和压缩移出 UI 线程。
+- 工程打开一次只解码一次，首帧合成和缓存复用已解码文档。
+- 根 Store 按会话、文档命令、历史、工具、视图、动画、Tilemap、工程 IO 和恢复拆分。
+- UI 刷新使用领域 revision 与精确 selector，不用字符串序列化大对象。
+- `core/` 运行时依赖保持无环，Tauri 访问全部收口到 `platform/`。
 
-本轮计划中没有未完成的高风险拆分项。仍需长期控制的维护风险集中在 `App.tsx` 的工作区持久化与全局模态框编排、`CanvasStage.tsx` 的指针手势状态机和 `workspace.ts` 的图层/选区命令；这些模块已有边界和测试保护，但未来新增功能时仍不得重新堆积无关职责。后续开发继续按职责迁移，不以一次性重写替代渐进拆分。
+架构债务由 `scripts/architecture-debt-budget.json` 按类别登记，本轮 10 类预算均已收紧到 0。该预算不是文件豁免；任何新债务都会立即失败，后续也不得回升或延期。`pnpm check:architecture` 是机器可执行的状态来源。
 
 ## 目标模块边界
 
@@ -59,7 +61,9 @@ platform/tauri-api ----> Tauri commands ----> Windows/file system
 - `core/file-preferences.ts` 统一管理编辑器首选项的默认值、校验、范围限制和持久化。新增设置必须先进入 `EditorPreferences`，再由界面消费。
 - `locales/` 按语言拆分资源，简体中文目录定义完整翻译键集合；`core/localization.ts` 统一管理可用语言、目录注册、类型化翻译键、简体中文回退和变量插值，`components/I18nProvider.tsx` 只负责把持久化语言连接到 React。未完整翻译和验收的语言不得注册为可用语言。
 - `core/storage.ts` 是渲染器本地存储的统一安全边界；`core/workspace-layout-preferences.ts` 负责窗口与工作区布局的校验、旧配置兼容和尺寸限制，`App.tsx` 不直接解析持久化数据。
+- `platform/app-window.ts` 是窗口尺寸、位置、最大化、多显示器可见性和原生窗口事件的唯一渲染器边界；`App.tsx` 只保存布局并调用平台适配器。
 - `core/document-files.ts` 统一文件名、扩展名、保存路径和工程编解码规则；`store/document-file-service.ts` 编排系统对话框与文件读写，`store/recovery-service.ts` 串行化恢复写入和删除。
+- `workers/document-decode.worker.ts` 在一次完整解码后先返回文档，再从同一解码结果准备初始合成；`workers/project-encode.worker.ts` 负责预览、清单、稀疏像素、增量复用计划和 ZIP 压缩，主线程只捕获轻量 revision 与存储原点元数据。
 - `core/history.ts` 保证撤销栈的内存计数与栈内容同步。撤销或重做失败时，原条目必须保留；视图状态不得进入该历史栈。
 - `store/clipboard-service.ts` 封装选区与图层剪贴板的快照、系统图片转换和内部回退。剪贴板是应用级临时状态，不属于任一文档的撤销历史；服务边界必须复制像素数组，避免粘贴或调用方意外改写复制来源。
 - `core/canvas-input.ts` 统一画布临时输入状态和可复用手势规则，包括当前拖拽、指针状态、修饰键、缩放级别、轴约束、选区缩放和旋转手柄。`CanvasStage.tsx` 仅编排事件与渲染，后续手势拆分必须复用此处规则。
@@ -72,13 +76,13 @@ platform/tauri-api ----> Tauri commands ----> Windows/file system
 - `App.tsx` 只在实际进入对应流程时动态加载 `CanvasStage`、`HomeWorkspace` 和 `ComponentLibrary`，避免首页启动路径预先解析编辑器与组件库代码。动态加载模块必须保留明确的加载边界，不得把核心文档状态放进懒加载组件内部。
 - `core/project-format.ts` 通过 `PROJECT_SCHEMA_VERSION` 和 `migrateProjectManifest()` 作为工程格式入口。未知版本拒绝打开，不猜测字段；未来版本迁移只增加独立迁移分支。
 - `components/app/useBrushLibrary.ts` 负责编排程序笔刷、项目笔刷和本地笔刷的加载、保存、删除与当前会话同步；`EditorToolOptions.tsx` 消费整理后的笔刷集合和命令。
-- `core/app-render-keys.ts` 定义菜单、标签、工具栏、工具属性栏、状态栏和应用协调器的最小刷新签名。签名不得包含像素数组；动画接入后按帧身份和可见 UI 字段扩展，不得序列化 cel 像素。
+- `components/app/app-render-keys.ts` 定义菜单、标签、工具栏、工具属性栏、状态栏和应用协调器的最小刷新签名。它属于 UI selector 边界，不反向污染 `core/`；签名不得包含像素数组或整份文档。
 - `components/app/DocumentTabs.tsx`、`EditorToolRail.tsx`、`EditorToolOptions.tsx` 和 `EditorStatusBar.tsx` 各自订阅领域签名并拥有自身弹层状态；`EditorCanvasHost.tsx` 是高频会话更新入口，`EditorWorkspaceShell.tsx` 只编排停靠布局。
 - `components/canvas-selection-renderer.ts` 负责选区屏幕几何、边界路径缓存和抓手绘制；`components/useCanvasViewPreview.ts` 负责平移、缩放预览及提交；`components/canvas-composite-cache.ts` 负责整图/分块合成缓存和局部失效。
-- `store/workspace-session.ts` 管理会话构造和工具设置持久化，`store/workspace-history.ts` 管理文档与图层历史快照，`store/workspace-palette.ts` 管理调色板选择、排序和历史命令。
+- `store/workspace-state.ts` 按领域组合 Workspace 数据与命令契约；`workspace-session.ts` 管理会话构造和工具设置持久化，`workspace-layer-move.ts` 管理图层拖动预览、取消和单次历史提交，`workspace-palette.ts` 管理调色板选择、排序和历史命令。生产历史路径不再使用完整工程快照。
 - Rust 平台命令按领域拆分为 `platform_palette.rs`、`platform_workspaces.rs`、`platform_brushes.rs`、`platform_gallery.rs`、`platform_recovery.rs` 和 `platform_dialogs.rs`；新增系统命令必须进入对应领域模块。
 
-后续拆分大模块时，优先把纯规则提取到 `core/` 并补测试，再让 `store/` 编排状态，最后由 React 组件接入。禁止把新的持久化 key、格式版本判断或坐标算法直接散落到 `App.tsx`、`CanvasStage.tsx` 或面板组件中。
+后续拆分大模块时，优先把纯规则提取到无环 `core/` 模块并补测试，再让领域 Store 编排状态，最后由 React 组件接入。禁止把新的持久化 key、格式版本判断、坐标算法或文档写入直接散落到 `App.tsx`、`CanvasStage.tsx` 或面板组件中。
 
 React 性能探针通过 `?moonsprite-perf=1` 启用，普通软件启动不执行 Profiler 测量。应用协调器不响应像素、平移和旋转等高频变化；画布主机、作品预览及实际变化的 UI 领域仍独立更新。后续优化应以区域探针确认的新热点为依据，不得以跳过必要状态更新换取指标。
 ## 工具设置边界

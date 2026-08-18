@@ -1,7 +1,7 @@
 import type { AnimationCel, AnimationCelSurface, AnimationFrame, AnimationGroupMask, AnimationTimeline, LayerMask, PaletteEntry, RasterLayer, SelectionMask, SpriteDocument, TextCelData, TilemapCelData } from '@shared/types'
 import { animationMaskAt, createId, getLayerStorageOrigin, resolveAnimationMask, setLayerStorageOrigin } from './document'
 import { assignRasterStorage, installRuntimeRaster, rasterStorageIdentity, runtimeRasterVisibleBounds, readSurfacePackedLocal } from './runtime-raster'
-import { normalizeTextCelData, translateTextCelData } from './text-raster'
+import { normalizeTextCelData, translateTextCelData } from './text-cel-data'
 import { cloneLayerStyles } from './layer-styles'
 import { tileBackgroundSurfaceToCanvas } from './background-patterns'
 import { cloneTilemapCelData, cloneTileset, normalizeTilemapCelData, renderTilemapSurface, resizeTilemapCelDataToCanvas } from './tilemap'

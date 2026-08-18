@@ -114,7 +114,13 @@ pnpm check:release
 ## 六、安全与架构保护
 
 - `core/` 不依赖 React、组件、平台和 Store；`store/` 不反向依赖组件；Tauri API 只从 `platform/` 访问。
-- `pnpm check:boundaries` 使用静态导入检查阻止新的跨层依赖。脚本中登记的历史例外是待迁移债务，不得扩展白名单。
+- 组件只读取状态和收集输入，不直接修改文档或会话派生状态，不调用原始 `mutateActive`、`pushHistory`，也不直接开始、结束或写入 `HistoryStack`。文档写入和历史提交统一进入领域命令或 `begin/update/commit/cancel` 事务；预览必须覆盖确认、取消、切换文档和卸载清理。
+- 撤销历史与工程格式解耦：`encodeProject`/`decodeProject` 不得作为历史快照，历史只保存受影响领域的最小差量。视图状态仍不得进入文档历史。
+- 一次打开只执行一次完整解码；初始合成复用解码结果。标记为异步的保存、恢复和工程任务不得先在 UI 线程完整遍历、复制或压缩文档，再把结果交给 Worker。
+- 恢复错误必须上报、记录或反馈给调用方，空 `catch` 和仅注释的 `catch` 均视为静默吞错。
+- `core/` 生产运行时循环、在 `workspace.ts` 重建巨型根 `WorkspaceState`、渲染键像素序列化和按文件边界白名单均被禁止；新命令必须进入 `workspace-state.ts` 的明确领域契约。
+- `pnpm check:boundaries` 使用静态导入检查依赖方向，不再按文件放行历史例外。`pnpm check:architecture` 执行完整架构契约扫描；只有触及上述边界的开发任务才在最低检查中追加它，普通 UI 与 Debug 不额外运行。
+- `scripts/architecture-debt-budget.json` 是现有迁移债务的唯一额度。额度必须等于扫描实数；债务减少时必须同步下调，禁止回升或推迟到期版本。`check:maintenance` 和发布门禁固定验证该契约。
 - 坐标转换复用统一几何函数；视图状态不进入文档撤销历史。
 - 文件格式变化必须包含兼容、迁移和失败回滚测试，必要时新增 ADR。
 - 不强制推送，不覆盖用户改动，不提交生成目录、安装包、用户工程、恢复文件、工作区或密钥。

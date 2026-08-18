@@ -1,8 +1,6 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { CheckCircle2, ExternalLink, FileOutput, GitFork } from 'lucide-react'
-import { PhysicalPosition, PhysicalSize } from '@tauri-apps/api/dpi'
-import { availableMonitors, getCurrentWindow } from '@tauri-apps/api/window'
+import { CheckCircle2, ExternalLink, GitFork } from 'lucide-react'
 import type { ColorMode, ImageResizeInterpolation, StoredWorkspace, TextCelData, ToolRailSide, WorkspaceLayout } from '@shared/types'
 import type { AdjustmentKind } from '@/core/adjustments'
 import { compositePixelWithLayerColor, getActiveLayer, isLayerEffectivelyVisible, readLayerColorAt } from '@/core/document'
@@ -21,7 +19,7 @@ import type { QuickCommandSettingsTarget } from '@/components/app/quick-command-
 import { TOOL_DEFINITIONS } from '@/components/app/editor-tools'
 import { publishCanvasResizePreview } from '@/core/canvas-resize-preview'
 import { detectDocumentPixelScale } from '@/core/image-scale-detection'
-import { appCoordinatorRenderKey } from '@/core/app-render-keys'
+import { appCoordinatorRenderKey } from '@/components/app/app-render-keys'
 import { detachDocumentPaneWorkspace, documentPaneContains, documentPaneLeafIds, moveDocumentPane, removeDocumentPane, splitDocumentPaneFromTab, type DocumentPaneDirection, type DocumentPaneNode, type DocumentPanePlacement } from '@/core/document-pane-layout'
 import { NewDocumentDialog } from '@/components/NewDocumentDialog'
 import { CanvasResizeDialog } from '@/components/CanvasResizeDialog'
@@ -66,6 +64,7 @@ import { beginPaletteSamplingShortcut, endPaletteSamplingShortcut } from '@/core
 import { readStoredString, writeStoredString } from '@/core/storage'
 import type { FloatingPosition } from '@/core/panel-preferences'
 import { applyCursorPreferences } from '@/platform/cursor-theme'
+import { applyAppWindowLayout, initializeAppWindow, readAppWindowLayout, showAppWindow } from '@/platform/app-window'
 import { applyToolIconScale, applyUiScale } from '@/platform/ui-scale'
 import { ACTIVE_WORKSPACE_STORAGE_KEY, BOTTOM_DOCK_HEIGHT_RATIO_STORAGE_KEY, BOTTOM_DOCK_HEIGHT_STORAGE_KEY, COLOR_SQUARE_ANCHOR_STORAGE_KEY, COLOR_SQUARE_DOCK_STORAGE_KEY, constrainBottomDockHeight, constrainInspectorWidth, constrainLeftDockWidth, DEFAULT_BOTTOM_DOCK_HEIGHT_RATIO, DEFAULT_INSPECTOR_WIDTH_RATIO, DEFAULT_LEFT_DOCK_WIDTH_RATIO, DEFAULT_PANEL_DOCKS, dockSizeRatio, FLOATING_PANEL_STORAGE_KEYS, INSPECTOR_LAYOUT_STORAGE_KEY, INSPECTOR_WIDTH_RATIO_STORAGE_KEY, INSPECTOR_WIDTH_STORAGE_KEY, LEFT_DOCK_WIDTH_RATIO_STORAGE_KEY, LEFT_DOCK_WIDTH_STORAGE_KEY, PANEL_DOCKS_STORAGE_KEY, resolveDockSizeRatio, TOOL_RAIL_SIDE_STORAGE_KEY, loadBottomDockHeight, loadInspectorWidth, loadLeftDockWidth, loadMainWindowState, loadPanelDocks, loadPanelVisibility, loadToolRailSide, normalizeWorkspaceLayout, readLayoutStorage, saveMainWindowState, savePanelDocks, savePanelVisibility, toolRailDockTargetAtPointer, workspaceDockSizesForParent, workspacePanelDockPresence, writeLayoutStorage } from '@/core/workspace-layout-preferences'
 import { type ExportOptions, type SaveAsOptions, type TextCelPreview, type TextLayerDraftTarget, useWorkspace } from '@/store/workspace'
@@ -166,21 +165,19 @@ const createBuiltInDefaultWorkspace = (name: string): StoredWorkspace => ({
 })
 
 const persistMainWindowState = async (notifyWorkspaceLayout = true): Promise<void> => {
-  if (!('__TAURI_INTERNALS__' in window)) return
-  const appWindow = getCurrentWindow()
-  const maximized = await appWindow.isMaximized()
+  const current = await readAppWindowLayout()
+  if (!current) return
   const previous = loadMainWindowState()
-  if (maximized && previous) {
+  if (current.maximized && previous) {
     saveMainWindowState({ ...previous, maximized: true })
     if (notifyWorkspaceLayout) window.dispatchEvent(new Event('moonsprite-workspace-layout-change'))
     return
   }
-  if (maximized) {
+  if (current.maximized) {
     if (notifyWorkspaceLayout) window.dispatchEvent(new Event('moonsprite-workspace-layout-change'))
     return
   }
-  const [position, size] = await Promise.all([appWindow.outerPosition(), appWindow.innerSize()])
-  saveMainWindowState({ x: position.x, y: position.y, width: size.width, height: size.height, maximized: false })
+  saveMainWindowState(current)
   if (notifyWorkspaceLayout) window.dispatchEvent(new Event('moonsprite-workspace-layout-change'))
 }
 export default function App() {
@@ -629,28 +626,10 @@ export default function App() {
   const applySavedMainWindow = async (state: WorkspaceLayout['mainWindow']): Promise<void> => {
     if (!state) return
     saveMainWindowState(state)
-    if (!('__TAURI_INTERNALS__' in window)) return
     try {
-      const appWindow = getCurrentWindow()
-      const isMaximized = await appWindow.isMaximized()
       // Repeating unmaximize -> resize -> maximize redraws the whole native window.
-      // A workspace switch should only touch the shell when its saved geometry differs.
-      if (state.maximized && isMaximized) return
-      if (!state.maximized && isMaximized) await appWindow.unmaximize()
-      const [currentPosition, currentSize] = await Promise.all([appWindow.outerPosition(), appWindow.innerSize()])
-      if (Math.abs(currentSize.width - state.width) > 1 || Math.abs(currentSize.height - state.height) > 1) {
-        await appWindow.setSize(new PhysicalSize(state.width, state.height))
-      }
-      const monitors = await availableMonitors()
-      const visible = monitors.some((monitor) => {
-        const area = monitor.workArea
-        const overlapWidth = Math.min(state.x + state.width, area.position.x + area.size.width) - Math.max(state.x, area.position.x)
-        const overlapHeight = Math.min(state.y + state.height, area.position.y + area.size.height) - Math.max(state.y, area.position.y)
-        return overlapWidth >= 80 && overlapHeight >= 48
-      })
-      if (visible && (Math.abs(currentPosition.x - state.x) > 1 || Math.abs(currentPosition.y - state.y) > 1)) await appWindow.setPosition(new PhysicalPosition(state.x, state.y))
-      else if (!visible) await appWindow.center()
-      if (state.maximized) await appWindow.maximize()
+      // The platform adapter skips that work when the saved maximized state already matches.
+      await applyAppWindowLayout(state)
     } catch {
       workspace.setMessage(t('app.workspace.windowRestoreError'))
     }
@@ -947,12 +926,9 @@ export default function App() {
   }, [runtimePreferences.recovery, runtimePreferences.recoveryMinutes])
 
   useEffect(() => {
-    if (!('__TAURI_INTERNALS__' in window)) return
-    const appWindow = getCurrentWindow()
     let disposed = false
     let saveTimer: number | null = null
-    let removeMoved: (() => void) | null = null
-    let removeResized: (() => void) | null = null
+    let removeGeometryObservers: (() => void) | null = null
     const scheduleSave = (): void => {
       if (saveTimer !== null) window.clearTimeout(saveTimer)
       saveTimer = window.setTimeout(() => {
@@ -962,42 +938,19 @@ export default function App() {
     }
     const setup = async (): Promise<void> => {
       const stored = loadMainWindowState()
-      if (stored) {
-        await appWindow.unmaximize()
-        await appWindow.setSize(new PhysicalSize(stored.width, stored.height))
-        let positionIsVisible = true
-        try {
-          const monitors = await availableMonitors()
-          positionIsVisible = monitors.some((monitor) => {
-            const area = monitor.workArea
-            const overlapWidth = Math.min(stored.x + stored.width, area.position.x + area.size.width) - Math.max(stored.x, area.position.x)
-            const overlapHeight = Math.min(stored.y + stored.height, area.position.y + area.size.height) - Math.max(stored.y, area.position.y)
-            return overlapWidth >= 80 && overlapHeight >= 48
-          })
-        } catch { /* Fall back to the stored position when monitor metadata is unavailable. */ }
-        if (positionIsVisible) await appWindow.setPosition(new PhysicalPosition(stored.x, stored.y))
-        else await appWindow.center()
-        if (stored.maximized) await appWindow.maximize()
-      } else {
-        await appWindow.setSize(new PhysicalSize(1440, 900))
-        await appWindow.center()
-        await persistMainWindowState()
-      }
-      if (disposed) return
-      await appWindow.show()
-      removeMoved = await appWindow.onMoved(scheduleSave)
-      removeResized = await appWindow.onResized(scheduleSave)
-      if (disposed) { removeMoved(); removeResized() }
+      const removeObservers = await initializeAppWindow(stored, scheduleSave)
+      if (!stored) await persistMainWindowState()
+      if (disposed) removeObservers()
+      else removeGeometryObservers = removeObservers
     }
     void setup().catch(() => {
       /* Keep the configured default window when restoration is unavailable, but never leave it invisible. */
-      void appWindow.show().catch(() => {})
+      void showAppWindow().catch(() => {})
     })
     return () => {
       disposed = true
       if (saveTimer !== null) window.clearTimeout(saveTimer)
-      removeMoved?.()
-      removeResized?.()
+      removeGeometryObservers?.()
     }
   }, [])
 
@@ -1806,7 +1759,7 @@ export default function App() {
   return <main className={`app-shell ${session?.view.showPixelGrid ? 'pixel-grid-on' : ''} ${editorOnly ? 'advanced-mode' : ''} ${advancedMode === 'tool-options' ? 'advanced-tool-options' : ''} ${advancedMode === 'canvas-only' ? 'advanced-canvas-only' : ''}`}>
     <AppWindowTitleBar />
     <BrushDynamicsTelemetryCapture documentId={session?.document.id ?? null} />
-    {saveAsOpen && session && <SaveAsDialog initialName={session.document.name.replace(/\.(moonsprite|aseprite|ase|png|jpe?g|webp)$/i, '') || 'MoonSprite-project'} initialFormat={saveAsFormatForPreference(readStoredString(SAVE_FORMAT_PREFERENCE_KEY))} onClose={() => setSaveAsOpen(false)} onSave={(options) => workspace.saveActive(true, options)} />}
+    {saveAsOpen && session && <SaveAsDialog initialName={session.document.name.replace(/\.(moonsprite|aseprite|ase|png|jpe?g|webp)$/i, '') || 'MoonSprite-project'} initialFormat={saveAsFormatForPreference(readStoredString(SAVE_FORMAT_PREFERENCE_KEY))} initialDirectory={runtimePreferences.saveDirectory || defaultFileDirectories.saveDirectory} onClose={() => setSaveAsOpen(false)} onSave={(options) => workspace.saveActive(true, options)} />}
     <AppMenuBar
       openMenu={openMenu}
       setOpenMenu={setOpenMenu}
@@ -1941,7 +1894,7 @@ export default function App() {
             </div>
           </FormField>
         </div>
-        <footer><button type="button" className="quiet-button" onClick={() => setExportOpen(false)}>{t('common.cancel')}</button><button className="primary-button" type="submit"><FileOutput size={15} />{t('app.menu.file.export')}</button></footer>
+        <footer><button type="button" className="quiet-button" onClick={() => setExportOpen(false)}>{t('common.cancel')}</button><button className="primary-button" type="submit"><PixelUtilityIcon kind="export" />{t('app.menu.file.export')}</button></footer>
       </ModalShell>
     </div>}
     {adjustmentOpen && <AdjustmentDialog kind={adjustmentKind} onClose={() => setAdjustmentOpen(false)} />}

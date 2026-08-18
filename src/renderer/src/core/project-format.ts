@@ -11,7 +11,7 @@ import { normalizePaletteColumns, normalizePaletteSlots } from './palette-layout
 import { normalizeProjectLayerPanelState } from './layer-panel-state'
 import { installRuntimeRaster, rasterStorageIdentity, runtimeRasterForSurface } from './runtime-raster'
 import { normalizeDocumentSlices } from './slices'
-import { normalizeTextCelData } from './text-raster'
+import { normalizeTextCelData } from './text-cel-data'
 import { cloneLayerStyles, normalizeLayerStyles } from './layer-styles'
 import { normalizeBackgroundLayerSettings } from './background-patterns'
 import { MAX_TILE_SIZE, MAX_TILEMAP_CELLS, MAX_TILEMAP_SURFACE_PIXELS, MAX_TILESET_LAYOUT_SLOTS, MAX_TILESET_PIXELS, compactTilesetTileSlots, normalizeTilemapCell, renderTilemapSurface } from './tilemap'
@@ -537,8 +537,8 @@ export interface ProjectEncodeOptions {
 }
 
 interface ProjectArchiveResource {
+  key: string
   path: string
-  resource: object
   revision: number | null
   raster?: { width: number; height: number; offsetX: number; offsetY: number; dataEncoding: RasterDataEncoding }
 }
@@ -556,7 +556,7 @@ export interface ProjectArchiveReuseEntry {
 interface ProjectSaveBaseline {
   sourcePath: string
   schemaVersion: number
-  resources: WeakMap<object, { path: string; crc32: number; revision: number | null; raster?: ProjectArchiveResource['raster'] }>
+  resources: Map<string, { path: string; crc32: number; revision: number | null; raster?: ProjectArchiveResource['raster'] }>
 }
 
 interface ProjectSaveBaselineCandidate {
@@ -589,20 +589,29 @@ const rasterMetadataMatches = (left: ProjectArchiveResource['raster'], right: Pr
     && left.dataEncoding === right.dataEncoding
 }
 
-const createProjectArchiveFiles = (document: SpriteDocument, options: ProjectEncodeOptions = {}, baseline?: ProjectSaveBaseline): ProjectArchiveBuild => {
+const createProjectArchiveFiles = (
+  document: SpriteDocument,
+  options: ProjectEncodeOptions = {},
+  baseline?: ProjectSaveBaseline,
+  revisionOverrides?: ReadonlyMap<string, number | null>
+): ProjectArchiveBuild => {
   syncActiveAnimationLayers(document)
   const files: Record<string, Uint8Array> = {}
   const resources: ProjectArchiveResource[] = []
   const dataFileByPixels = new Map<object, { dataFile: string; dataEncoding: RasterDataEncoding; width: number; height: number; offsetX: number; offsetY: number }>()
-  const encodePixels = (preferredFile: string, surface: RasterLayer | AnimationCelSurface): { dataFile: string; dataEncoding: RasterDataEncoding; width: number; height: number; offsetX: number; offsetY: number } => {
+  const revisionFor = (key: string, resource: object): number | null => revisionOverrides?.get(key) ?? getRasterContentRevision(resource)
+  const encodePixels = (key: string, preferredFile: string, surface: RasterLayer | AnimationCelSurface): { dataFile: string; dataEncoding: RasterDataEncoding; width: number; height: number; offsetX: number; offsetY: number } => {
     const storage = rasterStorageIdentity(surface)
     const existing = dataFileByPixels.get(storage)
-    if (existing) return existing
-    const revision = getRasterContentRevision(storage)
-    const previous = baseline?.resources.get(storage)
+    const revision = revisionFor(key, storage)
+    if (existing) {
+      resources.push({ key, path: existing.dataFile, revision, raster: { width: existing.width, height: existing.height, offsetX: existing.offsetX, offsetY: existing.offsetY, dataEncoding: existing.dataEncoding } })
+      return existing
+    }
+    const previous = baseline?.resources.get(key)
     if (baseline?.schemaVersion === PROJECT_SCHEMA_VERSION && previous?.raster && previous.revision === revision && rasterGeometryMatchesSurface(previous.raster, surface)) {
       const result = { dataFile: previous.path, ...previous.raster }
-      resources.push({ path: previous.path, resource: storage, revision, raster: previous.raster })
+      resources.push({ key, path: previous.path, revision, raster: previous.raster })
       dataFileByPixels.set(storage, result)
       return result
     }
@@ -613,19 +622,19 @@ const createProjectArchiveFiles = (document: SpriteDocument, options: ProjectEnc
     const dataFile = encoded.encoding === 'sparse-tiles-v1' ? `${preferredFile}.tiles` : preferredFile
     files[dataFile] = encoded.data
     const raster = { width: surface.width, height: surface.height, offsetX: surface.offsetX, offsetY: surface.offsetY, dataEncoding: encoded.encoding }
-    resources.push({ path: dataFile, resource: storage, revision, raster })
+    resources.push({ key, path: dataFile, revision, raster })
     const result = { dataFile, ...raster }
     dataFileByPixels.set(storage, result)
     return result
   }
-  const encodeMask = (mask: LayerMask): ManifestMask => {
+  const encodeMask = (key: string, mask: LayerMask): ManifestMask => {
     const dataFile = `masks/${mask.id}.rgba`
     files[dataFile] = toU8(mask.pixels)
-    resources.push({ path: dataFile, resource: mask.pixels, revision: getRasterContentRevision(mask.pixels) })
+    resources.push({ key, path: dataFile, revision: revisionFor(key, mask.pixels) })
     return { id: mask.id, ...(mask.linkedMaskId ? { linkedMaskId: mask.linkedMaskId } : {}), width: mask.width, height: mask.height, offsetX: mask.offsetX, offsetY: mask.offsetY, dataFile }
   }
   const layers: ManifestLayer[] = document.layers.map((layer) => {
-    const encoded = encodePixels(`layers/${layer.id}.${layer.format === 'rgba' ? 'rgba' : 'idx32'}`, layer)
+    const encoded = encodePixels(`layer:${layer.id}`, `layers/${layer.id}.${layer.format === 'rgba' ? 'rgba' : 'idx32'}`, layer)
     return {
       id: layer.id,
       name: layer.name,
@@ -660,7 +669,7 @@ const createProjectArchiveFiles = (document: SpriteDocument, options: ProjectEnc
   const tilesets: ManifestTileset[] = (document.tilesets ?? []).map((tileset) => {
     const dataFile = `tilesets/${tileset.id}.rgba`
     files[dataFile] = toU8(tileset.pixels)
-    resources.push({ path: dataFile, resource: tileset.pixels, revision: getRasterContentRevision(tileset.pixels) })
+    resources.push({ key: `tileset:${tileset.id}`, path: dataFile, revision: revisionFor(`tileset:${tileset.id}`, tileset.pixels) })
     return {
       id: tileset.id,
       name: tileset.name,
@@ -678,10 +687,10 @@ const createProjectArchiveFiles = (document: SpriteDocument, options: ProjectEnc
     frames: timeline.frames.map((frame) => ({ ...frame })),
     activeFrameId: timeline.activeFrameId,
     loop: timeline.loop,
-    groupMasks: (timeline.groupMasks ?? []).map((entry) => ({ groupId: entry.groupId, frameId: entry.frameId, mask: encodeMask(entry.mask) })),
+    groupMasks: (timeline.groupMasks ?? []).map((entry) => ({ groupId: entry.groupId, frameId: entry.frameId, mask: encodeMask(`group-mask:${entry.groupId}:${entry.frameId}`, entry.mask) })),
     cels: timeline.cels.flatMap((cel) => {
       if (!cel.surface) return []
-      const encoded = cel.linkedCelId ? undefined : encodePixels(`cels/${cel.id}.${cel.surface.format === 'rgba' ? 'rgba' : 'idx32'}`, cel.surface)
+      const encoded = cel.linkedCelId ? undefined : encodePixels(`cel:${cel.id}`, `cels/${cel.id}.${cel.surface.format === 'rgba' ? 'rgba' : 'idx32'}`, cel.surface)
       return [{
         id: cel.id,
         layerId: cel.layerId,
@@ -697,7 +706,7 @@ const createProjectArchiveFiles = (document: SpriteDocument, options: ProjectEnc
           dataFile: encoded.dataFile,
           dataEncoding: encoded.dataEncoding
         } : {}),
-        ...(cel.mask ? { mask: encodeMask(cel.mask) } : {}),
+        ...(cel.mask ? { mask: encodeMask(`cel-mask:${cel.id}`, cel.mask) } : {}),
         ...(cel.text ? { text: normalizeTextCelData(cel.text) } : {}),
         ...(cel.tilemap && !cel.linkedCelId ? { tilemap: manifestTilemapFromData(cel.tilemap) } : {})
       }]
@@ -712,7 +721,7 @@ const createProjectArchiveFiles = (document: SpriteDocument, options: ProjectEnc
     snapshots: timelapseSettings.snapshots.map((snapshot) => {
       const dataFile = `timelapse/${snapshot.id}.png`
       files[dataFile] = snapshot.data
-      resources.push({ path: dataFile, resource: snapshot.data, revision: null })
+      resources.push({ key: `timelapse:${snapshot.id}`, path: dataFile, revision: null })
       return { id: snapshot.id, capturedAt: snapshot.capturedAt, elapsedMs: snapshot.elapsedMs, width: snapshot.width, height: snapshot.height, dataFile }
     })
   }
@@ -755,15 +764,38 @@ export function encodeProject(document: SpriteDocument, options: ProjectEncodeOp
   return zipSync(createProjectZipEntries(files), { level: options.compressionLevel ?? 6 })
 }
 
+interface SerializedProjectSaveBaseline {
+  sourcePath: string
+  schemaVersion: number
+  resources: Array<[string, { path: string; crc32: number; revision: number | null; raster?: ProjectArchiveResource['raster'] }]>
+}
+
+export interface ProjectEncodeWorkerPayload {
+  document: SpriteDocument
+  includePreview: boolean
+  compressionLevel: NonNullable<ProjectEncodeOptions['compressionLevel']>
+  incremental: boolean
+  baseline?: SerializedProjectSaveBaseline
+  resourceRevisions: Array<[string, number | null]>
+  layerStorageOrigins: Array<[string, { x: number; y: number }]>
+}
+
+export interface ProjectEncodeWorkerResult {
+  data: Uint8Array
+  sourcePath: string | null
+  reusableEntries: ProjectArchiveReuseEntry[]
+  baseline: ProjectSaveBaselineCandidate
+}
+
 interface ProjectEncodeWorkerResponse {
   id: number
-  data?: Uint8Array
+  result?: ProjectEncodeWorkerResult
   error?: string
 }
 
 let projectEncodeWorker: Worker | null = null
 let projectEncodeSequence = 0
-const pendingProjectEncodes = new Map<number, { resolve: (data: Uint8Array) => void; reject: (error: Error) => void }>()
+const pendingProjectEncodes = new Map<number, { resolve: (result: ProjectEncodeWorkerResult) => void; reject: (error: Error) => void }>()
 
 const resetProjectEncodeWorker = (error: Error): void => {
   projectEncodeWorker?.terminate()
@@ -779,7 +811,7 @@ const ensureProjectEncodeWorker = (): Worker => {
     const request = pendingProjectEncodes.get(event.data.id)
     if (!request) return
     pendingProjectEncodes.delete(event.data.id)
-    if (event.data.data) request.resolve(event.data.data)
+    if (event.data.result) request.resolve(event.data.result)
     else request.reject(new Error(event.data.error || 'Project encode failed'))
   }
   worker.onerror = (event) => resetProjectEncodeWorker(new Error(event.message || 'Project encode worker failed'))
@@ -787,14 +819,13 @@ const ensureProjectEncodeWorker = (): Worker => {
   return worker
 }
 
-const encodeArchiveFilesInWorker = (files: Record<string, Uint8Array>, compressionLevel: NonNullable<ProjectEncodeOptions['compressionLevel']>): Promise<Uint8Array> => {
-  const entries = createProjectZipEntries(files)
-  if (typeof Worker === 'undefined') return Promise.resolve(zipSync(entries, { level: compressionLevel }))
+const encodeProjectInWorker = (payload: ProjectEncodeWorkerPayload): Promise<ProjectEncodeWorkerResult> => {
+  if (typeof Worker === 'undefined') return Promise.resolve().then(() => encodeProjectWorkerPayload(payload))
   return new Promise((resolve, reject) => {
     const id = ++projectEncodeSequence
     pendingProjectEncodes.set(id, { resolve, reject })
     try {
-      ensureProjectEncodeWorker().postMessage({ id, files: entries, compressionLevel })
+      ensureProjectEncodeWorker().postMessage({ id, payload })
     } catch (error) {
       pendingProjectEncodes.delete(id)
       reject(error instanceof Error ? error : new Error(String(error)))
@@ -804,11 +835,10 @@ const encodeArchiveFilesInWorker = (files: Record<string, Uint8Array>, compressi
 
 export function encodeProjectAsync(document: SpriteDocument, options: ProjectEncodeOptions = {}): Promise<Uint8Array> {
   options.onProgress?.(0)
-  const { files } = createProjectArchiveFiles(document, options)
   options.onProgress?.(0.05)
-  return encodeArchiveFilesInWorker(files, options.compressionLevel ?? 6).then((data) => {
+  return encodeProjectInWorker(createProjectEncodeWorkerPayload(document, options, false)).then((result) => {
     options.onProgress?.(1)
-    return data
+    return result.data
   })
 }
 
@@ -834,16 +864,85 @@ const readZipEntryCrcs = (data: Uint8Array): Map<string, number> => {
   return entries
 }
 
-const projectResourcesFromManifest = (document: SpriteDocument, manifest: ProjectManifest): ProjectArchiveResource[] => {
-  const candidates = new Map<object, ProjectArchiveResource | null>()
-  const add = (resource: object, path: string | null | undefined, revision: number | null, raster?: ProjectArchiveResource['raster']): void => {
-    if (!path || candidates.get(resource) === null) return
-    const previous = candidates.get(resource)
-    if (previous && previous.path !== path) {
-      candidates.set(resource, null)
-      return
+const captureProjectResourceRevisions = (document: SpriteDocument): Array<[string, number | null]> => {
+  const revisions: Array<[string, number | null]> = []
+  for (const layer of document.layers) revisions.push([`layer:${layer.id}`, getRasterContentRevision(rasterStorageIdentity(layer))])
+  for (const tileset of document.tilesets ?? []) revisions.push([`tileset:${tileset.id}`, getRasterContentRevision(tileset.pixels)])
+  const timeline = ensureAnimationDocument(document)
+  for (const cel of timeline.cels) {
+    if (cel.surface) revisions.push([`cel:${cel.id}`, getRasterContentRevision(rasterStorageIdentity(cel.surface))])
+    if (cel.mask) revisions.push([`cel-mask:${cel.id}`, getRasterContentRevision(cel.mask.pixels)])
+  }
+  for (const entry of timeline.groupMasks ?? []) revisions.push([`group-mask:${entry.groupId}:${entry.frameId}`, getRasterContentRevision(entry.mask.pixels)])
+  for (const snapshot of document.timelapse?.snapshots ?? []) revisions.push([`timelapse:${snapshot.id}`, null])
+  return revisions
+}
+
+const createProjectEncodeWorkerPayload = (document: SpriteDocument, options: ProjectEncodeOptions, incremental: boolean): ProjectEncodeWorkerPayload => {
+  const baseline = incremental ? projectSaveBaselines.get(document) : undefined
+  return {
+    document,
+    includePreview: options.includePreview !== false,
+    compressionLevel: options.compressionLevel ?? 6,
+    incremental,
+    baseline: baseline ? { sourcePath: baseline.sourcePath, schemaVersion: baseline.schemaVersion, resources: [...baseline.resources.entries()] } : undefined,
+    resourceRevisions: captureProjectResourceRevisions(document),
+    layerStorageOrigins: document.layers.map((layer) => [layer.id, getLayerStorageOrigin(layer)])
+  }
+}
+
+export function encodeProjectWorkerPayload(payload: ProjectEncodeWorkerPayload): ProjectEncodeWorkerResult {
+  for (const [layerId, origin] of payload.layerStorageOrigins) {
+    const layer = payload.document.layers.find((candidate) => candidate.id === layerId)
+    if (layer) setLayerStorageOrigin(layer, origin)
+  }
+  const baseline: ProjectSaveBaseline | undefined = payload.baseline
+    ? { sourcePath: payload.baseline.sourcePath, schemaVersion: payload.baseline.schemaVersion, resources: new Map(payload.baseline.resources) }
+    : undefined
+  const { files, resources } = createProjectArchiveFiles(
+    payload.document,
+    { includePreview: payload.includePreview, compressionLevel: payload.compressionLevel },
+    baseline,
+    new Map(payload.resourceRevisions)
+  )
+  if (!payload.incremental) {
+    return {
+      data: zipSync(createProjectZipEntries(files), { level: payload.compressionLevel }),
+      sourcePath: null,
+      reusableEntries: [],
+      baseline: { resources: [] }
     }
-    candidates.set(resource, { path, resource, revision, ...(raster ? { raster } : {}) })
+  }
+  const reusableEntries: ProjectArchiveReuseEntry[] = []
+  const reusableCrcs = new Map<string, number>()
+  const patchFiles = { ...files }
+  if (baseline) for (const resource of resources) {
+    const previous = baseline.resources.get(resource.key)
+    if (!previous || previous.path !== resource.path || previous.revision !== resource.revision || !rasterMetadataMatches(previous.raster, resource.raster)) continue
+    delete patchFiles[resource.path]
+    if (!reusableCrcs.has(resource.path)) reusableEntries.push({ path: resource.path, crc32: previous.crc32 })
+    reusableCrcs.set(resource.path, previous.crc32)
+  }
+  if (baseline && reusableEntries.length > 0) patchFiles['.moonsprite-save-plan.json'] = strToU8(JSON.stringify({ version: 1, entries: reusableEntries }))
+  const data = zipSync(createProjectZipEntries(patchFiles), { level: payload.compressionLevel })
+  const patchCrcs = readZipEntryCrcs(data)
+  const baselineResources = resources.flatMap((resource) => {
+    const crc32 = reusableCrcs.get(resource.path) ?? patchCrcs.get(resource.path)
+    return crc32 === undefined ? [] : [{ ...resource, crc32 }]
+  })
+  return {
+    data,
+    sourcePath: baseline?.sourcePath ?? null,
+    reusableEntries,
+    baseline: { resources: baselineResources }
+  }
+}
+
+const projectResourcesFromManifest = (document: SpriteDocument, manifest: ProjectManifest): ProjectArchiveResource[] => {
+  const candidates = new Map<string, ProjectArchiveResource>()
+  const add = (key: string, path: string | null | undefined, revision: number | null, raster?: ProjectArchiveResource['raster']): void => {
+    if (!path) return
+    candidates.set(key, { key, path, revision, ...(raster ? { raster } : {}) })
   }
   const rasterFromMetadata = (metadata: Pick<ManifestLayer | ManifestCel, 'width' | 'height' | 'offsetX' | 'offsetY' | 'dataEncoding'> | undefined, fallbackWidth?: number, fallbackHeight?: number): ProjectArchiveResource['raster'] | undefined => {
     const width = Number.isSafeInteger(metadata?.width) && metadata!.width! > 0 ? metadata!.width! : fallbackWidth
@@ -865,7 +964,7 @@ const projectResourcesFromManifest = (document: SpriteDocument, manifest: Projec
     const activeCel = activeCelFiles.get(layer.id)
     const storage = rasterStorageIdentity(layer)
     add(
-      storage,
+      `layer:${layer.id}`,
       activeCel?.dataFile ?? metadata?.dataFile,
       getRasterContentRevision(storage),
       activeCel ?? rasterFromMetadata(metadata, manifest.document.width, manifest.document.height)
@@ -873,7 +972,7 @@ const projectResourcesFromManifest = (document: SpriteDocument, manifest: Projec
   }
   const tilesetMetadata = new Map((manifest.document.tilesets ?? []).map((tileset) => [tileset.id, tileset]))
   for (const tileset of document.tilesets ?? []) {
-    add(tileset.pixels, tilesetMetadata.get(tileset.id)?.dataFile, getRasterContentRevision(tileset.pixels))
+    add(`tileset:${tileset.id}`, tilesetMetadata.get(tileset.id)?.dataFile, getRasterContentRevision(tileset.pixels))
   }
   const timeline = ensureAnimationDocument(document)
   const celMetadata = new Map(manifest.document.animation.cels.map((cel) => [cel.id, cel]))
@@ -881,15 +980,15 @@ const projectResourcesFromManifest = (document: SpriteDocument, manifest: Projec
     const metadata = celMetadata.get(cel.id)
     if (cel.surface && metadata?.dataFile) {
       const storage = rasterStorageIdentity(cel.surface)
-      add(storage, metadata.dataFile, getRasterContentRevision(storage), rasterFromMetadata(metadata))
+      add(`cel:${cel.id}`, metadata.dataFile, getRasterContentRevision(storage), rasterFromMetadata(metadata))
     }
-    if (cel.mask) add(cel.mask.pixels, metadata?.mask?.dataFile, getRasterContentRevision(cel.mask.pixels))
+    if (cel.mask) add(`cel-mask:${cel.id}`, metadata?.mask?.dataFile, getRasterContentRevision(cel.mask.pixels))
   }
   const groupMaskMetadata = new Map((manifest.document.animation.groupMasks ?? []).map((entry) => [`${entry.groupId}\u0000${entry.frameId}`, entry]))
-  for (const entry of timeline.groupMasks ?? []) add(entry.mask.pixels, groupMaskMetadata.get(`${entry.groupId}\u0000${entry.frameId}`)?.mask.dataFile, getRasterContentRevision(entry.mask.pixels))
+  for (const entry of timeline.groupMasks ?? []) add(`group-mask:${entry.groupId}:${entry.frameId}`, groupMaskMetadata.get(`${entry.groupId}\u0000${entry.frameId}`)?.mask.dataFile, getRasterContentRevision(entry.mask.pixels))
   const snapshotMetadata = new Map((manifest.document.timelapse?.snapshots ?? []).map((snapshot) => [snapshot.id, snapshot]))
-  for (const snapshot of document.timelapse?.snapshots ?? []) add(snapshot.data, snapshotMetadata.get(snapshot.id)?.dataFile, null)
-  return Array.from(candidates.values()).filter((candidate): candidate is ProjectArchiveResource => candidate !== null)
+  for (const snapshot of document.timelapse?.snapshots ?? []) add(`timelapse:${snapshot.id}`, snapshotMetadata.get(snapshot.id)?.dataFile, null)
+  return Array.from(candidates.values())
 }
 
 export function registerProjectSaveBaseline(document: SpriteDocument, sourcePath: string, archive: Uint8Array): boolean {
@@ -906,10 +1005,10 @@ export function registerProjectSaveBaseline(document: SpriteDocument, sourcePath
     projectSaveBaselines.delete(document)
     return false
   }
-  const resources = new WeakMap<object, { path: string; crc32: number; revision: number | null; raster?: ProjectArchiveResource['raster'] }>()
+  const resources = new Map<string, { path: string; crc32: number; revision: number | null; raster?: ProjectArchiveResource['raster'] }>()
   for (const resource of projectResourcesFromManifest(document, manifest)) {
     const crc32 = crcs.get(resource.path)
-    if (crc32 !== undefined) resources.set(resource.resource, { path: resource.path, crc32, revision: resource.revision, ...(resource.raster ? { raster: resource.raster } : {}) })
+    if (crc32 !== undefined) resources.set(resource.key, { path: resource.path, crc32, revision: resource.revision, ...(resource.raster ? { raster: resource.raster } : {}) })
   }
   projectSaveBaselines.set(document, { sourcePath, schemaVersion: sourceSchemaVersion, resources })
   return true
@@ -917,39 +1016,15 @@ export function registerProjectSaveBaseline(document: SpriteDocument, sourcePath
 
 export async function encodeProjectSaveAsync(document: SpriteDocument, options: ProjectEncodeOptions = {}): Promise<EncodedProjectSave> {
   options.onProgress?.(0)
-  const baseline = projectSaveBaselines.get(document)
-  const { files, resources } = createProjectArchiveFiles(document, options, baseline)
-  const reusableEntries: ProjectArchiveReuseEntry[] = []
-  const reusableCrcs = new Map<string, number>()
-  const patchFiles = { ...files }
-  if (baseline) for (const resource of resources) {
-    const previous = baseline.resources.get(resource.resource)
-    if (!previous || previous.path !== resource.path || previous.revision !== resource.revision || !rasterMetadataMatches(previous.raster, resource.raster)) continue
-    delete patchFiles[resource.path]
-    reusableEntries.push({ path: resource.path, crc32: previous.crc32 })
-    reusableCrcs.set(resource.path, previous.crc32)
-  }
-  if (baseline && reusableEntries.length > 0) patchFiles['.moonsprite-save-plan.json'] = strToU8(JSON.stringify({ version: 1, entries: reusableEntries }))
   options.onProgress?.(0.05)
-  const compressionLevel = options.compressionLevel ?? 6
-  const data = await encodeArchiveFilesInWorker(patchFiles, compressionLevel)
-  const patchCrcs = readZipEntryCrcs(data)
-  const baselineResources = resources.flatMap((resource) => {
-    const crc32 = reusableCrcs.get(resource.path) ?? patchCrcs.get(resource.path)
-    return crc32 === undefined ? [] : [{ ...resource, crc32 }]
-  })
+  const result = await encodeProjectInWorker(createProjectEncodeWorkerPayload(document, options, true))
   options.onProgress?.(1)
-  return {
-    data,
-    sourcePath: baseline?.sourcePath ?? null,
-    reusableEntries,
-    baseline: { resources: baselineResources }
-  }
+  return result
 }
 
 export function acceptProjectSaveBaseline(document: SpriteDocument, filePath: string, encoded: EncodedProjectSave): void {
-  const resources = new WeakMap<object, { path: string; crc32: number; revision: number | null; raster?: ProjectArchiveResource['raster'] }>()
-  for (const resource of encoded.baseline.resources) resources.set(resource.resource, { path: resource.path, crc32: resource.crc32, revision: resource.revision, ...(resource.raster ? { raster: resource.raster } : {}) })
+  const resources = new Map<string, { path: string; crc32: number; revision: number | null; raster?: ProjectArchiveResource['raster'] }>()
+  for (const resource of encoded.baseline.resources) resources.set(resource.key, { path: resource.path, crc32: resource.crc32, revision: resource.revision, ...(resource.raster ? { raster: resource.raster } : {}) })
   projectSaveBaselines.set(document, { sourcePath: filePath, schemaVersion: PROJECT_SCHEMA_VERSION, resources })
 }
 

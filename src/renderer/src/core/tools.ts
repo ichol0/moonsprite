@@ -6,7 +6,7 @@ import { flipSelectionMask, lassoSelection, packedColorMatchesTolerance, rasterL
 import { proceduralBrushCoverageAt } from './brushes'
 import { balancedStairLinePoints } from './pixel-line'
 import { hasSymmetry, symmetryPoints, type SymmetryAxes, type SymmetryCenter } from './symmetry'
-import { gradientColorForAmount, interpolateRgbaColor } from './gradient'
+import { gradientColorForAmount, interpolateRgbaColor } from './gradient-color'
 import { readSurfacePackedRegion } from './runtime-raster'
 import { allOutlineDirections, outlineDirectionForOffset, outlineKernelContainsOffset } from './outline-settings'
 import { tileRepeatRectSegments, wrapDocumentPointForTileRepeat } from './tilemap'

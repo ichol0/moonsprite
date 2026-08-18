@@ -3,7 +3,7 @@ import { strFromU8, unzipSync, zipSync, type Zippable } from 'fflate'
 import { activateAnimationFrame, addBlankAnimationFrame, connectAnimationCels, duplicateAnimationFrame, ensureAnimationDocument, refreshActiveAnimationFrame, resizeAnimationCelsAt, syncActiveAnimationFrame } from './animation'
 import { animationMaskAt, createDocument, createLayerMask, getActiveLayer, getLayerStorageOrigin, readLayerColorAt, resizeDocumentAt, writeLayerColor } from './document'
 import { applySelectionTranslationPreview, captureSelectionTransform, restoreSelectionTranslationPreview } from './tools'
-import { acceptProjectSaveBaseline, compactProjectRasterStorage, decodeProject, encodeProject, encodeProjectAsync, encodeProjectSaveAsync, PROJECT_SCHEMA_VERSION, migrateProjectManifest, readProjectGalleryMetadata, registerProjectSaveBaseline } from './project-format'
+import { acceptProjectSaveBaseline, compactProjectRasterStorage, decodeProject, encodeProject, encodeProjectAsync, encodeProjectSaveAsync, encodeProjectWorkerPayload, PROJECT_SCHEMA_VERSION, migrateProjectManifest, readProjectGalleryMetadata, registerProjectSaveBaseline, type ProjectEncodeWorkerPayload } from './project-format'
 import { runtimeRasterForSurface, surfacePixelsMaterialized } from './runtime-raster'
 import { createDefaultLayerStyles } from './layer-styles'
 import { createSolidTileset, createTilemapCelData, createTilesetFromRgba, deleteTilesetTile, renderTilemapSurface } from './tilemap'
@@ -841,9 +841,9 @@ describe('project manifest migration boundary', () => {
       onmessage: ((event: MessageEvent) => void) | null = null
       onerror: ((event: ErrorEvent) => void) | null = null
       constructor() { workers.push(this) }
-      postMessage(message: { id: number; files: Zippable; compressionLevel: 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 }): void {
-        const data = zipSync(message.files, { level: message.compressionLevel })
-        this.onmessage?.({ data: { id: message.id, data } } as MessageEvent)
+      postMessage(message: { id: number; payload: ProjectEncodeWorkerPayload }): void {
+        const result = encodeProjectWorkerPayload(structuredClone(message.payload))
+        this.onmessage?.({ data: { id: message.id, result } } as MessageEvent)
       }
       terminate(): void {}
     }

@@ -36,6 +36,7 @@ export interface SaveAsOptions {
   name: string
   format: 'moonsprite' | SaveImageKind
   scalePercent: number
+  directory?: string
 }
 
 interface SaveDocumentRequest {
@@ -100,7 +101,7 @@ export function saveDocumentFile(request: SaveDocumentRequest): Promise<SaveDocu
     const imageFormat = selectedFormat === 'moonsprite' ? null : selectedFormat
     const fallbackName = sanitizeFileStem(initial.document.name, 'MoonSprite-export')
     const requestedName = sanitizeFileStem(request.options?.name ?? fallbackName, fallbackName)
-    const saveDirectory = loadEditorPreferences().saveDirectory
+    const saveDirectory = request.options?.directory?.trim() || loadEditorPreferences().saveDirectory
     let filePath = initial.document.filePath
     if ((!filePath || request.saveAs) && imageFormat) {
       const extension = saveImageExtension(imageFormat)

@@ -1,4 +1,4 @@
-import type { DocumentSession } from '@/store/workspace'
+import type { DocumentSession } from '@/store/workspace-types'
 
 interface DocumentTabsState {
   activeId: string | null

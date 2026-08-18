@@ -17,9 +17,9 @@ test('Store 禁止反向依赖组件', () => {
   assert.equal(moduleBoundaryErrors('src/renderer/src/store/example.ts', source).length, 1)
 })
 
-test('允许既有迁移白名单但不扩散新例外', () => {
+test('既有边界债务也必须由扫描器报告并交给数字预算管理', () => {
   const tauriSource = "import { getCurrentWindow } from '@tauri-apps/api/window'"
   const storeSource = "import type { DocumentSession } from '@/store/workspace'"
-  assert.deepEqual(moduleBoundaryErrors('src/renderer/src/App.tsx', tauriSource), [])
-  assert.deepEqual(moduleBoundaryErrors('src/renderer/src/core/app-render-keys.ts', storeSource), [])
+  assert.equal(moduleBoundaryErrors('src/renderer/src/App.tsx', tauriSource).length, 1)
+  assert.equal(moduleBoundaryErrors('src/renderer/src/core/app-render-keys.ts', storeSource).length, 1)
 })

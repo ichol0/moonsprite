@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { createDocument } from './document'
-import { appCoordinatorRenderKey, appMenuRenderKey, documentTabsRenderKey, statusBarRenderKey, toolOptionsRenderKey, toolRailRenderKey } from './app-render-keys'
+import { appCoordinatorRenderKey, appMenuRenderKey, documentTabsRenderKey, statusBarRenderKey, toolOptionsRenderKey, toolRailRenderKey } from '@/components/app/app-render-keys'
 import { sessionFromDocument } from '@/store/workspace-session'
 
 const createSession = () => sessionFromDocument(createDocument('render key', 4, 4, 'rgba'))

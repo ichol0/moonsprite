@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { RasterLayer, RgbaColor, SelectionMask, SelectionMode, SelectionRect, TilemapCell } from '@shared/types'
 import { compositePixelWithLayerColor, compositeRegion, createCompositePointReplacementSampler, createCompositePointSampler, createNormalCompositePointReplacementSampler, createNormalCompositePointSampler, expandLayerStyleInvalidationRect, getActiveLayer, getLayerIdsInGroup, getPaletteEntry, isLayerEffectivelyLocked, isLayerEffectivelyVisible, layerContentBounds, layerIndexAt, layerMaskDisplayColor, readLayerColor, readLayerColorAt, readLayerMaskDisplayColorAt, renderLayerMaskRegion, resolveLayerCanvasColor } from '@/core/document'
-import { beginPixelEdit, revertPixelEdit, type ContentInvalidationHint, type HistoryEntry } from '@/core/history'
+import { beginPixelEdit, revertPixelEdit, type HistoryEntry } from '@/core/history'
 import { applyRelativeLuminance, blendOver, relativeLuminanceColor, TRANSPARENT, unpackColor } from '@/core/raster'
 import { applyGradient, constrainGradientEndpoint, createGradientColorSampler, gradientRegionSelection } from '@/core/gradient'
 import { DEFAULT_GRID_SETTINGS, gridCellBoundsAt, gridLinePositions, shouldRenderPixelGrid } from '@/core/grid'
@@ -39,10 +39,9 @@ import { eyedropperMagnifierPixelScale } from '@/core/eyedropper-magnifier'
 import { resolveBrushDynamics, smoothBrushSizeEnvelope } from '@/core/pressure'
 import { airbrushParticleSize, airbrushSymmetryPoints, generateAirbrushParticles } from '@/core/airbrush'
 import { clampSliceRect, moveSliceRect, moveSliceRects, sliceAtPoint } from '@/core/slices'
-import { animationCelKey, animationCelOffsetsForKeys, cloneAnimationCel, cloneAnimationCelsForLayer, ensureAnimationDocument, parseAnimationCelKey, removeAnimationCelsForLayers, resolveAnimationCel, restoreAnimationCels, setAnimationCelOffsets, setAnimationCelOffsetsForKeys } from '@/core/animation'
-import { cloneLayerStyles, layerStylesHistoryBytes } from '@/core/layer-styles'
+import { animationCelKey, animationCelOffsetsForKeys, ensureAnimationDocument, parseAnimationCelKey, resolveAnimationCel } from '@/core/animation'
 import { activeTilemapCelTarget, applyTilemapDocumentEdit, captureTilemapSelectionMove, previewTilemapSelectionMove, tilemapEditPreviewTilePixels, writeTilemapCell } from '@/core/tilemap-document'
-import { beginTilemapEdit, expandSelectionToTilemapCells, nearestTileRepeatEquivalent, normalizeSelectionForTileRepeatPreview, readTilesetTilePixels, tilemapCellBounds, tilemapCellIndexAtPoint, tilemapCellLineIndices, tilemapEditableSelectionAtPoint, tilemapEditBytes, tilemapSourcePointForCell, tilesetHasOnlyTransparentTile, tileRepeatContinuousPreviewPlacements, tileRepeatLinePoints, tileRepeatLineSegments, tileRepeatMappedPointForCopies, tileRepeatOffsetsForViewport, tileRepeatPreviewPlacements, wrapDocumentPointForTileRepeat, wrapSelectionMaskForTileRepeat } from '@/core/tilemap'
+import { beginTilemapEdit, expandSelectionToTilemapCells, nearestTileRepeatEquivalent, normalizeSelectionForTileRepeatPreview, readTilesetTilePixels, tilemapCellBounds, tilemapCellIndexAtPoint, tilemapCellLineIndices, tilemapEditableSelectionAtPoint, tilemapSourcePointForCell, tilesetHasOnlyTransparentTile, tileRepeatContinuousPreviewPlacements, tileRepeatLinePoints, tileRepeatLineSegments, tileRepeatMappedPointForCopies, tileRepeatOffsetsForViewport, tileRepeatPreviewPlacements, wrapDocumentPointForTileRepeat, wrapSelectionMaskForTileRepeat } from '@/core/tilemap'
 import { openTextToolDialog, TEXT_TOOL_PREVIEW_EVENT, type TextToolPreviewDetail } from '@/components/text-tool-events'
 import { clearTilesetTilePreview, publishTilesetTilePreview } from '@/components/tileset-preview-events'
 import rotationBackground1 from '@/assets/rotation-indicator/background-1.png'
@@ -103,18 +102,6 @@ const MOVE_LAYER_CLICK_FLASH_MS = 240
 const SMOOTH_GRADIENT_PREVIEW_SAMPLE_LIMIT = 96_000
 const DITHERED_GRADIENT_PREVIEW_SAMPLE_LIMIT = 1_500_000
 const insideSelection = (selection: SelectionMask, point: Point): boolean => selectionContains(selection, point.x, point.y)
-const moveLayerInvalidation = (drag: DragState, frameId?: string): ContentInvalidationHint | undefined => {
-  if (!drag.layerContentBounds || !drag.layerPreviewOffset) return undefined
-  const bounds = Object.values(drag.layerContentBounds).filter((candidate): candidate is SelectionRect => Boolean(candidate))
-  if (bounds.length === 0) return undefined
-  const moved = bounds.map((candidate) => translatedSelectionRect(candidate, drag.layerPreviewOffset!))
-  const regions = [...bounds, ...moved]
-  const left = Math.min(...regions.map((region) => region.x))
-  const top = Math.min(...regions.map((region) => region.y))
-  const right = Math.max(...regions.map((region) => region.x + region.width))
-  const bottom = Math.max(...regions.map((region) => region.y + region.height))
-  return { kind: 'region', frameId, rect: { x: left, y: top, width: right - left, height: bottom - top } }
-}
 const selectedTextBoxForSession = (session: DocumentSession): SelectionRect | null => {
   if (session.selectedGroupIds.length > 0 || session.selectedLayerIds.length !== 1) return null
   const layer = session.document.layers.find((candidate) => candidate.id === session.selectedLayerIds[0] && candidate.kind === 'text')
@@ -989,25 +976,7 @@ export function CanvasStage({ session }: { session: DocumentSession }) {
       documentChanged = applyTilemapDocumentEdit(session.document, drag.tilemapEdit, 'before')
     } else documentChanged = revertCancelledCanvasDragPixelChanges(session.document, drag)
     if (drag.kind === 'move-layer') {
-      state.mutateActive((active) => {
-        if (drag.duplicatedLayerId) {
-          active.document.layers = active.document.layers.filter((layer) => layer.id !== drag.duplicatedLayerId)
-          removeAnimationCelsForLayers(active.document, [drag.duplicatedLayerId])
-          if (drag.layerId) active.document.activeLayerId = drag.layerId
-          active.selectedLayerIds = drag.originalSelectedLayerIds?.length ? [...drag.originalSelectedLayerIds] : drag.layerId ? [drag.layerId] : []
-          active.selectedGroupId = null
-          active.selectedGroupIds = []
-        } else if (drag.animationCellOffsets && drag.animationCellKeys?.length) {
-          setAnimationCelOffsetsForKeys(active.document, drag.animationCellOffsets)
-        } else {
-          for (const layerId of drag.layerIds ?? (drag.layerId ? [drag.layerId] : [])) {
-            const layer = active.document.layers.find((candidate) => candidate.id === layerId)
-            const offset = drag.layerOffsets?.[layerId] ?? (layerId === drag.layerId ? drag.layerOffset : undefined)
-            if (layer && offset) { layer.offsetX = offset.x; layer.offsetY = offset.y }
-          }
-        }
-        if (drag.selectionStart !== undefined) active.selection = cloneSelection(drag.selectionStart)
-      }, false)
+      state.cancelLayerMovePreview(session.document.id, drag)
       documentChanged = true
     }
     if (drag.kind === 'transform-text-box') {
@@ -4792,49 +4761,15 @@ export function CanvasStage({ session }: { session: DocumentSession }) {
       if (previousDistance.x === distanceX && previousDistance.y === distanceY) return
       if (drag.selectionPivotStart) drag.previewPivot = { x: drag.selectionPivotStart.x + distanceX, y: drag.selectionPivotStart.y + distanceY }
       if (drag.duplicateOnDrag && !drag.duplicatedLayerId && (distanceX !== 0 || distanceY !== 0)) {
-        state.mutateActive((active) => {
-          const source = active.document.layers.find((candidate) => candidate.id === drag.layerId)
-          if (!source) return
-          const layerStyles = cloneLayerStyles(source.layerStyles)
-          const copy = source.format === 'rgba'
-            ? { ...source, id: `${source.id}-copy-${Date.now()}`, name: `${source.name} ${t('canvas.history.copySuffix')}`, ...(layerStyles ? { layerStyles } : {}), pixels: new Uint8ClampedArray(source.pixels) } as RasterLayer
-            : { ...source, id: `${source.id}-copy-${Date.now()}`, name: `${source.name} ${t('canvas.history.copySuffix')}`, ...(layerStyles ? { layerStyles } : {}), pixels: new Uint32Array(source.pixels) } as RasterLayer
-          const insertionIndex = active.document.layers.indexOf(source) + 1
-          active.document.layers.splice(insertionIndex, 0, copy)
-          cloneAnimationCelsForLayer(active.document, source.id, copy)
-          active.document.activeLayerId = copy.id
-          active.selectedLayerIds = [copy.id]
-          active.selectedGroupId = null
-          active.selectedGroupIds = []
-          drag.duplicatedLayerId = copy.id
-          drag.duplicatedLayer = copy
-          drag.duplicatedAnimationCels = ensureAnimationDocument(active.document).cels
-            .filter((cel) => cel.layerId === copy.id)
-            .map(cloneAnimationCel)
-          drag.duplicatedLayerIndex = insertionIndex
-        }, false)
-      }
-      const activeIds = drag.duplicatedLayerId ? [drag.duplicatedLayerId] : drag.layerIds ?? [drag.layerId]
-      const active = useWorkspace.getState().sessions.find((item) => item.document.id === session.document.id)
-      if (!active) return
-      {
-        if (!drag.duplicatedLayerId && drag.animationCellOffsets && drag.animationCellKeys?.length) {
-          const nextOffsets = Object.fromEntries(drag.animationCellKeys.map((key) => {
-            const offset = drag.animationCellOffsets![key]
-            return [key, { x: offset.x + distanceX, y: offset.y + distanceY }]
-          }))
-          setAnimationCelOffsetsForKeys(active.document, nextOffsets)
-        } else {
-          for (const layerId of activeIds) {
-            const layer = active.document.layers.find((candidate) => candidate.id === layerId)
-            const offset = drag.duplicatedLayerId ? drag.layerOffset : drag.layerOffsets?.[layerId]
-            if (!layer || !offset) continue
-            layer.offsetX = offset.x + distanceX
-            layer.offsetY = offset.y + distanceY
-          }
+        const duplicate = state.beginLayerMoveDuplicatePreview(session.document.id, drag.layerId, t('canvas.history.copySuffix'))
+        if (duplicate) {
+          drag.duplicatedLayerId = duplicate.layerId
+          drag.duplicatedLayer = duplicate.layer
+          drag.duplicatedAnimationCels = duplicate.animationCels
+          drag.duplicatedLayerIndex = duplicate.insertionIndex
         }
-        if (drag.selectionStart) active.selection = shiftSelection(drag.selectionStart, distanceX, distanceY, active.document.width, active.document.height)
       }
+      if (!state.previewLayerMove(session.document.id, drag, distanceX, distanceY)) return
       if (drag.layerContentBounds) {
         let dirtyPixels = 0
         for (const bounds of Object.values(drag.layerContentBounds)) {
@@ -5291,26 +5226,12 @@ export function CanvasStage({ session }: { session: DocumentSession }) {
       const edit = drag.tilemapEdit
       const moved = Boolean(drag.tilemapSelectionMoveDelta && (drag.tilemapSelectionMoveDelta.columns !== 0 || drag.tilemapSelectionMoveDelta.rows !== 0))
       if (edit && edit.before.size > 0 && edit.after.size > 0) {
-        session.selection = cloneSelection(afterSelection)
-        const invalidation: ContentInvalidationHint = edit.dirtyRect
-          ? { kind: 'region', frameId: edit.frameId, rect: { ...edit.dirtyRect } }
-          : { kind: 'full' }
-        state.pushHistory({
-          label: t(drag.copy ? 'workspace.history.copySelectionContent' : 'workspace.history.moveSelectionContent'),
-          bytes: tilemapEditBytes(edit) + (beforeSelection?.mask?.byteLength ?? 0) + (afterSelection?.mask?.byteLength ?? 0) + 64,
-          undo: () => {
-            applyTilemapDocumentEdit(session.document, edit, 'before')
-            session.selection = cloneSelection(beforeSelection)
-          },
-          redo: () => {
-            applyTilemapDocumentEdit(session.document, edit, 'after')
-            session.selection = cloneSelection(afterSelection)
-          },
-          invalidation,
-          affectedLayerIds: [edit.layerId],
-          contentChanged: true,
-          requiresAnimationSync: false
-        })
+        state.commitTilemapSelectionMove(
+          edit,
+          beforeSelection,
+          afterSelection,
+          t(drag.copy ? 'workspace.history.copySelectionContent' : 'workspace.history.moveSelectionContent')
+        )
       } else if (moved) state.commitSelectionChange(beforeSelection, afterSelection, t('canvas.history.moveSelectionBox'))
       if (drag.previewPivot) state.setSelectionPivot(drag.previewPivot)
       endSelectionAdjustmentEdit()
@@ -5345,95 +5266,7 @@ export function CanvasStage({ session }: { session: DocumentSession }) {
     if (drag.kind === 'airbrush' && drag.edit) {
       state.commitPixelEdit(drag.edit, t('canvas.history.airbrush'), { stroke: true, durationMs: Math.max(1, Date.now() - (drag.startedAt ?? Date.now())) })
     }
-    if (drag.kind === 'move-layer' && !drag.duplicatedLayer && drag.animationCellOffsets && drag.animationCellKeys?.length) {
-      const before = drag.animationCellOffsets
-      const after = animationCelOffsetsForKeys(session.document, drag.animationCellKeys)
-      const beforeSelection = cloneSelection(drag.selectionStart ?? null)
-      const afterSelection = cloneSelection(session.selection)
-      const offsetsChanged = drag.animationCellKeys.some((key) => after[key] && (after[key].x !== before[key].x || after[key].y !== before[key].y))
-      if (offsetsChanged) {
-        const affectedLayerIds = [...new Set(drag.animationCellKeys.map((key) => parseAnimationCelKey(key)?.layerId).filter((id): id is string => Boolean(id)))]
-        const activeFrameOnly = Boolean(drag.layerFrameId) && drag.animationCellKeys.every((key) => parseAnimationCelKey(key)?.frameId === drag.layerFrameId)
-        state.pushHistory({
-          label: t(drag.animationCellKeys.length > 1 ? 'canvas.history.moveSelectedLayers' : 'canvas.history.moveLayer'),
-          bytes: drag.animationCellKeys.length * 32,
-          undo: () => {
-            setAnimationCelOffsetsForKeys(session.document, before)
-            session.selection = cloneSelection(beforeSelection)
-          },
-          redo: () => {
-            setAnimationCelOffsetsForKeys(session.document, after)
-            session.selection = cloneSelection(afterSelection)
-          },
-          invalidation: activeFrameOnly ? moveLayerInvalidation(drag, drag.layerFrameId) : undefined,
-          affectedLayerIds,
-          requiresAnimationSync: false
-        })
-      }
-    } else if (drag.kind === 'move-layer' && !drag.duplicatedLayer && drag.layerIds && drag.layerIds.length > 1 && drag.layerOffsets) {
-      const before = drag.layerOffsets
-      const beforeSelection = cloneSelection(drag.selectionStart ?? null)
-      const afterSelection = cloneSelection(session.selection)
-      const after = Object.fromEntries(drag.layerIds.map((id) => {
-        const layer = session.document.layers.find((candidate) => candidate.id === id)
-        return [id, { x: layer?.offsetX ?? before[id].x, y: layer?.offsetY ?? before[id].y }]
-      }))
-      if (drag.layerIds.some((id) => after[id].x !== before[id].x || after[id].y !== before[id].y)) {
-        const frameId = drag.layerFrameId
-        state.pushHistory({
-          label: t('canvas.history.moveSelectedLayers'), bytes: drag.layerIds.length * 32,
-          undo: () => { if (frameId) setAnimationCelOffsets(session.document, frameId, before); session.selection = cloneSelection(beforeSelection) },
-          redo: () => { if (frameId) setAnimationCelOffsets(session.document, frameId, after); session.selection = cloneSelection(afterSelection) },
-          invalidation: moveLayerInvalidation(drag, frameId),
-          affectedLayerIds: [...drag.layerIds],
-          requiresAnimationSync: false
-        })
-      }
-    } else if (drag.kind === 'move-layer' && drag.layerId && drag.layerOffset) {
-      const layerId = drag.duplicatedLayerId ?? drag.layerId
-      const layer = session.document.layers.find((candidate) => candidate.id === layerId)
-      if (layer && (drag.duplicatedLayer || layer.offsetX !== drag.layerOffset.x || layer.offsetY !== drag.layerOffset.y)) {
-        const before = { ...drag.layerOffset }
-        const after = { x: layer.offsetX, y: layer.offsetY }
-        const beforeSelection = cloneSelection(drag.selectionStart ?? null)
-        const afterSelection = cloneSelection(session.selection)
-        state.pushHistory({
-          label: t('canvas.history.moveLayer'), bytes: drag.duplicatedLayer
-            ? drag.duplicatedLayer.pixels.byteLength
-              + (drag.duplicatedAnimationCels ?? []).reduce((sum, cel) => sum + (cel.surface?.pixels.byteLength ?? 0) + (cel.mask?.pixels.byteLength ?? 0) + (cel.tilemap?.cells.length ?? 0) * 24, 0)
-              + layerStylesHistoryBytes(drag.duplicatedLayer.layerStyles)
-              + 32
-            : 32,
-          undo: () => {
-            if (drag.duplicatedLayer) {
-              session.document.layers = session.document.layers.filter((candidate) => candidate.id !== layerId)
-              removeAnimationCelsForLayers(session.document, [layerId])
-              session.document.activeLayerId = drag.layerId!
-              session.selectedLayerIds = drag.originalSelectedLayerIds?.length ? [...drag.originalSelectedLayerIds] : [drag.layerId!]
-              session.selectedGroupId = null
-              session.selectedGroupIds = []
-            }
-            else if (drag.layerFrameId) setAnimationCelOffsets(session.document, drag.layerFrameId, { [layerId]: before })
-            session.selection = cloneSelection(beforeSelection)
-          },
-          redo: () => {
-            if (drag.duplicatedLayer) {
-              if (!session.document.layers.some((candidate) => candidate.id === layerId)) session.document.layers.splice(drag.duplicatedLayerIndex ?? session.document.layers.length, 0, drag.duplicatedLayer)
-              restoreAnimationCels(session.document, drag.duplicatedAnimationCels ?? [])
-              drag.duplicatedLayer.offsetX = after.x; drag.duplicatedLayer.offsetY = after.y
-              session.document.activeLayerId = layerId
-              session.selectedLayerIds = [layerId]
-              session.selectedGroupId = null
-              session.selectedGroupIds = []
-            } else if (drag.layerFrameId) setAnimationCelOffsets(session.document, drag.layerFrameId, { [layerId]: after })
-            session.selection = cloneSelection(afterSelection)
-          },
-          invalidation: drag.duplicatedLayer ? undefined : moveLayerInvalidation(drag, drag.layerFrameId),
-          affectedLayerIds: drag.duplicatedLayer ? undefined : [layerId],
-          requiresAnimationSync: drag.duplicatedLayer ? undefined : false
-        })
-      }
-    }
+    if (drag.kind === 'move-layer') state.commitLayerMove(session.document.id, drag)
     if (drag.kind === 'move-layer' && drag.collapseLayerSelectionOnClick && !drag.moved && drag.clickLayerId) {
       state.selectMoveToolLayer(drag.clickLayerId)
       revealLayerInPanel(session.document.id, drag.clickLayerId)

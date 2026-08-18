@@ -41,7 +41,7 @@ describe('LayersPanel animation', () => {
 
     rerender(<LayersPanel session={session} docked />)
     expect(container.querySelectorAll('.timeline-frame-edit-button')).toHaveLength(2)
-    expect(container.querySelectorAll('.layer-structure-edit-button')).toHaveLength(3)
+    expect(container.querySelectorAll('.layer-structure-edit-button')).toHaveLength(4)
   })
 
   it('keeps timeline selections while interacting with a marked floating dialog', () => {

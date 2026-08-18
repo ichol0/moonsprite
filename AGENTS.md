@@ -28,6 +28,7 @@
 - 普通 TypeScript（包括一般 Core、Store、Shared Debug）只运行类型检查和必要的模块边界检查；只有坐标、选区、撤销、文件格式、持久化、平台安全、共享核心算法，以及曾复发或难以人工发现的 Bug 使用 `pnpm check:dev -- --risk=high <源文件...> <相关测试文件...>`，并强制只运行显式列出的测试；Rust 与缩略图代码运行对应 `cargo check`。
 - 用户负责布局、手感、动画、视觉和需求符合度的主观验收。除非用户明确要求，不运行浏览器自动点击、截图对比、桌面自动验收或完整构建。
 - 开发期间不运行 `check:maintenance`、完整测试、完整 CI、性能基准，不更新发布日志、性能历史或一般回归矩阵，也不为每个问题提交、推送或打包。
+- 只有任务触及组件写文档、撤销模型、工程编解码、恢复、Core 依赖或根 Store 职责时，才在本轮最低检查中追加一次 `pnpm check:architecture`；普通 UI、文案和连续 Debug 不运行该全仓静态门禁。
 - 有确定的编译或测试错误时可以修复后重跑；没有确定证据时不得继续猜测式修改。连续两轮仍未解决，必须报告现象、根因判断和下一步，不得自行扩大调查或重构。
 
 ## dev.X 发布
@@ -64,7 +65,14 @@
 - `platform/` 是渲染器访问 Tauri 的唯一边界。
 - `src-tauri/` 负责系统文件、窗口、恢复、剪贴板、缩略图和打包集成。
 - 不为超大文件增加新的无关职责；新逻辑优先提取到明确模块，并由风险相称的测试保护。
-- `pnpm check:boundaries` 快速检查依赖方向；当前仅允许脚本中显式登记的历史迁移例外，禁止增加新例外。
+- 组件不得直接修改 `SpriteDocument`、`DocumentSession`、像素、dirty、revision、invalidation 或缓存版本，也不得调用原始 `mutateActive`、`pushHistory` 或直接控制 `HistoryStack`；所有文档写入和历史提交必须经过 Store 领域命令或 `begin/update/commit/cancel` 文档事务。
+- 实时预览事务必须同时处理确认、取消、切换文档和组件卸载；取消路径恢复基线，确认路径只产生一次 dirty、历史和失效提交。
+- `encodeProject`/`decodeProject` 只属于文件与恢复边界，不得用于撤销快照。历史保存受影响领域的最小前后状态，不依赖工程格式。
+- 一次工程打开只允许一次完整解码；初始合成、缩略图和缓存必须复用已解码文档。异步保存、恢复和工程编码不得在派发 Worker 前同步准备整份文档。
+- 保存与恢复错误必须进入可观测错误通道，不得使用空 `catch` 或仅注释的 `catch` 静默吞掉。
+- `core/` 生产运行时依赖图禁止循环；渲染键只能使用领域 revision 与轻量标量，不得序列化像素、cel 表面或整份文档。
+- `WorkspaceState` 只由 `store/workspace-state.ts` 中的会话、切片、工具、颜色、视图选区、历史、动画、Tilemap、图层、剪贴板、工程 IO、恢复和 UI 契约组合；不得在 `workspace.ts` 重建巨型根接口或绕过领域契约增加命令。
+- `pnpm check:boundaries` 快速检查依赖方向，不使用按文件白名单。`pnpm check:architecture` 检查完整架构契约；现有历史债只允许登记在 `scripts/architecture-debt-budget.json` 的数字预算中，实际数量与预算必须相等，预算只能递减、不能延期，到期必须清零。
 
 ## 命令入口
 
@@ -74,6 +82,9 @@ pnpm check:dev -- <本任务文件...>
 
 # 高风险开发：只运行显式列出的定向测试
 pnpm check:dev -- --risk=high <源文件...> <相关测试文件...>
+
+# 仅在触及受保护架构边界时追加
+pnpm check:architecture
 
 # dev.X 发布：完整正确性与维护门禁，不含性能基准
 pnpm check:release

@@ -1,8 +1,82 @@
-import { getCurrentWindow } from '@tauri-apps/api/window'
+import { PhysicalPosition, PhysicalSize } from '@tauri-apps/api/dpi'
+import { availableMonitors, getCurrentWindow } from '@tauri-apps/api/window'
+import type { WorkspaceLayout } from '@shared/types'
+
+export type AppWindowLayout = NonNullable<WorkspaceLayout['mainWindow']>
 
 const currentDesktopWindow = () => typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
   ? getCurrentWindow()
   : null
+
+const windowLayoutIsVisible = async (layout: AppWindowLayout): Promise<boolean> => {
+  try {
+    const monitors = await availableMonitors()
+    return monitors.some((monitor) => {
+      const area = monitor.workArea
+      const overlapWidth = Math.min(layout.x + layout.width, area.position.x + area.size.width) - Math.max(layout.x, area.position.x)
+      const overlapHeight = Math.min(layout.y + layout.height, area.position.y + area.size.height) - Math.max(layout.y, area.position.y)
+      return overlapWidth >= 80 && overlapHeight >= 48
+    })
+  } catch {
+    return true
+  }
+}
+
+export async function readAppWindowLayout(): Promise<AppWindowLayout | null> {
+  const appWindow = currentDesktopWindow()
+  if (!appWindow) return null
+  const maximized = await appWindow.isMaximized()
+  const [position, size] = await Promise.all([appWindow.outerPosition(), appWindow.innerSize()])
+  return { x: position.x, y: position.y, width: size.width, height: size.height, maximized }
+}
+
+export async function applyAppWindowLayout(layout: AppWindowLayout, mode: 'workspace' | 'startup' = 'workspace'): Promise<void> {
+  const appWindow = currentDesktopWindow()
+  if (!appWindow) return
+  const isMaximized = await appWindow.isMaximized()
+  if (mode === 'workspace' && layout.maximized && isMaximized) return
+  if (mode === 'startup' || (!layout.maximized && isMaximized)) await appWindow.unmaximize()
+  const [currentPosition, currentSize, visible] = await Promise.all([
+    appWindow.outerPosition(),
+    appWindow.innerSize(),
+    windowLayoutIsVisible(layout)
+  ])
+  if (Math.abs(currentSize.width - layout.width) > 1 || Math.abs(currentSize.height - layout.height) > 1) {
+    await appWindow.setSize(new PhysicalSize(layout.width, layout.height))
+  }
+  if (!visible) await appWindow.center()
+  else if (Math.abs(currentPosition.x - layout.x) > 1 || Math.abs(currentPosition.y - layout.y) > 1) {
+    await appWindow.setPosition(new PhysicalPosition(layout.x, layout.y))
+  }
+  if (layout.maximized) await appWindow.maximize()
+}
+
+export async function initializeAppWindow(
+  layout: AppWindowLayout | null,
+  onGeometryChanged: () => void,
+  fallbackSize = { width: 1440, height: 900 }
+): Promise<() => void> {
+  const appWindow = currentDesktopWindow()
+  if (!appWindow) return () => {}
+  if (layout) await applyAppWindowLayout(layout, 'startup')
+  else {
+    await appWindow.setSize(new PhysicalSize(fallbackSize.width, fallbackSize.height))
+    await appWindow.center()
+  }
+  await appWindow.show()
+  const [removeMoved, removeResized] = await Promise.all([
+    appWindow.onMoved(onGeometryChanged),
+    appWindow.onResized(onGeometryChanged)
+  ])
+  return () => {
+    removeMoved()
+    removeResized()
+  }
+}
+
+export async function showAppWindow(): Promise<void> {
+  await currentDesktopWindow()?.show()
+}
 
 export async function minimizeAppWindow(): Promise<void> {
   await currentDesktopWindow()?.minimize()

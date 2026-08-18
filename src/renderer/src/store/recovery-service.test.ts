@@ -63,4 +63,21 @@ describe('recovery service', () => {
     expect(restored.name).toBe('draft（恢复）')
     expect(restored.dirty).toBe(true)
   })
+
+  it('reports autosave failures while keeping the queue usable', async () => {
+    const writeRecovery = vi.fn()
+      .mockRejectedValueOnce(new Error('disk full'))
+      .mockResolvedValueOnce(undefined)
+    const service = new RecoveryService()
+    const document = createDocument('draft', 8, 8, 'rgba')
+
+    await expect(service.autosave(api({ writeRecovery }), [document])).rejects.toThrow('自动恢复保存失败')
+    await expect(service.autosave(api({ writeRecovery }), [document])).resolves.toBeUndefined()
+    expect(writeRecovery).toHaveBeenCalledTimes(2)
+  })
+
+  it('does not hide recovery deletion failures', async () => {
+    const service = new RecoveryService()
+    await expect(service.discard(api({ deleteRecovery: async () => { throw new Error('locked') } }), 'draft')).rejects.toThrow('locked')
+  })
 })

@@ -1,7 +1,7 @@
 import { memo } from 'react'
 import { PerformanceProfiler } from '@/components/PerformanceProfiler'
 import { useI18n } from '@/components/I18nProvider'
-import { statusBarRenderKey } from '@/core/app-render-keys'
+import { statusBarRenderKey } from '@/components/app/app-render-keys'
 import { useWorkspace } from '@/store/workspace'
 
 interface EditorStatusBarProps {

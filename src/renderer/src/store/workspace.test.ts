@@ -4275,6 +4275,18 @@ describe('save concurrency', () => {
     expect(exportImage).toHaveBeenCalledWith('D:/MoonSprite/exports/custom.png', 'png')
   })
 
+  it('lets the Save As dialog directory override the default save directory', async () => {
+    localStorage.setItem('moonsprite.preference.save-directory', 'D:/MoonSprite/gallery')
+    const saveProject = vi.fn(async () => ({ canceled: false, filePath: 'E:/delivery/custom.moonsprite' }))
+    const writeBinaryAtomic = vi.fn(async () => {})
+    installApi({ saveProject, writeBinaryAtomic })
+    useWorkspace.getState().addSession(createDocument('custom', 2, 2, 'rgba'))
+
+    await expect(useWorkspace.getState().saveActive(true, { name: 'custom', format: 'moonsprite', scalePercent: 100, directory: 'E:/delivery' })).resolves.toBe(true)
+
+    expect(saveProject).toHaveBeenCalledWith('E:/delivery/custom.moonsprite')
+  })
+
   it('lets the export dialog directory override the default export directory', async () => {
     localStorage.setItem('moonsprite.preference.export-directory', 'D:/MoonSprite/exports')
     const exportImage = vi.fn(async () => ({ canceled: false, filePath: 'E:/delivery/custom.png' }))

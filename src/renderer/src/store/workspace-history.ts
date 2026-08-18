@@ -1,11 +1,10 @@
-import type { SpriteDocument } from '@shared/types'
 import { getActiveLayer, getLayerStorageOrigin, setLayerStorageOrigin } from '@/core/document'
 import { animationCelAt, ensureAnimationDocument } from '@/core/animation'
-import { decodeProject, encodeProject } from '@/core/project-format'
 import type { LayerMergeSuccess } from '@/core/layer-merge'
 import type { AdjustmentSnapshot, DocumentSession } from './workspace-types'
 import { touch } from './workspace-session'
 import { translateCurrent as tr } from '@/core/localization'
+import { captureDocumentStructureSnapshot, documentStructureDeltaBytes, restoreDocumentStructureSnapshot, type DocumentStructureSnapshot } from './workspace-document-history'
 
 const adjustmentTargetLayerIds = (session: DocumentSession): string[] => {
   if (session.selection) return [getActiveLayer(session.document).id]
@@ -65,14 +64,6 @@ export function restoreAdjustmentSnapshot(session: DocumentSession, snapshot: Ad
   session.document.nextColorId = snapshot.nextColorId
 }
 
-export function restoreDocumentSnapshot(target: SpriteDocument, data: Uint8Array): void {
-  const restored = decodeProject(data)
-  restored.id = target.id
-  restored.filePath = target.filePath
-  restored.dirty = true
-  Object.assign(target, restored)
-}
-
 export interface LayerUiSnapshot {
   selectedLayerIds: string[]
   selectedGroupId: string | null
@@ -94,18 +85,20 @@ const restoreLayerUi = (session: DocumentSession, snapshot: LayerUiSnapshot): vo
   session.collapsedGroupIds = [...snapshot.collapsedGroupIds]
 }
 
-export function commitLayerMerge(session: DocumentSession, beforeDocument: Uint8Array, beforeUi: LayerUiSnapshot, result: LayerMergeSuccess, label: string): void {
+export function commitLayerMerge(session: DocumentSession, beforeDocument: DocumentStructureSnapshot, beforeUi: LayerUiSnapshot, result: LayerMergeSuccess, label: string): void {
   session.selectedGroupId = null
   session.selectedGroupIds = []
   session.selectedLayerIds = [result.layerId]
   session.collapsedGroupIds = session.collapsedGroupIds.filter((id) => !result.removedGroupIds.includes(id))
   touch(session)
-  const afterDocument = encodeProject(session.document)
+  const afterDocument = captureDocumentStructureSnapshot(session.document)
   const afterUi = captureLayerUi(session)
   session.history.push({
     label,
-    bytes: beforeDocument.byteLength + afterDocument.byteLength,
-    undo: () => { restoreDocumentSnapshot(session.document, beforeDocument); restoreLayerUi(session, beforeUi) },
-    redo: () => { restoreDocumentSnapshot(session.document, afterDocument); restoreLayerUi(session, afterUi) }
+    bytes: documentStructureDeltaBytes(beforeDocument, afterDocument),
+    undo: () => { restoreDocumentStructureSnapshot(session.document, beforeDocument); restoreLayerUi(session, beforeUi) },
+    redo: () => { restoreDocumentStructureSnapshot(session.document, afterDocument); restoreLayerUi(session, afterUi) },
+    invalidation: { kind: 'full' },
+    requiresAnimationSync: false
   })
 }

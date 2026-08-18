@@ -4,7 +4,7 @@ import { activateAnimationFrame, addBlankAnimationFrame, animationCelKey, animat
 import { createDocument, getActiveLayer, readLayerColorAt } from '@/core/document'
 import { beginPixelEdit, recordPixel } from '@/core/history'
 import { packColor } from '@/core/raster'
-import { activeTilemapCelTarget, applyTilemapDocumentEdit, captureTilemapSelectionMove, previewTilemapSelectionMove, tilemapEditPreviewTilePixels, writeTilemapCell } from '@/core/tilemap-document'
+import { activeTilemapCelTarget, captureTilemapSelectionMove, previewTilemapSelectionMove, tilemapEditPreviewTilePixels, writeTilemapCell } from '@/core/tilemap-document'
 import { beginTilemapEdit, readTilesetTilePixels, tilemapCellBounds, tilemapCellIndexAtPoint } from '@/core/tilemap'
 import { applySelectionTranslationPreview, captureSelectionTransform, selectionTranslationPreviewEdit } from '@/core/tools'
 import { isToolAvailableForSession } from './workspace-session'
@@ -445,14 +445,22 @@ describe('workspace Tilemap layers', () => {
     ])
     expect(document.tilesets![0].tileIds).toEqual(beforeTileIds)
 
-    applyTilemapDocumentEdit(document, edit, 'before')
+    const beforeSelection = { x: 0, y: 0, width: 2, height: 1 }
+    const afterSelection = { x: 1, y: 0, width: 2, height: 1 }
+    useWorkspace.getState().commitTilemapSelectionMove(edit, beforeSelection, afterSelection, 'Move tile selection')
+    expect(useWorkspace.getState().sessions[0].selection).toEqual(afterSelection)
+
+    useWorkspace.getState().undo()
     expect(target.tilemap.cells).toEqual([
       { tilesetId: tileset.id, tileId: firstTileId },
       { tilesetId: tileset.id, tileId: secondTileId },
       null
     ])
-    applyTilemapDocumentEdit(document, edit, 'after')
+    expect(useWorkspace.getState().sessions[0].selection).toEqual(beforeSelection)
+
+    useWorkspace.getState().redo()
     expect(target.tilemap.cells[2]?.tileId).toBe(secondTileId)
+    expect(useWorkspace.getState().sessions[0].selection).toEqual(afterSelection)
   })
 
   it('keeps the owned Tileset name and deletion lifecycle synchronized with its layer', async () => {

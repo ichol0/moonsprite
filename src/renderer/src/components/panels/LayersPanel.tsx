@@ -18,12 +18,12 @@ import { openTextToolDialog } from '@/components/text-tool-events'
 import type { DockDragProps } from '@/components/workspace-panel-types'
 import { animationMaskAt, animationMaskSlotAt, getDescendantGroupIds, getGroupLockingAncestor, getLayerIdsInGroup, getLayerLockingGroup, isGroupEffectivelyLocked, isLayerEffectivelyLocked, resolveAnimationMask } from '@/core/document'
 import { COMMAND_SCOPE_EVENT } from '@/core/command-context'
-import { buildLayerPanelTree, getLayerPanelAncestorGroupIds, layerPanelRevealScrollTop, resolveLayerPanelDropTarget, resolveLayerPanelEdgeDropTarget, type LayerPanelNode } from '@/core/layer-panel-layout'
+import { buildLayerPanelTree, layerPanelRevealScrollTop, resolveLayerPanelDropTarget, resolveLayerPanelEdgeDropTarget, type LayerPanelNode } from '@/core/layer-panel-layout'
 import { DEFAULT_ONION_SKIN_PREFERENCES, loadEditorPreferences, saveEditorPreferences, type OnionSkinPreferences } from '@/core/file-preferences'
 import { animationCelHasContent, animationCelKey, animationGroupMaskAt, createAnimationCelLookup, ensureAnimationDocument, parseAnimationCelKey } from '@/core/animation'
 import { renderAnimationCelThumbnailPixels, renderLayerMaskThumbnailPixels } from '@/core/animation-thumbnail'
 import { DEFAULT_SHORTCUTS, loadShortcuts, modifierShortcutHeld, type ShortcutId } from '@/core/shortcuts'
-import { useWorkspace, type DocumentSession } from '@/store/workspace'
+import { useWorkspace, type DocumentSession, type LayerPropertyField, type LayerPropertyTarget, type LayerPropertyValues } from '@/store/workspace'
 import { useI18n } from '@/components/I18nProvider'
 import { AnimationPlaybackMenu } from '@/components/AnimationPlaybackMenu'
 import { PlaybackPixelIcon } from '@/components/PlaybackPixelIcon'
@@ -36,10 +36,10 @@ import { hasEnabledLayerStyles } from '@/core/layer-styles'
 import { BackgroundLayerDialog } from '@/components/BackgroundLayerDialog'
 import { TilemapLayerDialog } from '@/components/TilemapLayerDialog'
 
-interface LayerFormTarget { id: string; kind: 'layer' | 'group' }
-type BatchProperty = 'name' | 'opacity' | 'blendMode' | 'cumulativeBlend' | 'displayColor' | 'description'
+type LayerFormTarget = LayerPropertyTarget
+type BatchProperty = LayerPropertyField
 interface LayerFormState { id: string; kind: 'layer' | 'group'; targets: LayerFormTarget[]; batchChanges: BatchProperty[]; name: string; opacity: number; blendMode: BlendMode; cumulativeBlend: boolean; locked: boolean; displayColor: RgbaColor | null; description: string }
-interface LayerPropertySnapshot extends LayerFormTarget { name: string; opacity: number; blendMode: BlendMode; cumulativeBlend: boolean; locked: boolean; displayColor: RgbaColor | null; description: string }
+const ALL_LAYER_PROPERTY_FIELDS: readonly LayerPropertyField[] = ['name', 'opacity', 'blendMode', 'cumulativeBlend', 'displayColor', 'description']
 interface LayerDragState { ids: string[]; groupIds: string[]; groupId?: string; row: LayerFormTarget; preserveSelection: boolean; selectedLayerIds: string[]; selectedGroupIds: string[]; wholeGroupSelection: boolean; startX: number; startY: number; moved: boolean; copy: boolean }
 type LayerPanelToggleTarget =
   | { control: 'visibility'; ownerKind: 'layer'; id: string }
@@ -230,7 +230,6 @@ function ActiveFrameSync({ documentId, frameIds, containerRef, suppressActiveGui
 const sameColor = (left: RgbaColor | null, right: RgbaColor | null): boolean => left === null || right === null
   ? left === right
   : left.r === right.r && left.g === right.g && left.b === right.b && left.a === right.a
-const cloneFormState = (value: LayerFormState): LayerFormState => ({ ...value, targets: value.targets.map((target) => ({ ...target })), batchChanges: [...value.batchChanges], displayColor: value.displayColor ? { ...value.displayColor } : null })
 const selectedRowsForDrag = (session: DocumentSession): { ids: string[]; groupIds: string[] } => {
   const selectedGroups = new Set(session.selectedGroupIds.length > 0 ? session.selectedGroupIds : session.selectedGroupId ? [session.selectedGroupId] : [])
   const groupIds = [...selectedGroups].filter((groupId) => !session.document.groups.some((candidate) => selectedGroups.has(candidate.id) && getDescendantGroupIds(session.document, candidate.id).includes(groupId)))
@@ -299,9 +298,7 @@ export function LayersPanel({ session, docked = false, sideDocked = false, onDoc
     const value = ids.map((id) => shortcuts[id] ?? DEFAULT_SHORTCUTS[id]).filter(Boolean).join(' / ')
     return value ? <kbd aria-hidden="true">{value}</kbd> : null
   }
-  const formOriginalRef = useRef<LayerFormState | null>(null)
-  const formOriginalTargetsRef = useRef<LayerPropertySnapshot[]>([])
-  const formWasDirtyRef = useRef(false)
+  const propertyTransactionRef = useRef<string | null>(null)
   const pendingPropertyPreviewRef = useRef<LayerFormState | null>(null)
   const propertyPreviewTimerRef = useRef<number | null>(null)
   const dragRef = useRef<LayerDragState | null>(null)
@@ -395,13 +392,7 @@ export function LayersPanel({ session, docked = false, sideDocked = false, onDoc
       const liveSession = useWorkspace.getState().sessions.find((item) => item.document.id === detail.documentId)
       const layer = liveSession?.document.layers.find((candidate) => candidate.id === detail.layerId)
       if (!liveSession || !layer) return
-      const ancestorIds = new Set(getLayerPanelAncestorGroupIds(liveSession.document.groups, layer.groupId))
-      if (liveSession.collapsedGroupIds.some((id) => ancestorIds.has(id))) {
-        store.mutateActive((active) => {
-          if (active.document.id !== detail.documentId) return
-          active.collapsedGroupIds = active.collapsedGroupIds.filter((id) => !ancestorIds.has(id))
-        }, false)
-      }
+      store.revealLayerInPanel(detail.documentId, detail.layerId)
       revealSequenceRef.current += 1
       setLayerRevealRequest({ layerId: detail.layerId, sequence: revealSequenceRef.current })
     }
@@ -1045,10 +1036,7 @@ export function LayersPanel({ session, docked = false, sideDocked = false, onDoc
     const gesture = layerToggleGestureRef.current
     if (!gesture) return
     layerToggleGestureRef.current = null
-    const active = useWorkspace.getState().sessions.find((item) => item.document.id === gesture.documentId)
-    if (!active) return
-    active.history.endCompound(layerToggleHistoryLabel(gesture.control))
-    store.mutateActive(() => {}, false)
+    store.commitLayerPanelTransaction(gesture.documentId, layerToggleHistoryLabel(gesture.control))
   }
   const beginLayerPanelToggle = (event: React.PointerEvent<HTMLElement>, target: LayerPanelToggleTarget, currentValue: boolean, blockingAncestorName?: string): void => {
     if (event.button !== 0) return
@@ -1062,11 +1050,10 @@ export function LayersPanel({ session, docked = false, sideDocked = false, onDoc
     const active = useWorkspace.getState().sessions.find((item) => item.document.id === session.document.id)
     if (!active) return
     const value = !currentValue
-    active.history.beginCompound()
+    store.beginLayerPanelTransaction(active.document.id)
     if (event.altKey && (target.ownerKind === 'layer' || target.ownerKind === 'group')) {
       for (const sibling of sameHierarchyToggleTargets(target)) applyLayerPanelToggle(sibling, value)
-      active.history.endCompound(layerToggleHistoryLabel(target.control))
-      store.mutateActive(() => {}, false)
+      store.commitLayerPanelTransaction(active.document.id, layerToggleHistoryLabel(target.control))
       return
     }
     layerToggleGestureRef.current = {
@@ -1354,12 +1341,9 @@ export function LayersPanel({ session, docked = false, sideDocked = false, onDoc
     return showLayerSelectionAcrossTimeline && session.selectedLayerIds.includes(displayRow.node.layer.id) && !session.selectedGroupId ? [row] : []
   })
   const beginProperties = (next: LayerFormState): void => {
-    formOriginalRef.current = cloneFormState(next)
-    formOriginalTargetsRef.current = next.targets.flatMap((target): LayerPropertySnapshot[] => {
-      const source = target.kind === 'group' ? groupById.get(target.id) : layerById.get(target.id)
-      return source ? [{ ...target, name: source.name, opacity: source.opacity, blendMode: source.blendMode, cumulativeBlend: target.kind === 'group' && (source as LayerGroup).cumulativeBlend === true, locked: source.locked, displayColor: source.displayColor ? { ...source.displayColor } : null, description: source.description ?? '' }] : []
-    })
-    formWasDirtyRef.current = session.document.dirty
+    const transactionId = store.beginLayerPropertiesTransaction(next.targets)
+    if (!transactionId) return
+    propertyTransactionRef.current = transactionId
     setForm(next)
   }
   const editLayer = (layer: RasterLayer): void => beginProperties({ id: layer.id, kind: 'layer', targets: [{ id: layer.id, kind: 'layer' }], batchChanges: [], name: layer.name, opacity: Math.round(layer.opacity * 100), blendMode: layer.blendMode, cumulativeBlend: false, locked: layer.locked, displayColor: layer.displayColor ? { ...layer.displayColor } : null, description: layer.description ?? '' })
@@ -1372,52 +1356,20 @@ export function LayersPanel({ session, docked = false, sideDocked = false, onDoc
     if (!source) return
     beginProperties({ id: first.id, kind: first.kind, targets, batchChanges: [], name: source.name, opacity: Math.round(source.opacity * 100), blendMode: source.blendMode, cumulativeBlend: first.kind === 'group' && (source as LayerGroup).cumulativeBlend === true, locked: source.locked, displayColor: source.displayColor ? { ...source.displayColor } : null, description: source.description ?? '' })
   }
+  const propertyValues = (next: LayerFormState): LayerPropertyValues => ({
+    name: next.name,
+    opacity: next.opacity / 100,
+    blendMode: next.blendMode,
+    cumulativeBlend: next.cumulativeBlend,
+    locked: next.locked,
+    displayColor: next.displayColor ? { ...next.displayColor } : null,
+    description: next.description
+  })
+  const propertyFields = (next: LayerFormState): readonly LayerPropertyField[] => next.targets.length > 1 ? next.batchChanges : ALL_LAYER_PROPERTY_FIELDS
   const applyPropertyPreview = (next: LayerFormState): void => {
-    store.mutateActive((active) => {
-      const changes = next.targets.length > 1 ? new Set(next.batchChanges) : new Set<BatchProperty>(['name', 'opacity', 'blendMode', 'cumulativeBlend', 'displayColor', 'description'])
-      let contentChanged = false
-      for (const formTarget of next.targets) {
-        const target = formTarget.kind === 'group'
-          ? active.document.groups.find((group) => group.id === formTarget.id)
-          : active.document.layers.find((layer) => layer.id === formTarget.id)
-        if (!target) continue
-        if (changes.has('name')) target.name = next.name
-        const visualLocked = formTarget.kind === 'group'
-          ? isGroupEffectivelyLocked(active.document, target as LayerGroup)
-          : isLayerEffectivelyLocked(active.document, target as RasterLayer)
-        if (!visualLocked) {
-          if (changes.has('opacity')) {
-            const opacity = Math.max(0, Math.min(1, next.opacity / 100))
-            contentChanged ||= target.opacity !== opacity
-            target.opacity = opacity
-          }
-          if (changes.has('blendMode')) {
-            contentChanged ||= target.blendMode !== next.blendMode
-            target.blendMode = next.blendMode
-          }
-          if (formTarget.kind === 'group' && changes.has('cumulativeBlend')) {
-            contentChanged ||= (target as LayerGroup).cumulativeBlend === true !== next.cumulativeBlend
-            ;(target as LayerGroup).cumulativeBlend = next.cumulativeBlend
-          }
-        }
-        if (next.targets.length === 1) target.locked = next.locked
-        if (changes.has('displayColor')) {
-          if (next.displayColor) target.displayColor = { ...next.displayColor }
-          else delete target.displayColor
-        }
-        if (changes.has('description')) target.description = next.description
-      }
-      active.document.dirty = true
-      active.document.updatedAt = new Date().toISOString()
-      active.layersPanelRevision += 1
-      active.recoverySuppressed = false
-      if (contentChanged) {
-        const fromRevision = active.contentRevision
-        active.revision += 1
-        active.contentRevision += 1
-        active.contentInvalidation = { kind: 'full', fromRevision, revision: active.contentRevision }
-      }
-    }, false)
+    const transactionId = propertyTransactionRef.current
+    if (!transactionId) return
+    store.previewLayerPropertiesTransaction(transactionId, propertyValues(next), propertyFields(next))
   }
   const flushPropertyPreview = (): LayerFormState | null => {
     if (propertyPreviewTimerRef.current !== null) window.clearTimeout(propertyPreviewTimerRef.current)
@@ -1442,99 +1394,17 @@ export function LayersPanel({ session, docked = false, sideDocked = false, onDoc
   const closeProperties = (): void => {
     const closingForm = flushPropertyPreview() ?? form
     if (!closingForm) return
-    const original = formOriginalRef.current
-    if (closingForm.targets.length > 1) {
-      const originals = formOriginalTargetsRef.current
-      if (closingForm.batchChanges.length === 0) {
-        formOriginalRef.current = null
-        formOriginalTargetsRef.current = []
-        setForm(null)
-        return
-      }
-      store.mutateActive((active) => {
-        for (const snapshot of originals) {
-          const target = snapshot.kind === 'group'
-            ? active.document.groups.find((group) => group.id === snapshot.id)
-            : active.document.layers.find((layer) => layer.id === snapshot.id)
-          if (!target) continue
-          target.name = snapshot.name
-          target.opacity = snapshot.opacity
-          target.blendMode = snapshot.blendMode
-          if (snapshot.kind === 'group') (target as LayerGroup).cumulativeBlend = snapshot.cumulativeBlend
-          target.locked = snapshot.locked
-          if (snapshot.displayColor) target.displayColor = { ...snapshot.displayColor }
-          else delete target.displayColor
-          target.description = snapshot.description
-        }
-        active.document.dirty = formWasDirtyRef.current
-      }, false)
-      const committedName = closingForm.name.trim()
-      const committedDescription = closingForm.description.trim()
-      session.history.beginCompound()
-      for (const snapshot of originals) {
-        if (snapshot.kind === 'group') {
-          const group = session.document.groups.find((candidate) => candidate.id === snapshot.id)
-          if (group) {
-            const visualLocked = isGroupEffectivelyLocked(session.document, group)
-            const name = closingForm.batchChanges.includes('name') && committedName ? committedName : snapshot.name
-            const opacity = closingForm.batchChanges.includes('opacity') && !visualLocked ? closingForm.opacity / 100 : snapshot.opacity
-            const blendMode = closingForm.batchChanges.includes('blendMode') && !visualLocked ? closingForm.blendMode : snapshot.blendMode
-            const cumulativeBlend = closingForm.batchChanges.includes('cumulativeBlend') && !visualLocked ? closingForm.cumulativeBlend : snapshot.cumulativeBlend
-            const displayColor = closingForm.batchChanges.includes('displayColor') ? closingForm.displayColor : snapshot.displayColor
-            const description = closingForm.batchChanges.includes('description') ? committedDescription : snapshot.description
-            if (snapshot.name === name && snapshot.opacity === opacity && snapshot.blendMode === blendMode && snapshot.cumulativeBlend === cumulativeBlend && sameColor(snapshot.displayColor, displayColor) && snapshot.description === description) continue
-            store.setGroupProperties(group.id, name, opacity, blendMode, snapshot.locked, displayColor, description, cumulativeBlend)
-          }
-        } else {
-          const layer = session.document.layers.find((candidate) => candidate.id === snapshot.id)
-          if (layer) {
-            const visualLocked = isLayerEffectivelyLocked(session.document, layer)
-            const name = closingForm.batchChanges.includes('name') && committedName ? committedName : snapshot.name
-            const opacity = closingForm.batchChanges.includes('opacity') && !visualLocked ? closingForm.opacity / 100 : snapshot.opacity
-            const blendMode = closingForm.batchChanges.includes('blendMode') && !visualLocked ? closingForm.blendMode : snapshot.blendMode
-            const displayColor = closingForm.batchChanges.includes('displayColor') ? closingForm.displayColor : snapshot.displayColor
-            const description = closingForm.batchChanges.includes('description') ? committedDescription : snapshot.description
-            if (snapshot.name === name && snapshot.opacity === opacity && snapshot.blendMode === blendMode && sameColor(snapshot.displayColor, displayColor) && snapshot.description === description) continue
-            store.setLayerPropertiesWithBlend(layer.id, name, opacity, blendMode, snapshot.locked, displayColor, description)
-          }
-        }
-      }
-      session.history.endCompound(t('layers.multipleProperties'))
-      formOriginalRef.current = null
-      formOriginalTargetsRef.current = []
-      setForm(null)
-      return
-    }
-    const committed = { ...closingForm, name: closingForm.name.trim() || original?.name || closingForm.name, description: closingForm.description.trim() }
-    const changed = Boolean(original) && (original!.name !== committed.name || original!.opacity !== committed.opacity || original!.blendMode !== committed.blendMode || original!.cumulativeBlend !== committed.cumulativeBlend || original!.locked !== committed.locked || original!.description !== committed.description || !sameColor(original!.displayColor, committed.displayColor))
-    if (original) {
-      store.mutateActive((active) => {
-        const target = original.kind === 'group'
-          ? active.document.groups.find((group) => group.id === original.id)
-          : active.document.layers.find((layer) => layer.id === original.id)
-        if (target) {
-          target.name = original.name
-          target.opacity = original.opacity / 100
-          target.blendMode = original.blendMode
-          if (original.kind === 'group') (target as LayerGroup).cumulativeBlend = original.cumulativeBlend
-          target.locked = original.locked
-          if (original.displayColor) target.displayColor = { ...original.displayColor }
-          else delete target.displayColor
-          target.description = original.description
-        }
-        active.document.dirty = formWasDirtyRef.current
-      }, false)
-      if (changed) {
-        if (committed.kind === 'group') store.setGroupProperties(committed.id, committed.name, committed.opacity / 100, committed.blendMode, committed.locked, committed.displayColor, committed.description, committed.cumulativeBlend)
-        else store.setLayerPropertiesWithBlend(committed.id, committed.name, committed.opacity / 100, committed.blendMode, committed.locked, committed.displayColor, committed.description)
-      }
-    }
-    formOriginalRef.current = null
-    formOriginalTargetsRef.current = []
+    const transactionId = propertyTransactionRef.current
+    if (transactionId) store.commitLayerPropertiesTransaction(transactionId, propertyValues(closingForm), propertyFields(closingForm))
+    propertyTransactionRef.current = null
     setForm(null)
   }
   useEffect(() => () => {
     if (propertyPreviewTimerRef.current !== null) window.clearTimeout(propertyPreviewTimerRef.current)
+    pendingPropertyPreviewRef.current = null
+    const transactionId = propertyTransactionRef.current
+    if (transactionId) useWorkspace.getState().cancelLayerPropertiesTransaction(transactionId)
+    propertyTransactionRef.current = null
   }, [])
   useEffect(() => {
     if (!form) return
@@ -1701,7 +1571,7 @@ export function LayersPanel({ session, docked = false, sideDocked = false, onDoc
     if (drag && target && dropTargetBlockedByGroups(target, drag.groupIds)) target = null
     dragRef.current = null
     const compound = Boolean(drag?.moved && target && drag.copy)
-    if (compound) session.history.beginCompound()
+    if (compound) store.beginLayerPanelTransaction(session.document.id)
     if (drag?.moved && target) {
       if (drag.copy) {
         const copies = store.duplicateSelectedLayerRows()
@@ -1722,7 +1592,7 @@ export function LayersPanel({ session, docked = false, sideDocked = false, onDoc
       if (drag.row.kind === 'group') store.selectGroup(drag.row.id)
       else store.selectLayer(drag.row.id)
     }
-    if (compound) session.history.endCompound(t('layers.copyMoveHistory'))
+    if (compound) store.commitLayerPanelTransaction(session.document.id, t('layers.copyMoveHistory'))
     setDraggingIds([])
     setDraggingGroupId(null)
     setDraggingCopy(false)
