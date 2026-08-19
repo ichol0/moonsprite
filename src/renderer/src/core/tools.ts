@@ -392,7 +392,7 @@ export function paintBrush(
       if (!claimBrushCoverage(edit, paintCoverageKey, index, scaledCoverage, coverageKey !== undefined || gradient !== undefined)) continue
       const eraseResolvedColor = gradient ? resolvedColor.a === 0 : color.a === 0
       if (eraseResolvedColor) {
-        const eraseCoverage = offset.color && gradient ? Math.round(scaledCoverage * offset.color.a / 255) : scaledCoverage
+        const eraseCoverage = offset.color ? Math.round(scaledCoverage * offset.color.a / 255) : scaledCoverage
         if (eraseCoverage === 0) continue
         if (eraseCoverage === 255) recordPixel(document, layer, edit, index, 0)
         else {
@@ -511,8 +511,8 @@ const orderedDither4x4 = [
   15, 7, 13, 5
 ]
 
-// Image brushes are deliberately one-color stamps. Gray changes the density of
-// painted pixels rather than the selected color's alpha or RGB values.
+// Colored image brushes preserve source RGBA pixels. Coverage conversion remains
+// only for legacy mask brushes and built-in procedural fill textures.
 const defaultImageBrushSettings: ImageBrushSettings = { mode: 'dither', threshold: 128, blackPoint: 0, whitePoint: 255, invert: false }
 const imageBrushMaskCache = new WeakMap<ImageBrush, Map<string, BrushMaskPoint[]>>()
 const solidBrushMaskCache = new Map<string, BrushMaskPoint[]>()
@@ -1374,7 +1374,9 @@ export function floodFill(document: SpriteDocument, layer: RasterLayer, startX: 
     const originY = brushPaintMode === 'pattern-source' ? imageBrush.sourceY ?? 0 : brushPaintMode === 'pattern-target' ? startY : 0
     const sampleX = x - originX
     const sampleY = y - originY
-    const sampleSize = brushPaintMode === 'paint' ? brushSize : Math.max(imageBrush.width, imageBrush.height)
+    const sampleSize = imageBrush.id.startsWith('procedural:') || brushPaintMode !== 'paint'
+      ? Math.max(imageBrush.width, imageBrush.height)
+      : brushSize
     if (imageBrush.id.startsWith('procedural:')) return imageBrushCoverage(proceduralBrushCoverageAt(imageBrush.id, sampleX, sampleY, sampleSize, imageBrush.proceduralSettings), sampleX, sampleY, imageBrushSettings, proceduralAntialiasStrength)
     return imageBrush.intrinsicSize ? imageBrush.coverage[wrappedIndex(sampleY, imageBrush.height) * imageBrush.width + wrappedIndex(sampleX, imageBrush.width)] ?? 0 : imageBrushCoverageAt(imageBrush, sampleX, sampleY, sampleSize, imageBrushSettings)
   }

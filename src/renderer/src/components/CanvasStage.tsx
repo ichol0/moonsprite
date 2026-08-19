@@ -38,6 +38,7 @@ import { publishCanvasColorSample, publishCanvasColorSamplingCompleted } from '@
 import { eyedropperMagnifierPixelScale } from '@/core/eyedropper-magnifier'
 import { resolveBrushDynamics, smoothBrushSizeEnvelope } from '@/core/pressure'
 import { airbrushParticleSize, airbrushSymmetryPoints, generateAirbrushParticles } from '@/core/airbrush'
+import { activeBrushInputsForTool } from '@/core/brushes'
 import { clampSliceRect, moveSliceRect, moveSliceRects, sliceAtPoint } from '@/core/slices'
 import { animationCelKey, animationCelOffsetsForKeys, ensureAnimationDocument, parseAnimationCelKey, resolveAnimationCel } from '@/core/animation'
 import { activeTilemapCelTarget, applyTilemapDocumentEdit, captureTilemapSelectionMove, previewTilemapSelectionMove, tilemapEditPreviewTilePixels, writeTilemapCell } from '@/core/tilemap-document'
@@ -253,14 +254,14 @@ export function CanvasStage({ session }: { session: DocumentSession }) {
     && isLayerEffectivelyVisible(session.document, activeLayer)
     && !isLayerEffectivelyLocked(session.document, activeLayer)
     && isToolAvailableForSession(session, session.tool)
-  const brushToolEnabled = session.tool === 'pencil' || session.tool === 'eraser' || session.tool === 'line' || (session.tool === 'fill' && fillKind === 'bucket')
-  const activeBrushImage = brushToolEnabled ? session.brushImage : null
-  const activeBrushTexture = brushToolEnabled ? session.brushTexture : 'solid'
+  const brushInputs = activeBrushInputsForTool(session.tool, fillKind, session.brushImage, session.brushTexture)
+  const activeBrushImage = brushInputs.imageBrush
+  const activeBrushTexture = brushInputs.texture
   const activeBrushPaintMode = activeBrushImage?.intrinsicSize ? session.brushPaintMode : 'paint'
   const activeBrushPreviewMode = activeBrushPaintMode
   const brushDynamicsPreviewIsSinglePixel = (session.tool === 'pencil' || session.tool === 'eraser')
     && Object.values(session.brushDynamics.effects).some((mapping) => mapping.sensor !== null)
-  const proceduralAntialiasStrength = brushToolEnabled && session.proceduralAntialias && activeBrushImage?.id.startsWith('procedural:') ? session.proceduralAntialiasStrength : 0
+  const proceduralAntialiasStrength = brushInputs.fillTextureEnabled && session.proceduralAntialias && activeBrushImage?.id.startsWith('procedural:') ? session.proceduralAntialiasStrength : 0
   const brushPatternOrigin = (point: Point): Point => {
     const anchor = brushStampAnchor(session.brushSize, activeBrushImage)
     return { x: point.x - anchor.x, y: point.y - anchor.y }
@@ -4450,7 +4451,7 @@ export function CanvasStage({ session }: { session: DocumentSession }) {
       const profiler = operationProbe?.recordOperationStage
         ? { record: (stage: string, duration: number, detail?: Record<string, number | string | boolean>) => operationProbe.recordOperationStage?.(stage, duration, detail) }
         : undefined
-      const edit = floodFillSymmetric(session.document, editableLayer, point.x, point.y, activeColor(event.button), pixelEditSelection, session.fillMode === 'contiguous', activeBrushImage, session.brushSize, session.brushImageSettings, activeBrushTexture, Math.max(1, Math.round(session.brushSize / 8)), proceduralAntialiasStrength, activeBrushPaintMode, session.symmetryAxes, symmetryCenter, session.fillTolerance, profiler)
+      const edit = floodFillSymmetric(session.document, editableLayer, point.x, point.y, activeColor(event.button), pixelEditSelection, session.fillMode === 'contiguous', activeBrushImage, session.brushSize, session.brushImageSettings, activeBrushTexture, session.brushTextureScale, proceduralAntialiasStrength, activeBrushPaintMode, session.symmetryAxes, symmetryCenter, session.fillTolerance, profiler)
       if (edit) {
         const commitStartedAt = operationProbe?.recordOperationStage ? performance.now() : 0
         state.commitPixelEdit(edit, activeBrushImage || activeBrushTexture !== 'solid' ? t('canvas.history.brushFill') : session.fillMode === 'contiguous' ? t('canvas.history.contiguousFill') : t('canvas.history.nonContiguousFill'))

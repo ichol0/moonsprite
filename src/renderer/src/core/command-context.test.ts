@@ -7,6 +7,7 @@ describe('command context', () => {
     expect(resolveDeleteCommand('layers', true)).toBe('layers')
     expect(resolveDeleteCommand('palette', true)).toBe('palette')
     expect(resolveDeleteCommand('tileset', true)).toBe('tileset')
+    expect(resolveDeleteCommand('brushes', true)).toBe('brushes')
   })
 
   it('adds Backspace as an alias without bypassing the configured Delete shortcut', () => {
@@ -21,6 +22,7 @@ describe('command context', () => {
     expect(resolveCopyCommand('canvas', true)).toBe('selection')
     expect(resolveCopyCommand('palette', true)).toBeNull()
     expect(resolveCopyCommand('tileset', true)).toBeNull()
+    expect(resolveCopyCommand('brushes', true)).toBeNull()
   })
 
   it('gives an open outline dialog exclusive ownership of Enter', () => {

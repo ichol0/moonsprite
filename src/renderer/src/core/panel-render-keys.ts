@@ -27,6 +27,7 @@ interface PanelSessionState {
   activeLayerMaskId?: string | null
   layerMaskIsolatedView?: boolean
   view: { relativeLuminance: boolean }
+  brushImageId?: string | null
 }
 
 const colorKey = (color: RgbaColor): string => `${color.r},${color.g},${color.b},${color.a}`
@@ -92,4 +93,10 @@ export const tilesetPanelRenderKey = (session: PanelSessionState): string => [
   colorKey(session.primaryColor),
   session.document.layers.filter((layer) => layer.kind === 'tilemap').map((layer) => `${layer.id}:${layer.name}:${layer.tilemapTilesetId ?? ''}`).join('|'),
   (session.document.tilesets ?? []).map((tileset) => `${tileset.id}:${tileset.name}:${tileset.tileWidth}:${tileset.tileHeight}:${tileset.columns}:${tileset.rows}:${tileset.tileIds.join(',')}:${getRasterContentRevision(tileset.pixels)}`).join('|')
+].join(';')
+
+export const brushPanelRenderKey = (session: PanelSessionState): string => [
+  session.document.id,
+  session.brushImageId ?? '',
+  (session.document.customBrushes ?? []).map((brush) => `${brush.id}:${brush.name}:${brush.width}:${brush.height}`).join('|')
 ].join(';')

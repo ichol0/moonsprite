@@ -86,4 +86,27 @@ describe('document drop service', () => {
     await waitFor(() => expect(openPath).toHaveBeenCalledWith('D:\\Art\\sprite.png'))
     stop()
   })
+
+  it('lets a positioned drop target claim files before document opening', async () => {
+    let nativeHandler!: (event: Event<DragDropEvent>) => void
+    const openPath = vi.fn(async () => true)
+    const claimPaths = vi.fn(() => true)
+    const stop = startDocumentDropService({
+      openPath,
+      claimPaths,
+      pathForFile: () => '',
+      desktop: true,
+      devicePixelRatio: 2,
+      nativeSources: [{ onDragDropEvent: vi.fn(async (handler) => { nativeHandler = handler; return vi.fn() }) }],
+      rustSubscriber: async () => () => undefined,
+      warn: vi.fn()
+    })
+
+    await waitFor(() => expect(nativeHandler).toBeTypeOf('function'))
+    nativeHandler({ ...dropEvent(['D:\\Art\\brush.png']), payload: { type: 'drop', paths: ['D:\\Art\\brush.png'], position: { x: 80, y: 40 } } as DragDropEvent })
+
+    await waitFor(() => expect(claimPaths).toHaveBeenCalledWith(['D:\\Art\\brush.png'], { x: 40, y: 20 }))
+    expect(openPath).not.toHaveBeenCalled()
+    stop()
+  })
 })

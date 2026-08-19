@@ -9,13 +9,15 @@ import { consumePendingCanvasGestureHistory } from '@/core/canvas-input'
 import { directSourceImageSaveTarget, fileNameFromPath } from '@/core/document-files'
 import { openProgress } from '@/core/open-progress'
 import { saveProgress } from '@/core/save-progress'
-import { createSelectionBrush } from '@/core/brushes'
+import { createSelectionBrush, encodeBrushPng } from '@/core/brushes'
 import { createHorizontalSpriteSheetDocument } from '@/core/sprite-sheet'
 import { applySelectionTransform, applySelectionTranslationCommit, applySelectionTranslationPreview, captureSelectionTransform, clampSelection, clearSelection, fillSelectionOrCanvas, flipLayer, flipSelection, flipSelectionTransformSource, moveSelection, outlineSelection, replaceLayerColor, restoreSelectionTranslationPreview, selectionTranslationPreviewEdit, transformSelectionCopy, type SelectionTransformLayerState, type SelectionTransformSource, type SelectionTranslationPreview } from '@/core/tools'
 import { applyRelativeLuminance, colorEquals, packColor, pixelIndex, relativeLuminanceColor, unpackColor } from '@/core/raster'
 import { combineSelection, flipSelectionMask, invertSelectionMask, selectionContains, shiftSelection, transformSelectionMask, type SelectionShearTransform } from '@/core/selection'
 import { recordRecentProject } from '@/core/home-history'
 import { createProceduralBrush, isProceduralBrushId, normalizeProceduralBrushSettings, PROCEDURAL_BRUSH_IDS } from '@/core/brushes'
+import { publishBrushLibraryChanged } from '@/core/brush-library-events'
+import { brushLibraryLocation } from '@/core/brush-library-location'
 import { mergeLayerDown, mergeLayerGroup, mergeRasterLayers, mergeVisibleLayers as mergeVisibleDocumentLayers, type LayerMergeSuccess } from '@/core/layer-merge'
 import { applyColorAdjustment, type ColorAdjustment } from '@/core/adjustments'
 import { assignGroupToGroup as assignGroupToGroupOperation, assignGroupToRoot as assignGroupToRootOperation, assignLayersAboveGroup as assignLayersAboveGroupOperation, assignLayersToGroup as assignLayersToGroupOperation, assignLayersToRoot as assignLayersToRootOperation, canMoveGroupInto, createLayerGroup as createLayerGroupOperation, moveGroupToRootEdge as moveGroupToRootEdgeOperation, moveLayerPanelRows as moveLayerPanelRowsOperation, moveLayersToRootEdge as moveLayersToRootEdgeOperation, positionGroupNextToLayer as positionGroupNextToLayerOperation, reorderGroup as reorderGroupOperation, reorderLayers as reorderLayersOperation, ungroupSelected as ungroupSelectedOperation, type LayerPanelRowMoveTarget } from '@/core/layer-operations'
@@ -29,13 +31,13 @@ import { resolveClipboardPlacement } from '@/core/clipboard-placement'
 import { cloneProceduralSettings, defaultToolSettings, loadToolSettings, normalizePersistedBrushProfile, saveToolSettings, type BrushTool, type PersistedBrushProfile, type PersistedToolSettings } from '@/core/tool-preferences'
 import { readStoredString } from '@/core/storage'
 import { persistProjectLayerPanelState } from '@/core/layer-panel-state'
-import { moveSymmetryCenter, type SymmetryAxes, type SymmetryCenter } from '@/core/symmetry'
+import { defaultSymmetryCenter, type SymmetryAxes, type SymmetryCenter } from '@/core/symmetry'
 import { brushPressureFromDynamics, migrateBrushPressureSettings, normalizeBrushPressureSettings, patchBrushDynamicsGradientDither, patchBrushDynamicsMapping, type BrushDynamicsEffect, type BrushDynamicsMapping, type BrushPressureSettings } from '@/core/pressure'
 import { cloneTextCelData, convertTextSurface, normalizeTextCelData, rasterizeText, translateTextCelData } from '@/core/text-raster'
 import { cloneLayerStyles, hasEnabledLayerStyles, layerStyleOutputBounds, layerStylesEqual, layerStylesHistoryBytes } from '@/core/layer-styles'
 import { renderBackgroundPatternIndexed, renderBackgroundPatternRgba, renderBackgroundTileIndexed, renderBackgroundTileRgba, type BackgroundPatternTile } from '@/core/background-patterns'
 import { activeTilemapCelTarget, applyTilemapDocumentEdit, applyTilemapSelectionCellMove, applyTilemapTilesetDocumentEdit, applyTilesetTileReferences, captureTilesetTileReferences, convertTilemapPixelEdit, rerenderTilesetReferences, rerenderTilesetTileReferences } from '@/core/tilemap-document'
-import { appendBlankTilesetTile, cloneTilemapCelData, cloneTileset, compactTilesetTileSlots, createBlankTileset, createTilemapCelData, deleteTilesetTiles as deleteTilesetTilesData, renderTilemapSurface, reorderTilesetTiles as reorderTilesetTilesData, setTilesetTileSlots as setTilesetTileSlotsData, tileRepeatFitZoom, tilemapCellBounds, tilemapCellIndexAtPoint, tilemapCellTranslationForSelection, tilemapEditBytes, tilemapTilesetEditBytes, tilemapTilesetEditHasChanges, wrapSelectionMaskForTileRepeat, writeTilesetTilePixels, type TilemapDrawingMode, type TilemapEdit, type TilemapTilesetEdit } from '@/core/tilemap'
+import { appendBlankTilesetTile, cloneTilemapCelData, cloneTileset, compactTilesetTileSlots, createBlankTileset, createTilemapCelData, deleteTilesetTiles as deleteTilesetTilesData, renderTilemapSurface, reorderTilesetTiles as reorderTilesetTilesData, setTilesetTileSlots as setTilesetTileSlotsData, sliceRasterSurfaceToTilemap, tileRepeatFitZoom, tilemapCellBounds, tilemapCellIndexAtPoint, tilemapCellTranslationForSelection, tilemapEditBytes, tilemapTilesetEditBytes, tilemapTilesetEditHasChanges, wrapSelectionMaskForTileRepeat, writeTilesetTilePixels, type TilemapDrawingMode, type TilemapEdit, type TilemapTilesetEdit } from '@/core/tilemap'
 import { exportDocumentFile, exportTimelapseFile, openDocumentFile, saveDocumentFile, type ExportOptions, type SaveAsOptions } from './document-file-service'
 import { RecoveryService } from './recovery-service'
 import { ClipboardService, selectionClipboardImage, type LayerClipboard, type LayerCollectionClipboard, type LayerMaskClipboard } from './clipboard-service'
@@ -1389,15 +1391,12 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       session.brushImage = { ...brush, colors: brush.colors?.slice(), paintColors: undefined }
       session.brushImageId = brush.id
       session.brushImageTemporary = true
-      session.brushPaintMode = 'pattern-source'
+      session.brushPaintMode = 'paint'
       session.selection = null
       session.selectionPivot = null
       session.tool = 'pencil'
-      session.document.customBrushes = [...(session.document.customBrushes ?? []).filter((item) => item.id !== brush.id), { id: brush.id, name: brush.name, width: brush.width, height: brush.height, coverage: brush.coverage.slice(), colors: brush.colors?.slice(), sourceX: brush.sourceX, sourceY: brush.sourceY }]
-      session.brushImageTemporary = false
       session.brushProfiles.pencil = brushProfileFromSession(session)
-      persistToolSettings(session)
-    })
+    }, false)
   },
   deleteProjectBrush(id) {
     get().mutateActive((session) => {
@@ -1411,14 +1410,30 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       rememberBrushProfile(session)
     })
   },
-  createBrushFromSelection() {
+  async createBrushFromSelection() {
     get().commitFloatingPaste()
     const session = activeSession(get())
     if (!session?.selection) { set({ message: tr('workspace.selectionRequired') }); return }
-    const brush = createSelectionBrush(session.document, session.selection, `project-brush-${createId('brush')}`, tr('brush.defaultName'))
+    const documentId = session.document.id
+    let brush: ImageBrush | null
+    try {
+      brush = createSelectionBrush(session.document, session.selection, `temporary-brush-${createId('brush')}`, tr('brush.defaultName'))
+    } catch (error) {
+      set({ message: error instanceof Error ? error.message : tr('brush.saveError') })
+      return
+    }
     if (!brush) { set({ message: tr('workspace.brushEmpty') }); return }
-    get().setTemporaryBrush(brush)
-    set({ message: tr('workspace.brushSaved') })
+    try {
+      const stored = await window.moonSprite.saveBrush(brush.name, encodeBrushPng(brush), true, brush.sourceX, brush.sourceY, brushLibraryLocation.getSnapshot())
+      publishBrushLibraryChanged()
+      if (get().activeId === documentId) {
+        get().setTemporaryBrush(brush)
+        get().setBrushImage({ ...brush, id: stored.id, name: stored.name, intrinsicSize: true })
+      }
+      set({ message: tr('workspace.brushSaved') })
+    } catch (error) {
+      set({ message: error instanceof Error ? error.message : tr('brush.saveError') })
+    }
   },
   setBrushImageSettings(settings) {
     get().mutateActive((session) => {
@@ -1870,7 +1885,23 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
   setWandTolerance(tolerance) { get().mutateActive((session) => { session.wandTolerance = Math.max(0, Math.min(255, Math.round(tolerance) || 0)); persistToolSettings(session) }, false) },
   setWandContiguous(contiguous) { get().mutateActive((session) => { session.wandContiguous = contiguous; persistToolSettings(session) }, false) },
   setPerfectPixels(enabled) { get().mutateActive((session) => { session.perfectPixels = enabled; persistToolSettings(session) }, false) },
-  setSymmetryAxis(axis, enabled) { get().mutateActive((session) => { session.symmetryAxes = { ...session.symmetryAxes, [axis]: enabled }; persistToolSettings(session) }, false) },
+  setSymmetryAxis(axis, enabled) {
+    get().mutateActive((session) => {
+      const initialized = session.symmetryAxesInitialized ?? {
+        horizontal: Boolean(session.symmetryAxes.horizontal),
+        vertical: Boolean(session.symmetryAxes.vertical),
+        diagonalUp: Boolean(session.symmetryAxes.diagonalUp),
+        diagonalDown: Boolean(session.symmetryAxes.diagonalDown),
+        rotational: Boolean(session.symmetryAxes.rotational)
+      }
+      if (enabled && !session.symmetryAxes[axis] && !initialized[axis]) {
+        session.symmetryCenter = defaultSymmetryCenter(session.document.width, session.document.height)
+      }
+      session.symmetryAxesInitialized = { ...initialized, [axis]: initialized[axis] || enabled }
+      session.symmetryAxes = { ...session.symmetryAxes, [axis]: enabled }
+      persistToolSettings(session)
+    }, false)
+  },
   setSymmetryCenter(center) { get().mutateActive((session) => { session.symmetryCenter = { ...center }; }, false) },
   resetSymmetryCenter() { get().mutateActive((session) => { session.symmetryCenter = { x: session.document.width / 2, y: session.document.height / 2 }; }, false) },
   setLastPencilPoint(point) { get().mutateActive((session) => { session.lastPencilPoint = point ? { ...point } : null }, false) },
@@ -3612,6 +3643,98 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     }
   },
 
+  async convertLayerToTilemap(layerId, options) {
+    get().commitFloatingPaste()
+    const current = activeSession(get())
+    if (!current) return
+    const sourceLayer = current.document.layers.find((candidate) => candidate.id === layerId)
+    if (!sourceLayer || sourceLayer.kind || hasEnabledLayerStyles(sourceLayer.layerStyles)) return
+    const documentId = current.document.id
+    try {
+      const tileWidth = Math.max(1, Math.trunc(options.tileWidth))
+      const tileHeight = Math.max(1, Math.trunc(options.tileHeight))
+      const layerName = options.name.trim() || sourceLayer.name
+      createTilemapCelData(current.document.width, current.document.height, tileWidth, tileHeight)
+      let converted = false
+      get().mutateActive((session) => {
+        if (session.document.id !== documentId) return
+        const document = session.document
+        const layer = document.layers.find((candidate) => candidate.id === layerId)
+        if (!layer || layer.kind || hasEnabledLayerStyles(layer.layerStyles)) return
+        syncActiveAnimationFrame(document)
+        const before = captureLayerContentSnapshot(document, layerId)
+        const beforeTileSelection = { tilesetId: session.selectedTilesetId, tileId: session.selectedTileId, secondaryTileId: session.secondaryTileId, mode: session.tilemapMode }
+        const timeline = ensureAnimationDocument(document)
+        const frameCels = timeline.frames.flatMap((frame) => {
+          const cel = timeline.cels.find((candidate) => candidate.layerId === layerId && candidate.frameId === frame.id)
+          if (!cel) return []
+          return [{ cel, surface: (resolveAnimationCel(timeline, cel) ?? cel).surface }]
+        })
+        let tileset = createBlankTileset(createId('tileset'), layerName, tileWidth, tileHeight, createId('tile'))
+        const convertedCels = frameCels.map(({ cel, surface }) => {
+          const sliced = sliceRasterSurfaceToTilemap(surface, document.palette, document.width, document.height, tileset, () => createId('tile'))
+          tileset = sliced.tileset
+          return { cel, tilemap: sliced.tilemap }
+        })
+        document.tilesets = [...(document.tilesets ?? []), tileset]
+        for (const { cel, tilemap } of convertedCels) {
+          delete cel.linkedCelId
+          delete cel.text
+          cel.tilemap = tilemap
+          cel.surface = renderTilemapSurface(
+            tilemap,
+            document.tilesets,
+            document.colorMode,
+            0,
+            0,
+            document.colorMode === 'indexed' ? (color) => paletteColorIdForCanvas(document, color) : undefined
+          )
+        }
+        layer.name = layerName
+        layer.kind = 'tilemap'
+        layer.tilemapTilesetId = tileset.id
+        delete layer.background
+        delete layer.layerStyles
+        refreshActiveAnimationFrame(document)
+        document.activeLayerId = layer.id
+        session.selectedGroupId = null
+        session.selectedGroupIds = []
+        session.selectedLayerIds = [layer.id]
+        session.layerSelectionAnchorId = layer.id
+        session.selectedTilesetId = tileset.id
+        session.selectedTileId = tileset.tileIds[0] ?? null
+        session.secondaryTileId = tileset.tileIds[0] ?? null
+        session.tilemapMode = 'hybrid'
+        session.selectedAnimationCellKeys = [animationCelKey(layer.id, timeline.activeFrameId)]
+        const after = captureLayerContentSnapshot(document, layerId)
+        const afterTileSelection = { tilesetId: session.selectedTilesetId, tileId: session.selectedTileId, secondaryTileId: session.secondaryTileId, mode: session.tilemapMode }
+        const restore = (
+          snapshot: ReturnType<typeof captureLayerContentSnapshot>,
+          tileSelection: { tilesetId: string | null; tileId: string | null; secondaryTileId: string | null; mode: TilemapDrawingMode }
+        ): void => {
+          restoreLayerContentSnapshot(document, snapshot)
+          session.selectedTilesetId = tileSelection.tilesetId
+          session.selectedTileId = tileSelection.tileId
+          session.secondaryTileId = tileSelection.secondaryTileId
+          session.tilemapMode = tileSelection.mode
+        }
+        session.history.push({
+          label: tr('workspace.history.convertToTilemapLayer'),
+          bytes: layerContentSnapshotBytes(before) + layerContentSnapshotBytes(after),
+          undo: () => restore(before, beforeTileSelection),
+          redo: () => restore(after, afterTileSelection),
+          invalidation: { kind: 'full' },
+          affectedLayerIds: [layerId],
+          requiresAnimationSync: false
+        })
+        converted = true
+      })
+      if (converted) requestTilesetPanelVisibility(true)
+    } catch (error) {
+      set({ message: error instanceof Error ? error.message : tr('workspace.canvasCreateError') })
+    }
+  },
+
   async createBackgroundLayer(pattern) {
     get().commitFloatingPaste()
     const current = activeSession(get())
@@ -3940,7 +4063,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     get().mutateActive((session) => {
       const document = session.document
       const layer = document.layers.find((candidate) => candidate.id === layerId)
-      if (!layer || (!layer.kind && !hasEnabledLayerStyles(layer.layerStyles))) return
+      if (!layer || (!layer.background && !layer.kind && !hasEnabledLayerStyles(layer.layerStyles))) return
       syncActiveAnimationFrame(document)
       const before = captureLayerContentSnapshot(document, layerId)
       const timeline = ensureAnimationDocument(document)
@@ -3997,10 +4120,11 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       delete layer.kind
       delete layer.tilemapTilesetId
       delete layer.layerStyles
+      delete layer.background
       removeTilesetSnapshots(document, rasterizedTilesets)
       refreshActiveAnimationFrame(document)
       const after = captureLayerContentSnapshot(document, layerId)
-      session.history.push({ label: tr('workspace.history.convertText'), bytes: layerContentSnapshotBytes(before) + layerContentSnapshotBytes(after), undo: () => restoreLayerContentSnapshot(document, before), redo: () => restoreLayerContentSnapshot(document, after), invalidation: { kind: 'full' }, affectedLayerIds: [layerId], requiresAnimationSync: false })
+      session.history.push({ label: tr('workspace.history.convertToRasterLayer'), bytes: layerContentSnapshotBytes(before) + layerContentSnapshotBytes(after), undo: () => restoreLayerContentSnapshot(document, before), redo: () => restoreLayerContentSnapshot(document, after), invalidation: { kind: 'full' }, affectedLayerIds: [layerId], requiresAnimationSync: false })
     })
   },
 

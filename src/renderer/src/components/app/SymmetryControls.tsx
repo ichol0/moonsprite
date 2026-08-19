@@ -4,6 +4,7 @@ import type { RgbaColor } from '@shared/types'
 import { ColorValueControl } from '@/components/ColorValueControl'
 import { FormField } from '@/components/FormField'
 import { NumberInput } from '@/components/NumberInput'
+import { RangeField } from '@/components/RangeField'
 import { MAX_SYMMETRY_AXIS_THICKNESS, MIN_SYMMETRY_AXIS_THICKNESS, loadEditorPreferences, saveEditorPreferences, type SymmetryAxisPreferences } from '@/core/file-preferences'
 import type { SymmetryAxes, SymmetryMode } from '@/core/symmetry'
 import { useI18n } from '@/components/I18nProvider'
@@ -147,7 +148,7 @@ export function SymmetryControls({ axes, onAxisToggle, onResetCenter }: Symmetry
       </button>
       {settingsOpen && <section className="symmetry-axis-settings" aria-label={t('toolOptions.adjustSymmetryAxis')}>
         <ColorValueControl color={preferences.color} density="regular" onChange={(color: RgbaColor) => updatePreferences({ color })} label={t('toolOptions.symmetryAxisColor')} roleLabel={t('toolOptions.symmetryAxisColor')} />
-        <FormField className="symmetry-thickness-control" label={t('toolOptions.symmetryAxisThickness')}><div className="symmetry-thickness-input" onPointerDown={() => setThicknessSliderOpen(true)}><NumberInput aria-label={t('toolOptions.symmetryAxisThickness')} density="compact" min={MIN_SYMMETRY_AXIS_THICKNESS} max={MAX_SYMMETRY_AXIS_THICKNESS} suffix="px" value={preferences.thickness} live onValueChange={(thickness) => updatePreferences({ thickness })} onFocus={() => setThicknessSliderOpen(true)} />{thicknessSliderOpen && <div className="symmetry-thickness-slider" role="dialog" aria-label={t('toolOptions.symmetryAxisThickness')}><input aria-label={t('toolOptions.symmetryAxisThickness')} type="range" min={MIN_SYMMETRY_AXIS_THICKNESS} max={MAX_SYMMETRY_AXIS_THICKNESS} value={preferences.thickness} onChange={(event) => updatePreferences({ thickness: Number(event.target.value) })} /><strong>{preferences.thickness}px</strong></div>}</div></FormField>
+        <FormField className="symmetry-thickness-control" label={t('toolOptions.symmetryAxisThickness')}><div className="symmetry-thickness-input" onPointerDown={() => setThicknessSliderOpen(true)}><NumberInput aria-label={t('toolOptions.symmetryAxisThickness')} density="compact" min={MIN_SYMMETRY_AXIS_THICKNESS} max={MAX_SYMMETRY_AXIS_THICKNESS} suffix="px" value={preferences.thickness} live onValueChange={(thickness) => updatePreferences({ thickness })} onFocus={() => setThicknessSliderOpen(true)} />{thicknessSliderOpen && <div className="symmetry-thickness-slider" role="dialog" aria-label={t('toolOptions.symmetryAxisThickness')}><RangeField ariaLabel={t('toolOptions.symmetryAxisThickness')} density="compact" min={MIN_SYMMETRY_AXIS_THICKNESS} max={MAX_SYMMETRY_AXIS_THICKNESS} suffix="px" value={preferences.thickness} onChange={(thickness) => updatePreferences({ thickness })} /></div>}</div></FormField>
       </section>}
     </div>,
     document.body

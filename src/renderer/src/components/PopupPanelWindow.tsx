@@ -14,7 +14,8 @@ const POPUP_PANEL_DEFAULT_SIZES: Record<WorkspacePanelId, { width: number; heigh
   palette: { width: 360, height: 520 },
   layers: { width: 760, height: 520 },
   preview: { width: 360, height: 380 },
-  tileset: { width: 420, height: 520 }
+  tileset: { width: 420, height: 520 },
+  brushes: { width: 380, height: 480 }
 }
 
 export function popupPanelInitialPosition(id: WorkspacePanelId, anchor: PopupPanelAnchor, viewport: ViewportSize): FloatingPosition {

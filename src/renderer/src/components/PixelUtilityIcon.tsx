@@ -10,6 +10,7 @@ const utilityIconPaths = {
   tileModeCreate: 'M2 3h7v1H2zM2 4h1v4H2zM8 4h1v1H8zM7 5h1v1H7zM6 6h3v1H6zM3 7h3v1H3zM7 7h1v1H7z',
   tileModeHybrid: 'M2 3h5v1H2zM2 4h1v2H2zM6 4h3v1H6zM2 5h5v1H2zM8 5h1v3H8zM3 6h1v1H3zM3 7h6v1H3z',
   autoSlice: 'M2 2h7v7H2zM4 2h1v7H4zM7 2h1v7H7zM2 4h7v1H2zM2 7h7v1H2z',
+  convertTo: 'M2 2h6v3H6v1H3v3H2zM7 6h1v1h1v1H8v1H7V8H4V7h3z',
   delete: 'M4 2h3v1H4zM2 3h7v1H2zM3 4h5v1H3zM3 5h1v3H3zM5 5h1v3H5zM7 5h1v3H7zM3 8h5v1H3z',
   newFolder: 'M2 2h3v1H2zM1 3h7v1H1zM1 4h4v1H1zM6 4h3v1H6zM1 5h3v1H1zM7 5h2v1H7zM1 6h4v1H1zM6 6h3v1H6zM1 7h8v2H1z',
   ungroupFolder: 'M2 2h3v1H2zM1 3h7v1H1zM1 4h8v1H1zM1 5h3v1H1zM7 5h2v1H7zM1 6h8v3H1z',

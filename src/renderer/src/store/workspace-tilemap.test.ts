@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { MoonSpriteApi } from '@shared/types'
 import { activateAnimationFrame, addBlankAnimationFrame, animationCelKey, animationCelOffsetsForKeys, ensureAnimationDocument, setAnimationCelOffsetsForKeys } from '@/core/animation'
-import { createDocument, getActiveLayer, readLayerColorAt } from '@/core/document'
+import { createDocument, getActiveLayer, readLayerColorAt, writeLayerColor } from '@/core/document'
 import { beginPixelEdit, recordPixel } from '@/core/history'
 import { packColor } from '@/core/raster'
 import { activeTilemapCelTarget, captureTilemapSelectionMove, previewTilemapSelectionMove, tilemapEditPreviewTilePixels, writeTilemapCell } from '@/core/tilemap-document'
@@ -105,6 +105,77 @@ describe('workspace Tilemap layers', () => {
 
     window.removeEventListener('moonsprite:hide-workspace-panel', hidePanel)
     window.removeEventListener('moonsprite:show-workspace-panel', showPanel)
+  })
+
+  it('converts every frame of a background layer into cropped Tilemap cells and restores it through history', async () => {
+    const document = createDocument('convert tiles', 3, 2, 'rgba')
+    const layer = getActiveLayer(document)
+    layer.name = 'Source Layer'
+    layer.background = { mode: 'canvas' }
+    const firstFrameId = ensureAnimationDocument(document).activeFrameId
+    const red = { r: 220, g: 30, b: 40, a: 255 }
+    const green = { r: 30, g: 190, b: 70, a: 255 }
+    writeLayerColor(document, layer, 0, red)
+    const secondFrameId = addBlankAnimationFrame(document)
+    writeLayerColor(document, getActiveLayer(document), 0, green)
+    activateAnimationFrame(document, firstFrameId)
+    useWorkspace.getState().addSession(document)
+    const showPanel = vi.fn()
+    const hidePanel = vi.fn()
+    window.addEventListener('moonsprite:show-workspace-panel', showPanel)
+    window.addEventListener('moonsprite:hide-workspace-panel', hidePanel)
+
+    await useWorkspace.getState().convertLayerToTilemap(layer.id, { name: 'Converted Tiles', tileWidth: 2, tileHeight: 2 })
+
+    expect(layer).toMatchObject({ name: 'Converted Tiles', kind: 'tilemap' })
+    expect(layer.background).toBeUndefined()
+    expect(document.tilesets).toHaveLength(1)
+    expect(document.tilesets![0].tileIds).toHaveLength(3)
+    const convertedCels = ensureAnimationDocument(document).cels.filter((cel) => cel.layerId === layer.id)
+    expect(convertedCels).toHaveLength(2)
+    expect(convertedCels.every((cel) => cel.tilemap?.columns === 2 && cel.tilemap.rows === 1 && cel.surface?.width === 4)).toBe(true)
+    expect(convertedCels.every((cel) => cel.tilemap?.cells[1] === null)).toBe(true)
+    expect(readLayerColorAt(document, layer, 0, 0)).toEqual(red)
+    activateAnimationFrame(document, secondFrameId)
+    expect(readLayerColorAt(document, layer, 0, 0)).toEqual(green)
+    expect(useWorkspace.getState().sessions[0]).toMatchObject({ selectedTilesetId: document.tilesets![0].id, tilemapMode: 'hybrid' })
+    expect(showPanel).toHaveBeenCalledTimes(1)
+
+    useWorkspace.getState().undo()
+    expect(layer.name).toBe('Source Layer')
+    expect(layer.kind).toBeUndefined()
+    expect(layer.background).toEqual({ mode: 'canvas' })
+    expect(document.tilesets).toEqual([])
+    expect(ensureAnimationDocument(document).cels.filter((cel) => cel.layerId === layer.id).every((cel) => cel.tilemap === undefined)).toBe(true)
+    expect(readLayerColorAt(document, layer, 0, 0)).toEqual(green)
+    activateAnimationFrame(document, firstFrameId)
+    expect(readLayerColorAt(document, layer, 0, 0)).toEqual(red)
+    expect(hidePanel).toHaveBeenCalledTimes(1)
+
+    useWorkspace.getState().redo()
+    expect(layer).toMatchObject({ name: 'Converted Tiles', kind: 'tilemap' })
+    expect(layer.background).toBeUndefined()
+    expect(document.tilesets).toHaveLength(1)
+    expect(showPanel).toHaveBeenCalledTimes(2)
+
+    window.removeEventListener('moonsprite:show-workspace-panel', showPanel)
+    window.removeEventListener('moonsprite:hide-workspace-panel', hidePanel)
+  })
+
+  it('converts a background layer to a normal layer in one reversible command', () => {
+    const document = createDocument('normal conversion', 2, 1, 'rgba')
+    const layer = getActiveLayer(document)
+    layer.background = { mode: 'canvas' }
+    useWorkspace.getState().addSession(document)
+
+    useWorkspace.getState().rasterizeLayer(layer.id)
+    expect(layer.background).toBeUndefined()
+
+    useWorkspace.getState().undo()
+    expect(layer.background).toEqual({ mode: 'canvas' })
+
+    useWorkspace.getState().redo()
+    expect(layer.background).toBeUndefined()
   })
 
   it('creates the first real tile when original editing starts from the transparent placeholder', async () => {

@@ -82,7 +82,8 @@
 - `TextInput`、`NumberInput`、`ThemedSelect` 默认使用 34px 标准字段高度。
 - 工具属性栏可显式使用 26px 紧凑变体。
 - 标签、控件、说明与悬浮描述使用 `FormField`，禁止在弹窗和首选项里重复拼装字段布局。
-- 同时包含标签、连续滑块和数字输入的参数使用 `RangeField`，由 `compact` / `regular` 密度决定字号与高度，不得在各弹窗重新实现一套滑块行。
+- 通用单值滑块使用 `RangeField`：轨道保持直角并以左侧填充表达进度，数值与单位始终居中显示在轨道内部；由 `compact` / `regular` 密度决定字号与高度，不得在各弹窗重新实现一套滑块行。颜色渐变条和双端范围控件可保留专用结构，但同样不得使用圆角滑块。
+- 所有滚动区域使用组件库像素滚动条；共享样式必须提供全局兜底，新增 `overflow: auto/scroll` 时不得回退到系统原生滚动条或显示上下箭头。
 - 独立复选项使用 `CheckboxField`，底层像素状态由 `PixelCheckbox` 提供。
 - 互斥模式使用 `SegmentedControl`，选项描述统一通过 Tooltip 展示。
 - 颜色值按钮使用 `ColorValueControl` 的 `compact`、`regular`、`emphasized` 显式密度，不允许父容器覆盖按钮高度。

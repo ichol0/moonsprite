@@ -1,15 +1,17 @@
-export type EditorCommandScope = 'canvas' | 'layers' | 'palette' | 'tileset'
+export type EditorCommandScope = 'canvas' | 'layers' | 'palette' | 'tileset' | 'brushes'
 
 export const COMMAND_SCOPE_EVENT = 'moonsprite:command-scope'
 export const TILESET_DELETE_COMMAND_EVENT = 'moonsprite:delete-tileset-selection'
+export const BRUSH_LIBRARY_DELETE_COMMAND_EVENT = 'moonsprite:delete-brush-selection'
 
-export type DeleteCommandTarget = 'selection' | 'layers' | 'palette' | 'tileset' | null
+export type DeleteCommandTarget = 'selection' | 'layers' | 'palette' | 'tileset' | 'brushes' | null
 export type CopyCommandTarget = 'selection' | 'layers' | null
 
 export function resolveDeleteCommand(scope: EditorCommandScope, hasSelection: boolean): DeleteCommandTarget {
   if (scope === 'layers') return 'layers'
   if (scope === 'palette') return 'palette'
   if (scope === 'tileset') return 'tileset'
+  if (scope === 'brushes') return 'brushes'
   return hasSelection ? 'selection' : null
 }
 

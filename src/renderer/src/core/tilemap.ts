@@ -1,6 +1,7 @@
-import type { AnimationCelSurface, ColorMode, RgbaColor, SelectionMask, SelectionRect, TilemapCelData, TilemapCell, TileRepeatMode, Tileset } from '@shared/types'
-import { packColor, relativeLuminanceColor } from './raster'
+import type { AnimationCelSurface, ColorMode, PaletteEntry, RgbaColor, SelectionMask, SelectionRect, TilemapCelData, TilemapCell, TileRepeatMode, Tileset } from '@shared/types'
+import { packColor, relativeLuminanceColor, unpackColor } from './raster'
 import { balancedStairLinePoints } from './pixel-line'
+import { readSurfacePackedLocal } from './runtime-raster'
 import { combineSelection, rasterLinePoints, selectionContains } from './selection'
 
 export const MAX_TILE_SIZE = 256
@@ -880,6 +881,58 @@ export const findTilesetTileByPixels = (tileset: Tileset, pixels: Uint8ClampedAr
     if (equal) return tileset.tileIds[tileIndex]
   }
   return null
+}
+
+export interface RasterSurfaceTilemapSlice {
+  tilemap: TilemapCelData
+  tileset: Tileset
+}
+
+/** Crops one raster cel to the canvas grid and reuses identical RGBA tiles. */
+export const sliceRasterSurfaceToTilemap = (
+  surface: AnimationCelSurface | undefined,
+  palette: readonly PaletteEntry[],
+  canvasWidth: number,
+  canvasHeight: number,
+  tileset: Tileset,
+  createTileId: () => string
+): RasterSurfaceTilemapSlice => {
+  const tilemap = createTilemapCelData(canvasWidth, canvasHeight, tileset.tileWidth, tileset.tileHeight)
+  if (!surface) return { tilemap, tileset }
+  const paletteById = surface.format === 'indexed'
+    ? new Map(palette.map((entry) => [entry.id, entry.color]))
+    : null
+  let nextTileset = tileset
+
+  for (let row = 0; row < tilemap.rows; row += 1) for (let column = 0; column < tilemap.columns; column += 1) {
+    const pixels = new Uint8ClampedArray(tilemap.tileWidth * tilemap.tileHeight * 4)
+    let visible = false
+    for (let y = 0; y < tilemap.tileHeight; y += 1) for (let x = 0; x < tilemap.tileWidth; x += 1) {
+      const canvasX = column * tilemap.tileWidth + x
+      const canvasY = row * tilemap.tileHeight + y
+      if (canvasX >= canvasWidth || canvasY >= canvasHeight) continue
+      const localX = canvasX - surface.offsetX
+      const localY = canvasY - surface.offsetY
+      if (localX < 0 || localY < 0 || localX >= surface.width || localY >= surface.height) continue
+      const packed = readSurfacePackedLocal(surface, localX, localY)
+      const color = surface.format === 'rgba' ? unpackColor(packed) : paletteById?.get(packed)
+      if (!color || color.a === 0) continue
+      const offset = (y * tilemap.tileWidth + x) * 4
+      pixels[offset] = color.r
+      pixels[offset + 1] = color.g
+      pixels[offset + 2] = color.b
+      pixels[offset + 3] = color.a
+      visible = true
+    }
+    if (!visible) continue
+    let tileId = findTilesetTileByPixels(nextTileset, pixels)
+    if (!tileId) {
+      tileId = createTileId()
+      nextTileset = appendTilesetTile(nextTileset, tileId, pixels)
+    }
+    tilemap.cells[row * tilemap.columns + column] = { tilesetId: nextTileset.id, tileId }
+  }
+  return { tilemap, tileset: nextTileset }
 }
 
 export const deleteTilesetTiles = (tileset: Tileset, requestedTileIds: readonly string[]): Tileset | null => {

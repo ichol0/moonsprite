@@ -1,12 +1,47 @@
-import type { ImageBrush, ProceduralBrushId, ProceduralBrushSettings, SelectionMask, SpriteDocument, StoredBrush } from '@shared/types'
+import type { BrushTexture, FillKind, ImageBrush, ProceduralBrushId, ProceduralBrushSettings, SelectionMask, SpriteDocument, StoredBrush, ToolId } from '@shared/types'
 import { getActiveLayer, readLayerColor, readLayerColorAt } from './document'
 import { encodePng } from './png-encode'
 import { selectionContains } from './selection'
 import { packColor, unpackColor } from './raster'
 import { translateCurrent as tr, type TranslationKey } from './localization'
 
-const MAX_SOURCE_PIXELS = 16 * 1024 * 1024
-const MAX_BRUSH_DIMENSION = 256
+export const MAX_BRUSH_DIMENSION = 256
+
+export interface ActiveBrushInputs {
+  imageBrush: ImageBrush | null
+  texture: BrushTexture
+  fillTextureEnabled: boolean
+}
+
+export function activeBrushInputsForTool(tool: ToolId, fillKind: FillKind, imageBrush: ImageBrush | null, texture: BrushTexture): ActiveBrushInputs {
+  const fillTextureEnabled = tool === 'fill' && fillKind === 'bucket'
+  const supportsImageBrush = tool === 'pencil' || tool === 'eraser' || tool === 'line' || fillTextureEnabled
+  return {
+    imageBrush: supportsImageBrush && (fillTextureEnabled || !imageBrush?.id.startsWith('procedural:')) ? imageBrush : null,
+    texture: fillTextureEnabled ? texture : 'solid',
+    fillTextureEnabled
+  }
+}
+
+const assertBrushDimensions = (width: number, height: number, name: string): void => {
+  if (width > MAX_BRUSH_DIMENSION || height > MAX_BRUSH_DIMENSION) {
+    throw new Error(tr('core.brush.dimensionLimit', { name, limit: MAX_BRUSH_DIMENSION }))
+  }
+}
+
+export function createImageBrushFromRgba(id: string, name: string, width: number, height: number, pixels: Uint8ClampedArray): ImageBrush {
+  assertBrushDimensions(width, height, name)
+  if (pixels.length !== width * height * 4) throw new Error(tr('core.brush.invalidPixels', { name }))
+  const coverage = new Uint8Array(width * height)
+  const colors = new Uint32Array(width * height)
+  for (let index = 0; index < coverage.length; index += 1) {
+    const offset = index * 4
+    const color = { r: pixels[offset] ?? 0, g: pixels[offset + 1] ?? 0, b: pixels[offset + 2] ?? 0, a: pixels[offset + 3] ?? 0 }
+    coverage[index] = color.a
+    colors[index] = packColor(color)
+  }
+  return { id, name, width, height, coverage, colors, intrinsicSize: true }
+}
 
 export function createSelectionBrush(document: SpriteDocument, selection: SelectionMask, id: string, name: string): ImageBrush | null {
   const x = Math.max(0, Math.min(document.width, Math.floor(selection.x)))
@@ -16,6 +51,7 @@ export function createSelectionBrush(document: SpriteDocument, selection: Select
   const width = right - x
   const height = bottom - y
   if (width < 1 || height < 1) return null
+  assertBrushDimensions(width, height, name)
   const layer = getActiveLayer(document)
   const coverage = new Uint8Array(width * height)
   const colors = new Uint32Array(width * height)
@@ -57,29 +93,18 @@ export function encodeBrushPng(brush: ImageBrush): Uint8Array {
 export async function decodeImageBrush(stored: StoredBrush, bytes: Uint8Array): Promise<ImageBrush> {
   const { decodePng } = await import('./png')
   const document = decodePng(bytes, stored.name)
-  if (document.width * document.height > MAX_SOURCE_PIXELS) throw new Error(tr('core.brush.sourceTooLarge', { name: stored.name }))
+  assertBrushDimensions(document.width, document.height, stored.name)
   const layer = getActiveLayer(document)
-  const scale = Math.min(1, MAX_BRUSH_DIMENSION / Math.max(document.width, document.height))
-  const width = Math.max(1, Math.round(document.width * scale))
-  const height = Math.max(1, Math.round(document.height * scale))
+  const width = document.width
+  const height = document.height
   const coverage = new Uint8Array(width * height)
+  const colors = new Uint32Array(width * height)
   for (let index = 0; index < coverage.length; index += 1) {
-    const x = index % width
-    const y = Math.floor(index / width)
-    const sourceX = Math.min(document.width - 1, Math.floor((x + 0.5) * document.width / width))
-    const sourceY = Math.min(document.height - 1, Math.floor((y + 0.5) * document.height / height))
-    const color = readLayerColor(document, layer, sourceY * document.width + sourceX)
-    coverage[index] = stored.intrinsicSize ? color.a : Math.round(((color.r + color.g + color.b) / 3) * color.a / 255)
+    const color = readLayerColor(document, layer, index)
+    coverage[index] = color.a
+    colors[index] = packColor(color)
   }
-  const colors = stored.intrinsicSize ? new Uint32Array(width * height) : undefined
-  if (colors) for (let index = 0; index < colors.length; index += 1) {
-    const x = index % width
-    const y = Math.floor(index / width)
-    const sourceX = Math.min(document.width - 1, Math.floor((x + 0.5) * document.width / width))
-    const sourceY = Math.min(document.height - 1, Math.floor((y + 0.5) * document.height / height))
-    colors[index] = packColor(readLayerColor(document, layer, sourceY * document.width + sourceX))
-  }
-  return { id: stored.id, name: stored.name, width, height, coverage, colors, intrinsicSize: stored.intrinsicSize, sourceX: stored.sourceX, sourceY: stored.sourceY }
+  return { id: stored.id, name: stored.name, width, height, coverage, colors, intrinsicSize: true, sourceX: stored.sourceX, sourceY: stored.sourceY }
 }
 
 export const PROCEDURAL_BRUSH_IDS: ProceduralBrushId[] = ['procedural:noise', 'procedural:clouds', 'procedural:cells', 'procedural:fibers']

@@ -21,6 +21,7 @@ import {
   renderTilemapSurface,
   resizeTilemapCelDataToCanvas,
   setTilesetTileSlots,
+  sliceRasterSurfaceToTilemap,
   tileRepeatDocumentOffsets,
   tileRepeatContinuousPreviewPlacements,
   tileRepeatFitZoom,
@@ -186,6 +187,56 @@ describe('tilemap model', () => {
     expect(surface.height).toBe(2)
     expect(Array.from(surface.pixels.slice(0, 4))).toEqual([0, 0, 0, 0])
     expect(Array.from(surface.pixels.slice(8, 12))).toEqual([10, 20, 30, 255])
+  })
+
+  it('slices raster content into deduplicated tiles and pads partial edge cells', () => {
+    const red = [220, 30, 40, 255]
+    const blue = [20, 60, 220, 255]
+    const yellow = [240, 200, 20, 255]
+    const surface = {
+      format: 'rgba' as const,
+      width: 5,
+      height: 2,
+      offsetX: 0,
+      offsetY: 0,
+      pixels: new Uint8ClampedArray([
+        ...red, ...blue, ...red, ...blue, ...yellow,
+        ...blue, ...red, ...blue, ...red, 0, 0, 0, 0
+      ])
+    }
+    let nextTile = 0
+    const sliced = sliceRasterSurfaceToTilemap(
+      surface,
+      [],
+      5,
+      2,
+      createBlankTileset('tileset-sliced', 'Sliced', 2, 2, 'tile-transparent'),
+      () => `tile-${nextTile++}`
+    )
+
+    expect(sliced.tilemap).toMatchObject({ columns: 3, rows: 1 })
+    expect(sliced.tileset.tileIds).toHaveLength(3)
+    expect(sliced.tilemap.cells[0]?.tileId).toBe(sliced.tilemap.cells[1]?.tileId)
+    expect(sliced.tilemap.cells[2]?.tileId).not.toBe(sliced.tilemap.cells[0]?.tileId)
+    expect(Array.from(readTilesetTilePixels(sliced.tileset, sliced.tilemap.cells[2]!.tileId)!)).toEqual([
+      ...yellow, 0, 0, 0, 0,
+      0, 0, 0, 0, 0, 0, 0, 0
+    ])
+  })
+
+  it('resolves indexed colors while keeping fully transparent cells empty', () => {
+    const sliced = sliceRasterSurfaceToTilemap(
+      { format: 'indexed', width: 2, height: 1, offsetX: 0, offsetY: 0, pixels: new Uint32Array([7, 0]) },
+      [{ id: 0, name: 'Transparent', color: { r: 0, g: 0, b: 0, a: 0 } }, { id: 7, name: 'Green', color: { r: 20, g: 180, b: 60, a: 255 } }],
+      2,
+      1,
+      createBlankTileset('tileset-indexed', 'Indexed', 1, 1, 'tile-transparent'),
+      () => 'tile-green'
+    )
+
+    expect(sliced.tilemap.cells[0]).toEqual({ tilesetId: 'tileset-indexed', tileId: 'tile-green' })
+    expect(sliced.tilemap.cells[1]).toBeNull()
+    expect(Array.from(readTilesetTilePixels(sliced.tileset, 'tile-green')!)).toEqual([20, 180, 60, 255])
   })
 
   it('records one reversible edit per changed grid cell', () => {

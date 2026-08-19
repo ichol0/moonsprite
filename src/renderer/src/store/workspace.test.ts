@@ -6,6 +6,7 @@ import { packColor, relativeLuminanceColor } from '@/core/raster'
 import { applySelectionTransform, applySelectionTranslationPreview, captureSelectionTransform, paintBrush, selectionTranslationPreviewEdit } from '@/core/tools'
 import { builtInPalettes } from '@/core/built-in-palettes'
 import { createProceduralBrush } from '@/core/brushes'
+import { brushLibraryLocation } from '@/core/brush-library-location'
 import { addBlankAnimationFrame, animationCelAt, animationCelHasContent, animationCelKey, ensureAnimationDocument, resolveAnimationCel, setAnimationCelOffsetsForKeys } from '@/core/animation'
 import { buildLayerPanelTree } from '@/core/layer-panel-layout'
 import { transformedSelectionBounds, transformSelectionMask } from '@/core/selection'
@@ -77,8 +78,46 @@ beforeEach(() => {
   installApi()
   vi.stubGlobal('OffscreenCanvas', MockTextCanvas)
   localStorage.clear()
+  brushLibraryLocation.set(null)
   saveProgress.dismiss()
   useWorkspace.setState({ sessions: [], activeId: null, message: null, saveProgress: null, dialog: null })
+})
+
+describe('symmetry axis placement', () => {
+  it('uses the canvas center only when each axis is enabled for the first time', () => {
+    const document = createDocument('symmetry pointer', 16, 12, 'rgba')
+    useWorkspace.getState().addSession(document)
+
+    useWorkspace.getState().setSymmetryCenter({ x: 3.5, y: 4.5 })
+    useWorkspace.getState().setSymmetryAxis('horizontal', true)
+    expect(useWorkspace.getState().sessions[0].symmetryCenter).toEqual({ x: 8, y: 6 })
+
+    useWorkspace.getState().setSymmetryCenter({ x: 9.5, y: 8.5 })
+    useWorkspace.getState().setSymmetryAxis('horizontal', false)
+    useWorkspace.getState().setSymmetryAxis('horizontal', true)
+    expect(useWorkspace.getState().sessions[0].symmetryCenter).toEqual({ x: 9.5, y: 8.5 })
+
+    useWorkspace.getState().setSymmetryAxis('vertical', true)
+    expect(useWorkspace.getState().sessions[0].symmetryCenter).toEqual({ x: 8, y: 6 })
+  })
+
+  it('tracks first-use placement independently for each open project', () => {
+    const first = createDocument('first symmetry project', 20, 16, 'rgba')
+    const second = createDocument('second symmetry project', 30, 24, 'rgba')
+    useWorkspace.getState().addSession(first)
+    useWorkspace.getState().addSession(second)
+
+    useWorkspace.getState().setActive(first.id)
+    useWorkspace.getState().setSymmetryCenter({ x: 2.5, y: 3.5 })
+    useWorkspace.getState().setSymmetryAxis('diagonalUp', true)
+
+    useWorkspace.getState().setActive(second.id)
+    useWorkspace.getState().setSymmetryCenter({ x: 12.5, y: 13.5 })
+    useWorkspace.getState().setSymmetryAxis('diagonalUp', true)
+
+    expect(useWorkspace.getState().sessions.find((session) => session.document.id === first.id)?.symmetryCenter).toEqual({ x: 10, y: 8 })
+    expect(useWorkspace.getState().sessions.find((session) => session.document.id === second.id)?.symmetryCenter).toEqual({ x: 15, y: 12 })
+  })
 })
 
 describe('pending canvas gesture history', () => {
@@ -1474,8 +1513,12 @@ describe('multi-layer deletion', () => {
   })
 })
 
-describe('procedural brush settings', () => {
-  it('creates a project brush from non-transparent selected pixels', () => {
+describe('brush settings', () => {
+  it('stores a selection brush in the local library without dirtying the project', async () => {
+    const saveBrush = vi.fn(async (name: string, _data: Uint8Array, intrinsicSize?: boolean, sourceX?: number, sourceY?: number) => ({
+      id: 'selection-brush.png', name, filePath: 'brushes/selection-brush.png', intrinsicSize, sourceX, sourceY
+    }))
+    installApi({ saveBrush })
     const document = createDocument('selection brush', 4, 3, 'rgba')
     const layer = getActiveLayer(document)
     writeLayerColor(document, layer, 0, red)
@@ -1484,24 +1527,48 @@ describe('procedural brush settings', () => {
     useWorkspace.getState().setTool('selection')
     useWorkspace.getState().setSelection({ x: 0, y: 0, width: 3, height: 1 })
 
-    useWorkspace.getState().createBrushFromSelection()
+    await useWorkspace.getState().createBrushFromSelection()
 
     const session = useWorkspace.getState().sessions[0]
-    expect(session).toMatchObject({ tool: 'pencil', brushImageTemporary: false, brushPaintMode: 'pattern-source', selection: null })
-    expect(session.brushImage).toMatchObject({ name: '选区笔刷', width: 3, height: 1, sourceX: 0, sourceY: 0 })
+    expect(session).toMatchObject({ tool: 'pencil', brushImageTemporary: false, brushPaintMode: 'paint', selection: null })
+    expect(session.brushImage).toMatchObject({ id: 'selection-brush.png', name: '选区笔刷', width: 3, height: 1, sourceX: 0, sourceY: 0 })
     expect(session.brushImage?.coverage).toEqual(Uint8Array.from([255, 0, 128]))
-    expect(session.brushImageId).toMatch(/^project-brush-/)
-    expect(session.document.customBrushes).toHaveLength(1)
+    expect(session.brushImageId).toBe('selection-brush.png')
+    expect(session.document.customBrushes ?? []).toEqual([])
+    expect(document.dirty).toBe(false)
+    expect(saveBrush).toHaveBeenCalledWith('选区笔刷', expect.any(Uint8Array), true, 0, 0, null)
   })
 
-  it('persists pattern alignment without persisting a temporary brush id', () => {
+  it('stores a selection brush in the active brush-library folder', async () => {
+    const saveBrush = vi.fn(async (name: string, _data: Uint8Array, intrinsicSize?: boolean, sourceX?: number, sourceY?: number, folderId?: string | null) => ({
+      id: 'folder-brush.png', name, filePath: `brushes/${folderId}/folder-brush.png`, intrinsicSize, sourceX, sourceY, folderId
+    }))
+    installApi({ saveBrush })
+    const document = createDocument('folder brush', 2, 2, 'rgba')
+    writeLayerColor(document, getActiveLayer(document), 0, red)
+    useWorkspace.getState().addSession(document)
+    useWorkspace.getState().setSelection({ x: 0, y: 0, width: 1, height: 1 })
+    brushLibraryLocation.set('Characters/Heroes')
+
+    await useWorkspace.getState().createBrushFromSelection()
+
+    expect(saveBrush).toHaveBeenCalledWith('选区笔刷', expect.any(Uint8Array), true, 0, 0, 'Characters/Heroes')
+    expect(useWorkspace.getState().sessions[0].brushImageId).toBe('folder-brush.png')
+  })
+
+  it('persists pattern alignment and the stored local brush id', async () => {
     vi.useFakeTimers()
     try {
+      installApi({
+        saveBrush: vi.fn(async (name: string, _data: Uint8Array, intrinsicSize?: boolean, sourceX?: number, sourceY?: number) => ({
+          id: 'persistent-selection.png', name, filePath: 'brushes/persistent-selection.png', intrinsicSize, sourceX, sourceY
+        }))
+      })
       const document = createDocument('temporary persistence', 2, 2, 'rgba')
       writeLayerColor(document, getActiveLayer(document), 0, red)
       useWorkspace.getState().addSession(document)
       useWorkspace.getState().setSelection({ x: 0, y: 0, width: 1, height: 1 })
-      useWorkspace.getState().createBrushFromSelection()
+      await useWorkspace.getState().createBrushFromSelection()
       useWorkspace.getState().setBrushPaintMode('pattern-target')
       vi.advanceTimersByTime(101)
 
@@ -1509,7 +1576,7 @@ describe('procedural brush settings', () => {
       useWorkspace.getState().addSession(createDocument('restored settings', 2, 2, 'rgba'))
       const restored = useWorkspace.getState().sessions[0]
       expect(restored.brushPaintMode).toBe('pattern-target')
-      expect(restored.brushImageId).toBeTruthy()
+      expect(restored.brushImageId).toBe('persistent-selection.png')
       expect(restored.brushImage).toBeNull()
       expect(restored.brushImageTemporary).toBe(false)
     } finally {
@@ -1593,7 +1660,7 @@ describe('procedural brush settings', () => {
     const session = useWorkspace.getState().sessions[0]
     expect(session.brushSize).toBe(37)
     expect(session.proceduralAntialias).toBe(false)
-    expect(session.brushPaintMode).toBe('pattern-source')
+    expect(session.brushPaintMode).toBe('paint')
   })
 
   it('disables procedural texture antialiasing by default and persists an explicit choice', () => {
@@ -4204,6 +4271,23 @@ describe('save concurrency', () => {
       { signature: 'GIF89a', width: 2, height: 4 },
       { signature: 'GIF89a', width: 4, height: 2 }
     ])
+  })
+
+  it('exports only the selected slice when a slice id is provided', async () => {
+    const chooseDirectory = vi.fn(async () => ({ canceled: false, directoryPath: 'D:/exports' }))
+    const writeBinaryAtomic = vi.fn(async (_filePath: string, _data: Uint8Array) => {})
+    installApi({ chooseDirectory, writeBinaryAtomic })
+    const document = createDocument('selected slice', 3, 2, 'rgba')
+    document.slices = [
+      { id: 'left', name: 'Left', x: 0, y: 0, width: 1, height: 2 },
+      { id: 'right', name: 'Right', x: 1, y: 1, width: 2, height: 1 }
+    ]
+    useWorkspace.getState().addSession(document)
+
+    await expect(useWorkspace.getState().exportActive({ name: 'ignored.png', format: 'png-rgba', scalePercent: 100, target: 'slices', sliceId: 'right', directory: 'D:/exports' })).resolves.toBe(true)
+
+    expect(chooseDirectory).toHaveBeenCalledWith('D:/exports')
+    expect(writeBinaryAtomic.mock.calls.map(([filePath]) => filePath)).toEqual(['D:/exports/Right.png'])
   })
 
   it('uses the preferred image format when saving an unsaved document', async () => {

@@ -18,6 +18,7 @@ describe('tool preferences persistence boundary', () => {
   it('loads defaults when storage is empty or malformed', () => {
     const storage = createStorage()
     expect(loadToolSettings(storage).brushSize).toBe(1)
+    expect(loadToolSettings(storage).brushPaintMode).toBe('paint')
     storage.setItem(TOOL_SETTINGS_KEY, '{bad')
     expect(loadToolSettings(storage).brushPaintMode).toBe(defaultToolSettings.brushPaintMode)
   })
@@ -46,7 +47,7 @@ describe('tool preferences persistence boundary', () => {
     storage.setItem(TOOL_SETTINGS_KEY, JSON.stringify({
       brushSize: 999,
       brushTextureScale: 0,
-      brushPaintMode: 'paint',
+      brushPaintMode: 'pattern-source',
       brushPaintModePreferenceVersion: 0,
       proceduralAntialiasStrength: 999,
       selectionMode: 'invalid'
@@ -54,7 +55,7 @@ describe('tool preferences persistence boundary', () => {
     const settings = loadToolSettings(storage)
     expect(settings.brushSize).toBe(128)
     expect(settings.brushTextureScale).toBe(1)
-    expect(settings.brushPaintMode).toBe('pattern-source')
+    expect(settings.brushPaintMode).toBe('paint')
     expect(settings.proceduralAntialiasStrength).toBe(100)
     expect(settings.selectionMode).toBe('replace')
     expect(settings.fillTolerance).toBe(0)
@@ -65,6 +66,16 @@ describe('tool preferences persistence boundary', () => {
     expect(settings.brushDynamics.effects.gradient).toMatchObject({ sensor: null, outputMin: 0, outputMax: 100 })
     expect(settings.brushProfiles?.pencil?.brushPressure).toEqual(DEFAULT_BRUSH_PRESSURE_SETTINGS)
     expect(settings).toMatchObject({ airbrushParticleRadius: 1, airbrushParticleShape: 'round', airbrushScatterRadius: 12, airbrushDensity: 8, airbrushIntervalMs: 50 })
+  })
+
+  it('preserves an explicit versioned brush paint mode', () => {
+    const storage = createStorage()
+    storage.setItem(TOOL_SETTINGS_KEY, JSON.stringify({
+      brushPaintMode: 'pattern-target',
+      brushPaintModePreferenceVersion: 1
+    }))
+
+    expect(loadToolSettings(storage).brushPaintMode).toBe('pattern-target')
   })
 
   it('migrates legacy pressure settings when no version 2 dynamics exist', () => {

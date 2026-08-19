@@ -12,6 +12,7 @@ import { useI18n } from './I18nProvider'
 import { PixelUtilityIcon } from './PixelUtilityIcon'
 import { FormField } from './FormField'
 import { PreferenceToggle } from './PreferenceToggle'
+import { RangeField } from './RangeField'
 
 interface TimelapseDialogProps {
   settings: TimelapseSettings
@@ -152,8 +153,7 @@ export function TimelapseDialog({ settings, onChange, onClear, onExport, onClose
           <div className="timelapse-preview-frame"><canvas ref={canvasRef} /></div>
           <div className="timelapse-preview-controls">
             <button type="button" className="icon-button" disabled={settings.snapshots.length < 2} title={previewPlaying ? t('timelapse.pausePreview') : t('timelapse.playPreview')} aria-label={previewPlaying ? t('timelapse.pausePreview') : t('timelapse.playPreview')} onClick={togglePreviewPlayback}>{previewPlaying ? <Pause size={15} /> : <Play size={15} />}</button>
-            <input type="range" min={0} max={Math.max(0, settings.snapshots.length - 1)} value={Math.min(previewFrame, Math.max(0, settings.snapshots.length - 1))} disabled={settings.snapshots.length === 0} aria-label={t('timelapse.previewPosition')} onChange={(event) => { setPreviewPlaying(false); setPreviewFrame(Number(event.target.value)) }} />
-            <output>{settings.snapshots.length === 0 ? '0 / 0' : `${previewFrame + 1} / ${settings.snapshots.length}`}</output>
+            <RangeField ariaLabel={t('timelapse.previewPosition')} density="compact" min={0} max={Math.max(0, settings.snapshots.length - 1)} value={Math.min(previewFrame, Math.max(0, settings.snapshots.length - 1))} valueLabel={settings.snapshots.length === 0 ? '0 / 0' : `${previewFrame + 1} / ${settings.snapshots.length}`} disabled={settings.snapshots.length === 0} onChange={(value) => { setPreviewPlaying(false); setPreviewFrame(value) }} />
           </div>
         </section>
         <PreferenceToggle className="timelapse-toggle" checked={settings.enabled} label={t('timelapse.recording')} onChange={(enabled) => onChange({ enabled })} />

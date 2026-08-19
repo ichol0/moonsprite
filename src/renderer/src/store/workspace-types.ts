@@ -34,7 +34,7 @@ import type {
 import type { ContentInvalidationHint, HistoryStack, PixelEdit } from '@/core/history'
 import type { SelectionShearTransform } from '@/core/selection'
 import type { SelectionTransformLayerState, SelectionTransformSource, SelectionTranslationPreview } from '@/core/tools'
-import type { SymmetryAxes, SymmetryCenter } from '@/core/symmetry'
+import type { SymmetryAxes, SymmetryCenter, SymmetryMode } from '@/core/symmetry'
 import type { BrushTool } from '@/core/tool-preferences'
 import type { BrushDynamicsSettings, BrushPressureSettings } from '@/core/pressure'
 import type { TilemapDrawingMode } from '@/core/tilemap'
@@ -183,6 +183,7 @@ export interface DocumentSession {
   wandContiguous: boolean
   perfectPixels: boolean
   symmetryAxes: SymmetryAxes
+  symmetryAxesInitialized: Record<SymmetryMode, boolean>
   symmetryCenter: SymmetryCenter
   airbrushParticleRadius: number
   airbrushParticleShape: BrushShape

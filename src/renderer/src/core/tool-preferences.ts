@@ -72,7 +72,7 @@ export const defaultToolSettings: PersistedToolSettings = {
   brushShape: 'round',
   brushTexture: 'solid',
   brushTextureScale: 1,
-  brushPaintMode: 'pattern-source',
+  brushPaintMode: 'paint',
   brushPaintModePreferenceVersion: 1,
   brushImageId: null,
   brushImageSettings: { mode: 'dither', threshold: 128, blackPoint: 0, whitePoint: 255, invert: false },

@@ -47,10 +47,11 @@ import { ModalShell } from '@/components/ModalShell'
 import { PixelUtilityIcon } from '@/components/PixelUtilityIcon'
 import { TextInput } from '@/components/TextInput'
 import { ThemedSelect } from '@/components/ThemedSelect'
-import { animationFrameStepDirection, COMMAND_SCOPE_EVENT, TILESET_DELETE_COMMAND_EVENT, resolveCopyCommand, resolveDeleteCommand, shouldHandleAnimationPlaybackShortcut, shouldHandleGlobalSelectionEnter, shouldTriggerDeleteCommand, type EditorCommandScope } from '@/core/command-context'
+import { animationFrameStepDirection, BRUSH_LIBRARY_DELETE_COMMAND_EVENT, COMMAND_SCOPE_EVENT, TILESET_DELETE_COMMAND_EVENT, resolveCopyCommand, resolveDeleteCommand, shouldHandleAnimationPlaybackShortcut, shouldHandleGlobalSelectionEnter, shouldTriggerDeleteCommand, type EditorCommandScope } from '@/core/command-context'
 import { formatBytes } from '@/core/resource-policy'
 import { adjacentFormInput } from '@/core/form-focus'
 import { saveProgress } from '@/core/save-progress'
+import { publishBrushLibraryImportPaths } from '@/core/brush-library-events'
 import { startDocumentDropService } from '@/platform/document-drop-service'
 import { APP_CHANNEL_LABEL } from '@/core/app-meta'
 import moonspriteLogo from '@/assets/moonsprite-logo.svg'
@@ -118,9 +119,9 @@ const workspaceDockParentSize = (workArea: HTMLElement | null): { width: number;
 
 const defaultPanelDocks: Record<WorkspacePanelId, PanelDock> = { ...DEFAULT_PANEL_DOCKS }
 const defaultInspectorLayout = JSON.stringify({
-  order: ['palette', 'color', 'layers', 'tileset', 'preview'],
-  verticalWeights: { color: 330, palette: 620, layers: 560, preview: 220, tileset: 280 },
-  bottomWeights: { color: 280, palette: 280, layers: 720, preview: 280, tileset: 360 }
+  order: ['palette', 'color', 'layers', 'brushes', 'tileset', 'preview'],
+  verticalWeights: { color: 330, palette: 620, layers: 560, preview: 220, tileset: 280, brushes: 240 },
+  bottomWeights: { color: 280, palette: 280, layers: 720, preview: 280, tileset: 360, brushes: 320 }
 })
 const createBuiltInDefaultWorkspace = (name: string): StoredWorkspace => ({
   id: 'builtin-default',
@@ -130,7 +131,7 @@ const createBuiltInDefaultWorkspace = (name: string): StoredWorkspace => ({
   builtIn: true,
   layout: {
     panelDocks: { ...defaultPanelDocks },
-    panelVisibility: { color: true, palette: true, layers: true, preview: true, tileset: false },
+    panelVisibility: { color: true, palette: true, layers: true, preview: true, tileset: false, brushes: true },
     inspectorWidth: 300,
     leftDockWidth: 280,
     bottomDockHeight: 220,
@@ -142,12 +143,12 @@ const createBuiltInDefaultWorkspace = (name: string): StoredWorkspace => ({
     inspectorLayout: defaultInspectorLayout,
     colorSquareDock: 'left',
     colorSquareAnchor: 'end',
-    floatingPanels: { color: null, palette: null, layers: null, preview: null, tileset: null },
+    floatingPanels: { color: null, palette: null, layers: null, preview: null, tileset: null, brushes: null },
     mainWindow: null
   },
   initialLayout: {
     panelDocks: { ...defaultPanelDocks },
-    panelVisibility: { color: true, palette: true, layers: true, preview: true, tileset: false },
+    panelVisibility: { color: true, palette: true, layers: true, preview: true, tileset: false, brushes: true },
     inspectorWidth: 300,
     leftDockWidth: 280,
     bottomDockHeight: 220,
@@ -159,7 +160,7 @@ const createBuiltInDefaultWorkspace = (name: string): StoredWorkspace => ({
     inspectorLayout: defaultInspectorLayout,
     colorSquareDock: 'left',
     colorSquareAnchor: 'end',
-    floatingPanels: { color: null, palette: null, layers: null, preview: null, tileset: null },
+    floatingPanels: { color: null, palette: null, layers: null, preview: null, tileset: null, brushes: null },
     mainWindow: null
   }
 })
@@ -488,7 +489,7 @@ export default function App() {
       if (event.type === 'pointerdown') selectionCommandOverrideRef.current = false
       const surface = (event.target as HTMLElement | null)?.closest<HTMLElement>('[data-command-scope], .stage-surface')
       const scope = surface?.classList.contains('stage-surface') ? 'canvas' : surface?.dataset.commandScope
-      if (scope === 'canvas' || scope === 'layers' || scope === 'palette' || scope === 'tileset') {
+      if (scope === 'canvas' || scope === 'layers' || scope === 'palette' || scope === 'tileset' || scope === 'brushes') {
         commandScopeRef.current = scope
         commandSurfaceRef.current = surface ?? null
       }
@@ -496,7 +497,7 @@ export default function App() {
     const applyCommandScope = (event: Event): void => {
       const detail = (event as CustomEvent<{ scope?: EditorCommandScope; preferSelection?: boolean }>).detail
       const scope = detail?.scope
-      if (scope === 'canvas' || scope === 'layers' || scope === 'palette' || scope === 'tileset') {
+      if (scope === 'canvas' || scope === 'layers' || scope === 'palette' || scope === 'tileset' || scope === 'brushes') {
         commandScopeRef.current = scope
         commandSurfaceRef.current = null
       }
@@ -558,11 +559,11 @@ export default function App() {
   useEffect(() => {
     const showPanel = (event: Event): void => {
       const id = (event as CustomEvent<{ id?: WorkspacePanelId }>).detail?.id
-      if (id === 'tileset') updatePanelVisibility(id, true)
+      if (id && id in DEFAULT_PANEL_DOCKS) updatePanelVisibility(id, true)
     }
     const hidePanel = (event: Event): void => {
       const id = (event as CustomEvent<{ id?: WorkspacePanelId }>).detail?.id
-      if (id !== 'tileset') return
+      if (!id || !(id in DEFAULT_PANEL_DOCKS)) return
       updatePanelVisibility(id, false)
       setPopupPanelId((current) => current === id ? null : current)
     }
@@ -805,6 +806,9 @@ export default function App() {
     if (format === 'gif' && target === 'frames') target = 'document'
     else if (target === 'frames' && requestedTarget !== 'frames' && frameCount <= 1) target = 'document'
     else if (target === 'slices' && !session.document.slices?.length) target = 'document'
+    const sliceId = target === 'slices' && remembered?.sliceId && session.document.slices?.some((slice) => slice.id === remembered.sliceId)
+      ? remembered.sliceId
+      : undefined
     const defaultScale = format === 'svg' ? 100 : exportScalePresets.includes(100) ? 100 : exportScalePresets[0] ?? 100
     const documentName = session.document.name.replace(/\.(moonsprite|aseprite|ase|png|jpe?g|webp|svg|gif)$/i, '') || 'MoonSprite-export'
     const gifFrameLimit = Math.max(1, frameCount)
@@ -814,6 +818,7 @@ export default function App() {
       scalePercent: remembered?.scalePercent ?? defaultScale,
       directory: remembered?.directory || preferences.exportDirectory || defaultFileDirectories.exportDirectory,
       target,
+      ...(sliceId ? { sliceId } : {}),
       gifFrameRange: remembered?.gifFrameRange ?? 'all',
       ...(remembered?.gifFrameStart !== undefined ? { gifFrameStart: Math.min(gifFrameLimit, remembered.gifFrameStart) } : {}),
       ...(remembered?.gifFrameEnd !== undefined ? { gifFrameEnd: Math.min(gifFrameLimit, remembered.gifFrameEnd) } : {}),
@@ -1027,6 +1032,13 @@ export default function App() {
     return startDocumentDropService({
       openPath: (path) => useWorkspace.getState().openPath(path),
       pathForFile: (file) => window.moonSprite.pathForFile(file),
+      claimPaths: (paths, position) => {
+        if (!position) return false
+        const target = document.elementFromPoint(position.x, position.y)
+        if (!target?.closest('[data-brush-library-dropzone]')) return false
+        publishBrushLibraryImportPaths(paths)
+        return true
+      },
       onOpened: () => setHomeOpen(false)
     })
   }, [])
@@ -1163,7 +1175,7 @@ export default function App() {
       }
       if (key === 'escape') {
         const hasPaletteSurface = Boolean(document.querySelector('.palette-operation-dialog, .palette-library-popover, .palette-actions-popover, .palette-library-context'))
-        const hasOwnedPopover = Boolean(document.querySelector('.document-tab-context-menu, .tool-flyout, .brush-library, .brush-size-popover, .brush-advanced-settings [aria-expanded="true"]'))
+        const hasOwnedPopover = Boolean(document.querySelector('.document-tab-context-menu, .tool-flyout, .brush-library, .brush-size-popover'))
         const dialogChoice = workspace.dialog?.choices.find((choice) => choice.id === 'cancel')?.id ?? workspace.dialog?.choices.find((choice) => choice.tone === 'quiet')?.id
         if (workspace.dialog && dialogChoice) workspace.resolveDialog(dialogChoice)
         else if (saveProgress.getSnapshot().phase !== 'hidden') saveProgress.dismiss()
@@ -1299,7 +1311,7 @@ export default function App() {
         state.setSelection({ x: 0, y: 0, width: active.document.width, height: active.document.height })
       })) return
       if (runCommand('invertSelection', () => workspace.invertSelection())) return
-      if (runCommand('createBrushFromSelection', () => {
+      if (!keyboardSurfaceBlocked && !isTextEntry && runCommand('createBrushFromSelection', () => {
         if (session?.selection) workspace.createBrushFromSelection()
         else workspace.setMessage(t('app.brushSelection.required'))
       })) return
@@ -1426,11 +1438,13 @@ export default function App() {
       if (runCommand('toggleLayersPanel', () => updatePanelVisibility('layers', !panelVisibility.layers))) return
       if (runCommand('togglePreviewPanel', () => updatePanelVisibility('preview', !panelVisibility.preview))) return
       if (runCommand('toggleTilesetPanel', () => updatePanelVisibility('tileset', !panelVisibility.tileset))) return
+      if (runCommand('toggleBrushLibraryPanel', () => updatePanelVisibility('brushes', !panelVisibility.brushes))) return
       if (runCommand('popupColorPanel', () => togglePopupPanel('color'))) return
       if (runCommand('popupPalettePanel', () => togglePopupPanel('palette'))) return
       if (runCommand('popupLayersPanel', () => togglePopupPanel('layers'))) return
       if (runCommand('popupPreviewPanel', () => togglePopupPanel('preview'))) return
       if (runCommand('popupTilesetPanel', () => togglePopupPanel('tileset'))) return
+      if (runCommand('popupBrushLibraryPanel', () => togglePopupPanel('brushes'))) return
       if (runCommand('toggleTimeline', toggleTimelineVisibility)) return
       if (runCommand('toolRailLeft', () => updateToolRailSide('left'))) return
       if (runCommand('toolRailRight', () => updateToolRailSide('right'))) return
@@ -1485,6 +1499,11 @@ export default function App() {
         if (target === 'tileset') {
           const surface = commandSurfaceRef.current
           if (surface?.isConnected && surface.dataset.commandScope === 'tileset') surface.dispatchEvent(new Event(TILESET_DELETE_COMMAND_EVENT))
+          return
+        }
+        if (target === 'brushes') {
+          const surface = commandSurfaceRef.current
+          if (surface?.isConnected && surface.dataset.commandScope === 'brushes') surface.dispatchEvent(new Event(BRUSH_LIBRARY_DELETE_COMMAND_EVENT))
           return
         }
         if (session?.selectedAnimationMaskCellKeys.length && !selectionCommandOverrideRef.current) { workspace.deleteSelectedLayerMasks(); return }
@@ -1756,6 +1775,13 @@ export default function App() {
         : documentPaneDockDebug?.direction === 'bottom'
           ? t('app.documentDockDebug.bottom')
           : t('app.documentDockDebug.none')
+  const exportSlices = session?.document.slices ?? []
+  const exportTarget: NonNullable<ExportOptions['target']> = exportForm.format === 'gif' && exportForm.target === 'frames'
+    ? 'document'
+    : exportForm.target === 'slices' && exportSlices.length === 0
+      ? 'document'
+      : exportForm.target ?? 'document'
+  const selectedExportSliceId = exportForm.sliceId && exportSlices.some((slice) => slice.id === exportForm.sliceId) ? exportForm.sliceId : ''
   return <main className={`app-shell ${session?.view.showPixelGrid ? 'pixel-grid-on' : ''} ${editorOnly ? 'advanced-mode' : ''} ${advancedMode === 'tool-options' ? 'advanced-tool-options' : ''} ${advancedMode === 'canvas-only' ? 'advanced-canvas-only' : ''}`}>
     <AppWindowTitleBar />
     <BrushDynamicsTelemetryCapture documentId={session?.document.id ?? null} />
@@ -1862,11 +1888,10 @@ export default function App() {
     {workspace.saveProgress && createPortal(<div className={`modal-backdrop save-progress-backdrop ${workspace.saveProgress.requiresConfirmation ? 'is-complete' : 'is-running'}`} role="presentation"><ModalShell storageKey="save-progress" defaultWidth={280} defaultHeight={workspace.saveProgress.requiresConfirmation ? 190 : 142} fitContentKey={workspace.saveProgress.requiresConfirmation ? 'complete' : 'progress'} minWidth={250} minHeight={workspace.saveProgress.requiresConfirmation ? 176 : 132} className="save-progress-modal" role="dialog" aria-modal="true" aria-live="polite" aria-labelledby="save-progress-title"><header><div className="save-progress-heading"><span className="save-progress-icon" aria-hidden="true">{workspace.saveProgress.requiresConfirmation ? <CheckCircle2 size={20} /> : <span className="save-progress-animation" />}</span><div><span className="eyebrow">FILE OPERATION</span><h2 id="save-progress-title">{workspace.saveProgress.title}</h2></div></div>{!workspace.saveProgress.requiresConfirmation && <button type="button" className="icon-button" aria-label={t('app.progress.close', { title: workspace.saveProgress.title })} onClick={() => workspace.dismissSaveProgress()}><PixelUtilityIcon kind="close" /></button>}</header><div className="save-progress-body"><strong>{workspace.saveProgress.label}</strong><div className={`save-progress-track ${workspace.saveProgress.value >= 100 ? 'is-full' : ''}`} aria-label={t('app.progress.aria', { title: workspace.saveProgress.title, value: workspace.saveProgress.value })}><i style={{ width: `${workspace.saveProgress.value}%` }} /></div><div className="save-progress-meta"><span>{t(workspace.saveProgress.requiresConfirmation ? 'app.progress.complete' : 'app.progress.processing')}</span><small>{workspace.saveProgress.value}%</small></div></div>{workspace.saveProgress.requiresConfirmation && <footer><button type="button" className="primary-button" onClick={() => workspace.dismissSaveProgress()}>{t('timelapse.confirmExport')}</button></footer>}</ModalShell></div>, document.body)}
     {workspace.dialog && <div className="modal-backdrop dialog-backdrop" role="presentation"><ModalShell storageKey="confirm-content-v2" fitContentKey={`${workspace.dialog.title}:${workspace.dialog.choices.length}`} defaultWidth={420} defaultHeight={180} minHeight={0} resizable={false} className="confirm-modal" role="alertdialog" aria-modal="true" aria-labelledby="app-dialog-title"><DialogHeader eyebrow="MOONSPRITE" title={workspace.dialog.title} titleId="app-dialog-title" /><div className="confirm-content"><strong>{workspace.dialog.message}</strong>{workspace.dialog.detail && <p>{workspace.dialog.detail}</p>}</div><footer>{workspace.dialog.choices.map((choice) => <button key={choice.id} className={choice.tone === 'primary' ? 'primary-button' : choice.tone === 'danger' ? 'danger-button' : 'quiet-button'} onClick={() => workspace.resolveDialog(choice.id)}>{choice.label}</button>)}</footer></ModalShell></div>}
     {exportOpen && <div className="modal-backdrop" role="presentation" onPointerDown={(event) => { if (event.target === event.currentTarget) setExportOpen(false) }}>
-      <ModalShell as="form" storageKey="export-layout-v2" fitContentKey={`${exportForm.format}:${exportForm.gifFrameRange ?? 'all'}`} defaultWidth={520} defaultHeight={520} minWidth={420} minHeight={360} maxWidth={640} maxHeight={760} className="export-modal" onSubmit={(event) => {
+      <ModalShell as="form" storageKey="export-layout-v2" fitContentKey={`${exportForm.format}:${exportTarget}:${exportForm.gifFrameRange ?? 'all'}`} defaultWidth={520} defaultHeight={520} minWidth={420} minHeight={360} maxWidth={640} maxHeight={760} className="export-modal" onSubmit={(event) => {
         event.preventDefault()
-        const target = exportForm.format === 'gif' && exportForm.target === 'frames' ? 'document' : exportForm.target === 'slices' && !session?.document.slices?.length ? 'document' : exportForm.target
         const selectedPresetName = presets.some((preset) => preset.presetName === presetName) ? presetName : undefined
-        void workspace.exportActive({ ...exportForm, target, ...(selectedPresetName ? { presetName: selectedPresetName } : {}) }).then((exported) => { if (exported) setExportOpen(false) })
+        void workspace.exportActive({ ...exportForm, target: exportTarget, sliceId: exportTarget === 'slices' ? selectedExportSliceId || undefined : undefined, ...(selectedPresetName ? { presetName: selectedPresetName } : {}) }).then((exported) => { if (exported) setExportOpen(false) })
       }}>
         <DialogHeader eyebrow="EXPORT IMAGE" title={t('app.export.settings')} closeLabel={t('common.close')} onClose={() => setExportOpen(false)} />
         <div className="modal-body component-scrollbar export-modal-body">
@@ -1879,7 +1904,8 @@ export default function App() {
           </FormField>
           <div className="export-primary-fields">
             <FormField label={t('app.export.format')}><ThemedSelect<ExportOptions['format']> value={exportForm.format} groups={[{ label: t('app.export.formatGroup'), options: [{ value: 'png-auto', label: t('app.export.pngAuto') }, { value: 'png-rgba', label: t('app.export.pngRgba') }, { value: 'jpeg', label: t('app.export.jpegWhite') }, { value: 'webp', label: t('app.export.webp') }, { value: 'svg', label: t('app.export.svg') }, { value: 'gif', label: t('app.export.gif') }] }]} label={t('app.export.format')} onChange={(format) => setExportForm({ ...exportForm, name: withExportFileExtension(exportForm.name, format), format, target: format === 'gif' && exportForm.target === 'frames' ? 'document' : exportForm.target, scalePercent: format === 'svg' ? 100 : exportForm.scalePercent })} /></FormField>
-            <FormField label={t('app.export.target')}><ThemedSelect<NonNullable<ExportOptions['target']>> value={exportForm.format === 'gif' && exportForm.target === 'frames' ? 'document' : exportForm.target === 'slices' && !session?.document.slices?.length ? 'document' : exportForm.target ?? 'document'} groups={[{ label: t('app.export.target'), options: [{ value: 'document', label: t('app.export.targetDocument') }, ...((session?.document.animation?.frames.length ?? 1) > 1 && exportForm.format !== 'gif' ? [{ value: 'frames' as const, label: t('app.export.targetFrames') }] : []), ...(session?.document.slices?.length ? [{ value: 'slices' as const, label: t('app.export.targetSlices') }] : [])] }]} label={t('app.export.target')} onChange={(target) => setExportForm({ ...exportForm, target })} /></FormField>
+            <FormField label={t('app.export.target')}><ThemedSelect<NonNullable<ExportOptions['target']>> value={exportTarget} groups={[{ label: t('app.export.target'), options: [{ value: 'document', label: t('app.export.targetDocument') }, ...((session?.document.animation?.frames.length ?? 1) > 1 && exportForm.format !== 'gif' ? [{ value: 'frames' as const, label: t('app.export.targetFrames') }] : []), ...(exportSlices.length ? [{ value: 'slices' as const, label: t('app.export.targetSlices') }] : [])] }]} label={t('app.export.target')} onChange={(target) => setExportForm({ ...exportForm, target, sliceId: target === 'slices' ? selectedExportSliceId || undefined : undefined })} /></FormField>
+            {exportTarget === 'slices' && <FormField className="export-slice-field" label={t('app.export.sliceSelection')}><ThemedSelect value={selectedExportSliceId} groups={[{ label: t('app.export.sliceSelection'), options: [{ value: '', label: t('app.export.allSlices') }, ...exportSlices.map((slice) => ({ value: slice.id, label: slice.name, description: `${slice.width} × ${slice.height} · ${slice.x}, ${slice.y}` }))] }]} label={t('app.export.sliceSelection')} onChange={(sliceId) => setExportForm({ ...exportForm, sliceId: sliceId || undefined })} /></FormField>}
           </div>
           {exportForm.format === 'gif' && <section className="gif-export-options">
             <FormField label={t('app.export.gifRange')}><ThemedSelect value={exportForm.gifFrameRange ?? 'all'} groups={[{ label: t('app.export.gifRange'), options: [{ value: 'all', label: t('app.export.gifAllFrames') }, { value: 'range', label: t('app.export.gifFrameRange') }] }]} label={t('app.export.gifRange')} onChange={(gifFrameRange) => setExportForm({ ...exportForm, gifFrameRange: gifFrameRange as 'all' | 'range' })} /></FormField>
@@ -1889,7 +1915,7 @@ export default function App() {
           <FormField className="export-scale-field" label={exportForm.format === 'svg' ? t('app.export.scale') : t('app.export.scalePercent')}><div className="scale-control"><NumberInput min={1} max={exportForm.format === 'svg' ? 64 : 6400} value={exportForm.format === 'svg' ? exportForm.scalePercent / 100 : exportForm.scalePercent} suffix={exportForm.format === 'svg' ? 'x' : '%'} onValueChange={(value) => setExportForm({ ...exportForm, scalePercent: exportForm.format === 'svg' ? Math.max(100, Math.round(value * 100)) : value })} /><div className="scale-presets" aria-label={exportForm.format === 'svg' ? t('app.export.scalePresets') : t('app.export.scalePercentPresets')}>{exportScalePresets.map((scale) => <button type="button" key={scale} className={exportForm.scalePercent === scale ? 'selected' : ''} onClick={() => setExportForm({ ...exportForm, scalePercent: scale })}>{exportForm.format === 'svg' ? `${scale / 100}x` : `${scale}%`}</button>)}</div></div></FormField>
           <FormField className="export-preset-field" label={t('app.export.preset')}>
             <div className="export-preset-control">
-              <ThemedSelect value={presetName} groups={[{ label: t('app.export.savedPresets'), options: [{ value: '', label: t('app.export.choosePreset') }, ...presets.map((preset) => ({ value: preset.presetName, label: `${preset.presetName} · ${preset.scalePercent}%` }))] }]} label={t('app.export.preset')} onChange={(value) => { const preset = presets.find((item) => item.presetName === value); setPresetName(value); if (preset) { const { presetName: _presetName, ...options } = preset; setExportForm(options) } }} />
+              <ThemedSelect value={presetName} groups={[{ label: t('app.export.savedPresets'), options: [{ value: '', label: t('app.export.choosePreset') }, ...presets.map((preset) => ({ value: preset.presetName, label: `${preset.presetName} · ${preset.scalePercent}%` }))] }]} label={t('app.export.preset')} onChange={(value) => { const preset = presets.find((item) => item.presetName === value); setPresetName(value); if (preset) { const { presetName: _presetName, ...options } = preset; const sliceId = options.target === 'slices' && options.sliceId && exportSlices.some((slice) => slice.id === options.sliceId) ? options.sliceId : undefined; setExportForm({ ...options, sliceId }) } }} />
               <div className="preset-row"><TextInput className="preset-name-input" aria-label={t('app.export.presetName')} placeholder={t('app.export.presetName')} value={presetName} onChange={(event) => setPresetName(event.target.value)} /><button type="button" className="quiet-button" onClick={savePreset}>{t('app.export.savePreset')}</button><button type="button" className="icon-button preset-delete" title={t('app.export.deletePreset')} aria-label={t('app.export.deletePreset')} disabled={!presets.some((preset) => preset.presetName === presetName)} onClick={deletePreset}><PixelUtilityIcon kind="delete" /></button></div>
             </div>
           </FormField>

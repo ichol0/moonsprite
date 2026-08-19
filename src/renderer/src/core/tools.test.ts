@@ -318,6 +318,25 @@ describe('pixel tools', () => {
     expect(readLayerColor(document, layer, 0)).toEqual({ ...blue, a: 127 })
   })
 
+  it('uses imported image alpha as eraser strength', () => {
+    const document = createDocument('rgba image eraser', 1, 1, 'rgba')
+    const layer = getActiveLayer(document)
+    writeLayerColor(document, layer, 0, blue)
+    const brush = {
+      id: 'rgba-eraser.png',
+      name: 'RGBA eraser',
+      width: 1,
+      height: 1,
+      coverage: new Uint8Array([128]),
+      colors: new Uint32Array([packColor({ r: 255, g: 255, b: 255, a: 128 })]),
+      intrinsicSize: true
+    }
+
+    paintBrush(document, layer, beginPixelEdit(layer.id), 0, 0, 1, { r: 0, g: 0, b: 0, a: 0 }, 'square', null, 'solid', 1, brush)
+
+    expect(readLayerColor(document, layer, 0)).toEqual({ ...blue, a: 127 })
+  })
+
   it('captures every non-transparent selection pixel and its original color', () => {
     const document = createDocument('capture colored selection', 3, 1, 'rgba')
     const layer = getActiveLayer(document)
@@ -389,6 +408,20 @@ describe('pixel tools', () => {
       expect(customized).not.toEqual(baseline)
       expect(new Set(customized).size).toBeGreaterThan(4)
     }
+  })
+
+  it('uses procedural bucket sizes as canvas pixels instead of a hidden brush size', () => {
+    const filledAlpha = (scale: number, brushSize: number): number[] => {
+      const document = createDocument(`procedural fill ${scale} ${brushSize}`, 48, 24, 'rgba')
+      const layer = getActiveLayer(document)
+      const brush = createProceduralBrush('procedural:fibers', { seed: 103, scale, detail: 35, variation: 28, angle: 90 })
+      floodFill(document, layer, 0, 0, blue, null, false, brush, brushSize, undefined, 'solid', 1, 0, 'paint')
+      return Array.from({ length: document.width * document.height }, (_, index) => readLayerColor(document, layer, index).a)
+    }
+
+    const fine = filledAlpha(5, 1)
+    expect(filledAlpha(5, 128)).toEqual(fine)
+    expect(filledAlpha(18, 1)).not.toEqual(fine)
   })
 
   it('embeds normalized procedural settings in the generated brush', () => {
@@ -1531,7 +1564,7 @@ describe('pixel tools', () => {
     expect(edit.before.size).toBe(centeredCracks.length)
   })
 
-  it('uses grayscale image brush values as a one-color dithered stamp and skips black pixels', () => {
+  it('keeps legacy coverage-mask brushes as one-color dithered stamps', () => {
     const document = createDocument('gray brush', 4, 4, 'rgba')
     const layer = getActiveLayer(document)
     const edit = beginPixelEdit(layer.id)
@@ -1629,7 +1662,7 @@ describe('pixel tools', () => {
     expect(new Set(mask.map((point) => point.coverage))).toEqual(new Set([128, 255]))
   })
 
-  it('keeps local grayscale image brushes hard-edged when procedural antialiasing is enabled', () => {
+  it('keeps legacy coverage-mask brushes hard-edged when procedural antialiasing is enabled', () => {
     const local = { id: 'local.png', name: 'local', width: 4, height: 1, coverage: new Uint8Array([127, 128, 140, 255]) }
     const settings = { mode: 'threshold' as const, threshold: 128, blackPoint: 0, whitePoint: 255, invert: false }
     const mask = brushMaskOffsets(4, 'square', 'solid', 1, 0, 0, local, settings, 100)

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { createDocument, createLayer } from './document'
-import { colorPanelRenderKey, layersPanelRenderKey, palettePanelRenderKey, previewPanelRenderKey, tilesetPanelRenderKey } from './panel-render-keys'
+import { brushPanelRenderKey, colorPanelRenderKey, layersPanelRenderKey, palettePanelRenderKey, previewPanelRenderKey, tilesetPanelRenderKey } from './panel-render-keys'
 import type { TilemapDrawingMode } from './tilemap'
 
 const session = () => ({
@@ -21,6 +21,7 @@ const session = () => ({
   animationReturnToStart: false,
   activeLayerMaskId: null as string | null,
   layerMaskIsolatedView: false,
+  brushImageId: null as string | null,
   revision: 0,
   contentRevision: 0,
   layersPanelRevision: 0,
@@ -104,5 +105,15 @@ describe('panel render keys', () => {
     current.secondaryTileId = 'tile-background'
     expect(colorPanelRenderKey(current)).not.toBe(colorBefore)
     expect(tilesetPanelRenderKey(current)).not.toBe(tilesetBefore)
+  })
+
+  it('invalidates the Brush Library for active and legacy project brush changes', () => {
+    const current = session()
+    const before = brushPanelRenderKey(current)
+    current.brushImageId = 'local-brush.png'
+    expect(brushPanelRenderKey(current)).not.toBe(before)
+    const selected = brushPanelRenderKey(current)
+    current.document.customBrushes = [{ id: 'legacy', name: 'Legacy', width: 1, height: 1, coverage: Uint8Array.of(255) }]
+    expect(brushPanelRenderKey(current)).not.toBe(selected)
   })
 })

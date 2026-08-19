@@ -22,6 +22,7 @@ export interface ExportPreset {
   format: ImageExportKind
   scalePercent: number
   target?: 'document' | 'slices' | 'frames'
+  sliceId?: string
   directory?: string
   gifFrameRange?: 'all' | 'range'
   gifFrameStart?: number
@@ -39,6 +40,7 @@ export interface DocumentExportSettings {
   format: ImageExportKind
   scalePercent: number
   target?: 'document' | 'slices' | 'frames'
+  sliceId?: string
   directory?: string
   gifFrameRange?: 'all' | 'range'
   gifFrameStart?: number
@@ -90,6 +92,7 @@ function normalizeExportPreset(value: unknown): ExportPreset | null {
   const scalePercent = finiteInteger(value.scalePercent, finiteInteger(legacyScalePercent, 100, 1, 6400), 1, 6400)
   const directory = typeof value.directory === 'string' ? value.directory.trim() : ''
   const target = value.target === 'slices' || (format !== 'gif' && value.target === 'frames') ? value.target : 'document'
+  const sliceId = typeof value.sliceId === 'string' ? value.sliceId.trim() : ''
   const gifFrameRange = value.gifFrameRange === 'range' ? 'range' : 'all'
   const gifDirection: GifDirection = value.gifDirection === 'reverse'
     || value.gifDirection === 'forward-ping-pong'
@@ -104,6 +107,7 @@ function normalizeExportPreset(value: unknown): ExportPreset | null {
     format,
     scalePercent,
     ...(target !== 'document' ? { target } : {}),
+    ...(target === 'slices' && sliceId ? { sliceId } : {}),
     ...(directory ? { directory } : {}),
     ...(format === 'gif' ? {
       gifFrameRange,
@@ -122,6 +126,7 @@ function normalizeDocumentExportSettings(value: unknown): DocumentExportSettings
   const scalePercent = finiteInteger(value.scalePercent, 100, 1, 6400)
   const directory = typeof value.directory === 'string' ? value.directory.trim() : ''
   const target = value.target === 'slices' || (format !== 'gif' && value.target === 'frames') ? value.target : 'document'
+  const sliceId = typeof value.sliceId === 'string' ? value.sliceId.trim() : ''
   const gifFrameRange = value.gifFrameRange === 'range' ? 'range' : 'all'
   const gifDirection: GifDirection = value.gifDirection === 'reverse'
     || value.gifDirection === 'forward-ping-pong'
@@ -136,6 +141,7 @@ function normalizeDocumentExportSettings(value: unknown): DocumentExportSettings
     format,
     scalePercent,
     target,
+    ...(target === 'slices' && sliceId ? { sliceId } : {}),
     ...(directory ? { directory } : {}),
     ...(presetName ? { presetName } : {}),
     ...(format === 'gif' ? {

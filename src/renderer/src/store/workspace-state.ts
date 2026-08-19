@@ -137,7 +137,7 @@ export interface WorkspaceToolCommands {
   setBrushImage(brush: ImageBrush | null): void
   setTemporaryBrush(brush: ImageBrush): void
   deleteProjectBrush(id: string): void
-  createBrushFromSelection(): void
+  createBrushFromSelection(): Promise<void>
   setBrushImageSettings(settings: Partial<ImageBrushSettings>): void
   setProceduralBrushSettings(settings: Partial<ProceduralBrushSettings>): void
   setProceduralAntialias(enabled: boolean): void
@@ -287,6 +287,7 @@ export interface WorkspaceAnimationCommands {
 export interface WorkspaceLayerCommands {
   addLayer(): Promise<void>
   createTilemapLayer(options: TilemapLayerOptions): Promise<void>
+  convertLayerToTilemap(layerId: string, options: TilemapLayerOptions): Promise<void>
   createBackgroundLayer(pattern: BackgroundPatternId | BackgroundPatternTile): Promise<void>
   setLayerBackground(layerId: string, enabled: boolean): void
   createTextLayer(data: TextCelData, x: number, y: number): void

@@ -26,9 +26,11 @@
 | 恢复写入与放弃 | 恢复保存串行执行；用户放弃后等待在途写入结束并删除，晚到写入不得重新创建草稿 | `recovery-service.test.ts`、`workspace.test.ts`、Rust 恢复测试 |
 | 恢复能力降级 | 恢复目录或会话标记不可写时只记录警告，不阻止主窗口和编辑器启动 | Rust `platform_recovery` 测试 |
 | 文件拖放去重 | Windows 路径与 `file://` 路径统一规范化；HTML、Webview、Window 与 Rust 重复事件只打开一次并可重新订阅 | `document-drop.test.ts`、`document-drop-events.test.ts`、`document-drop-service.test.ts` |
+| 笔刷库文件边界 | 拖到笔刷库的图片不得作为文档打开；RGBA 和半透明像素往返保存保持，宽高超过 `256px` 在写盘前拒绝；`Ctrl+B` 只写全局库且不污染工程 dirty | `brushes.test.ts`、`workspace-session.test.ts`、`document-drop-service.test.ts`、`workspace.test.ts` |
 | 最近文件清理边界 | 路径确实不存在时移除最近记录；文件仍存在但解析失败时保留，不能把读取错误当成用户删除 | `HomeWorkspace.test.tsx`、Rust `platform_files` 测试 |
 | 剪贴板快照隔离 | 系统剪贴板不可读时回退内部快照；粘贴、变换和跨文档操作不得改写复制来源像素 | `clipboard-service.test.ts`、`workspace.test.ts` |
 | Tileset 槽位兼容 | 空槽布局保存重开后保持；旧 v13 紧凑布局可读取；重复、缺失或越界槽位明确拒绝，槽位移动不改变瓦片像素和稳定引用 | `project-format.test.ts`、`tilemap.test.ts`、`workspace-tilemap.test.ts` |
+| 图层转换为 Tilemap | 普通或背景图层按画布网格裁切全部帧，相同瓦片去重、边缘补透明；转换、重命名、背景身份、Tileset 与会话选择通过同一个 Undo/Redo 完整恢复 | `tilemap.test.ts`、`workspace-tilemap.test.ts`、`LayersPanel.test.tsx` |
 | 偏好与语言回退 | 损坏、未知或旧版偏好安全回退；切换语言不翻译工程名、图层名和用户输入 | `file-preferences.test.ts`、`localization.test.ts` |
 
 ## 历史与会话
@@ -62,6 +64,7 @@
 | 多帧画布尺寸 | 调整画布尺寸时所有 frame/cel 使用同一偏移；扩大、裁切、Undo/Redo 后保持相对位置 | `animation.test.ts`、`workspace.test.ts`、`document.test.ts` |
 | 调整预览基线 | 调整期间移动、变换或加减选时始终从未调整基线计算，不闪回、不重复叠加、不污染范围外像素 | `AdjustmentDialog.test.tsx`、`adjustment-preview-lifecycle.test.ts` |
 | 对称变换闭包 | 多轴绘制、填充和选区计算闭包并去重，轴线像素只写一次，结果合并为一次历史 | `symmetry.test.ts`、`tools.test.ts`、`selection.test.ts` |
+| 对称轴首次定位 | 每个工程中的每种对称轴首次启用时使用当前画布中心；同轴重复开关不跳动，不同工程的首次使用状态互不串联 | `workspace.test.ts` |
 | 洋葱皮合成 | 相邻帧按完整可见图层合成，当前帧内容和多图层遮挡不改变应显示的洋葱皮结果 | `onion-skin.test.ts` |
 
 ## 动画与图层结构

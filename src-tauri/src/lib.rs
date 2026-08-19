@@ -125,6 +125,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             platform_dialogs::open_files,
+            platform_dialogs::open_brush_images,
             take_startup_files,
             platform_dialogs::save_project,
             platform_dialogs::export_image,
@@ -155,6 +156,11 @@ pub fn run() {
             platform_brushes::list_brushes,
             platform_brushes::save_brush,
             platform_brushes::delete_brush,
+            platform_brushes::set_brush_order,
+            platform_brushes::create_brush_folder,
+            platform_brushes::rename_brush_folder,
+            platform_brushes::delete_brush_folder,
+            platform_brushes::move_brush,
             platform_brushes::open_brush_folder,
             platform_fonts::list_fonts,
             platform_fonts::list_system_fonts,

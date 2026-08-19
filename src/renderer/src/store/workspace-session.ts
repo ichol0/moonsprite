@@ -98,7 +98,7 @@ export const applyBrushProfile = (session: DocumentSession, profile: BrushProfil
 }
 
 export const remapSelectionBrushColors = (brush: ImageBrush, primary: RgbaColor, secondary: RgbaColor): ImageBrush => {
-  if (!brush.intrinsicSize || !brush.colors || brush.colors.length !== brush.width * brush.height) return brush
+  if (!brush.intrinsicSize || brush.sourceX === undefined || brush.sourceY === undefined || !brush.colors || brush.colors.length !== brush.width * brush.height) return brush
   const paintColors = new Uint32Array(brush.colors.length)
   for (let index = 0; index < brush.colors.length; index += 1) {
     const source = unpackColor(brush.colors[index] ?? 0)
@@ -265,6 +265,13 @@ export const sessionFromDocument = (document: SpriteDocument): DocumentSession =
     airbrushDensity: settings.airbrushDensity,
     airbrushIntervalMs: settings.airbrushIntervalMs,
     symmetryAxes: { ...settings.symmetryAxes },
+    symmetryAxesInitialized: {
+      horizontal: settings.symmetryAxes.horizontal,
+      vertical: settings.symmetryAxes.vertical,
+      diagonalUp: settings.symmetryAxes.diagonalUp,
+      diagonalDown: settings.symmetryAxes.diagonalDown,
+      rotational: Boolean(settings.symmetryAxes.rotational)
+    },
     symmetryCenter: defaultSymmetryCenter(document.width, document.height),
     lastPencilPoint: null,
     lastEraserPoint: null,

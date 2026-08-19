@@ -10,7 +10,8 @@ const panelDocks: Record<WorkspacePanelId, PanelDock> = {
   palette: 'right',
   layers: 'right',
   preview: 'right',
-  tileset: 'right'
+  tileset: 'right',
+  brushes: 'right'
 }
 
 const panelVisibility = (tileset: boolean): Record<WorkspacePanelId, boolean> => ({
@@ -18,7 +19,8 @@ const panelVisibility = (tileset: boolean): Record<WorkspacePanelId, boolean> =>
   palette: false,
   layers: false,
   preview: false,
-  tileset
+  tileset,
+  brushes: false
 })
 
 beforeEach(() => {

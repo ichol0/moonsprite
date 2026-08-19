@@ -185,6 +185,29 @@ pub(crate) fn open_files(language: Option<String>) -> OpenDialogResult {
 }
 
 #[tauri::command]
+pub(crate) fn open_brush_images(language: Option<String>) -> OpenDialogResult {
+    let paths = FileDialog::new()
+        .add_filter(
+            if is_english(language.as_deref()) {
+                "Brush images"
+            } else {
+                "笔刷图片"
+            },
+            &["png", "jpg", "jpeg", "webp", "bmp", "gif"],
+        )
+        .pick_files();
+    let file_paths = paths
+        .unwrap_or_default()
+        .into_iter()
+        .map(|path| path.to_string_lossy().to_string())
+        .collect::<Vec<_>>();
+    OpenDialogResult {
+        canceled: file_paths.is_empty(),
+        file_paths,
+    }
+}
+
+#[tauri::command]
 pub(crate) fn save_project(
     default_path: Option<String>,
     format: Option<String>,

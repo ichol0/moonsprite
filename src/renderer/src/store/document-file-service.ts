@@ -22,6 +22,7 @@ function rememberExportPath(filePath: string): void {
 function rememberLastDocumentExport(document: SpriteDocument, options: ExportOptions | undefined, actual: Pick<DocumentExportSettings, 'name' | 'format' | 'scalePercent' | 'target' | 'directory'>): void {
   saveDocumentExportSettings(document, {
     ...actual,
+    ...(actual.target === 'slices' && options?.sliceId ? { sliceId: options.sliceId } : {}),
     ...(options?.presetName ? { presetName: options.presetName } : {}),
     ...(actual.format === 'gif' ? {
       gifFrameRange: options?.gifFrameRange ?? 'all',
@@ -151,8 +152,10 @@ export async function exportDocumentFile(api: MoonSpriteApi, document: SpriteDoc
   const requestedName = sanitizeFileStem(options?.name ?? fallbackName, fallbackName)
   const format = options?.format ?? 'png-auto'
   if (options?.target === 'slices') {
-    const slices = document.slices ?? []
-    if (slices.length === 0) throw new Error(translate(loadEditorPreferences().language, 'file.export.noSlices'))
+    const documentSlices = document.slices ?? []
+    if (documentSlices.length === 0) throw new Error(translate(loadEditorPreferences().language, 'file.export.noSlices'))
+    const slices = options.sliceId ? documentSlices.filter((slice) => slice.id === options.sliceId) : documentSlices
+    if (slices.length === 0) throw new Error(translate(loadEditorPreferences().language, 'file.export.sliceMissing'))
     const directoryResult = await api.chooseDirectory(options.directory?.trim() || loadEditorPreferences().exportDirectory)
     if (directoryResult.canceled || !directoryResult.directoryPath) return null
     lifecycle?.onEncodeStart?.()

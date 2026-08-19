@@ -16,7 +16,7 @@ describe('native document drop events', () => {
     handler({ event: 'tauri://drag-over', id: 1, payload: { type: 'over', position: { x: 0, y: 0 } } as DragDropEvent })
     handler({ event: 'tauri://drag-drop', id: 2, payload: { type: 'drop', paths: ['D:\\gallery\\sprite.moonsprite'], position: { x: 0, y: 0 } } as DragDropEvent })
     expect(onDrop).toHaveBeenCalledOnce()
-    expect(onDrop).toHaveBeenCalledWith(['D:\\gallery\\sprite.moonsprite'])
+    expect(onDrop).toHaveBeenCalledWith({ paths: ['D:\\gallery\\sprite.moonsprite'], position: { x: 0, y: 0 } })
 
     cleanup()
     expect(unlisten).toHaveBeenCalledOnce()
@@ -32,7 +32,7 @@ describe('native document drop events', () => {
     const remove = await subscribeToNativeDocumentDropSources([failing, working], onDrop)
     handler({ event: 'tauri://drag-drop', id: 3, payload: { type: 'drop', paths: ['D:\\gallery\\sprite.aseprite'], position: { x: 0, y: 0 } } as DragDropEvent })
 
-    expect(onDrop).toHaveBeenCalledWith(['D:\\gallery\\sprite.aseprite'])
+    expect(onDrop).toHaveBeenCalledWith({ paths: ['D:\\gallery\\sprite.aseprite'], position: { x: 0, y: 0 } })
     remove()
     expect(cleanup).toHaveBeenCalledOnce()
   })

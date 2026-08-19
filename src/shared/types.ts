@@ -17,19 +17,19 @@ export interface ProceduralBrushSettings {
   angle: number
 }
 
-/** A grayscale brush stamp. Coverage is 0-255 and is not stored in projects. */
+/** A bitmap brush stamp. Coverage is 0-255; colors preserve source RGBA pixels when present. */
 export interface ImageBrush {
   id: string
   name: string
   width: number
   height: number
   coverage: Uint8Array
-  /** Optional source colors for selection-created brushes. Packed RGBA, one per pixel. */
+  /** Optional source colors for imported and selection-created brushes. Packed RGBA, one per pixel. */
   colors?: Uint32Array
-  /** Temporary foreground/background remap used while painting; never serialized. */
+  /** Temporary foreground/background remap for selection-created brushes; never serialized. */
   paintColors?: Uint32Array
   proceduralSettings?: ProceduralBrushSettings
-  /** Selection-created brushes keep their source dimensions instead of scaling to brushSize. */
+  /** Imported and selection-created brushes keep their source dimensions instead of scaling to brushSize. */
   intrinsicSize?: boolean
   /** Canvas-space origin used by source-aligned pattern painting. */
   sourceX?: number
@@ -49,6 +49,7 @@ export interface ProjectBrush {
   sourceY?: number
 }
 
+/** Legacy grayscale output settings kept only for persisted tool-setting compatibility. */
 export type GrayscaleBrushMode = 'dither' | 'threshold'
 
 export interface ImageBrushSettings {
@@ -66,11 +67,19 @@ export interface StoredBrush {
   intrinsicSize?: boolean
   sourceX?: number
   sourceY?: number
+  folderId?: string | null
+}
+
+export interface StoredBrushFolder {
+  id: string
+  name: string
+  filePath: string
 }
 
 export interface BrushListing {
   directoryPath: string
   brushes: StoredBrush[]
+  folders: StoredBrushFolder[]
 }
 
 export interface StoredFont {
@@ -674,7 +683,7 @@ export interface PaletteListing {
   palettes: StoredPalette[]
 }
 
-export type WorkspacePanelId = 'color' | 'palette' | 'layers' | 'preview' | 'tileset'
+export type WorkspacePanelId = 'color' | 'palette' | 'layers' | 'preview' | 'tileset' | 'brushes'
 export type WorkspacePanelDock = 'right' | 'left' | 'bottom' | 'floating'
 export type ToolRailSide = 'left' | 'right' | 'top' | 'bottom'
 
@@ -738,6 +747,7 @@ export interface BinaryReadProgress {
 
 export interface MoonSpriteApi {
   openFiles(): Promise<OpenDialogResult>
+  openBrushImages(): Promise<OpenDialogResult>
   takeStartupFiles(): Promise<string[]>
   saveProject(defaultPath?: string, format?: SaveDialogFormat): Promise<SaveDialogResult>
   exportImage(defaultPath: string | undefined, format: ImageExportFormat): Promise<SaveDialogResult>
@@ -765,8 +775,13 @@ export interface MoonSpriteApi {
   deleteWorkspace(id: string): Promise<void>
   openWorkspaceFolder(): Promise<void>
   listBrushes(): Promise<BrushListing>
-  saveBrush(name: string, data: Uint8Array, intrinsicSize?: boolean, sourceX?: number, sourceY?: number): Promise<StoredBrush>
+  saveBrush(name: string, data: Uint8Array, intrinsicSize?: boolean, sourceX?: number, sourceY?: number, folderId?: string | null): Promise<StoredBrush>
   deleteBrush(id: string): Promise<void>
+  setBrushOrder(ids: string[]): Promise<void>
+  createBrushFolder(name: string, parentFolderId?: string | null): Promise<StoredBrushFolder>
+  renameBrushFolder(id: string, name: string): Promise<StoredBrushFolder>
+  deleteBrushFolder(id: string): Promise<void>
+  moveBrush(id: string, folderId?: string | null): Promise<StoredBrush>
   openBrushFolder(): Promise<void>
   listFonts(): Promise<FontListing>
   listSystemFonts(): Promise<StoredFont[]>

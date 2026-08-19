@@ -1115,6 +1115,26 @@ describe('LayersPanel properties', () => {
     expect(layer.clippingMask).toBeUndefined()
   })
 
+  it('groups layer type changes under Convert To and opens the Tilemap conversion dialog', () => {
+    const document = createDocument('layer conversion menu', 8, 8, 'rgba')
+    const layer = getActiveLayer(document)
+    layer.name = 'Source Pixels'
+    useWorkspace.getState().addSession(document)
+    const { container } = render(<LayersPanel session={useWorkspace.getState().sessions[0]} docked />)
+
+    fireEvent.contextMenu(container.querySelector(`[data-layer-id="${layer.id}"]`)!, { clientX: 20, clientY: 20 })
+    const contextMenu = container.querySelector<HTMLElement>('.layer-context-menu')!
+    expect(within(contextMenu).getByRole('button', { name: '转换为' })).toBeInTheDocument()
+    const convertMenu = within(contextMenu).getByRole('menu', { name: '转换为', hidden: true })
+    expect(within(convertMenu).getByRole('menuitem', { name: '转换为背景图层', hidden: true })).toBeEnabled()
+    expect(within(convertMenu).getByRole('menuitem', { name: '转换为普通图层', hidden: true })).toBeDisabled()
+
+    fireEvent.click(within(convertMenu).getByRole('menuitem', { name: '转换为瓦片图层', hidden: true }))
+
+    expect(screen.getByRole('dialog', { name: '转换为瓦片图层' })).toBeInTheDocument()
+    expect(screen.getByDisplayValue('Source Pixels')).toBeInTheDocument()
+  })
+
   it('opens layer styles for layers and groups from their context menu or status icon', () => {
     const document = createDocument('layer style menu', 2, 2, 'rgba')
     const layer = getActiveLayer(document)

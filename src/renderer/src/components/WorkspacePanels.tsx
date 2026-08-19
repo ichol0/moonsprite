@@ -7,12 +7,14 @@ import { LayersPanel } from '@/components/panels/LayersPanel'
 import { PalettePanel } from '@/components/panels/PalettePanel'
 import { PreviewPanel } from '@/components/panels/PreviewPanel'
 import { TilesetPanel } from '@/components/panels/TilesetPanel'
+import { BrushLibraryPanel } from '@/components/panels/BrushLibraryPanel'
+import { useBrushLibrary } from '@/components/app/useBrushLibrary'
 import { PixelUtilityIcon } from '@/components/PixelUtilityIcon'
 import type { DockDragProps } from '@/components/workspace-panel-types'
 import { readStoredString, removeStoredValue, saveFloatingPosition, writeStoredString } from '@/core/panel-preferences'
 import { bottomPanelFlex, COLOR_SQUARE_ANCHOR_STORAGE_KEY, COLOR_SQUARE_DOCK_STORAGE_KEY, DEFAULT_BOTTOM_WIDTHS, DEFAULT_INSPECTOR_ORDER, DEFAULT_INSPECTOR_SIZES, INSPECTOR_LAYOUT_STORAGE_KEY, MINIMUM_BOTTOM_WIDTHS, MINIMUM_INSPECTOR_SIZES, loadInspectorLayout, moveInspectorPanel, proportionalPanelFlex, type WorkspacePanelId } from '@/core/panel-layout'
 import { FLOATING_PANEL_STORAGE_KEYS } from '@/core/workspace-layout-preferences'
-import { colorPanelRenderKey, layersPanelRenderKey, palettePanelRenderKey, previewPanelRenderKey, tilesetPanelRenderKey } from '@/core/panel-render-keys'
+import { brushPanelRenderKey, colorPanelRenderKey, layersPanelRenderKey, palettePanelRenderKey, previewPanelRenderKey, tilesetPanelRenderKey } from '@/core/panel-render-keys'
 import { FloatingDockPreview, panelDockZoneAt } from './floating-panel'
 import type { FixedPanelDock, PanelDock } from './floating-panel'
 import { PerformanceProfiler } from './PerformanceProfiler'
@@ -97,7 +99,8 @@ export function InspectorPanels({ session, panelVisibility, onClosePreview, pane
   onPopupPanelClose?: () => void
 }) {
   const { t } = useI18n()
-  const panelLabels: Record<WorkspacePanelId, string> = { color: t('panel.color'), palette: t('panel.palette'), layers: t('panel.layers'), preview: t('panel.preview'), tileset: t('panel.tileset') }
+  const brushLibrary = useBrushLibrary(session)
+  const panelLabels: Record<WorkspacePanelId, string> = { color: t('panel.color'), palette: t('panel.palette'), layers: t('panel.layers'), preview: t('panel.preview'), tileset: t('panel.tileset'), brushes: t('panel.brushes') }
   const panelDockLabels: Record<PanelDock, string> = { left: t('panel.dock.left'), right: t('panel.dock.right'), bottom: t('panel.dock.bottom'), floating: t('panel.dock.floating') }
   const panelStateKey = useWorkspace((state) => {
     const current = state.sessions.find((item) => item.document.id === session.document.id) ?? session
@@ -106,7 +109,8 @@ export function InspectorPanels({ session, panelVisibility, onClosePreview, pane
       palettePanelRenderKey(current),
       layersPanelRenderKey(current),
       previewPanelRenderKey(current),
-      tilesetPanelRenderKey(current)
+      tilesetPanelRenderKey(current),
+      brushPanelRenderKey(current)
     ].join('::')
   })
   void panelStateKey
@@ -422,9 +426,11 @@ export function InspectorPanels({ session, panelVisibility, onClosePreview, pane
         ? <MemoPalettePanel renderKey={palettePanelRenderKey(session)} session={session} {...dockProps} />
         : id === 'layers'
           ? <MemoLayersPanel renderKey={layersPanelRenderKey(session)} session={session} sideDocked={dock === 'left' || dock === 'right'} {...dockProps} />
-          : id === 'tileset'
-            ? <MemoTilesetPanel renderKey={tilesetPanelRenderKey(session)} session={session} {...dockProps} />
-            : <MemoPreviewPanel renderKey={previewPanelRenderKey(session)} session={session} onClose={popup ? onPopupPanelClose ?? onClosePreview : onClosePreview} relativeLuminanceInPreview={relativeLuminanceInPreview} relativeLuminanceOverride={previewRelativeLuminanceOverride} {...dockProps} />
+          : id === 'brushes'
+            ? <BrushLibraryPanel session={session} controller={brushLibrary} {...dockProps} />
+            : id === 'tileset'
+              ? <MemoTilesetPanel renderKey={tilesetPanelRenderKey(session)} session={session} {...dockProps} />
+              : <MemoPreviewPanel renderKey={previewPanelRenderKey(session)} session={session} onClose={popup ? onPopupPanelClose ?? onClosePreview : onClosePreview} relativeLuminanceInPreview={relativeLuminanceInPreview} relativeLuminanceOverride={previewRelativeLuminanceOverride} {...dockProps} />
     return <PerformanceProfiler id={`Panel:${id}`}>{panel}</PerformanceProfiler>
   }
 

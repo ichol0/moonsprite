@@ -124,9 +124,11 @@ export const documentStructureDeltaBytes = (before: DocumentStructureSnapshot, a
 }
 
 interface LayerDefinitionSnapshot {
+  name: string
   kind?: RasterLayer['kind']
   tilemapTilesetId?: string
   layerStyles?: RasterLayer['layerStyles']
+  background?: RasterLayer['background']
 }
 
 export interface LayerContentSnapshot {
@@ -149,9 +151,11 @@ export const captureLayerContentSnapshot = (document: SpriteDocument, layerId: s
   return {
     layerId,
     definition: {
+      name: layer.name,
       kind: layer.kind,
       tilemapTilesetId: layer.tilemapTilesetId,
-      layerStyles: cloneLayerStyles(layer.layerStyles)
+      layerStyles: cloneLayerStyles(layer.layerStyles),
+      background: layer.background ? { ...layer.background } : undefined
     },
     cels: timeline.cels.filter((cel) => cel.layerId === layerId).map(cloneAnimationCel),
     tilesets: [...(document.tilesets ?? [])],
@@ -166,12 +170,15 @@ export const captureLayerContentSnapshot = (document: SpriteDocument, layerId: s
 export const restoreLayerContentSnapshot = (document: SpriteDocument, snapshot: LayerContentSnapshot): void => {
   const layer = document.layers.find((candidate) => candidate.id === snapshot.layerId)
   if (!layer) return
+  layer.name = snapshot.definition.name
   if (snapshot.definition.kind) layer.kind = snapshot.definition.kind
   else delete layer.kind
   if (snapshot.definition.tilemapTilesetId) layer.tilemapTilesetId = snapshot.definition.tilemapTilesetId
   else delete layer.tilemapTilesetId
   if (snapshot.definition.layerStyles) layer.layerStyles = cloneLayerStyles(snapshot.definition.layerStyles)
   else delete layer.layerStyles
+  if (snapshot.definition.background) layer.background = { ...snapshot.definition.background }
+  else delete layer.background
   document.tilesets = [...snapshot.tilesets]
   document.palette = clonePalette(snapshot.palette)
   document.paletteOrder = [...snapshot.paletteOrder]

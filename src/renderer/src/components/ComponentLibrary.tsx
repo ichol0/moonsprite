@@ -1,6 +1,7 @@
 import { useMemo, useState, type ReactElement } from 'react'
 import { CheckCircle2, FileText, Layers2, Palette, Search } from 'lucide-react'
-import type { GradientDither, OutlineDirections, OutlineKernel, OutlinePosition, RgbaColor, Tileset } from '@shared/types'
+import type { GradientDither, ImageBrush, OutlineDirections, OutlineKernel, OutlinePosition, RgbaColor, Tileset } from '@shared/types'
+import { BrushThumbnail } from './BrushThumbnail'
 import { ColorPicker, type ColorPickerConfig } from './ColorPicker'
 import { ColorValueControl } from './ColorValueControl'
 import { DeleteIconButton } from './DeleteIconButton'
@@ -30,6 +31,7 @@ import { CURSOR_ICON_LIBRARY } from '@/platform/cursor-theme'
 import { translate, type AppLocale, type TranslationKey, type TranslationParams } from '@/core/localization'
 import { outlineDirectionsForKernel } from '@/core/outline-settings'
 import type { BrushDynamicsEffect, BrushDynamicsMapping, BrushDynamicsSettings } from '@/core/pressure'
+import { packColor } from '@/core/raster'
 
 type ComponentCategory = 'all' | 'controls' | 'forms' | 'panels' | 'dialogs' | 'editor'
 
@@ -73,7 +75,7 @@ const pixelIconNames: Partial<Record<PixelUtilityIconKind, string>> = {
   invertSelection: '反选', selectAll: '全选', deselect: '取消选择', selectionOutline: '选区边框',
   resetView: '重置视图', deleteSelection: '删除选区内容', rotateClockwise90: '顺时针旋转 90°',
   rotateCounterClockwise90: '逆时针旋转 90°', tileRepeatX: 'X轴平铺', tileRepeatY: 'Y轴平铺', tileRepeatBoth: '包围平铺',
-  tilemap: '瓦片', tilePaint: '绘制瓦片', tileModeEdit: '原位编辑',
+  tilemap: '瓦片', tilePaint: '绘制瓦片', convertTo: '转换为', tileModeEdit: '原位编辑',
   tileModeCreate: '变体创建', tileModeHybrid: '混合编辑', timelapse: '缩时视频', grid: '网格'
 }
 
@@ -140,10 +142,11 @@ export const COMPONENT_LIBRARY_ENTRIES: ComponentLibraryEntry[] = [
   { id: 'checkbox', name: '复选框', category: 'forms', description: '用于可以同时启用的独立选项。', source: 'CheckboxField / PixelCheckbox', tags: ['设置', '复选'] },
   { id: 'switch', name: '开关', category: 'forms', description: '用于明确的开启与关闭状态。', source: 'PreferenceToggle', tags: ['设置', '开关'] },
   { id: 'live-preview-toggle', name: '实时预览开关', category: 'forms', description: '调整类弹窗用于开启或关闭实时预览的统一开关。', source: 'LivePreviewToggle', tags: ['实时', '开关', '弹窗'] },
-  { id: 'scrollbar', name: '滚动区域', category: 'forms', description: '下拉菜单和长列表使用的统一滚动条。', source: '.component-scrollbar', tags: ['滚动', '列表'] },
+  { id: 'scrollbar', name: '滚动区域', category: 'forms', description: '所有滚动区域共享的像素滚动条，并由全局样式阻止回退到系统原生样式。', source: '.component-scrollbar / global fallback', tags: ['滚动', '列表'] },
   { id: 'panel-header', name: '栏目标题', category: 'panels', description: '停靠栏目标题、拖动入口和右侧操作。', source: '.panel > header', tags: ['栏目', '停靠'] },
   { id: 'layer-row', name: '图层行', category: 'panels', description: '可见性、锁定、组图标、名称、混合模式和拖动状态。', source: 'LayersPanel', tags: ['图层', '拖动'] },
   { id: 'swatches', name: '颜色格', category: 'panels', description: '调色板中的居中描边、选中外框和多选状态。', source: '.swatch-grid / .swatch', tags: ['颜色', '多选'] },
+  { id: 'brush-thumbnail', name: '笔刷缩略图', category: 'panels', description: '笔刷库与工具属性栏共用的 RGBA 像素缩略图。', source: 'BrushThumbnail / .brush-swatch', tags: ['栏目', '选中', '颜色'] },
   { id: 'tileset-tile-thumbnail', name: '瓦片缩略图', category: 'panels', description: '瓦片集中的方形像素缩略图，支持默认、选中、禁用和点击选择状态。', source: 'TilesetTileThumbnail / .tileset-tile-grid', tags: ['栏目', '选中', '状态'] },
   { id: 'modal-shell', name: '弹窗框架', category: 'dialogs', description: '统一标题、内容、底部操作、拖动、八向缩放和尺寸位置记忆。', source: 'ModalShell / .modal-backdrop', tags: ['弹窗', '布局', '缩放'] },
   { id: 'dialog-header', name: '弹窗标题栏', category: 'dialogs', description: '统一弹窗眉题、标题、关闭操作和可选标题栏动作。', source: 'DialogHeader', tags: ['弹窗', '布局', '操作'] },
@@ -214,7 +217,7 @@ function NumberInputPreview({ locale }: { locale: AppLocale }) {
     <FormField className="component-number-input-row" layout="inline" label={locale === 'zh-CN' ? '紧凑' : 'Compact'}><NumberInput density="compact" value={value} min={1} max={128} suffix="px" onValueChange={setValue} /></FormField>
     <div className="component-number-input-row component-number-input-no-label"><NumberInput aria-label={componentText(locale, 'componentLibrary.preview.untitledNumber')} value={untitledValue} min={1} max={128} suffix="px" onValueChange={setUntitledValue} /></div>
     <FormField className="component-number-input-row" layout="inline" label={componentText(locale, 'componentLibrary.preview.hintNumber')}><NumberInput className="component-number-input-hint-input" aria-label={componentText(locale, 'componentLibrary.preview.hintNumber')} value="" min={1} max={128} placeholder={componentText(locale, 'componentLibrary.preview.enterNumber')} onValueChange={() => undefined} /></FormField>
-    <FormField className="component-number-input-row" layout="inline" label={componentText(locale, 'componentLibrary.preview.size')}><div className="brush-size-control component-number-input-slider" onPointerDown={() => setSliderOpen(true)}><NumberInput aria-label={componentText(locale, 'componentLibrary.preview.sliderNumber')} value={sliderValue} min={1} max={128} suffix="px" onValueChange={setSliderValue} onFocus={() => setSliderOpen(true)} />{sliderOpen && <div className="brush-size-popover" role="dialog" aria-label={componentText(locale, 'componentLibrary.preview.adjustNumber')}><input aria-label={componentText(locale, 'componentLibrary.preview.valueSlider')} type="range" min="1" max="128" value={sliderValue} onChange={(event) => setSliderValue(Number(event.target.value))} /><strong>{sliderValue}px</strong></div>}</div></FormField>
+    <FormField className="component-number-input-row" layout="inline" label={componentText(locale, 'componentLibrary.preview.size')}><div className="brush-size-control component-number-input-slider" onPointerDown={() => setSliderOpen(true)}><NumberInput aria-label={componentText(locale, 'componentLibrary.preview.sliderNumber')} value={sliderValue} min={1} max={128} suffix="px" onValueChange={setSliderValue} onFocus={() => setSliderOpen(true)} />{sliderOpen && <div className="brush-size-popover" role="dialog" aria-label={componentText(locale, 'componentLibrary.preview.adjustNumber')}><RangeField ariaLabel={componentText(locale, 'componentLibrary.preview.valueSlider')} density="compact" min={1} max={128} suffix="px" value={sliderValue} onChange={setSliderValue} /></div>}</div></FormField>
     <FormField className="component-number-input-row" layout="inline" label={componentText(locale, 'componentLibrary.preview.disabled')}><NumberInput disabled value={32} min={1} max={128} suffix="px" onValueChange={() => undefined} /></FormField>
   </div>
 }
@@ -288,7 +291,7 @@ function PanelHeaderPreview({ locale }: { locale: AppLocale }) {
 function PixelUtilityIconPreview() {
   const [locked, setLocked] = useState(true)
   const [visible, setVisible] = useState(true)
-    const kinds = ['properties', 'delete', 'newFolder', 'ungroupFolder', 'plus', 'minus', 'close', 'up', 'down', 'left', 'right', 'onion', 'more', 'moreLines', 'paletteLocal', 'paletteCenter', 'restore', 'undo', 'redo', 'workspace', 'copy', 'link', 'paste', 'mergeDown', 'mergeVisible', 'clippingMask', 'layerMask', 'layerStyle', 'folder', 'folderOpen', 'move', 'save', 'export', 'image', 'roadmapPlanned', 'roadmapCompleted', 'info', 'canvasCenter', 'canvasTop', 'canvasBottom', 'canvasLeft', 'canvasRight', 'canvasTopLeft', 'canvasTopRight', 'canvasBottomLeft', 'canvasBottomRight', 'checkboxUnchecked', 'checkboxChecked', 'pin', 'clearRecords', 'refresh', 'extractColors', 'follow', 'check', 'selectionFlipHorizontal', 'selectionFlipVertical', 'canvasMirrorHorizontal', 'canvasMirrorVertical', 'invertSelection', 'selectAll', 'deselect', 'selectionOutline', 'resetView', 'deleteSelection', 'rotateClockwise90', 'rotateCounterClockwise90', 'tileRepeatX', 'tileRepeatY', 'tileRepeatBoth', 'tilemap', 'tilePaint', 'tileModeEdit', 'tileModeCreate', 'tileModeHybrid', 'timelapse', 'grid'] as const
+  const kinds = ['properties', 'delete', 'newFolder', 'ungroupFolder', 'plus', 'minus', 'close', 'up', 'down', 'left', 'right', 'onion', 'more', 'moreLines', 'paletteLocal', 'paletteCenter', 'restore', 'undo', 'redo', 'workspace', 'copy', 'link', 'paste', 'mergeDown', 'mergeVisible', 'clippingMask', 'layerMask', 'layerStyle', 'folder', 'folderOpen', 'move', 'save', 'export', 'image', 'roadmapPlanned', 'roadmapCompleted', 'info', 'canvasCenter', 'canvasTop', 'canvasBottom', 'canvasLeft', 'canvasRight', 'canvasTopLeft', 'canvasTopRight', 'canvasBottomLeft', 'canvasBottomRight', 'checkboxUnchecked', 'checkboxChecked', 'pin', 'clearRecords', 'refresh', 'extractColors', 'follow', 'check', 'selectionFlipHorizontal', 'selectionFlipVertical', 'canvasMirrorHorizontal', 'canvasMirrorVertical', 'invertSelection', 'selectAll', 'deselect', 'selectionOutline', 'resetView', 'deleteSelection', 'rotateClockwise90', 'rotateCounterClockwise90', 'tileRepeatX', 'tileRepeatY', 'tileRepeatBoth', 'tilemap', 'tilePaint', 'convertTo', 'tileModeEdit', 'tileModeCreate', 'tileModeHybrid', 'timelapse', 'grid'] as const
   return <div className="component-preview-row"><button type="button" title={pixelIconTitle(locked ? 'lock' : 'unlock')} className={locked ? 'icon-button selected' : 'icon-button'} aria-label={pixelIconTitle(locked ? 'lock' : 'unlock')} aria-pressed={locked} onClick={() => setLocked((value) => !value)}><PixelUtilityIcon kind={locked ? 'lock' : 'unlock'} /></button><button type="button" title={pixelIconTitle(visible ? 'eye' : 'eyeOff')} className={visible ? 'icon-button selected' : 'icon-button'} aria-label={pixelIconTitle(visible ? 'eye' : 'eyeOff')} aria-pressed={visible} onClick={() => setVisible((value) => !value)}><PixelUtilityIcon kind={visible ? 'eye' : 'eyeOff'} /></button>{kinds.map((kind) => <button key={kind} type="button" className="icon-button" title={pixelIconTitle(kind)} aria-label={pixelIconTitle(kind)}><PixelUtilityIcon kind={kind} /></button>)}<button type="button" className="icon-button" title={pixelIconTitle('lock')} aria-label={pixelIconTitle('lock')} disabled><PixelUtilityIcon kind="lock" /></button></div>
 }
 
@@ -456,6 +459,43 @@ function ColorValuePreview({ locale }: { locale: AppLocale }) {
   return <div className="component-color-value-preview"><ColorValueControl color={color} density="compact" onChange={setColor} label={componentText(locale, 'componentLibrary.preview.colorValue')} roleLabel={componentText(locale, 'componentLibrary.preview.foreground')} fillWithColor /><ColorValueControl color={color} density="regular" onChange={setColor} label={componentText(locale, 'componentLibrary.preview.colorValue')} roleLabel={componentText(locale, 'componentLibrary.preview.foreground')} fillWithColor /><ColorValueControl color={transparentColor} density="emphasized" onChange={setTransparentColor} label={componentText(locale, 'componentLibrary.preview.colorValue')} roleLabel={componentText(locale, 'componentLibrary.preview.background')} fillWithColor /><ColorValueControl color={color} density="regular" disabled onChange={setColor} label={componentText(locale, 'componentLibrary.preview.disabled')} fillWithColor /></div>
 }
 
+const componentBrushes: ImageBrush[] = [
+  {
+    id: 'component-brush-color',
+    name: 'Color brush',
+    width: 4,
+    height: 4,
+    coverage: Uint8Array.from([0, 255, 255, 0, 255, 255, 255, 255, 255, 255, 255, 255, 0, 255, 255, 0]),
+    colors: Uint32Array.from([
+      packColor({ r: 0, g: 0, b: 0, a: 0 }), packColor({ r: 41, g: 121, b: 255, a: 255 }), packColor({ r: 89, g: 195, b: 106, a: 255 }), packColor({ r: 0, g: 0, b: 0, a: 0 }),
+      packColor({ r: 41, g: 121, b: 255, a: 255 }), packColor({ r: 248, g: 91, b: 74, a: 255 }), packColor({ r: 248, g: 91, b: 74, a: 255 }), packColor({ r: 89, g: 195, b: 106, a: 255 }),
+      packColor({ r: 41, g: 121, b: 255, a: 255 }), packColor({ r: 248, g: 91, b: 74, a: 255 }), packColor({ r: 248, g: 91, b: 74, a: 255 }), packColor({ r: 89, g: 195, b: 106, a: 255 }),
+      packColor({ r: 0, g: 0, b: 0, a: 0 }), packColor({ r: 41, g: 121, b: 255, a: 255 }), packColor({ r: 89, g: 195, b: 106, a: 255 }), packColor({ r: 0, g: 0, b: 0, a: 0 })
+    ]),
+    intrinsicSize: true
+  },
+  {
+    id: 'component-brush-alpha',
+    name: 'Alpha brush',
+    width: 2,
+    height: 2,
+    coverage: Uint8Array.from([255, 128, 64, 0]),
+    colors: Uint32Array.from([
+      packColor({ r: 255, g: 255, b: 255, a: 255 }), packColor({ r: 255, g: 255, b: 255, a: 128 }),
+      packColor({ r: 255, g: 255, b: 255, a: 64 }), packColor({ r: 0, g: 0, b: 0, a: 0 })
+    ]),
+    intrinsicSize: true
+  }
+]
+
+function BrushThumbnailPreview({ locale }: { locale: AppLocale }) {
+  const [selected, setSelected] = useState(0)
+  return <div className="component-preview-row" style={{ '--brush-swatch-size': '48px' } as React.CSSProperties}>
+    {componentBrushes.map((brush, index) => <button key={brush.id} type="button" className={`swatch brush-swatch transparent ${selected === index ? 'selected' : ''}`} aria-label={`${componentText(locale, 'componentLibrary.preview.brush')} ${index + 1}`} aria-pressed={selected === index} onClick={() => setSelected(index)}><span className="brush-swatch-preview" aria-hidden="true"><BrushThumbnail brush={brush} /></span></button>)}
+    <button type="button" className="swatch brush-swatch transparent" aria-label={componentText(locale, 'componentLibrary.preview.disabled')} disabled><span className="brush-swatch-preview" aria-hidden="true"><BrushThumbnail brush={componentBrushes[0]} /></span></button>
+  </div>
+}
+
 function DockPreview({ locale }: { locale: AppLocale }) {
   return <div className="component-dock-preview"><div className="component-dock-rail"><span /><span /><span /></div><div className="component-dock-canvas"><div className="component-dock-drop-line" /><span>{componentText(locale, 'componentLibrary.preview.canvas')}</span></div><div className="component-dock-panel"><strong>{componentText(locale, 'componentLibrary.preview.color')}</strong><span /><span /><span /></div></div>
 }
@@ -486,6 +526,7 @@ const previewRenderers: Record<string, (props: { locale: AppLocale }) => ReactEl
   'panel-header': PanelHeaderPreview,
   'layer-row': LayerRowPreview,
   swatches: SwatchesPreview,
+  'brush-thumbnail': BrushThumbnailPreview,
   'tileset-tile-thumbnail': TilesetTileThumbnailPreview,
   'modal-shell': ModalShellPreview,
   'dialog-header': ModalShellPreview,
