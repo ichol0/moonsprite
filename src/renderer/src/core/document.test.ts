@@ -1,14 +1,24 @@
 import { describe, expect, it } from 'vitest'
-import { blendWithMode, packColor } from './raster'
+import { blendWithMode, packColor, writeRgbaPixel } from './raster'
 import { createDefaultLayerStyles } from './layer-styles'
 import { activateAnimationFrame, duplicateAnimationFrame, ensureAnimationDocument } from './animation'
-import { captureDocumentImageResizeSnapshot, compositePixelWithLayerColor, compositeRegion, createCompositePointReplacementSampler, createCompositePointSampler, createCompositeSampler, createDocument, createLayer, createLayerMask, createNormalCompositePointReplacementSampler, createNormalCompositePointSampler, DocumentCompositeCache, getPaletteEntry, layerContentBounds, markLayerContentChanged, normalCompositeLayers, paletteColorIdForCanvas, readLayerColor, readLayerColorAt, readLayerMaskDisplayColorAt, renderLayerMaskRegion, resizeDocumentAt, resizeDocumentImage, resolveLayerCanvasColor, restoreDocumentImageResizeSnapshot, writeLayerColor, writeLayerPackedRun } from './document'
+import { cachedLayerContentBounds, captureDocumentImageResizeSnapshot, compositePixelWithLayerColor, compositeRegion, createCompositePointReplacementSampler, createCompositePointSampler, createCompositeSampler, createDocument, createLayer, createLayerMask, createNormalCompositePointReplacementSampler, createNormalCompositePointSampler, DocumentCompositeCache, getPaletteEntry, layerContentBounds, markLayerContentChanged, normalCompositeLayers, paletteColorIdForCanvas, readLayerColor, readLayerColorAt, readLayerMaskDisplayColorAt, renderLayerMaskRegion, resizeDocumentAt, resizeDocumentImage, resolveLayerCanvasColor, restoreDocumentImageResizeSnapshot, writeLayerColor, writeLayerPackedRun } from './document'
 import { installRuntimeRaster, surfacePixelsMaterialized } from './runtime-raster'
 
 const red = { r: 255, g: 0, b: 0, a: 255 }
 const blue = { r: 0, g: 0, b: 255, a: 128 }
 
 describe('document compositing', () => {
+  it('distinguishes unknown content bounds from cached empty or populated bounds', () => {
+    const document = createDocument('known bounds', 8, 6, 'rgba')
+    const layer = document.layers[0]
+    writeLayerColor(document, layer, 3 * layer.width + 4, red)
+
+    expect(cachedLayerContentBounds(document, layer)).toBeUndefined()
+    expect(layerContentBounds(document, layer)).toEqual({ x: 4, y: 3, width: 1, height: 1 })
+    expect(cachedLayerContentBounds(document, layer)).toEqual({ x: 4, y: 3, width: 1, height: 1 })
+  })
+
   it('keeps binary-alpha cached shadow and inner glow pixel-identical', () => {
     const document = createDocument('binary style cache', 18, 14, 'rgba')
     const layer = document.layers[0]
@@ -74,6 +84,38 @@ describe('document compositing', () => {
     expect(Array.from(compositeRegion(document, 0, 0, 12, 10, cache, 1))).toEqual(Array.from(compositeRegion(document, 0, 0, 12, 10)))
   })
 
+  it('keeps cached binary shadow geometry exact across blur previews and content changes', () => {
+    const document = createDocument('cached shadow previews', 24, 20, 'rgba')
+    const layer = document.layers[0]
+    for (let x = 5; x < 19; x += 1) {
+      writeLayerColor(document, layer, 4 * layer.width + x, red)
+      writeLayerColor(document, layer, 15 * layer.width + x, red)
+    }
+    for (let y = 5; y < 15; y += 1) {
+      writeLayerColor(document, layer, y * layer.width + 5, red)
+      writeLayerColor(document, layer, y * layer.width + 18, red)
+    }
+    const styles = createDefaultLayerStyles()
+    styles.shadow = { ...styles.shadow, enabled: true, offsetX: 2, offsetY: -1, blur: 2 }
+    layer.layerStyles = styles
+    const cache = new DocumentCompositeCache()
+    let revision = 1
+
+    for (const blur of [2, 3, 5, 1, 8]) {
+      styles.shadow.blur = blur
+      expect(Array.from(compositeRegion(document, 0, 0, document.width, document.height, cache, revision++))).toEqual(
+        Array.from(compositeRegion(document, 0, 0, document.width, document.height))
+      )
+    }
+
+    writeLayerColor(document, layer, 10 * layer.width + 12, red)
+    markLayerContentChanged(layer)
+    styles.shadow.blur = 5
+    expect(Array.from(compositeRegion(document, 0, 0, document.width, document.height, cache, revision))).toEqual(
+      Array.from(compositeRegion(document, 0, 0, document.width, document.height))
+    )
+  })
+
   it('creates layers without a display color marker by default', () => {
     expect(createLayer('plain', 1, 1, 'rgba').displayColor).toBeUndefined()
   })
@@ -115,6 +157,105 @@ describe('document compositing', () => {
 
     writeLayerColor(document, special, 0, blue)
     expect(normalCompositeLayers(document)).toBeNull()
+  })
+
+  it('keeps hidden non-default groups out of fast-path eligibility', () => {
+    const document = createDocument('hidden complex group', 2, 1, 'rgba')
+    const visible = document.layers[0]
+    const hidden = createLayer('hidden member', 2, 1, 'rgba')
+    hidden.groupId = 'hidden-group'
+    hidden.blendMode = 'multiply'
+    document.layers.push(hidden)
+    document.groups.push({ id: 'hidden-group', name: 'Hidden', parentGroupId: null, visible: false, locked: false, opacity: 0.3, blendMode: 'multiply' })
+    writeLayerColor(document, visible, 0, red)
+    writeLayerColor(document, hidden, 0, blue)
+
+    expect(normalCompositeLayers(document)).toEqual([visible])
+    expect(Array.from(compositeRegion(document, 0, 0, 2, 1, new DocumentCompositeCache(), 1))).toEqual([
+      255, 0, 0, 255,
+      0, 0, 0, 0
+    ])
+  })
+
+  it('keeps visible empty opacity groups out of fast-path eligibility', () => {
+    const document = createDocument('visible empty opacity group', 2, 1, 'rgba')
+    const visible = document.layers[0]
+    document.groups.push({ id: 'empty-group', name: 'Empty', parentGroupId: null, visible: true, locked: false, opacity: 0.3, blendMode: 'normal' })
+    const timeline = ensureAnimationDocument(document)
+    const mask = createLayerMask('empty-group', document.width, document.height, 'group')
+    writeLayerColor(document, mask, 0, { r: 0, g: 0, b: 0, a: 255 })
+    timeline.groupMasks = [{ groupId: 'empty-group', frameId: timeline.activeFrameId, mask }]
+    writeLayerColor(document, visible, 0, red)
+    const cache = new DocumentCompositeCache()
+
+    expect(normalCompositeLayers(document)).toEqual([visible])
+    expect(cache.renderLayersFor(document, 1)).toEqual([visible])
+  })
+
+  it('ignores neutral legacy group masks but keeps painted masks on the generic path', () => {
+    const document = createDocument('neutral legacy group mask', 2, 1, 'rgba')
+    const layer = document.layers[0]
+    layer.groupId = 'masked-group'
+    document.groups.push({ id: 'masked-group', name: 'Masked', parentGroupId: null, visible: true, locked: false, opacity: 0.3, blendMode: 'normal' })
+    writeLayerColor(document, layer, 0, red)
+    const timeline = ensureAnimationDocument(document)
+    const mask = createLayerMask('masked-group', document.width, document.height, 'group')
+    timeline.groupMasks = [{ groupId: 'masked-group', frameId: timeline.activeFrameId, mask }]
+    const cache = new DocumentCompositeCache()
+
+    expect(cache.opacityGroupStackFor(document, 1)).not.toBeNull()
+    writeLayerColor(document, mask, 0, { r: 0, g: 0, b: 0, a: 255 })
+    expect(cache.opacityGroupStackFor(document, 2)).toBeNull()
+  })
+
+  it('matches the generic sampler for an isolated normal-opacity group', () => {
+    const document = createDocument('isolated opacity group', 3, 1, 'rgba')
+    const background = document.layers[0]
+    const groupBottom = createLayer('group bottom', 3, 1, 'rgba')
+    const groupTop = createLayer('group top', 3, 1, 'rgba')
+    groupBottom.groupId = 'opacity-group'
+    groupTop.groupId = 'opacity-group'
+    groupBottom.opacity = 0.65
+    groupTop.opacity = 0.8
+    document.layers.push(groupBottom, groupTop)
+    document.groups.push({ id: 'opacity-group', name: 'Opacity', parentGroupId: null, visible: true, locked: false, opacity: 0.3, blendMode: 'normal' })
+    writeLayerColor(document, background, 0, { r: 32, g: 48, b: 64, a: 255 })
+    writeLayerColor(document, background, 1, { r: 80, g: 96, b: 112, a: 180 })
+    writeLayerColor(document, groupBottom, 0, { r: 220, g: 72, b: 40, a: 210 })
+    writeLayerColor(document, groupBottom, 1, { r: 30, g: 180, b: 90, a: 160 })
+    writeLayerColor(document, groupTop, 0, { r: 50, g: 90, b: 230, a: 150 })
+    writeLayerColor(document, groupTop, 2, { r: 240, g: 210, b: 40, a: 255 })
+    const sample = createCompositePointSampler(document)
+    const expected = new Uint8ClampedArray(document.width * 4)
+    for (let x = 0; x < document.width; x += 1) writeRgbaPixel(expected, x, sample(x, 0))
+
+    expect(Array.from(compositeRegion(document, 0, 0, document.width, 1, new DocumentCompositeCache(), 1))).toEqual(Array.from(expected))
+  })
+
+  it('matches the generic sampler for an isolated multiply-opacity group', () => {
+    const document = createDocument('isolated multiply group', 3, 1, 'rgba')
+    const background = document.layers[0]
+    const groupBottom = createLayer('group bottom', 3, 1, 'rgba')
+    const groupTop = createLayer('group top', 3, 1, 'rgba')
+    groupBottom.groupId = 'multiply-group'
+    groupTop.groupId = 'multiply-group'
+    groupBottom.opacity = 0.65
+    groupTop.opacity = 0.8
+    document.layers.push(groupBottom, groupTop)
+    document.groups.push({ id: 'multiply-group', name: 'Multiply', parentGroupId: null, visible: true, locked: false, opacity: 0.32, blendMode: 'multiply' })
+    writeLayerColor(document, background, 0, { r: 32, g: 48, b: 64, a: 255 })
+    writeLayerColor(document, background, 1, { r: 80, g: 96, b: 112, a: 180 })
+    writeLayerColor(document, groupBottom, 0, { r: 220, g: 72, b: 40, a: 210 })
+    writeLayerColor(document, groupBottom, 1, { r: 30, g: 180, b: 90, a: 160 })
+    writeLayerColor(document, groupTop, 0, { r: 50, g: 90, b: 230, a: 150 })
+    writeLayerColor(document, groupTop, 2, { r: 240, g: 210, b: 40, a: 255 })
+    const sample = createCompositePointSampler(document)
+    const expected = new Uint8ClampedArray(document.width * 4)
+    for (let x = 0; x < document.width; x += 1) writeRgbaPixel(expected, x, sample(x, 0))
+    const cache = new DocumentCompositeCache()
+
+    expect(cache.opacityGroupStackFor(document, 1)).not.toBeNull()
+    expect(Array.from(compositeRegion(document, 0, 0, document.width, 1, cache, 1))).toEqual(Array.from(expected))
   })
 
   it('does not scan a large layer to composite a small dirty region', () => {

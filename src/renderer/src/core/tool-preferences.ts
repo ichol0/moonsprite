@@ -2,6 +2,7 @@ import type { BrushPaintMode, BrushShape, BrushTexture, FillKind, FillMode, Grad
 import { normalizeProceduralBrushSettings, PROCEDURAL_BRUSH_IDS } from './brushes'
 import { readStoredJson, writeStoredJson } from './storage'
 import { DEFAULT_SYMMETRY_AXES, type SymmetryAxes } from './symmetry'
+import { DEFAULT_GAP_CLOSING_THRESHOLD, normalizeGapClosingThreshold } from './contiguous-region'
 import {
   DEFAULT_BRUSH_DYNAMICS_SETTINGS,
   DEFAULT_BRUSH_PRESSURE_SETTINGS,
@@ -46,6 +47,8 @@ export interface PersistedToolSettings extends PersistedBrushProfile {
   fillMode: FillMode
   fillKind: FillKind
   fillTolerance: number
+  fillGapClosing: boolean
+  fillGapThreshold: number
   gradientTolerance: number
   gradientContiguous: boolean
   gradientDither: GradientDither
@@ -54,6 +57,8 @@ export interface PersistedToolSettings extends PersistedBrushProfile {
   selectionMode: SelectionMode
   wandTolerance: number
   wandContiguous: boolean
+  wandGapClosing: boolean
+  wandGapThreshold: number
   perfectPixels: boolean
   symmetryAxes: SymmetryAxes
   airbrushParticleRadius: number
@@ -90,6 +95,8 @@ export const defaultToolSettings: PersistedToolSettings = {
   fillMode: 'contiguous',
   fillKind: 'bucket',
   fillTolerance: 0,
+  fillGapClosing: false,
+  fillGapThreshold: DEFAULT_GAP_CLOSING_THRESHOLD,
   gradientTolerance: 0,
   gradientContiguous: true,
   gradientDither: 'none',
@@ -98,6 +105,8 @@ export const defaultToolSettings: PersistedToolSettings = {
   selectionMode: 'replace',
   wandTolerance: 0,
   wandContiguous: true,
+  wandGapClosing: false,
+  wandGapThreshold: DEFAULT_GAP_CLOSING_THRESHOLD,
   perfectPixels: false,
   symmetryAxes: { ...DEFAULT_SYMMETRY_AXES },
   airbrushParticleRadius: 1,
@@ -183,6 +192,8 @@ export function loadToolSettings(storage?: Storage): PersistedToolSettings {
       fillMode: stored.fillMode === 'global' || stored.fillMode === 'contiguous' ? stored.fillMode : defaultToolSettings.fillMode,
       fillKind: stored.fillKind === 'gradient' || stored.fillKind === 'bucket' ? stored.fillKind : defaultToolSettings.fillKind,
       fillTolerance: Number.isFinite(stored.fillTolerance) ? Math.max(0, Math.min(255, Math.round(stored.fillTolerance!))) : defaultToolSettings.fillTolerance,
+      fillGapClosing: typeof stored.fillGapClosing === 'boolean' ? stored.fillGapClosing : defaultToolSettings.fillGapClosing,
+      fillGapThreshold: Number.isFinite(stored.fillGapThreshold) ? normalizeGapClosingThreshold(stored.fillGapThreshold!) : defaultToolSettings.fillGapThreshold,
       gradientTolerance: Number.isFinite(stored.gradientTolerance) ? Math.max(0, Math.min(255, Math.round(stored.gradientTolerance!))) : defaultToolSettings.gradientTolerance,
       gradientContiguous: typeof stored.gradientContiguous === 'boolean' ? stored.gradientContiguous : defaultToolSettings.gradientContiguous,
       gradientDither: stored.gradientDither === 'checker' || stored.gradientDither === 'diagonal' || stored.gradientDither === 'diagonal-reverse' || stored.gradientDither === 'horizontal' || stored.gradientDither === 'vertical' || stored.gradientDither === 'bayer-2' || stored.gradientDither === 'bayer-4' || stored.gradientDither === 'bayer-8' || stored.gradientDither === 'none' ? stored.gradientDither : defaultToolSettings.gradientDither,
@@ -191,6 +202,8 @@ export function loadToolSettings(storage?: Storage): PersistedToolSettings {
       selectionMode: stored.selectionMode === 'add' || stored.selectionMode === 'subtract' || stored.selectionMode === 'intersect' || stored.selectionMode === 'replace' ? stored.selectionMode : defaultToolSettings.selectionMode,
       wandTolerance: Number.isFinite(stored.wandTolerance) ? Math.max(0, Math.min(255, Math.round(stored.wandTolerance!))) : defaultToolSettings.wandTolerance,
       wandContiguous: typeof stored.wandContiguous === 'boolean' ? stored.wandContiguous : defaultToolSettings.wandContiguous,
+      wandGapClosing: typeof stored.wandGapClosing === 'boolean' ? stored.wandGapClosing : defaultToolSettings.wandGapClosing,
+      wandGapThreshold: Number.isFinite(stored.wandGapThreshold) ? normalizeGapClosingThreshold(stored.wandGapThreshold!) : defaultToolSettings.wandGapThreshold,
       perfectPixels: typeof stored.perfectPixels === 'boolean' ? stored.perfectPixels : defaultToolSettings.perfectPixels,
       airbrushParticleRadius: Number.isFinite(stored.airbrushParticleRadius) ? Math.max(1, Math.min(16, Math.round(stored.airbrushParticleRadius!))) : defaultToolSettings.airbrushParticleRadius,
       airbrushParticleShape: stored.airbrushParticleShape === 'square' || stored.airbrushParticleShape === 'line' || stored.airbrushParticleShape === 'round' ? stored.airbrushParticleShape : defaultToolSettings.airbrushParticleShape,

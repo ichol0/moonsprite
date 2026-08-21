@@ -1,6 +1,6 @@
 [package]
 name = "moonsprite"
-version = "0.1.0-dev.5"
+version = "0.1.0-dev.6"
 description = "An original, source-available pixel art workstation for Windows."
 authors = ["MoonSprite contributors"]
 edition = "2021"
@@ -25,4 +25,4 @@ zip = { version = "4", default-features = false, features = ["deflate"] }
 ttf-parser = "0.25"
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_System_DataExchange", "Win32_System_Memory", "Win32_System_Registry"] }
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_System_DataExchange", "Win32_System_Memory", "Win32_System_Registry", "Win32_UI_Input_KeyboardAndMouse"] }

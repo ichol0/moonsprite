@@ -33,7 +33,7 @@ const zeroBudget = () => ({
 const evaluate = (changes = {}) => architectureBudgetErrors({
   budget: changes.budget ?? zeroBudget(),
   counts: changes.counts ?? Object.fromEntries(Object.keys(ARCHITECTURE_RULES).map((rule) => [rule, 0])),
-  currentVersion: changes.currentVersion ?? '0.1.0-dev.5',
+  currentVersion: changes.currentVersion ?? '0.1.0-dev.6',
   knownRuleIds: Object.keys(ARCHITECTURE_RULES),
   previousBudget: changes.previousBudget ?? null,
 })

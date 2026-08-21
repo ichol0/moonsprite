@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { LayerGroup, LayerStyles, RasterLayer, RgbaColor } from '@shared/types'
 import { cloneLayerStyles, createDefaultLayerStyles, MAX_LAYER_STYLE_SHADOW_OFFSET, MAX_LAYER_STYLE_SIZE, MAX_LAYER_STYLE_STROKE_SIZE, resolveLayerStyles } from '@/core/layer-styles'
-import { useWorkspace } from '@/store/workspace'
+import { useWorkspace, type LayerPropertyTarget } from '@/store/workspace'
 import { ColorValueControl } from './ColorValueControl'
 import { DialogHeader } from './DialogHeader'
 import { FormField } from './FormField'
@@ -27,42 +27,51 @@ const effectLabelKeys = {
   colorOverlay: 'layers.layerStyleColorOverlay',
   gradientOverlay: 'layers.layerStyleGradientOverlay'
 } as const
-export function LayerStyleDialog({ ownerKind, owner, onClose }: { ownerKind: 'layer' | 'group'; owner: RasterLayer | LayerGroup; onClose: () => void }) {
+export function LayerStyleDialog({ ownerKind, owner, targets, onClose }: { ownerKind: 'layer' | 'group'; owner: RasterLayer | LayerGroup; targets?: readonly LayerPropertyTarget[]; onClose: () => void }) {
   const { t } = useI18n()
-  const previewLayerStyles = useWorkspace((state) => state.previewLayerStyles)
-  const setLayerStyles = useWorkspace((state) => state.setLayerStyles)
-  const originalRef = useRef(cloneLayerStyles(owner.layerStyles))
+  const previewLayerStyleEntries = useWorkspace((state) => state.previewLayerStyleEntries)
+  const setLayerStylesForTargets = useWorkspace((state) => state.setLayerStylesForTargets)
+  const targetsRef = useRef<LayerPropertyTarget[]>(targets?.length ? targets.map((target) => ({ ...target })) : [{ kind: ownerKind, id: owner.id }])
+  const originalsRef = useRef(targetsRef.current.map((target) => {
+    const session = useWorkspace.getState().sessions.find((item) => item.document.id === useWorkspace.getState().activeId)
+    const targetOwner = target.kind === 'layer'
+      ? session?.document.layers.find((layer) => layer.id === target.id)
+      : session?.document.groups.find((group) => group.id === target.id)
+    return { target, styles: cloneLayerStyles(targetOwner?.layerStyles) }
+  }))
   const finalizedRef = useRef(false)
   const [draft, setDraft] = useState(() => resolveLayerStyles(owner.layerStyles))
   const [activeEffect, setActiveEffect] = useState<LayerStyleEffect>('stroke')
   const [previewEnabled, setPreviewEnabled] = useState(true)
 
   useEffect(() => () => {
-    if (!finalizedRef.current) useWorkspace.getState().previewLayerStyles(ownerKind, owner.id, originalRef.current)
-  }, [owner.id, ownerKind])
+    if (!finalizedRef.current) useWorkspace.getState().previewLayerStyleEntries(originalsRef.current)
+  }, [])
 
   const previewDraft = (next: LayerStyles): void => {
     setDraft(next)
-    if (previewEnabled) previewLayerStyles(ownerKind, owner.id, next)
+    if (previewEnabled) previewLayerStyleEntries(targetsRef.current.map((target) => ({ target, styles: next })))
   }
   const updateEffect = <K extends LayerStyleEffect>(effect: K, patch: Partial<LayerStyles[K]>): void => {
     previewDraft({ ...draft, [effect]: { ...draft[effect], ...patch } })
   }
   const updateColor = (effect: 'stroke' | 'shadow' | 'innerGlow' | 'colorOverlay', color: RgbaColor): void => updateEffect(effect, { color })
   const cancel = (): void => {
-    previewLayerStyles(ownerKind, owner.id, originalRef.current)
+    previewLayerStyleEntries(originalsRef.current)
     finalizedRef.current = true
     onClose()
   }
   const apply = (): void => {
-    previewLayerStyles(ownerKind, owner.id, originalRef.current)
-    setLayerStyles(ownerKind, owner.id, draft)
+    previewLayerStyleEntries(originalsRef.current)
+    setLayerStylesForTargets(targetsRef.current, draft)
     finalizedRef.current = true
     onClose()
   }
   const togglePreview = (enabled: boolean): void => {
     setPreviewEnabled(enabled)
-    previewLayerStyles(ownerKind, owner.id, enabled ? draft : originalRef.current)
+    previewLayerStyleEntries(enabled
+      ? targetsRef.current.map((target) => ({ target, styles: draft }))
+      : originalsRef.current)
   }
 
   const editor = activeEffect === 'stroke'
@@ -101,7 +110,7 @@ export function LayerStyleDialog({ ownerKind, owner, onClose }: { ownerKind: 'la
 
   return createPortal(<div className="modal-backdrop" role="presentation" onPointerDown={(event) => { if (event.target === event.currentTarget) cancel() }}>
     <ModalShell as="form" data-preserve-animation-selection storageKey="layer-style-v1" defaultWidth={620} defaultHeight={470} minWidth={560} minHeight={420} maxWidth={760} maxHeight={680} className="layer-style-modal" onSubmit={(event) => { event.preventDefault(); apply() }} role="dialog" aria-label={t('layers.layerStyle')}>
-      <DialogHeader title={t('layers.layerStyleTitle', { name: owner.name })} closeLabel={t('common.close')} onClose={cancel} />
+      <DialogHeader title={targetsRef.current.length > 1 ? t('layers.multipleLayerStyleTitle') : t('layers.layerStyleTitle', { name: owner.name })} closeLabel={t('common.close')} onClose={cancel} />
       <div className="modal-body layer-style-dialog-body">
         <nav className="layer-style-effect-list component-scrollbar" aria-label={t('layers.layerStyleEffects')}>
           {effectKeys.map((effect) => <div key={effect} className={`layer-style-effect-row ${activeEffect === effect ? 'selected' : ''}`}>

@@ -14,13 +14,18 @@ describe('document file rules', () => {
     expect(sanitizeFileStem('8*8.aseprite', 'untitled')).toBe('8_8')
     expect(sanitizeFileStem('walk.gif', 'untitled')).toBe('walk')
     expect(sanitizeFileStem('tiles.bmp', 'untitled')).toBe('tiles')
+    expect(sanitizeFileStem('layers.psd', 'untitled')).toBe('layers')
   })
 
   it('keeps save dialog formats and suffixes consistent', () => {
     expect(saveImageDialogFormat('aseprite')).toBe('aseprite')
+    expect(saveImageDialogFormat('psd')).toBe('psd')
     expect(saveImageKindForPath('sprite.jpeg')).toBe('jpeg')
+    expect(saveImageKindForPath('sprite.psd')).toBe('psd')
     expect(normalizeSaveDialogPath('sprite.png', 'aseprite')).toBe('sprite.aseprite')
     expect(normalizeSaveDialogPath('sprite.ase', 'aseprite')).toBe('sprite.ase')
+    expect(normalizeSaveDialogPath('sprite.png', 'psd')).toBe('sprite.psd')
+    expect(normalizeSaveDialogPath('sprite.psd', 'psd')).toBe('sprite.psd')
   })
 
   it('recognizes every imported raster format and only permits flat source-image saves', () => {
@@ -76,6 +81,13 @@ describe('document file rules', () => {
     expect(saved.layers[0].pixels).toEqual(activePixels)
     expect(restored.layers[0].pixels).toBe(activePixels)
     expect(activePixels.byteLength).toBeGreaterThan(0)
+  })
+
+  it('infers PSD encoding from a Save As path', async () => {
+    const document = createDocument('layered', 2, 2, 'rgba')
+    const encoded = await encodeDocumentForPath(document, 'D:\\gallery\\layered.psd', null, 100)
+
+    expect(new TextDecoder().decode(encoded.subarray(0, 4))).toBe('8BPS')
   })
 
   it('decodes genuinely small projects directly but keeps large expanded canvases in the worker', () => {

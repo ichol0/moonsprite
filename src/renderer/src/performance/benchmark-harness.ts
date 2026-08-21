@@ -1,5 +1,5 @@
 import type { FillKind, LayerGroup, ShapeKind, ToolId, ViewState } from '@shared/types'
-import { createDocument, createLayer } from '@/core/document'
+import { cacheRasterContentBounds, createDocument, createLayer } from '@/core/document'
 import { createDefaultLayerStyles, resolveLayerStyles } from '@/core/layer-styles'
 import { useWorkspace } from '@/store/workspace'
 import { largeProjectPlan, MAX_LARGE_PROJECT_PIXEL_BYTES } from './benchmark-plan'
@@ -163,6 +163,7 @@ async function createLargeDocument(size: number) {
   document.layers = [background, ...localLayers, editLayer]
   document.activeLayerId = editLayer.id
   addDocument(document)
+  cacheRasterContentBounds(editLayer, document.palette, { x: left, y: top, width: regionSize, height: regionSize })
   return { uniquePixelBytes, layerCount: document.layers.length, frameCount: 1 }
 }
 
@@ -224,6 +225,59 @@ const previewActiveLayerStyleSize = (effect: 'shadow' | 'innerGlow', size: numbe
   useWorkspace.getState().previewLayerStyles('layer', layer.id, styles)
 }
 
+const recordOperation = (stage: string, startedAt: number) => {
+  window.__moonSpriteCanvasProbe?.recordOperationStage?.(stage, performance.now() - startedAt)
+}
+
+const toggleActiveLayerVisibility = () => {
+  const session = activeSession()
+  if (!session) return
+  const startedAt = performance.now()
+  useWorkspace.getState().toggleLayerVisibility(session.document.activeLayerId)
+  recordOperation('layer-visibility.command', startedAt)
+}
+
+const toggleActiveLayerGroupVisibility = () => {
+  const session = activeSession()
+  const activeLayer = session?.document.layers.find((layer) => layer.id === session.document.activeLayerId)
+  if (!session || !activeLayer?.groupId) return
+  const startedAt = performance.now()
+  useWorkspace.getState().toggleGroupVisibility(activeLayer.groupId)
+  recordOperation('group-visibility.command', startedAt)
+}
+
+const previewActiveLayerOpacity = (opacity: number) => {
+  const session = activeSession()
+  if (!session) return
+  const layer = session.document.layers.find((candidate) => candidate.id === session.document.activeLayerId)
+  if (!layer) return
+  const state = useWorkspace.getState()
+  const transactionId = state.beginLayerPropertiesTransaction([{ id: layer.id, kind: 'layer' }])
+  if (!transactionId) return
+  const startedAt = performance.now()
+  state.previewLayerPropertiesTransaction(transactionId, {
+    name: layer.name,
+    opacity,
+    blendMode: layer.blendMode,
+    cumulativeBlend: false,
+    locked: layer.locked,
+    displayColor: layer.displayColor ?? null,
+    description: layer.description ?? ''
+  }, ['opacity'])
+  recordOperation('layer-opacity.preview-command', startedAt)
+}
+
+const reorderActiveLayer = () => {
+  const session = activeSession()
+  if (!session) return
+  const sourceIndex = session.document.layers.findIndex((layer) => layer.id === session.document.activeLayerId)
+  const target = session.document.layers[sourceIndex - 1]
+  if (sourceIndex <= 0 || !target) return
+  const startedAt = performance.now()
+  useWorkspace.getState().reorderLayers([session.document.activeLayerId], target.id, false)
+  recordOperation('layer-reorder.command', startedAt)
+}
+
 const setMoveAutoSelect = (enabled: boolean) => {
   useWorkspace.getState().setMoveAutoSelect(enabled)
 }
@@ -277,6 +331,10 @@ export function installPerformanceHarness() {
     prepareCenteredSelection,
     prepareActiveLayerStyle,
     previewActiveLayerStyleSize,
+    toggleActiveLayerVisibility,
+    toggleActiveLayerGroupVisibility,
+    previewActiveLayerOpacity,
+    reorderActiveLayer,
     setMoveAutoSelect,
     setTimelapseRecording,
     timelapseSnapshotCount,

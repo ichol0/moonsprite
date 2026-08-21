@@ -14,7 +14,7 @@ const RECENT_EXPORT_PATHS_SCHEMA_VERSION = 1
 const DOCUMENT_EXPORT_SETTINGS_SCHEMA_VERSION = 1
 const MAX_RECENT_EXPORT_PATHS = 10
 const MAX_DOCUMENT_EXPORT_SETTINGS = 100
-const exportFormats: readonly ImageExportKind[] = ['png-auto', 'png-rgba', 'jpeg', 'webp', 'svg', 'gif']
+const exportFormats: readonly ImageExportKind[] = ['png-auto', 'png-rgba', 'jpeg', 'webp', 'svg', 'gif', 'psd']
 
 export interface ExportPreset {
   presetName: string
@@ -91,7 +91,9 @@ function normalizeExportPreset(value: unknown): ExportPreset | null {
   const legacyScalePercent = typeof value.scale === 'number' ? value.scale * 100 : 100
   const scalePercent = finiteInteger(value.scalePercent, finiteInteger(legacyScalePercent, 100, 1, 6400), 1, 6400)
   const directory = typeof value.directory === 'string' ? value.directory.trim() : ''
-  const target = value.target === 'slices' || (format !== 'gif' && value.target === 'frames') ? value.target : 'document'
+  const target = format === 'psd'
+    ? 'document'
+    : value.target === 'slices' || (format !== 'gif' && value.target === 'frames') ? value.target : 'document'
   const sliceId = typeof value.sliceId === 'string' ? value.sliceId.trim() : ''
   const gifFrameRange = value.gifFrameRange === 'range' ? 'range' : 'all'
   const gifDirection: GifDirection = value.gifDirection === 'reverse'
@@ -125,7 +127,9 @@ function normalizeDocumentExportSettings(value: unknown): DocumentExportSettings
   const format = isExportFormat(value.format) ? value.format : 'png-auto'
   const scalePercent = finiteInteger(value.scalePercent, 100, 1, 6400)
   const directory = typeof value.directory === 'string' ? value.directory.trim() : ''
-  const target = value.target === 'slices' || (format !== 'gif' && value.target === 'frames') ? value.target : 'document'
+  const target = format === 'psd'
+    ? 'document'
+    : value.target === 'slices' || (format !== 'gif' && value.target === 'frames') ? value.target : 'document'
   const sliceId = typeof value.sliceId === 'string' ? value.sliceId.trim() : ''
   const gifFrameRange = value.gifFrameRange === 'range' ? 'range' : 'all'
   const gifDirection: GifDirection = value.gifDirection === 'reverse'
@@ -238,17 +242,18 @@ export function saveDocumentExportSettings(document: DocumentExportSettingsOwner
   } satisfies StoredDocumentExportSettings, storage)
 }
 
-export function exportFileExtension(format: ImageExportKind): 'png' | 'jpg' | 'webp' | 'svg' | 'gif' {
+export function exportFileExtension(format: ImageExportKind): 'png' | 'jpg' | 'webp' | 'svg' | 'gif' | 'psd' {
   if (format === 'jpeg') return 'jpg'
   if (format === 'webp') return 'webp'
   if (format === 'svg') return 'svg'
   if (format === 'gif') return 'gif'
+  if (format === 'psd') return 'psd'
   return 'png'
 }
 
 export function withExportFileExtension(name: string, format: ImageExportKind): string {
   const fallback = 'MoonSprite-export'
-  const stem = name.trim().replace(/\.(moonsprite|aseprite|ase|png|jpe?g|webp|svg|gif)$/i, '').trim() || fallback
+  const stem = name.trim().replace(/\.(moonsprite|aseprite|ase|png|jpe?g|webp|svg|gif|psd)$/i, '').trim() || fallback
   return `${stem}.${exportFileExtension(format)}`
 }
 

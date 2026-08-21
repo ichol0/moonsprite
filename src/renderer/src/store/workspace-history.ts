@@ -36,32 +36,72 @@ export function captureAdjustmentSnapshot(session: DocumentSession, targetLayerI
   }
 }
 
-export function restoreAdjustmentSnapshot(session: DocumentSession, snapshot: AdjustmentSnapshot): void {
+const bindAdjustmentSnapshotPixels = (
+  session: DocumentSession,
+  layerSnapshot: AdjustmentSnapshot['layers'][number],
+  pixels: Uint8ClampedArray | Uint32Array
+): void => {
+  const timeline = ensureAnimationDocument(session.document)
+  const layer = session.document.layers.find((candidate) => candidate.id === layerSnapshot.layerId)
+  if (!layer) return
+  if ((layer.format === 'rgba') !== (pixels instanceof Uint8ClampedArray)) throw new Error(tr('core.history.adjustmentFormatChanged'))
+  const frameId = layerSnapshot.frameId ?? timeline.activeFrameId
+  const cel = animationCelAt(timeline, layerSnapshot.layerId, frameId)
+  if (cel) cel.surface = layer.format === 'rgba' && pixels instanceof Uint8ClampedArray
+    ? { format: 'rgba', width: layerSnapshot.width, height: layerSnapshot.height, offsetX: layerSnapshot.offsetX, offsetY: layerSnapshot.offsetY, storageOriginX: layerSnapshot.storageOriginX, storageOriginY: layerSnapshot.storageOriginY, pixels }
+    : layer.format === 'indexed' && pixels instanceof Uint32Array
+      ? { format: 'indexed', width: layerSnapshot.width, height: layerSnapshot.height, offsetX: layerSnapshot.offsetX, offsetY: layerSnapshot.offsetY, storageOriginX: layerSnapshot.storageOriginX, storageOriginY: layerSnapshot.storageOriginY, pixels }
+      : undefined
+  if (timeline.activeFrameId === frameId) {
+    layer.width = layerSnapshot.width
+    layer.height = layerSnapshot.height
+    layer.offsetX = layerSnapshot.offsetX
+    layer.offsetY = layerSnapshot.offsetY
+    layer.pixels = pixels
+    setLayerStorageOrigin(layer, { x: layerSnapshot.storageOriginX, y: layerSnapshot.storageOriginY })
+    if (cel?.surface) cel.surface.pixels = layer.pixels
+  }
+}
+
+const restoreAdjustmentPalette = (session: DocumentSession, snapshot: AdjustmentSnapshot): void => {
+  session.document.palette = snapshot.palette.map((entry) => ({ ...entry, color: { ...entry.color } }))
+  session.document.nextColorId = snapshot.nextColorId
+}
+
+/** Rebinds snapshot geometry to writable layer storage without copying its source pixels. */
+export function prepareAdjustmentSnapshotTargets(session: DocumentSession, snapshot: AdjustmentSnapshot): void {
   const timeline = ensureAnimationDocument(session.document)
   for (const layerSnapshot of snapshot.layers) {
     const layer = session.document.layers.find((candidate) => candidate.id === layerSnapshot.layerId)
     if (!layer) continue
-    const pixels = layerSnapshot.pixels instanceof Uint8ClampedArray ? new Uint8ClampedArray(layerSnapshot.pixels) : new Uint32Array(layerSnapshot.pixels)
-    if ((layer.format === 'rgba') !== (pixels instanceof Uint8ClampedArray)) throw new Error(tr('core.history.adjustmentFormatChanged'))
     const frameId = layerSnapshot.frameId ?? timeline.activeFrameId
     const cel = animationCelAt(timeline, layerSnapshot.layerId, frameId)
-    if (cel) cel.surface = layer.format === 'rgba' && pixels instanceof Uint8ClampedArray
-      ? { format: 'rgba', width: layerSnapshot.width, height: layerSnapshot.height, offsetX: layerSnapshot.offsetX, offsetY: layerSnapshot.offsetY, storageOriginX: layerSnapshot.storageOriginX, storageOriginY: layerSnapshot.storageOriginY, pixels }
-      : layer.format === 'indexed' && pixels instanceof Uint32Array
-        ? { format: 'indexed', width: layerSnapshot.width, height: layerSnapshot.height, offsetX: layerSnapshot.offsetX, offsetY: layerSnapshot.offsetY, storageOriginX: layerSnapshot.storageOriginX, storageOriginY: layerSnapshot.storageOriginY, pixels }
-        : undefined
-    if (timeline.activeFrameId === frameId) {
-      layer.width = layerSnapshot.width
-      layer.height = layerSnapshot.height
-      layer.offsetX = layerSnapshot.offsetX
-      layer.offsetY = layerSnapshot.offsetY
-      layer.pixels = pixels
-      setLayerStorageOrigin(layer, { x: layerSnapshot.storageOriginX, y: layerSnapshot.storageOriginY })
-      if (cel?.surface) cel.surface.pixels = layer.pixels
-    }
+    const celPixels = cel?.surface?.pixels
+    const current = timeline.activeFrameId === frameId ? layer.pixels : celPixels
+    const expectedLength = layerSnapshot.pixels.length
+    const currentIsShared = current !== undefined && (
+      session.document.layers.some((candidate) => candidate.id !== layer.id && candidate.pixels === current)
+      || timeline.cels.some((candidate) => candidate.id !== cel?.id && candidate.surface?.pixels === current)
+    )
+    const pixels = layerSnapshot.pixels instanceof Uint8ClampedArray
+      ? current instanceof Uint8ClampedArray && current.length === expectedLength && !currentIsShared ? current : new Uint8ClampedArray(expectedLength)
+      : current instanceof Uint32Array && current.length === expectedLength && !currentIsShared ? current : new Uint32Array(expectedLength)
+    bindAdjustmentSnapshotPixels(session, layerSnapshot, pixels)
   }
-  session.document.palette = snapshot.palette.map((entry) => ({ ...entry, color: { ...entry.color } }))
-  session.document.nextColorId = snapshot.nextColorId
+  restoreAdjustmentPalette(session, snapshot)
+}
+
+export function restorePreparedAdjustmentSnapshotLayer(session: DocumentSession, layerSnapshot: AdjustmentSnapshot['layers'][number]): void {
+  const pixels = layerSnapshot.pixels instanceof Uint8ClampedArray ? new Uint8ClampedArray(layerSnapshot.pixels) : new Uint32Array(layerSnapshot.pixels)
+  bindAdjustmentSnapshotPixels(session, layerSnapshot, pixels)
+}
+
+export function restoreAdjustmentSnapshot(session: DocumentSession, snapshot: AdjustmentSnapshot): void {
+  for (const layerSnapshot of snapshot.layers) {
+    const pixels = layerSnapshot.pixels instanceof Uint8ClampedArray ? new Uint8ClampedArray(layerSnapshot.pixels) : new Uint32Array(layerSnapshot.pixels)
+    bindAdjustmentSnapshotPixels(session, layerSnapshot, pixels)
+  }
+  restoreAdjustmentPalette(session, snapshot)
 }
 
 export interface LayerUiSnapshot {

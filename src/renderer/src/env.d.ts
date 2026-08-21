@@ -23,6 +23,10 @@ declare global {
       prepareCenteredSelection(size: number): void
       prepareActiveLayerStyle(shadowBlur: number, innerGlowSize: number): void
       previewActiveLayerStyleSize(effect: 'shadow' | 'innerGlow', size: number): void
+      toggleActiveLayerVisibility(): void
+      toggleActiveLayerGroupVisibility(): void
+      previewActiveLayerOpacity(opacity: number): void
+      reorderActiveLayer(): void
       setMoveAutoSelect(enabled: boolean): void
       setTimelapseRecording(enabled: boolean): void
       timelapseSnapshotCount(): number

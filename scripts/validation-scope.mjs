@@ -15,6 +15,13 @@ const FULL_VALIDATION_FILES = new Set([
 ])
 
 const startsWithAny = (file, roots) => roots.some((root) => file.startsWith(root))
+const rendererCodePattern = /^src\/(?:renderer|shared)\/.*\.[cm]?[jt]sx?$/
+
+export const isRendererCodeFile = (file) => rendererCodePattern.test(normalize(file))
+
+export const getRendererCodeFiles = (files) => (
+  [...new Set(files.map(normalize).filter(isRendererCodeFile))]
+)
 
 export function classifyValidationScope(files, { forceFull = false, expandFull = true } = {}) {
   const normalizedFiles = [...new Set(files.map(normalize).filter(Boolean))]

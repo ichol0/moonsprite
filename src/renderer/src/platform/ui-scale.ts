@@ -15,9 +15,12 @@ interface NativeScaleTarget {
 }
 
 let requestedScale: UiScale | null = null
-let appliedTarget: NativeScaleTarget | null = null
+let appliedZoomTarget: NativeScaleTarget | null = null
+let appliedMinimumScale: UiScale | null = null
+let pendingMinimumScale: UiScale | null = null
 let desiredTarget: NativeScaleTarget | null = null
 let nativeScaleQueue = Promise.resolve()
+let minimumSizeObserverInstalled = false
 
 function zoomsMatch(left: number, right: number): boolean {
   return Math.abs(left - right) <= ZOOM_EPSILON
@@ -40,15 +43,60 @@ function minimumWindowSize(scale: UiScale): PhysicalSize {
   )
 }
 
+function queuePendingMinimumSize(): void {
+  const operation = nativeScaleQueue.catch(() => undefined).then(async () => {
+    const scale = pendingMinimumScale
+    if (scale === null) return
+    const appWindow = getCurrentWindow()
+    if (await appWindow.isMaximized()) return
+    await appWindow.setMinSize(minimumWindowSize(scale))
+    if (pendingMinimumScale === scale) {
+      appliedMinimumScale = scale
+      pendingMinimumScale = null
+    }
+  })
+  nativeScaleQueue = operation
+}
+
+function ensureMinimumSizeObserver(): void {
+  if (minimumSizeObserverInstalled) return
+  minimumSizeObserverInstalled = true
+  void getCurrentWindow().onResized(queuePendingMinimumSize).catch(() => {
+    minimumSizeObserverInstalled = false
+  })
+}
+
 function queueNativeScale(target: NativeScaleTarget): Promise<void> {
   desiredTarget = target
   const operation = nativeScaleQueue.catch(() => undefined).then(async () => {
-    if (!desiredTarget || !targetsMatch(target, desiredTarget) || (appliedTarget && targetsMatch(target, appliedTarget))) return
-    await Promise.all([
-      getCurrentWebview().setZoom(target.zoom),
-      getCurrentWindow().setMinSize(minimumWindowSize(target.scale))
-    ])
-    appliedTarget = target
+    if (!desiredTarget || !targetsMatch(target, desiredTarget)) return
+    const zoomApplied = appliedZoomTarget && targetsMatch(target, appliedZoomTarget)
+    const minimumApplied = appliedMinimumScale === target.scale || pendingMinimumScale === target.scale
+    if (zoomApplied && minimumApplied) return
+
+    const appWindow = getCurrentWindow()
+    const wasMaximized = await appWindow.isMaximized()
+    if (!zoomApplied) {
+      await getCurrentWebview().setZoom(target.zoom)
+      appliedZoomTarget = target
+    }
+
+    let maximized = await appWindow.isMaximized()
+    if (wasMaximized && !maximized) {
+      await appWindow.maximize()
+      maximized = true
+    }
+    if (!desiredTarget || !targetsMatch(target, desiredTarget)) return
+    if (maximized) {
+      pendingMinimumScale = target.scale
+      ensureMinimumSizeObserver()
+      return
+    }
+    if (appliedMinimumScale !== target.scale) {
+      await appWindow.setMinSize(minimumWindowSize(target.scale))
+      appliedMinimumScale = target.scale
+    }
+    if (pendingMinimumScale === target.scale) pendingMinimumScale = null
   })
   nativeScaleQueue = operation
   return operation

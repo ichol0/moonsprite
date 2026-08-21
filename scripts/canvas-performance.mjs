@@ -369,6 +369,21 @@ async function benchmarkScenarioPage(page, size, scenario) {
     }))
   }
 
+  if (actionKind === 'layer-visibility' || actionKind === 'group-visibility' || actionKind === 'layer-opacity' || actionKind === 'layer-reorder') {
+    if (initialView) await resetSimpleScenario(page, initialView)
+    await page.waitForTimeout(500)
+    results.push(await runScenario(page, size, scenario, async () => {
+      await page.evaluate((operation) => {
+        const harness = window.__moonSpritePerformanceHarness
+        if (!harness) throw new Error('Performance harness is unavailable.')
+        if (operation === 'layer-visibility') harness.toggleActiveLayerVisibility()
+        else if (operation === 'group-visibility') harness.toggleActiveLayerGroupVisibility()
+        else if (operation === 'layer-opacity') harness.previewActiveLayerOpacity(0.5)
+        else harness.reorderActiveLayer()
+      }, actionKind)
+    }))
+  }
+
   if (actionKind === 'layer-style-move') {
     if (initialView) await resetSimpleScenario(page, initialView)
     await page.evaluate(() => {

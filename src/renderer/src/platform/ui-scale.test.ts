@@ -1,12 +1,20 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-const { onScaleChanged, scaleChangedHandlers, scaleFactor, setMinSize, setZoom } = vi.hoisted(() => {
+const { isMaximized, maximize, onResized, onScaleChanged, resizedHandlers, scaleChangedHandlers, scaleFactor, setMinSize, setZoom } = vi.hoisted(() => {
   const handlers: Array<(event: { payload: { scaleFactor: number } }) => void> = []
+  const resizeHandlers: Array<() => void> = []
   return {
+    isMaximized: vi.fn(() => Promise.resolve(false)),
+    maximize: vi.fn(() => Promise.resolve()),
+    onResized: vi.fn((handler: () => void) => {
+      resizeHandlers.push(handler)
+      return Promise.resolve(() => undefined)
+    }),
     onScaleChanged: vi.fn((handler: (event: { payload: { scaleFactor: number } }) => void) => {
       handlers.push(handler)
       return Promise.resolve(() => undefined)
     }),
+    resizedHandlers: resizeHandlers,
     scaleChangedHandlers: handlers,
     scaleFactor: vi.fn(() => Promise.resolve(1)),
     setMinSize: vi.fn((_size: unknown) => Promise.resolve()),
@@ -19,7 +27,7 @@ vi.mock('@tauri-apps/api/webview', () => ({
 }))
 
 vi.mock('@tauri-apps/api/window', () => ({
-  getCurrentWindow: () => ({ onScaleChanged, scaleFactor, setMinSize })
+  getCurrentWindow: () => ({ isMaximized, maximize, onResized, onScaleChanged, scaleFactor, setMinSize })
 }))
 
 function enableTauriRuntime(): void {
@@ -30,7 +38,12 @@ describe('UI scale platform adapter', () => {
   beforeEach(() => {
     vi.resetModules()
     delete (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__
+    resizedHandlers.length = 0
     scaleChangedHandlers.length = 0
+    isMaximized.mockClear()
+    isMaximized.mockResolvedValue(false)
+    maximize.mockClear()
+    onResized.mockClear()
     onScaleChanged.mockClear()
     scaleFactor.mockClear()
     scaleFactor.mockResolvedValue(1)
@@ -84,8 +97,36 @@ describe('UI scale platform adapter', () => {
     expect(scaleChangedHandlers).toHaveLength(1)
     scaleChangedHandlers[0]({ payload: { scaleFactor: 2 } })
     await vi.waitFor(() => expect(setZoom.mock.calls).toEqual([[0.8], [0.5]]))
-    expect(setMinSize).toHaveBeenCalledTimes(2)
-    expect(setMinSize.mock.calls[1][0]).toMatchObject({ width: 1024, height: 640 })
+    expect(setMinSize).toHaveBeenCalledTimes(1)
+    expect(setMinSize.mock.calls[0][0]).toMatchObject({ width: 1024, height: 640 })
+  })
+
+  it('defers the minimum size while maximized and applies it after restore', async () => {
+    enableTauriRuntime()
+    isMaximized.mockResolvedValue(true)
+    const { applyUiScale } = await import('./ui-scale')
+
+    await applyUiScale(1.5)
+
+    expect(setZoom).toHaveBeenCalledWith(1.5)
+    expect(setMinSize).not.toHaveBeenCalled()
+    expect(onResized).toHaveBeenCalledTimes(1)
+    expect(resizedHandlers).toHaveLength(1)
+
+    isMaximized.mockResolvedValue(false)
+    resizedHandlers[0]()
+    await vi.waitFor(() => expect(setMinSize).toHaveBeenCalledWith(expect.objectContaining({ width: 1536, height: 960 })))
+  })
+
+  it('restores maximized state if native zoom unexpectedly unmaximizes the window', async () => {
+    enableTauriRuntime()
+    isMaximized.mockResolvedValueOnce(true).mockResolvedValueOnce(false)
+    const { applyUiScale } = await import('./ui-scale')
+
+    await applyUiScale(1.5)
+
+    expect(maximize).toHaveBeenCalledTimes(1)
+    expect(setMinSize).not.toHaveBeenCalled()
   })
 
   it('applies the toolbar icon scale as an exact CSS pixel size', async () => {

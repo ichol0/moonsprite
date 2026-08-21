@@ -39,6 +39,7 @@ describe('export settings persistence', () => {
       { presetName: 'JPEG', name: 'sprite.jpg', format: 'jpeg', scalePercent: 300 },
       { presetName: 'WebP', name: 'sprite.webp', format: 'webp', scalePercent: 400 },
       { presetName: 'SVG', name: 'sprite.svg', format: 'svg', scalePercent: 800 },
+      { presetName: 'Photoshop', name: 'sprite.psd', format: 'psd', scalePercent: 100 },
       { presetName: 'All frames', name: 'walk.png', format: 'png-rgba', scalePercent: 100, target: 'frames' },
       {
         presetName: 'GIF preview',
@@ -74,7 +75,17 @@ describe('export settings persistence', () => {
   it('updates export suffixes while retaining the file stem', () => {
     expect(withExportFileExtension('sprite.png', 'jpeg')).toBe('sprite.jpg')
     expect(withExportFileExtension('walk', 'gif')).toBe('walk.gif')
+    expect(withExportFileExtension('layered.aseprite', 'psd')).toBe('layered.psd')
     expect(withExportFileExtension('', 'webp')).toBe('MoonSprite-export.webp')
+  })
+
+  it('keeps PSD presets and remembered exports on the canvas target', () => {
+    const storage = memoryStorage()
+    expect(saveExportPresets([{ presetName: 'PSD', name: 'sprite.png', format: 'psd', scalePercent: 200, target: 'frames' }], storage)).toBe(true)
+    expect(loadExportPresets(storage)).toEqual([{ presetName: 'PSD', name: 'sprite.psd', format: 'psd', scalePercent: 200 }])
+
+    expect(saveDocumentExportSettings(exportOwner('psd-doc', null), { name: 'sprite.gif', format: 'psd', scalePercent: 100, target: 'slices', sliceId: 'hero' }, storage)).toBe(true)
+    expect(loadDocumentExportSettings(exportOwner('psd-doc', null), storage)).toEqual({ name: 'sprite.psd', format: 'psd', scalePercent: 100, target: 'document' })
   })
 
   it('extracts parent directories from Windows and POSIX paths', () => {

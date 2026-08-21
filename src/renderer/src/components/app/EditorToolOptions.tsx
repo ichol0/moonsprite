@@ -28,6 +28,7 @@ import { autoSliceCount, autoSliceRects, MAX_AUTO_SLICES, type AutoSliceSettings
 import { publishSlicePreview } from '@/core/slice-preview'
 import { BRUSH_SPEED_INPUT_LIMIT, DEFAULT_PRESSURE_INPUT_RANGE, DEFAULT_SPEED_INPUT_RANGE, type BrushDynamicsCurve, type BrushDynamicsDirection, type BrushDynamicsEffect, type BrushDynamicsMapping, type BrushDynamicsSensor, type BrushDynamicsSettings } from '@/core/pressure'
 import { getBrushDynamicsTelemetry, subscribeBrushDynamicsTelemetry, type BrushDynamicsTelemetrySnapshot } from '@/core/brush-dynamics-telemetry'
+import { MAX_GAP_CLOSING_THRESHOLD, MIN_GAP_CLOSING_THRESHOLD } from '@/core/contiguous-region'
 import { useWorkspace } from '@/store/workspace'
 import { PixelDownIcon as ChevronDown, PixelUtilityIcon } from '@/components/PixelUtilityIcon'
 import { PixelAssetIcon, PixelShapeIcon, selectionModes, temporarySelectionModeForModifiers } from './editor-tools'
@@ -117,21 +118,41 @@ function ProceduralBrushControls({ brushId, settings, onChange }: {
   </>
 }
 
-function ToleranceControl({ value, open, label, inputLabel, sliderLabel, onOpen, onChange }: {
+function ToleranceControl({ value, open, label, inputLabel, sliderLabel, className = '', min = 0, max = 255, suffix, tooltip, onOpen, onChange }: {
   value: number
   open: boolean
   label: string
   inputLabel: string
   sliderLabel: string
+  className?: string
+  min?: number
+  max?: number
+  suffix?: string
+  tooltip?: string
   onOpen: () => void
   onChange: (value: number) => void
 }) {
-  return <div className="tolerance-control" onPointerDown={onOpen}>
-    <FormField className="tool-inline-field" layout="inline" label={label}><NumberInput aria-label={inputLabel} density="compact" min={0} max={255} value={value} onValueChange={onChange} onFocus={onOpen} /></FormField>
+  return <div className={`tolerance-control ${className}`.trim()} onPointerDown={onOpen}>
+    <FormField className="tool-inline-field" layout="inline" label={label} tooltip={tooltip}><NumberInput aria-label={inputLabel} density="compact" min={min} max={max} suffix={suffix} value={value} onValueChange={onChange} onFocus={onOpen} /></FormField>
     {open && <div className="brush-size-popover tolerance-popover" role="dialog" aria-label={inputLabel}>
-      <RangeField ariaLabel={sliderLabel} density="compact" min={0} max={255} value={value} onChange={onChange} />
+      <RangeField ariaLabel={sliderLabel} density="compact" min={min} max={max} suffix={suffix} value={value} onChange={onChange} />
     </div>}
   </div>
+}
+
+function GapClosingControls({ enabled, threshold, open, onEnabledChange, onThresholdChange, onOpen }: {
+  enabled: boolean
+  threshold: number
+  open: boolean
+  onEnabledChange: (enabled: boolean) => void
+  onThresholdChange: (threshold: number) => void
+  onOpen: () => void
+}) {
+  const { t } = useI18n()
+  return <>
+    <CheckboxField className="tool-checkbox" checked={enabled} label={t('toolOptions.smartClosure')} tooltip={t('toolOptions.smartClosureHint')} onChange={onEnabledChange} />
+    {enabled && <ToleranceControl className="gap-closing-threshold-control" value={threshold} open={open} label={t('toolOptions.closureThreshold')} inputLabel={t('toolOptions.closureThreshold')} sliderLabel={t('toolOptions.closureThresholdSlider')} min={MIN_GAP_CLOSING_THRESHOLD} max={MAX_GAP_CLOSING_THRESHOLD} suffix="px" tooltip={t('toolOptions.closureThresholdHint')} onOpen={onOpen} onChange={onThresholdChange} />}
+  </>
 }
 
 const pressureSensorBounds: Record<BrushDynamicsSensor, { max: number; defaultMin: number; defaultMax: number; defaultCurve: BrushDynamicsCurve; step: number; suffix: string }> = {
@@ -369,7 +390,7 @@ export const EditorToolOptions = memo(function EditorToolOptions({ onOpenColorRe
   ))
   const [brushSizeFlyoutOpen, setBrushSizeFlyoutOpen] = useState(false)
   const [fillTextureOpen, setFillTextureOpen] = useState(false)
-  const [toleranceFlyoutOpen, setToleranceFlyoutOpen] = useState<'wand' | 'fill' | 'gradient' | null>(null)
+  const [toleranceFlyoutOpen, setToleranceFlyoutOpen] = useState<'wand' | 'wand-gap' | 'fill' | 'fill-gap' | 'gradient' | null>(null)
   const [temporarySelectionMode, setTemporarySelectionMode] = useState<SelectionMode | null>(null)
   const [pressureFlyoutOpen, setPressureFlyoutOpen] = useState(false)
   const [sliceProperties, setSliceProperties] = useState<(SelectionRect & { id: string }) | null>(null)
@@ -574,8 +595,8 @@ export const EditorToolOptions = memo(function EditorToolOptions({ onOpenColorRe
     saveEditorPreferences({ ...loadEditorPreferences(), lineDirectionStep: nextValue })
     window.dispatchEvent(new Event('moonsprite:preferences-changed'))
   }
-  const openBrushLibrary = (): void => {
-    window.dispatchEvent(new CustomEvent('moonsprite:show-workspace-panel', { detail: { id: 'brushes' } }))
+  const toggleBrushLibrary = (): void => {
+    window.dispatchEvent(new CustomEvent('moonsprite:toggle-workspace-panel', { detail: { id: 'brushes' } }))
   }
   const chooseBasicBrush = (shape: BrushShape): void => {
     workspace.setBrushImage(null)
@@ -627,7 +648,7 @@ export const EditorToolOptions = memo(function EditorToolOptions({ onOpenColorRe
           {activeProceduralBrush && <div className="fill-procedural-settings"><ProceduralBrushControls brushId={activeProceduralBrush.id as ProceduralBrushId} settings={session.proceduralBrushSettings[activeProceduralBrush.id as ProceduralBrushId]} onChange={workspace.setProceduralBrushSettings} /><div className="procedural-output-controls"><PreferenceToggle className="procedural-dither-toggle" checked={session.brushImageSettings.mode === 'dither'} label={t('toolOptions.textureDither')} tooltip={t('toolOptions.textureDitherHint')} onChange={(enabled) => workspace.setBrushImageSettings({ mode: enabled ? 'dither' : 'threshold' })} /><div className="procedural-antialias-control"><CheckboxField className="tool-checkbox" checked={session.proceduralAntialias} label={t('toolOptions.textureAntialiasing')} onChange={workspace.setProceduralAntialias} />{session.proceduralAntialias && <RangeField className="procedural-antialias-strength" density="compact" label={t('toolOptions.amount')} min={1} max={100} suffix="%" value={session.proceduralAntialiasStrength} onChange={workspace.setProceduralAntialiasStrength} />}</div></div></div>}
         </div>}
       </div>}
-      <button type="button" className={`brush-library-trigger ${activeLibraryBrush ? 'selected' : ''}`} title={t('toolOptions.openBrushLibrary')} aria-label={t('toolOptions.openBrushLibrary')} onClick={openBrushLibrary}>{activeLibraryBrush ? <BrushThumbnail brush={activeLibraryBrush} /> : <PixelUtilityIcon kind="image" />}</button>
+      <button type="button" className={`brush-library-trigger ${activeLibraryBrush ? 'selected' : ''}`} title={t('toolOptions.openBrushLibrary')} aria-label={t('toolOptions.openBrushLibrary')} onClick={toggleBrushLibrary}>{activeLibraryBrush ? <BrushThumbnail brush={activeLibraryBrush} /> : <PixelUtilityIcon kind="image" />}</button>
       {isStrokeBrushTool && !activeLibraryBrush?.intrinsicSize && <div className="brush-size-control" onPointerDown={() => setBrushSizeFlyoutOpen(true)}><NumberInput aria-label={t('toolOptions.brushSizeValue')} density="compact" min={1} max={128} suffix="px" value={session.brushSize} onValueChange={workspace.setBrushSize} onFocus={() => setBrushSizeFlyoutOpen(true)} />{brushSizeFlyoutOpen && <div className="brush-size-popover" role="dialog" aria-label={t('toolOptions.adjustBrushSize')}><RangeField ariaLabel={t('toolOptions.brushSizeSlider')} density="compact" min={1} max={128} suffix="px" value={session.brushSize} onChange={workspace.setBrushSize} /></div>}</div>}
       {activeLibraryBrush?.intrinsicSize && <span className="brush-paint-mode-select" title={t('toolOptions.brushModeHint')}><ThemedSelect<BrushPaintMode> density="compact" value={session.brushPaintMode} groups={brushPaintModeGroups} label={t('toolOptions.brushMode')} popoverWidth={148} onChange={workspace.setBrushPaintMode} /></span>}
       {session.tool === 'pencil' && <FormField className="line-direction-step-control" layout="inline" label={t('toolOptions.lineDirectionStep')} tooltip={t('toolOptions.lineDirectionStepHint')}><NumberInput aria-label={t('toolOptions.lineDirectionStep')} density="compact" min={1} max={16} value={lineDirectionStep} onValueChange={updateLineDirectionStep} /></FormField>}
@@ -648,11 +669,11 @@ export const EditorToolOptions = memo(function EditorToolOptions({ onOpenColorRe
         onPivotChange={workspace.setSelectionPivot}
         onVisibleChange={(showSelectionPivot) => workspace.setView({ showSelectionPivot })}
       />
-      {session.selectionKind === 'magic' && <><ToleranceControl value={session.wandTolerance} open={toleranceFlyoutOpen === 'wand'} label={t('toolOptions.tolerance')} inputLabel={t('toolOptions.magicWandTolerance')} sliderLabel={t('toolOptions.magicWandToleranceSlider')} onOpen={() => setToleranceFlyoutOpen('wand')} onChange={workspace.setWandTolerance} /><CheckboxField className="tool-checkbox" aria-label={t('toolOptions.contiguousSelection')} checked={session.wandContiguous} label={t('toolOptions.contiguous')} onChange={workspace.setWandContiguous} /></>}
+      {session.selectionKind === 'magic' && <><ToleranceControl value={session.wandTolerance} open={toleranceFlyoutOpen === 'wand'} label={t('toolOptions.tolerance')} inputLabel={t('toolOptions.magicWandTolerance')} sliderLabel={t('toolOptions.magicWandToleranceSlider')} onOpen={() => setToleranceFlyoutOpen('wand')} onChange={workspace.setWandTolerance} /><CheckboxField className="tool-checkbox" aria-label={t('toolOptions.contiguousSelection')} checked={session.wandContiguous} label={t('toolOptions.contiguous')} onChange={workspace.setWandContiguous} />{session.wandContiguous && <GapClosingControls enabled={session.wandGapClosing} threshold={session.wandGapThreshold} open={toleranceFlyoutOpen === 'wand-gap'} onEnabledChange={workspace.setWandGapClosing} onThresholdChange={workspace.setWandGapThreshold} onOpen={() => setToleranceFlyoutOpen('wand-gap')} />}</>}
     </>}
     {session.tool === 'shape' && (session.shapeKind === 'rectangle' || session.shapeKind === 'rectangle-outline' || session.shapeKind === 'ellipse' || session.shapeKind === 'ellipse-outline') && <div className="shape-ratio-control"><CheckboxField className="tool-checkbox" checked={session.shapeRatio !== null} label={t('toolOptions.fixedRatio')} onChange={(checked) => workspace.setShapeRatio(checked ? { width: 1, height: 1 } : null)} />{session.shapeRatio !== null && <div className="shape-ratio-inputs"><NumberInput aria-label={t('toolOptions.shapeWidthRatio')} density="compact" min={0.1} max={100} step={0.1} value={session.shapeRatio.width} onValueChange={(width) => workspace.setShapeRatio({ ...session.shapeRatio!, width })} /><span>:</span><NumberInput aria-label={t('toolOptions.shapeHeightRatio')} density="compact" min={0.1} max={100} step={0.1} value={session.shapeRatio.height} onValueChange={(height) => workspace.setShapeRatio({ ...session.shapeRatio!, height })} /><button type="button" className="icon-button shape-ratio-swap" title={t('toolOptions.swapRatio')} aria-label={t('toolOptions.swapRatio')} onClick={() => workspace.setShapeRatio({ width: session.shapeRatio!.height, height: session.shapeRatio!.width })}><ArrowLeftRight size={13} /></button></div>}</div>}
     {session.tool === 'line' && session.lineKind === 'curve' && <FormField className="curve-anchor-count-control" layout="inline" label={t('toolOptions.curveAnchorCount')} tooltip={t('toolOptions.curveAnchorCountHint')}><NumberInput aria-label={t('toolOptions.curveAnchorCount')} density="compact" min={1} max={8} value={session.curveAnchorCount} onValueChange={workspace.setCurveAnchorCount} /></FormField>}
-    {session.tool === 'fill' && fillKind === 'bucket' && <><ToleranceControl value={session.fillTolerance} open={toleranceFlyoutOpen === 'fill'} label={t('toolOptions.tolerance')} inputLabel={t('toolOptions.fillTolerance')} sliderLabel={t('toolOptions.fillToleranceSlider')} onOpen={() => setToleranceFlyoutOpen('fill')} onChange={workspace.setFillTolerance} /><CheckboxField className="tool-checkbox" aria-label={t('toolOptions.contiguousFill')} checked={session.fillMode === 'contiguous'} label={t('toolOptions.contiguous')} onChange={(checked) => workspace.setFillMode(checked ? 'contiguous' : 'global')} /></>}
+    {session.tool === 'fill' && fillKind === 'bucket' && <><ToleranceControl value={session.fillTolerance} open={toleranceFlyoutOpen === 'fill'} label={t('toolOptions.tolerance')} inputLabel={t('toolOptions.fillTolerance')} sliderLabel={t('toolOptions.fillToleranceSlider')} onOpen={() => setToleranceFlyoutOpen('fill')} onChange={workspace.setFillTolerance} /><CheckboxField className="tool-checkbox" aria-label={t('toolOptions.contiguousFill')} checked={session.fillMode === 'contiguous'} label={t('toolOptions.contiguous')} onChange={(checked) => workspace.setFillMode(checked ? 'contiguous' : 'global')} />{session.fillMode === 'contiguous' && <GapClosingControls enabled={session.fillGapClosing} threshold={session.fillGapThreshold} open={toleranceFlyoutOpen === 'fill-gap'} onEnabledChange={workspace.setFillGapClosing} onThresholdChange={workspace.setFillGapThreshold} onOpen={() => setToleranceFlyoutOpen('fill-gap')} />}</>}
     {session.tool === 'fill' && fillKind === 'gradient' && <>
       <ToleranceControl value={session.gradientTolerance} open={toleranceFlyoutOpen === 'gradient'} label={t('toolOptions.tolerance')} inputLabel={t('toolOptions.gradientTolerance')} sliderLabel={t('toolOptions.gradientToleranceSlider')} onOpen={() => setToleranceFlyoutOpen('gradient')} onChange={workspace.setGradientTolerance} />
       <CheckboxField className="tool-checkbox" aria-label={t('toolOptions.contiguousGradient')} checked={session.gradientContiguous} label={t('toolOptions.contiguous')} onChange={workspace.setGradientContiguous} />

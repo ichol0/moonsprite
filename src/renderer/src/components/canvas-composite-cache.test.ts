@@ -305,6 +305,38 @@ describe('CanvasCompositeCache', () => {
     expect(Array.from(rendered.data)).toEqual(Array.from(compositeRegion(document, 0, 0, 16, 16)))
   })
 
+  it('keeps move preview enabled when a visible opacity group is empty', () => {
+    const context = {
+      save: vi.fn(), restore: vi.fn(), beginPath: vi.fn(), rect: vi.fn(), clip: vi.fn(),
+      translate: vi.fn(), scale: vi.fn(), drawImage: vi.fn(), imageSmoothingEnabled: true
+    }
+    const document = createDocument('moving beside empty opacity group', 64, 64, 'rgba')
+    const moving = createLayer('moving', 64, 64, 'rgba')
+    document.layers.push(moving)
+    document.groups.push({ id: 'empty-group', name: 'Empty', parentGroupId: null, visible: true, locked: false, opacity: 0.3, blendMode: 'normal' })
+    const timeline = ensureAnimationDocument(document)
+    const mask = createLayerMask('empty-group', document.width, document.height, 'group')
+    writeLayerColor(document, mask, 0, { r: 0, g: 0, b: 0, a: 255 })
+    timeline.groupMasks = [{ groupId: 'empty-group', frameId: timeline.activeFrameId, mask }]
+    writeLayerColor(document, moving, 2 + 2 * moving.width, { r: 255, g: 0, b: 0, a: 255 })
+    const cache = new CanvasCompositeCache()
+    const draw = () => cache.draw({
+      context: context as never,
+      document,
+      view: { zoom: 4, panX: 0, panY: 0, rotation: 0, mirrored: false, mirroredVertical: false, showGrid: false, relativeLuminance: false },
+      originX: 0, originY: 0, canvasWidth: 256, canvasHeight: 256,
+      fromX: 0, fromY: 0, toX: 16, toY: 16,
+      revision: 1, contentRevision: 1, movingLayerIds: [moving.id]
+    })
+
+    draw()
+    const previewCanvas = context.drawImage.mock.calls.at(-1)?.[0] as MockOffscreenCanvas
+    expect(previewCanvas.width).toBe(16)
+    moving.offsetX = 1
+    draw()
+    expect(context.drawImage.mock.calls.at(-1)?.[0]).toBe(previewCanvas)
+  })
+
   it('shows moved layer pixels across enabled tile-repeat boundaries', () => {
     const context = {
       save: vi.fn(), restore: vi.fn(), beginPath: vi.fn(), rect: vi.fn(), clip: vi.fn(),

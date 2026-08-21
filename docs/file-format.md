@@ -1,6 +1,10 @@
-# MoonSprite 文件格式 v13
+# MoonSprite 文件格式 v15
 
-v13 新增项目级 `tilesets` 与可编辑 Tilemap cel。Tileset 使用稳定 ID 保存瓦片宽高、表格行列、逐瓦片稳定 ID、允许空位的 `tileSlots` 栏目布局和 RGBA 图集资源；`tileSlots` 只控制瓦片集排布，图集像素仍按 `tileIds` 紧凑保存。Tilemap 图层使用 `kind: "tilemap"` 标记，并以 `tilemapTilesetId` 保存该图层拥有的项目 Tileset。每个非链接源 cel 保存瓦片尺寸、网格行列和非空格子的 `index + tilesetId + tileId` 引用。cel 的栅格 surface 继续写入工程并供既有合成、缩略图和导出路径使用，但打开工程时会按 Tilemap 源数据重新生成，不能作为可编辑源。v1-v12 工程迁移时使用空 Tileset 集合，早期未保存 `tileSlots` 的 v13 数据按紧凑 `tileIds` 顺序补齐，普通栅格和文本语义保持不变。
+v15 将自由瓦片源从单一多瓦片 Tileset 改为图层级 `freeTileSources`。每个源保存稳定 `id`、名称、可选描述与显示颜色、显隐、锁定、不透明度、混合模式、整数像素偏移和独占的 `tilesetId`；对应 Tileset 必须只含一个瓦片，其宽高就是该源的动态尺寸。自由瓦片源仍不得与其他自由瓦片源或 Tilemap 共享 Tileset，但多个 Tilemap 图层可以共同引用同一个 `tilemapTilesetId`。每个非链接源 cel 的 `freeTiles.instances` 按从后到前保存稳定实例 ID、有效 `sourceId`、cel surface 本地整数像素锚点，以及可选 `visible`、`locked`、`flipHorizontal`、`flipVertical` 布尔值、`rotation` 整 `90°` 四分之一转数、实例不透明度和混合模式，不再保存 v14 `tileId` 引用。省略变换字段表示不旋转、不镜像；读取时拒绝非 `0..3` 的旋转值、非布尔镜像值，并继续验证源 ID、实例 ID、自由瓦片所有权与坐标，再按源属性、源像素和实例列表重新生成 cel surface。v14 工程的 `freeTileTilesetId` 会按原 Tileset 的稳定瓦片顺序拆成多个独立源，为每个源创建单瓦片 Tileset，再把旧实例 `tileId` 映射到新 `sourceId`。
+
+v14 新增初版自由瓦片图层。图层使用 `kind: "free-tile"` 和 `freeTileTilesetId` 独占一个可包含多瓦片的项目 Tileset；每个非链接源 cel 使用 `freeTiles.instances` 保存稳定实例 ID、`tileId` 和本地像素坐标。v15 只保留这些字段作为迁移输入，当前写入器不得再输出 `freeTileTilesetId` 或实例 `tileId`。v1-v13 工程迁移时不创建自由瓦片图层或实例数据。
+
+v13 新增项目级 `tilesets` 与可编辑 Tilemap cel。Tileset 使用稳定 ID 保存瓦片宽高、表格行列、逐瓦片稳定 ID、允许空位的 `tileSlots` 栏目布局和 RGBA 图集资源；`tileSlots` 只控制瓦片集排布，图集像素仍按 `tileIds` 紧凑保存。Tilemap 图层使用 `kind: "tilemap"` 标记，并以 `tilemapTilesetId` 保存所引用的项目 Tileset；多个 Tilemap 图层允许保存相同 ID。每个非链接源 cel 保存瓦片尺寸、网格行列和非空格子的 `index + tilesetId + tileId` 引用。cel 的栅格 surface 继续写入工程并供既有合成、缩略图和导出路径使用，但打开工程时会按 Tilemap 源数据重新生成，不能作为可编辑源。v1-v12 工程迁移时使用空 Tileset 集合，早期未保存 `tileSlots` 的 v13 数据按紧凑 `tileIds` 顺序补齐，普通栅格和文本语义保持不变。
 
 v12 为普通栅格图层新增可选 `background` 元数据。`mode: "preset"` 同时保存纯色或内置图案 ID，`mode: "canvas"` 表示由普通图层转换；实际可编辑像素仍保存在图层与各帧 cel 的原栅格资源中。背景图层扩大画布时以扩大前可见画布为单位一次性平铺全部帧，普通图层吸色时排除背景图层，选择背景图层后恢复完整合成吸色。v1-v11 工程迁移时不创建背景标记，旧版本中同名未知字段不采纳。
 
@@ -40,7 +44,7 @@ v5 动画元数据至少包含一帧、当前帧、帧持续时间、循环状�
 
 `timelapse/` PNG 已经自行压缩，当前写入使用 ZIP Store。打开工程时只扫描一次 ZIP 中央目录，再按清单路径直接读取 Layer、Cel、蒙版和其他必需资源；Store 快照以只读归档视图接入文档，不再逐张二次解压或复制，旧工程中的 Deflate 条目仍按原方式兼容解压。任何编辑产生的新快照使用独立字节数组，保存时两类快照保持相同文件语义。
 
-v1 工程打开时先补成单帧时间轴；v2 工程保留原图层、组和动画数据并按“无蒙版”迁移；v3 工程保留原有 cel 蒙版并按“无图层组蒙版”迁移；v4 资源显式按 `raw` 读取。v1-v4 都迁移到内存 v5，首次保存时按当前稀疏度重写。v1-v12 缺少 Tilemap 数据时迁移为空 Tileset 集合。cel、图层组、蒙版、Tileset 或 Tilemap 引用无效，像素文件缺失、编码未知、格式与字节长度不匹配时必须拒绝打开；Tilemap 格子引用不存在的 Tileset、瓦片 ID 或不匹配的瓦片尺寸时同样视为工程损坏。`app` 不是 `MoonSprite`、尺寸非法、图层数据缺失或字节长度异常时必须拒绝，未知未来版本不得静默降级读取。
+v1 工程打开时先补成单帧时间轴；v2 工程保留原图层、组和动画数据并按“无蒙版”迁移；v3 工程保留原有 cel 蒙版并按“无图层组蒙版”迁移；v4 资源显式按 `raw` 读取。v1-v4 都迁移到内存 v5，首次保存时按当前稀疏度重写。v1-v12 缺少 Tilemap 数据时迁移为空 Tileset 集合，v1-v13 缺少自由瓦片数据时保持普通图层语义，v14 自由瓦片按上述规则拆分为 v15 独立源。cel、图层组、蒙版、Tileset、Tilemap 或自由瓦片引用无效，像素文件缺失、编码未知、格式与字节长度不匹配时必须拒绝打开；Tilemap 格子引用不存在的 Tileset 或瓦片 ID、自由瓦片源引用不存在或重复的 Tileset、实例引用无效 `sourceId`、重复实例 ID、混入旧 `tileId` 或所有权冲突时同样视为工程损坏。`app` 不是 `MoonSprite`、尺寸非法、图层数据缺失或字节长度异常时必须拒绝，未知未来版本不得静默降级读取。
 
 索引颜色文档保留颜色 ID `0` 表示透明；其他颜色 ID 在调色板重排后保持稳定。绘制、粘贴、文本栅格化和 RGBA 转换都不得自动扩张调色板，而是精确匹配或映射到 `paletteOrder` 中最接近的可见颜色。导出 PNG 时，只有合成结果不超过 256 个唯一颜色才保留索引输出，否则导出等效 RGBA 图像。
 

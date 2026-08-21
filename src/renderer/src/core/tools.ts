@@ -10,6 +10,7 @@ import { gradientColorForAmount, interpolateRgbaColor } from './gradient-color'
 import { readSurfacePackedRegion } from './runtime-raster'
 import { allOutlineDirections, outlineDirectionForOffset, outlineKernelContainsOffset } from './outline-settings'
 import { tileRepeatRectSegments, wrapDocumentPointForTileRepeat } from './tilemap'
+import { contiguousMatchingRegion } from './contiguous-region'
 
 const paintLayerValue = (document: SpriteDocument, layer: RasterLayer, edit: PixelEdit, index: number, color: RgbaColor): number => {
   if (color.a === 0) return layer.format === 'rgba' ? packColor(color) : 0
@@ -389,8 +390,9 @@ export function paintBrush(
         : color.a === 0
         ? 'erase'
         : `paint:${paintColor.r},${paintColor.g},${paintColor.b},${paintColor.a}`)
-      if (!claimBrushCoverage(edit, paintCoverageKey, index, scaledCoverage, coverageKey !== undefined || gradient !== undefined)) continue
       const eraseResolvedColor = gradient ? resolvedColor.a === 0 : color.a === 0
+      const overwriteImageBrushPixel = imageBrush?.intrinsicSize === true && brushPaintMode === 'paint' && !eraseResolvedColor
+      if (!overwriteImageBrushPixel && !claimBrushCoverage(edit, paintCoverageKey, index, scaledCoverage, coverageKey !== undefined || gradient !== undefined)) continue
       if (eraseResolvedColor) {
         const eraseCoverage = offset.color ? Math.round(scaledCoverage * offset.color.a / 255) : scaledCoverage
         if (eraseCoverage === 0) continue
@@ -402,7 +404,12 @@ export function paintBrush(
         }
       } else {
         const stamped = scaledCoverage === 255 ? paintColor : { ...paintColor, a: Math.round(paintColor.a * scaledCoverage / 255) }
-        recordPixel(document, layer, edit, index, paintLayerValue(document, layer, edit, index, stamped))
+        const next = overwriteImageBrushPixel
+          ? layer.format === 'rgba'
+            ? packColor(stamped)
+            : stamped.a === 0 ? 0 : paletteColorIdForCanvas(document, stamped)
+          : paintLayerValue(document, layer, edit, index, stamped)
+        recordPixel(document, layer, edit, index, next)
       }
     }
   }
@@ -1276,7 +1283,7 @@ const floodFillSolidRuns = (document: SpriteDocument, layer: RasterLayer, startX
   return edit
 }
 
-export function floodFill(document: SpriteDocument, layer: RasterLayer, startX: number, startY: number, color: RgbaColor, selection?: SelectionMask | null, contiguous = true, imageBrush: ImageBrush | null = null, brushSize = 1, imageBrushSettings?: ImageBrushSettings, brushTexture: BrushTexture = 'solid', brushTextureScale = 1, proceduralAntialiasStrength = 0, brushPaintMode: BrushPaintMode = 'paint', tolerance = 0): PixelEdit | null {
+export function floodFill(document: SpriteDocument, layer: RasterLayer, startX: number, startY: number, color: RgbaColor, selection?: SelectionMask | null, contiguous = true, imageBrush: ImageBrush | null = null, brushSize = 1, imageBrushSettings?: ImageBrushSettings, brushTexture: BrushTexture = 'solid', brushTextureScale = 1, proceduralAntialiasStrength = 0, brushPaintMode: BrushPaintMode = 'paint', tolerance = 0, gapClosingThreshold = 0): PixelEdit | null {
   if (!isInBounds(document.width, document.height, startX, startY) || isLayerEffectivelyLocked(document, layer) || (selection && !insideSelection(selection, startX, startY))) return null
   const startWasOutsideLayer = layerIndexAt(layer, startX, startY) === null
   if (startWasOutsideLayer && !ensureLayerCoversCanvas(document, layer)) return null
@@ -1365,7 +1372,7 @@ export function floodFill(document: SpriteDocument, layer: RasterLayer, startX: 
   preparePixelEdit(document, edit)
   const next = paintLayerValue(document, layer, edit, startLayerIndex, color)
   if (target === next) return null
-  if (normalizedTolerance === 0 && document.width * document.height >= COMPACT_FILL_MIN_PIXELS && !imageBrush && brushTexture === 'solid') {
+  if (gapClosingThreshold <= 0 && normalizedTolerance === 0 && document.width * document.height >= COMPACT_FILL_MIN_PIXELS && !imageBrush && brushTexture === 'solid') {
     return floodFillSolidRuns(document, layer, startX, startY, target, next, selection, contiguous)
   }
   const textureCoverage = (x: number, y: number): number => {
@@ -1415,6 +1422,24 @@ export function floodFill(document: SpriteDocument, layer: RasterLayer, startX: 
     return edit.before.size > 0 ? edit : null
   }
   const maxPixels = document.width * document.height
+  if (gapClosingThreshold > 0) {
+    const region = contiguousMatchingRegion(document.width, document.height, startX, startY, (index) => {
+      const x = index % document.width
+      const y = Math.floor(index / document.width)
+      if (selection && !insideSelection(selection, x, y)) return false
+      const layerIndex = layerIndexAtCanvas(x, y)
+      return layerIndex !== null && matchesValue(readLayerPacked(document, layer, layerIndex))
+    }, gapClosingThreshold)
+    if (!region) return null
+    for (let index = 0; index < maxPixels; index += 1) {
+      if (region[index] !== 1) continue
+      const x = index % document.width
+      const y = Math.floor(index / document.width)
+      const layerIndex = layerIndexAtCanvas(x, y)
+      if (layerIndex !== null) paintAtCoverage(layerIndex, textureCoverage(x, y), readLayerPacked(document, layer, layerIndex))
+    }
+    return edit.before.size > 0 ? edit : null
+  }
   const visited = new Uint8Array(maxPixels)
   let stack = new Int32Array(Math.min(maxPixels, 1024))
   let stackLength = 0
@@ -1448,11 +1473,11 @@ export function floodFill(document: SpriteDocument, layer: RasterLayer, startX: 
   return edit.before.size > 0 ? edit : null
 }
 
-export function floodFillSymmetric(document: SpriteDocument, layer: RasterLayer, startX: number, startY: number, color: RgbaColor, selection: SelectionMask | null | undefined, contiguous: boolean, imageBrush: ImageBrush | null, brushSize: number, imageBrushSettings: ImageBrushSettings | undefined, brushTexture: BrushTexture, brushTextureScale: number, proceduralAntialiasStrength: number, brushPaintMode: BrushPaintMode, symmetryAxes?: SymmetryAxes, symmetryCenter?: SymmetryCenter, tolerance = 0, profiler?: PixelOperationProfiler): PixelEdit | null {
+export function floodFillSymmetric(document: SpriteDocument, layer: RasterLayer, startX: number, startY: number, color: RgbaColor, selection: SelectionMask | null | undefined, contiguous: boolean, imageBrush: ImageBrush | null, brushSize: number, imageBrushSettings: ImageBrushSettings | undefined, brushTexture: BrushTexture, brushTextureScale: number, proceduralAntialiasStrength: number, brushPaintMode: BrushPaintMode, symmetryAxes?: SymmetryAxes, symmetryCenter?: SymmetryCenter, tolerance = 0, gapClosingThreshold = 0, profiler?: PixelOperationProfiler): PixelEdit | null {
   const merged = beginPixelEdit(layer.id)
   for (const seed of symmetryPoints({ x: startX, y: startY }, document.width, document.height, symmetryAxes, symmetryCenter)) {
     const fillStartedAt = profiler ? performance.now() : 0
-    const edit = floodFill(document, layer, seed.x, seed.y, color, selection, contiguous, imageBrush, brushSize, imageBrushSettings, brushTexture, brushTextureScale, proceduralAntialiasStrength, brushPaintMode, tolerance)
+    const edit = floodFill(document, layer, seed.x, seed.y, color, selection, contiguous, imageBrush, brushSize, imageBrushSettings, brushTexture, brushTextureScale, proceduralAntialiasStrength, brushPaintMode, tolerance, gapClosingThreshold)
     profiler?.record('bucket.flood-fill', performance.now() - fillStartedAt, {
       points: edit?.before.size ?? 0,
       runs: edit?.runs?.length ?? 0,
@@ -1695,6 +1720,7 @@ export interface SelectionTranslationPreview {
 
 export interface SelectionTransformLayerState {
   layerId: string
+  frameId?: string
   source: SelectionTransformSource
   previewEdit: PixelEdit | null
   translationPreview: SelectionTranslationPreview | null

@@ -1,9 +1,10 @@
-import type { AnimationCel, AnimationFrame, AnimationGroupMask, ColorMode, LayerGroup, PaletteEntry, RasterLayer, SpriteDocument, Tileset } from '@shared/types'
+import type { AnimationCel, AnimationFrame, AnimationGroupMask, ColorMode, FreeTileSourceLayer, LayerGroup, PaletteEntry, RasterLayer, SpriteDocument, Tileset } from '@shared/types'
 import { cloneAnimationCel, ensureAnimationDocument, refreshActiveAnimationFrame, restoreAnimationCels, syncActiveAnimationFrame } from '@/core/animation'
 import { captureDocumentImageResizeSnapshot, documentImageResizeSnapshotBytes, restoreDocumentImageResizeSnapshot, type DocumentImageResizeSnapshot } from '@/core/document'
 import { cloneLayerStyles } from '@/core/layer-styles'
 import { rasterStorageIdentity, runtimeRasterForSurface } from '@/core/runtime-raster'
 import { cloneTilemapCelData } from '@/core/tilemap'
+import { cloneFreeTileCelData } from '@/core/free-tile'
 
 interface AnimationStructureSnapshot {
   frames: AnimationFrame[]
@@ -127,6 +128,7 @@ interface LayerDefinitionSnapshot {
   name: string
   kind?: RasterLayer['kind']
   tilemapTilesetId?: string
+  freeTileSources?: FreeTileSourceLayer[]
   layerStyles?: RasterLayer['layerStyles']
   background?: RasterLayer['background']
 }
@@ -154,6 +156,7 @@ export const captureLayerContentSnapshot = (document: SpriteDocument, layerId: s
       name: layer.name,
       kind: layer.kind,
       tilemapTilesetId: layer.tilemapTilesetId,
+      freeTileSources: layer.freeTileSources?.map((source) => ({ ...source, displayColor: source.displayColor ? { ...source.displayColor } : undefined })),
       layerStyles: cloneLayerStyles(layer.layerStyles),
       background: layer.background ? { ...layer.background } : undefined
     },
@@ -175,6 +178,9 @@ export const restoreLayerContentSnapshot = (document: SpriteDocument, snapshot: 
   else delete layer.kind
   if (snapshot.definition.tilemapTilesetId) layer.tilemapTilesetId = snapshot.definition.tilemapTilesetId
   else delete layer.tilemapTilesetId
+  delete layer.freeTileTilesetId
+  if (snapshot.definition.freeTileSources) layer.freeTileSources = snapshot.definition.freeTileSources.map((source) => ({ ...source, displayColor: source.displayColor ? { ...source.displayColor } : undefined }))
+  else delete layer.freeTileSources
   if (snapshot.definition.layerStyles) layer.layerStyles = cloneLayerStyles(snapshot.definition.layerStyles)
   else delete layer.layerStyles
   if (snapshot.definition.background) layer.background = { ...snapshot.definition.background }
@@ -248,7 +254,7 @@ export const documentColorModeSnapshotBytes = (snapshot: DocumentColorModeSnapsh
 
 export interface DocumentCanvasResizeSnapshot {
   surfaces: DocumentImageResizeSnapshot
-  cels: Array<{ celId: string; surface?: AnimationCel['surface']; tilemap?: AnimationCel['tilemap'] }>
+  cels: Array<{ celId: string; surface?: AnimationCel['surface']; tilemap?: AnimationCel['tilemap']; freeTiles?: AnimationCel['freeTiles'] }>
 }
 
 export const captureDocumentCanvasResizeSnapshot = (document: SpriteDocument): DocumentCanvasResizeSnapshot => ({
@@ -256,7 +262,8 @@ export const captureDocumentCanvasResizeSnapshot = (document: SpriteDocument): D
   cels: (document.animation?.cels ?? []).map((cel) => ({
     celId: cel.id,
     surface: cel.surface,
-    tilemap: cel.tilemap ? cloneTilemapCelData(cel.tilemap) : undefined
+    tilemap: cel.tilemap ? cloneTilemapCelData(cel.tilemap) : undefined,
+    freeTiles: cel.freeTiles ? cloneFreeTileCelData(cel.freeTiles) : undefined
   }))
 })
 
@@ -268,10 +275,12 @@ export const restoreDocumentCanvasResizeSnapshot = (document: SpriteDocument, sn
     cel.surface = state.surface
     if (state.tilemap) cel.tilemap = cloneTilemapCelData(state.tilemap)
     else delete cel.tilemap
+    if (state.freeTiles) cel.freeTiles = cloneFreeTileCelData(state.freeTiles)
+    else delete cel.freeTiles
   }
   restoreDocumentImageResizeSnapshot(document, snapshot.surfaces)
 }
 
 export const documentCanvasResizeSnapshotBytes = (snapshot: DocumentCanvasResizeSnapshot): number =>
   documentImageResizeSnapshotBytes(snapshot.surfaces)
-  + snapshot.cels.reduce((sum, entry) => sum + (entry.tilemap?.cells.length ?? 0) * 16 + 32, 0)
+  + snapshot.cels.reduce((sum, entry) => sum + (entry.tilemap?.cells.length ?? 0) * 16 + (entry.freeTiles?.instances.length ?? 0) * 72 + 32, 0)

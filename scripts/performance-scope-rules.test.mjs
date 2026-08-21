@@ -13,12 +13,16 @@ test('普通 UI、交互热点和高频渲染分别归入 P1、P2、P3', () => {
   assert.equal(input.suites[0].id, 'canvas-interaction')
   assert.deepEqual(input.commands, ['pnpm bench:canvas -- --size=512 --scenario=pan,zoom --runtime=production'])
   assert.equal(classifyPerformanceImpact(['src/renderer/src/components/CanvasStage.tsx']).level, 'P3')
+
+  const adjustments = classifyPerformanceImpact(['src/renderer/src/core/adjustments.ts'])
+  assert.equal(adjustments.level, 'P2')
+  assert.deepEqual(adjustments.suites.map((suite) => suite.id), ['adjustments'])
 })
 
 test('依赖与构建配置归入 P4 并覆盖其他级别', () => {
   const result = classifyPerformanceImpact(['src/renderer/src/components/CanvasStage.tsx', 'pnpm-lock.yaml'])
   assert.equal(result.level, 'P4')
-  assert.deepEqual(result.suites.map((suite) => suite.id), ['canvas-standard', 'canvas-profile', 'canvas-complex', 'canvas-large-800', 'canvas-large-2048', 'canvas-large-4000', 'canvas-large-sentinel', 'selection', 'document-composite', 'project-format', 'bundle', 'desktop'])
+  assert.deepEqual(result.suites.map((suite) => suite.id), ['canvas-standard', 'canvas-profile', 'canvas-complex', 'canvas-large-800', 'canvas-large-2048', 'canvas-large-4000', 'canvas-large-sentinel', 'selection', 'adjustments', 'document-composite', 'project-format', 'bundle', 'desktop'])
   assert.deepEqual(result.suites.find((suite) => suite.id === 'canvas-complex').sizes, [800, 1024])
   assert.equal(result.suites.find((suite) => suite.id === 'canvas-profile').runtime, 'profile')
 })

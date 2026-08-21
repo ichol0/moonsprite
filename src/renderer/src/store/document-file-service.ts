@@ -8,7 +8,7 @@ import { translate } from '@/core/localization'
 import { exportAnimationGif } from '@/core/gif'
 import { encodeTimelapseVideo, type TimelapseExportOptions } from '@/core/timelapse'
 import { normalizeTimelapseSettings } from '@/core/project-metadata'
-import { RECENT_EXPORTS_CHANGED_EVENT, parentDirectoryFromPath, recordRecentExportPath, saveDocumentExportSettings, withExportFileExtension, type DocumentExportSettings } from '@/core/export-settings'
+import { RECENT_EXPORTS_CHANGED_EVENT, exportFileExtension, parentDirectoryFromPath, recordRecentExportPath, saveDocumentExportSettings, withExportFileExtension, type DocumentExportSettings } from '@/core/export-settings'
 import { acceptProjectSaveBaseline, clearProjectSaveBaseline, encodeProjectAsync, encodeProjectSaveAsync } from '@/core/project-format'
 import { cloneDocumentForAnimationFrame } from '@/core/animation'
 
@@ -152,6 +152,7 @@ export async function exportDocumentFile(api: MoonSpriteApi, document: SpriteDoc
   const requestedName = sanitizeFileStem(options?.name ?? fallbackName, fallbackName)
   const format = options?.format ?? 'png-auto'
   if (options?.target === 'slices') {
+    if (format === 'psd') throw new Error(translate(loadEditorPreferences().language, 'file.export.psdDocumentOnly'))
     const documentSlices = document.slices ?? []
     if (documentSlices.length === 0) throw new Error(translate(loadEditorPreferences().language, 'file.export.noSlices'))
     const slices = options.sliceId ? documentSlices.filter((slice) => slice.id === options.sliceId) : documentSlices
@@ -186,6 +187,7 @@ export async function exportDocumentFile(api: MoonSpriteApi, document: SpriteDoc
   }
   if (options?.target === 'frames') {
     if (format === 'gif') throw new Error(translate(loadEditorPreferences().language, 'file.export.framesGifUnsupported'))
+    if (format === 'psd') throw new Error(translate(loadEditorPreferences().language, 'file.export.psdDocumentOnly'))
     const exportWidth = Math.max(1, Math.round(document.width * scalePercent / 100))
     const exportHeight = Math.max(1, Math.round(document.height * scalePercent / 100))
     if (!Number.isSafeInteger(exportWidth) || !Number.isSafeInteger(exportHeight)) throw new Error(translate(loadEditorPreferences().language, 'file.export.safeRange'))
@@ -218,10 +220,10 @@ export async function exportDocumentFile(api: MoonSpriteApi, document: SpriteDoc
   const exportWidth = Math.max(1, Math.round(document.width * scalePercent / 100))
   const exportHeight = Math.max(1, Math.round(document.height * scalePercent / 100))
   if (!Number.isSafeInteger(exportWidth) || !Number.isSafeInteger(exportHeight)) throw new Error(translate(loadEditorPreferences().language, 'file.export.safeRange'))
-  const check = checkResourceLimit(exportWidth, exportHeight, 1, 'rgba', resources)
+  const check = checkResourceLimit(exportWidth, exportHeight, format === 'psd' ? Math.max(1, document.layers.length + 1) : 1, 'rgba', resources)
   if (!check.allowed) throw new Error(check.reason)
-  const extension = format === 'gif' ? 'gif' : saveImageExtension(format)
-  const dialogFormat = extension === 'jpg' ? 'jpeg' : extension === 'png' ? 'png' : extension === 'svg' ? 'svg' : extension === 'gif' ? 'gif' : 'webp'
+  const extension = exportFileExtension(format)
+  const dialogFormat = format === 'png-auto' || format === 'png-rgba' ? 'png' : format
   const exportDirectory = options?.directory?.trim() || loadEditorPreferences().exportDirectory
   const result = await api.exportImage(joinDirectoryPath(exportDirectory, `${requestedName}.${extension}`), dialogFormat)
   if (result.canceled || !result.filePath) return null
@@ -240,6 +242,7 @@ export async function exportDocumentFile(api: MoonSpriteApi, document: SpriteDoc
     target: 'document',
     directory: parentDirectoryFromPath(path)
   })
+  if (format === 'psd') return translate(loadEditorPreferences().language, 'file.export.psd')
   return output.indexed ? translate(loadEditorPreferences().language, 'file.export.indexed') : translate(loadEditorPreferences().language, 'file.export.image', { extension: output.extension.toUpperCase() })
 }
 

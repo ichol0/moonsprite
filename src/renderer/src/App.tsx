@@ -47,7 +47,7 @@ import { ModalShell } from '@/components/ModalShell'
 import { PixelUtilityIcon } from '@/components/PixelUtilityIcon'
 import { TextInput } from '@/components/TextInput'
 import { ThemedSelect } from '@/components/ThemedSelect'
-import { animationFrameStepDirection, BRUSH_LIBRARY_DELETE_COMMAND_EVENT, COMMAND_SCOPE_EVENT, TILESET_DELETE_COMMAND_EVENT, resolveCopyCommand, resolveDeleteCommand, shouldHandleAnimationPlaybackShortcut, shouldHandleGlobalSelectionEnter, shouldTriggerDeleteCommand, type EditorCommandScope } from '@/core/command-context'
+import { animationFrameStepDirection, BRUSH_LIBRARY_DELETE_COMMAND_EVENT, COMMAND_SCOPE_EVENT, hasAnimationDeleteSelection, TILESET_DELETE_COMMAND_EVENT, resolveCopyCommand, resolveDeleteCommand, shouldHandleAnimationPlaybackShortcut, shouldHandleGlobalSelectionEnter, shouldTriggerDeleteCommand, type EditorCommandScope } from '@/core/command-context'
 import { formatBytes } from '@/core/resource-policy'
 import { adjacentFormInput } from '@/core/form-focus'
 import { saveProgress } from '@/core/save-progress'
@@ -103,7 +103,7 @@ const createFloatingDocumentPosition = (documentId: string, anchor: { x: number;
 }
 
 const saveAsFormatForPreference = (value: string | null): SaveAsOptions['format'] => {
-  if (value === 'ase' || value === 'aseprite' || value === 'jpeg' || value === 'webp') return value
+  if (value === 'ase' || value === 'aseprite' || value === 'jpeg' || value === 'webp' || value === 'psd') return value
   if (value === 'png') return 'png-auto'
   return 'moonsprite'
 }
@@ -567,13 +567,22 @@ export default function App() {
       updatePanelVisibility(id, false)
       setPopupPanelId((current) => current === id ? null : current)
     }
+    const togglePanel = (event: Event): void => {
+      const id = (event as CustomEvent<{ id?: WorkspacePanelId }>).detail?.id
+      if (!id || !(id in DEFAULT_PANEL_DOCKS)) return
+      const open = panelVisibility[id] || popupPanelId === id
+      updatePanelVisibility(id, !open)
+      if (open) setPopupPanelId((current) => current === id ? null : current)
+    }
     window.addEventListener('moonsprite:show-workspace-panel', showPanel)
     window.addEventListener('moonsprite:hide-workspace-panel', hidePanel)
+    window.addEventListener('moonsprite:toggle-workspace-panel', togglePanel)
     return () => {
       window.removeEventListener('moonsprite:show-workspace-panel', showPanel)
       window.removeEventListener('moonsprite:hide-workspace-panel', hidePanel)
+      window.removeEventListener('moonsprite:toggle-workspace-panel', togglePanel)
     }
-  }, [updatePanelVisibility])
+  }, [panelVisibility, popupPanelId, updatePanelVisibility])
   const togglePopupPanel = useCallback((id: WorkspacePanelId): void => {
     if (panelDocks[id] === 'floating') return
     setPopupPanelId((current) => current === id ? null : id)
@@ -800,17 +809,18 @@ export default function App() {
     const remembered = loadDocumentExportSettings(session.document)
     const preferredFormat = imageExportKindForPreference(readStoredString(EXPORT_FORMAT_PREFERENCE_KEY))
     const frameCount = session.document.animation?.frames.length ?? 1
-    const defaultFormat = requestedTarget === 'frames' ? (preferredFormat === 'gif' ? 'png-auto' : preferredFormat) : frameCount > 1 ? 'gif' : preferredFormat
-    const format = requestedTarget === 'frames' && remembered?.format === 'gif' ? 'png-auto' : remembered?.format ?? defaultFormat
+    const defaultFormat = requestedTarget === 'frames' ? (preferredFormat === 'gif' || preferredFormat === 'psd' ? 'png-auto' : preferredFormat) : frameCount > 1 ? 'gif' : preferredFormat
+    const format = requestedTarget === 'frames' && (remembered?.format === 'gif' || remembered?.format === 'psd') ? 'png-auto' : remembered?.format ?? defaultFormat
     let target = requestedTarget ?? remembered?.target ?? 'document'
-    if (format === 'gif' && target === 'frames') target = 'document'
+    if (format === 'psd') target = 'document'
+    else if (format === 'gif' && target === 'frames') target = 'document'
     else if (target === 'frames' && requestedTarget !== 'frames' && frameCount <= 1) target = 'document'
     else if (target === 'slices' && !session.document.slices?.length) target = 'document'
     const sliceId = target === 'slices' && remembered?.sliceId && session.document.slices?.some((slice) => slice.id === remembered.sliceId)
       ? remembered.sliceId
       : undefined
     const defaultScale = format === 'svg' ? 100 : exportScalePresets.includes(100) ? 100 : exportScalePresets[0] ?? 100
-    const documentName = session.document.name.replace(/\.(moonsprite|aseprite|ase|png|jpe?g|webp|svg|gif)$/i, '') || 'MoonSprite-export'
+    const documentName = session.document.name.replace(/\.(moonsprite|aseprite|ase|png|jpe?g|webp|svg|gif|psd)$/i, '') || 'MoonSprite-export'
     const gifFrameLimit = Math.max(1, frameCount)
     setExportForm({
       name: withExportFileExtension(remembered?.name ?? documentName, format),
@@ -1494,7 +1504,22 @@ export default function App() {
         event.preventDefault()
         event.stopPropagation()
         if (commandScopeRef.current === 'canvas' && session?.tool === 'move' && session.moveKind === 'slice' && (session.selectedSliceIds?.length || session.selectedSliceId)) { workspace.deleteSlices(session.selectedSliceIds?.length ? session.selectedSliceIds : [session.selectedSliceId!]); return }
-        const target = resolveDeleteCommand(commandScopeRef.current, Boolean(session?.selection))
+        const hasAnimationSelection = !selectionCommandOverrideRef.current && Boolean(session && hasAnimationDeleteSelection({
+          selectedFrameCount: session.selectedAnimationFrameIds.length,
+          selectedCellCount: session.selectedAnimationCellKeys.length,
+          selectedMaskCellCount: session.selectedAnimationMaskCellKeys.length,
+          cellSelectionExplicit: session.animationCellSelectionExplicit
+        }))
+        const target = resolveDeleteCommand(commandScopeRef.current, Boolean(session?.selection), hasAnimationSelection, Boolean(session?.selectedFreeTileInstanceId))
+        if (target === 'free-tile-instance' && session?.selectedFreeTileInstanceId) {
+          workspace.deleteFreeTileInstances(session.selectedFreeTileInstanceIds.length > 0 ? session.selectedFreeTileInstanceIds : [session.selectedFreeTileInstanceId])
+          return
+        }
+        if (target === 'animation') {
+          if (session?.selectedAnimationMaskCellKeys.length) workspace.deleteSelectedLayerMasks()
+          else workspace.deleteSelectedAnimationItems()
+          return
+        }
         if (target === 'layers' && (session?.selectedLayerIds.length || session?.selectedGroupIds.length)) { workspace.deleteSelectedLayers(); return }
         if (target === 'tileset') {
           const surface = commandSurfaceRef.current
@@ -1506,8 +1531,6 @@ export default function App() {
           if (surface?.isConnected && surface.dataset.commandScope === 'brushes') surface.dispatchEvent(new Event(BRUSH_LIBRARY_DELETE_COMMAND_EVENT))
           return
         }
-        if (session?.selectedAnimationMaskCellKeys.length && !selectionCommandOverrideRef.current) { workspace.deleteSelectedLayerMasks(); return }
-        if ((session?.selectedAnimationCellKeys.length || session?.selectedAnimationFrameIds.length) && !selectionCommandOverrideRef.current) { workspace.deleteSelectedAnimationItems(); return }
         if (target === 'palette' && session?.selectedPaletteIds.length) workspace.deletePaletteColors(session.selectedPaletteIds)
         else if (target === 'selection' && session?.selection) workspace.deleteSelection()
         return
@@ -1533,7 +1556,7 @@ export default function App() {
     window.addEventListener('keyup', keyup, true)
     window.addEventListener('blur', blur)
     return () => { window.removeEventListener('keydown', keydown, true); window.removeEventListener('keyup', keyup, true); window.removeEventListener('blur', blur) }
-  }, [adjustmentOpen, advancedMode, aboutOpen, blockedShortcuts, canvasResizeOpen, colorReplacementOpen, componentLibraryOpen, cycleAdvancedMode, exportOpen, gridSettingsOpen, homeOpen, imageResizeOpen, latestReleaseOpen, loadSavedWorkspaces, newOpen, openMenu, openPreferences, openSaveAs, outlineOpen, panelVisibility, popupPanelId, preferencesOpen, projectInfoOpen, roadmapOpen, runtimePreferences.timelineHidden, saveAsOpen, shortcutOpen, timelapseOpen, toggleMirrorView, togglePopupPanel, toggleTimelineVisibility, updatePanelVisibility, updateToolRailSide, workspace, workspaceManagerOpen, workspaceSaveOpen, session?.brushSize, session?.document.id, session?.moveKind, session?.selectedSliceId, session?.selectedSliceIds, session?.selection, session?.textBoxTransform, session?.tool, shortcuts])
+  }, [adjustmentOpen, advancedMode, aboutOpen, blockedShortcuts, canvasResizeOpen, colorReplacementOpen, componentLibraryOpen, cycleAdvancedMode, exportOpen, gridSettingsOpen, homeOpen, imageResizeOpen, latestReleaseOpen, loadSavedWorkspaces, newOpen, openMenu, openPreferences, openSaveAs, outlineOpen, panelVisibility, popupPanelId, preferencesOpen, projectInfoOpen, roadmapOpen, runtimePreferences.timelineHidden, saveAsOpen, shortcutOpen, timelapseOpen, toggleMirrorView, togglePopupPanel, toggleTimelineVisibility, updatePanelVisibility, updateToolRailSide, workspace, workspaceManagerOpen, workspaceSaveOpen, session?.brushSize, session?.document.id, session?.moveKind, session?.selectedFreeTileInstanceId, session?.selectedSliceId, session?.selectedSliceIds, session?.selection, session?.textBoxTransform, session?.tool, shortcuts])
 
   useEffect(() => {
     const keydown = (event: KeyboardEvent): void => {
@@ -1776,7 +1799,9 @@ export default function App() {
           ? t('app.documentDockDebug.bottom')
           : t('app.documentDockDebug.none')
   const exportSlices = session?.document.slices ?? []
-  const exportTarget: NonNullable<ExportOptions['target']> = exportForm.format === 'gif' && exportForm.target === 'frames'
+  const exportTarget: NonNullable<ExportOptions['target']> = exportForm.format === 'psd'
+    ? 'document'
+    : exportForm.format === 'gif' && exportForm.target === 'frames'
     ? 'document'
     : exportForm.target === 'slices' && exportSlices.length === 0
       ? 'document'
@@ -1785,7 +1810,7 @@ export default function App() {
   return <main className={`app-shell ${session?.view.showPixelGrid ? 'pixel-grid-on' : ''} ${editorOnly ? 'advanced-mode' : ''} ${advancedMode === 'tool-options' ? 'advanced-tool-options' : ''} ${advancedMode === 'canvas-only' ? 'advanced-canvas-only' : ''}`}>
     <AppWindowTitleBar />
     <BrushDynamicsTelemetryCapture documentId={session?.document.id ?? null} />
-    {saveAsOpen && session && <SaveAsDialog initialName={session.document.name.replace(/\.(moonsprite|aseprite|ase|png|jpe?g|webp)$/i, '') || 'MoonSprite-project'} initialFormat={saveAsFormatForPreference(readStoredString(SAVE_FORMAT_PREFERENCE_KEY))} initialDirectory={runtimePreferences.saveDirectory || defaultFileDirectories.saveDirectory} onClose={() => setSaveAsOpen(false)} onSave={(options) => workspace.saveActive(true, options)} />}
+    {saveAsOpen && session && <SaveAsDialog initialName={session.document.name.replace(/\.(moonsprite|aseprite|ase|png|jpe?g|webp|psd)$/i, '') || 'MoonSprite-project'} initialFormat={saveAsFormatForPreference(readStoredString(SAVE_FORMAT_PREFERENCE_KEY))} initialDirectory={runtimePreferences.saveDirectory || defaultFileDirectories.saveDirectory} onClose={() => setSaveAsOpen(false)} onSave={(options) => workspace.saveActive(true, options)} />}
     <AppMenuBar
       openMenu={openMenu}
       setOpenMenu={setOpenMenu}
@@ -1903,8 +1928,8 @@ export default function App() {
             </div>
           </FormField>
           <div className="export-primary-fields">
-            <FormField label={t('app.export.format')}><ThemedSelect<ExportOptions['format']> value={exportForm.format} groups={[{ label: t('app.export.formatGroup'), options: [{ value: 'png-auto', label: t('app.export.pngAuto') }, { value: 'png-rgba', label: t('app.export.pngRgba') }, { value: 'jpeg', label: t('app.export.jpegWhite') }, { value: 'webp', label: t('app.export.webp') }, { value: 'svg', label: t('app.export.svg') }, { value: 'gif', label: t('app.export.gif') }] }]} label={t('app.export.format')} onChange={(format) => setExportForm({ ...exportForm, name: withExportFileExtension(exportForm.name, format), format, target: format === 'gif' && exportForm.target === 'frames' ? 'document' : exportForm.target, scalePercent: format === 'svg' ? 100 : exportForm.scalePercent })} /></FormField>
-            <FormField label={t('app.export.target')}><ThemedSelect<NonNullable<ExportOptions['target']>> value={exportTarget} groups={[{ label: t('app.export.target'), options: [{ value: 'document', label: t('app.export.targetDocument') }, ...((session?.document.animation?.frames.length ?? 1) > 1 && exportForm.format !== 'gif' ? [{ value: 'frames' as const, label: t('app.export.targetFrames') }] : []), ...(exportSlices.length ? [{ value: 'slices' as const, label: t('app.export.targetSlices') }] : [])] }]} label={t('app.export.target')} onChange={(target) => setExportForm({ ...exportForm, target, sliceId: target === 'slices' ? selectedExportSliceId || undefined : undefined })} /></FormField>
+            <FormField label={t('app.export.format')}><ThemedSelect<ExportOptions['format']> value={exportForm.format} groups={[{ label: t('app.export.formatGroup'), options: [{ value: 'png-auto', label: t('app.export.pngAuto') }, { value: 'png-rgba', label: t('app.export.pngRgba') }, { value: 'jpeg', label: t('app.export.jpegWhite') }, { value: 'webp', label: t('app.export.webp') }, { value: 'svg', label: t('app.export.svg') }, { value: 'gif', label: t('app.export.gif') }, { value: 'psd', label: t('app.export.psd'), description: t('app.export.psdDocumentOnly') }] }]} label={t('app.export.format')} onChange={(format) => setExportForm({ ...exportForm, name: withExportFileExtension(exportForm.name, format), format, target: format === 'psd' || format === 'gif' && exportForm.target === 'frames' ? 'document' : exportForm.target, scalePercent: format === 'svg' ? 100 : exportForm.scalePercent })} /></FormField>
+            <FormField label={t('app.export.target')}><ThemedSelect<NonNullable<ExportOptions['target']>> value={exportTarget} groups={[{ label: t('app.export.target'), options: [{ value: 'document', label: t('app.export.targetDocument') }, ...((session?.document.animation?.frames.length ?? 1) > 1 && exportForm.format !== 'gif' && exportForm.format !== 'psd' ? [{ value: 'frames' as const, label: t('app.export.targetFrames') }] : []), ...(exportSlices.length && exportForm.format !== 'psd' ? [{ value: 'slices' as const, label: t('app.export.targetSlices') }] : [])] }]} label={t('app.export.target')} onChange={(target) => setExportForm({ ...exportForm, target, sliceId: target === 'slices' ? selectedExportSliceId || undefined : undefined })} /></FormField>
             {exportTarget === 'slices' && <FormField className="export-slice-field" label={t('app.export.sliceSelection')}><ThemedSelect value={selectedExportSliceId} groups={[{ label: t('app.export.sliceSelection'), options: [{ value: '', label: t('app.export.allSlices') }, ...exportSlices.map((slice) => ({ value: slice.id, label: slice.name, description: `${slice.width} × ${slice.height} · ${slice.x}, ${slice.y}` }))] }]} label={t('app.export.sliceSelection')} onChange={(sliceId) => setExportForm({ ...exportForm, sliceId: sliceId || undefined })} /></FormField>}
           </div>
           {exportForm.format === 'gif' && <section className="gif-export-options">

@@ -8,6 +8,13 @@ const CANVAS_BUDGETS = {
 }
 
 const BENCHMARK_BUDGETS = [
+  [/4000x4000 brightness/i, 140],
+  [/4000x4000 curves/i, 160],
+  [/4000x4000 hue saturation/i, 180],
+  [/4000x4000 color balance/i, 180],
+  [/4000x4000 curve histogram/i, 160],
+  [/1024x1024 high entropy hue saturation/i, 160],
+  [/1024x1024 high entropy color balance/i, 100],
   [/contiguous noise background/i, 22],
   [/selection boundary/i, 12],
   [/64x64 dirty region/i, 100],

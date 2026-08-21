@@ -13,6 +13,13 @@ describe('SaveAsDialog', () => {
     expect(screen.getByText(/不会保留图层和工程结构/)).toBeInTheDocument()
   })
 
+  it('offers PSD without showing the flattened image warning', () => {
+    render(<SaveAsDialog initialName="layers" initialFormat="psd" initialDirectory="D:/gallery" onSave={vi.fn(async () => true)} onClose={vi.fn()} />)
+
+    expect(screen.getByRole('button', { name: '保存格式' })).toHaveTextContent('Photoshop 工程')
+    expect(screen.queryByText(/不会保留图层和工程结构/)).not.toBeInTheDocument()
+  })
+
   it('chooses and displays a custom save location', async () => {
     const previousApi = window.moonSprite
     const chooseDirectory = vi.fn(async () => ({ canceled: false, directoryPath: 'E:/delivery' }))

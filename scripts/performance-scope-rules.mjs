@@ -27,7 +27,7 @@ const p3Patterns = [
 ]
 
 const p2Patterns = [
-  /\/core\/(canvas-input|selection|view-geometry|palette|palette-layout|layer-operations|panel-render-keys)\.ts$/,
+  /\/core\/(adjustments|canvas-input|selection|view-geometry|palette|palette-layout|layer-operations|panel-render-keys)\.ts$/,
   /\/components\/(ColorPicker|canvas-selection-renderer|useCanvasViewPreview)\.tsx?$/,
   /\/components\/panels\/(PalettePanel|LayersPanel|ColorPanel|PreviewPanel)\.tsx$/,
 ]
@@ -69,6 +69,7 @@ export function classifyPerformanceAudit(files, options = {}) {
   if (levelRank[minimumLevel] > levelRank[level]) level = minimumLevel
 
   const selectionAlgorithm = paths.some((file) => /\/core\/selection(?:-performance)?\.(?:ts|tsx)$/.test(file))
+  const adjustmentAlgorithm = paths.some((file) => /\/core\/adjustments(?:-performance)?\.(?:ts|tsx)$/.test(file))
   const projectFormat = paths.some((file) => /\/core\/(?:project-format|document-files)\.ts$/.test(file) || /\/workers\/document-decode\.worker\.ts$/.test(file))
   const canvasInteraction = paths.some((file) => /\/(canvas-input|view-geometry|canvas-selection-renderer|useCanvasViewPreview)/.test(file))
   const complexDocument = paths.some((file) => /\/(animation|animation-thumbnail|document|layer-operations|onion-skin|timelapse|workspace|LayersPanel|PreviewPanel)/.test(file))
@@ -83,6 +84,7 @@ export function classifyPerformanceAudit(files, options = {}) {
       ...largeCanvasSuites(),
       largeSentinelSuite(),
       benchmarkSuite('selection', 'src/renderer/src/core/selection-performance.bench.ts'),
+      benchmarkSuite('adjustments', 'src/renderer/src/core/adjustments-performance.bench.ts'),
       benchmarkSuite('document-composite', 'src/renderer/src/core/document-performance.bench.ts'),
       benchmarkSuite('project-format', 'src/renderer/src/core/project-format-performance.bench.ts'),
       { id: 'bundle', kind: 'bundle' },
@@ -101,9 +103,11 @@ export function classifyPerformanceAudit(files, options = {}) {
     if (complexDocument) suites.push(benchmarkSuite('document-composite', 'src/renderer/src/core/document-performance.bench.ts'))
     if (projectFormat || includeReleaseComplexSuite) suites.push(benchmarkSuite('project-format', 'src/renderer/src/core/project-format-performance.bench.ts'))
     if (selectionAlgorithm) suites.push(benchmarkSuite('selection', 'src/renderer/src/core/selection-performance.bench.ts'))
+    if (adjustmentAlgorithm) suites.push(benchmarkSuite('adjustments', 'src/renderer/src/core/adjustments-performance.bench.ts'))
     suites.push({ id: 'bundle', kind: 'bundle' })
   } else if (level === 'P2') {
-    if (selectionAlgorithm) suites.push(benchmarkSuite('selection', 'src/renderer/src/core/selection-performance.bench.ts'))
+    if (adjustmentAlgorithm) suites.push(benchmarkSuite('adjustments', 'src/renderer/src/core/adjustments-performance.bench.ts'))
+    else if (selectionAlgorithm) suites.push(benchmarkSuite('selection', 'src/renderer/src/core/selection-performance.bench.ts'))
     else if (projectFormat) suites.push(benchmarkSuite('project-format', 'src/renderer/src/core/project-format-performance.bench.ts'))
     else if (canvasInteraction) suites.push(canvasSuite('canvas-interaction', [512], ['pan', 'zoom']))
     else if (complexDocument) suites.push(canvasSuite('canvas-complex', [512], ['complex-draw', 'complex-undo', 'complex-playback']))

@@ -1,4 +1,4 @@
-import type { BackgroundLayerSettings, ClipboardImage, LayerGroup, RasterLayer, TextCelData, TilemapCelData, Tileset } from '@shared/types'
+import type { BackgroundLayerSettings, ClipboardImage, FreeTileCelData, FreeTileSourceLayer, LayerGroup, RasterLayer, TextCelData, TilemapCelData, Tileset } from '@shared/types'
 import { unpackColor } from '@/core/raster'
 import { cloneLayerStyles } from '@/core/layer-styles'
 
@@ -13,8 +13,9 @@ export interface SelectionClipboard {
 
 export interface LayerClipboard {
   name: string
-  kind?: 'text' | 'tilemap'
+  kind?: 'text' | 'tilemap' | 'free-tile'
   tilemapTilesetId?: string
+  freeTileSources?: FreeTileSourceLayer[]
   width: number
   height: number
   offsetX: number
@@ -41,6 +42,7 @@ export interface LayerClipboard {
     opacity?: number
     text?: TextCelData
     tilemap?: TilemapCelData
+    freeTiles?: FreeTileCelData
     pixels: Uint8ClampedArray
     mask?: LayerMaskClipboard
   }>
@@ -94,10 +96,12 @@ const cloneLayerClipboard = (clipboard: LayerClipboard): LayerClipboard => ({
   layerStyles: cloneLayerStyles(clipboard.layerStyles),
   background: clipboard.background ? { ...clipboard.background } : undefined,
   displayColor: clipboard.displayColor ? { ...clipboard.displayColor } : undefined,
+  freeTileSources: clipboard.freeTileSources?.map((source) => ({ ...source, displayColor: source.displayColor ? { ...source.displayColor } : undefined })),
   pixels: clipboard.pixels.slice(),
   animationCels: clipboard.animationCels?.map((cel) => ({
     ...cel,
     tilemap: cel.tilemap ? { ...cel.tilemap, cells: cel.tilemap.cells.map((cell) => cell ? { ...cell } : null) } : undefined,
+    freeTiles: cel.freeTiles ? { instances: cel.freeTiles.instances.map((instance) => ({ ...instance })) } : undefined,
     pixels: cel.pixels.slice(),
     mask: cel.mask ? { ...cel.mask, pixels: cel.mask.pixels.slice() } : undefined
   }))

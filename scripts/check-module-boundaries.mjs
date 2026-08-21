@@ -75,6 +75,10 @@ export const moduleBoundaryFindings = (file, source) => {
 export const moduleBoundaryErrors = (file, source) => moduleBoundaryFindings(file, source)
   .map((finding) => `${finding.file}: ${finding.message}`)
 
+export const moduleBoundaryFindingsForFiles = (files) => (
+  files.flatMap(({ file, source }) => moduleBoundaryFindings(normalize(file), source))
+)
+
 const sourceFiles = async (directory) => {
   const entries = await readdir(directory, { withFileTypes: true })
   const files = []
@@ -86,7 +90,57 @@ const sourceFiles = async (directory) => {
   return files
 }
 
+const focusedFiles = () => {
+  const marker = process.argv.indexOf('--files')
+  if (marker < 0) return null
+  const files = process.argv.slice(marker + 1).filter(Boolean).map(normalize)
+  if (files.length === 0) {
+    console.error('模块边界定向检查失败：--files 后必须提供至少一个文件。')
+    process.exitCode = 1
+    return []
+  }
+  return files
+}
+
+const runFocused = async (files) => {
+  const sources = []
+  const missing = []
+  for (const file of files) {
+    try {
+      sources.push({ file, source: await readFile(join(process.cwd(), file), 'utf8') })
+    } catch (error) {
+      if (error?.code === 'ENOENT') {
+        missing.push(file)
+        continue
+      }
+      throw error
+    }
+  }
+  if (missing.length > 0) {
+    console.error('模块边界定向检查失败：以下文件不存在：')
+    for (const file of missing) console.error(`- ${file}`)
+    process.exitCode = 1
+    return
+  }
+  const findings = moduleBoundaryFindingsForFiles(sources)
+
+  if (findings.length > 0) {
+    console.error('模块边界定向检查失败：')
+    for (const item of findings) console.error(`- ${item.file}:${item.line} ${item.message}`)
+    process.exitCode = 1
+    return
+  }
+
+  console.log(`模块边界定向检查通过：${files.length} 个变更文件。`)
+}
+
 const run = async () => {
+  const focused = focusedFiles()
+  if (focused !== null) {
+    if (focused.length > 0) await runFocused(focused)
+    return
+  }
+
   const findings = []
   for (const path of await sourceFiles(ROOT)) {
     const file = normalize(relative(process.cwd(), path))

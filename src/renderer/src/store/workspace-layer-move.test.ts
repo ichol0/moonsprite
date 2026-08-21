@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest'
+import { animationCelAt, animationCelKey, animationCelOffsetsForKeys, connectAnimationCels, ensureAnimationDocument } from '@/core/animation'
 import { createDocument } from '@/core/document'
 import { useWorkspace, type LayerMoveState } from './workspace'
 
@@ -42,6 +43,56 @@ describe('store-owned layer move transactions', () => {
     useWorkspace.getState().redo()
     expect(document.layers[0].offsetX).toBe(3)
     expect(document.layers[0].offsetY).toBe(4)
+  })
+
+  it('moves the current layer across selected animation frames as one undoable operation', () => {
+    const document = createDocument('move selected frames', 8, 8, 'rgba')
+    useWorkspace.getState().addSession(document)
+    useWorkspace.getState().duplicateAnimationFrame()
+    const timeline = ensureAnimationDocument(document)
+    const layerId = document.activeLayerId
+    const keys = timeline.frames.map((frame) => animationCelKey(layerId, frame.id))
+    const before = animationCelOffsetsForKeys(document, keys)
+    const move = baseMove(document.id)
+    Object.assign(move, {
+      layerFrameId: timeline.activeFrameId,
+      animationCellKeys: keys,
+      animationCellOffsets: before,
+      layerPreviewOffset: { x: 3, y: -2 }
+    })
+
+    expect(useWorkspace.getState().previewLayerMove(document.id, move, 3, -2)).toBe(true)
+    expect(animationCelOffsetsForKeys(document, keys)).toEqual(Object.fromEntries(keys.map((key) => [key, { x: before[key].x + 3, y: before[key].y - 2 }])))
+
+    useWorkspace.getState().commitLayerMove(document.id, move)
+    useWorkspace.getState().undo()
+    expect(animationCelOffsetsForKeys(document, keys)).toEqual(before)
+
+    useWorkspace.getState().redo()
+    expect(animationCelOffsetsForKeys(document, keys)).toEqual(Object.fromEntries(keys.map((key) => [key, { x: before[key].x + 3, y: before[key].y - 2 }])))
+  })
+
+  it('moves a linked cel source once when multiple selected frames reference it', () => {
+    const document = createDocument('move linked selected frames', 8, 8, 'rgba')
+    useWorkspace.getState().addSession(document)
+    useWorkspace.getState().duplicateAnimationFrame()
+    const timeline = ensureAnimationDocument(document)
+    const layerId = document.activeLayerId
+    const cels = timeline.frames.map((frame) => animationCelAt(timeline, layerId, frame.id)!)
+    cels[0].surface!.pixels[3] = 255
+    expect(connectAnimationCels(document, cels.map((cel) => cel.id))).toBe(true)
+    const keys = timeline.frames.map((frame) => animationCelKey(layerId, frame.id))
+    const before = animationCelOffsetsForKeys(document, keys)
+    const move = baseMove(document.id)
+    Object.assign(move, {
+      layerFrameId: timeline.activeFrameId,
+      animationCellKeys: keys,
+      animationCellOffsets: before,
+      layerPreviewOffset: { x: 4, y: 0 }
+    })
+
+    expect(useWorkspace.getState().previewLayerMove(document.id, move, 4, 0)).toBe(true)
+    expect(animationCelOffsetsForKeys(document, keys)).toEqual(Object.fromEntries(keys.map((key) => [key, { x: before[key].x + 4, y: before[key].y }])))
   })
 
   it('cancels a duplicate preview without dirtying or leaving animation cels', () => {

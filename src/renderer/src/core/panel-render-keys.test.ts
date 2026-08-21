@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { createDocument, createLayer } from './document'
 import { brushPanelRenderKey, colorPanelRenderKey, layersPanelRenderKey, palettePanelRenderKey, previewPanelRenderKey, tilesetPanelRenderKey } from './panel-render-keys'
 import type { TilemapDrawingMode } from './tilemap'
+import type { FreeTileDrawingMode } from './free-tile'
 
 const session = () => ({
   document: createDocument('render keys', 4, 4, 'rgba'),
@@ -11,7 +12,11 @@ const session = () => ({
   selectedTilesetId: null as string | null,
   selectedTileId: null as string | null,
   secondaryTileId: null as string | null,
+  selectedFreeTileInstanceId: null as string | null,
+  selectedFreeTileInstanceIds: [] as string[],
+  freeTileInstanceLayerId: null as string | null,
   tilemapMode: 'create' as TilemapDrawingMode,
+  freeTileMode: 'paint' as FreeTileDrawingMode,
   selectedLayerIds: [] as string[],
   selectedGroupId: null as string | null,
   selectedGroupIds: [] as string[],
@@ -96,6 +101,33 @@ describe('panel render keys', () => {
     const before = tilesetPanelRenderKey(current)
     current.tilemapMode = 'edit'
     expect(tilesetPanelRenderKey(current)).not.toBe(before)
+  })
+
+  it('invalidates the shared Tileset panel when its free-tile drawing mode changes', () => {
+    const current = session()
+    const before = tilesetPanelRenderKey(current)
+    current.freeTileMode = 'edit'
+    expect(tilesetPanelRenderKey(current)).not.toBe(before)
+  })
+
+  it('invalidates the shared Tileset panel when Free Tile instances or their selection change', () => {
+    const current = session()
+    const before = tilesetPanelRenderKey(current)
+    current.selectedFreeTileInstanceId = 'instance-a'
+    expect(tilesetPanelRenderKey(current)).not.toBe(before)
+    const selected = tilesetPanelRenderKey(current)
+    current.contentRevision += 1
+    expect(tilesetPanelRenderKey(current)).not.toBe(selected)
+  })
+
+  it('invalidates the Layers panel when the Free Tile instance-layer view changes', () => {
+    const current = session()
+    const before = layersPanelRenderKey(current)
+    current.freeTileInstanceLayerId = 'free-layer'
+    expect(layersPanelRenderKey(current)).not.toBe(before)
+    const opened = layersPanelRenderKey(current)
+    current.selectedFreeTileInstanceIds = ['instance-a', 'instance-b']
+    expect(layersPanelRenderKey(current)).not.toBe(opened)
   })
 
   it('invalidates tile-aware panels when the background tile changes', () => {

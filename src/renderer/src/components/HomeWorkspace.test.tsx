@@ -43,7 +43,7 @@ describe('HomeWorkspace', () => {
 
     render(<HomeWorkspace onNew={vi.fn()} onOpen={vi.fn()} onOpenProject={vi.fn(async () => true)} onRestoreRecovery={vi.fn(async () => true)} />)
 
-    expect(screen.getByText('DEV.5')).toBeInTheDocument()
+    expect(screen.getByText('DEV.6')).toBeInTheDocument()
     expect(document.querySelector('.start-screen-version')).not.toBeInTheDocument()
     expect(document.querySelectorAll('.start-screen-links .start-screen-link')).toHaveLength(4)
     expect(document.querySelectorAll('.start-screen-links svg.start-screen-link-icon')).toHaveLength(4)

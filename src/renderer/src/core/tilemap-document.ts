@@ -29,6 +29,7 @@ export const ensureTilemapTilesetOwnership = (document: SpriteDocument): void =>
   const tilesets = document.tilesets ?? []
   const tilesetsById = new Map(tilesets.map((tileset) => [tileset.id, tileset]))
   const claimed = new Set<string>()
+  const explicitIds = new Set(document.layers.flatMap((layer) => layer.kind === 'tilemap' && layer.tilemapTilesetId ? [layer.tilemapTilesetId] : []))
   for (const layer of document.layers) {
     if (layer.kind !== 'tilemap') continue
     let tileset = layer.tilemapTilesetId ? tilesetsById.get(layer.tilemapTilesetId) : undefined
@@ -40,14 +41,25 @@ export const ensureTilemapTilesetOwnership = (document: SpriteDocument): void =>
       if (!tileset) {
         const tilemap = timeline.cels.find((cel) => cel.layerId === layer.id && cel.tilemap)?.tilemap
         tileset = tilemap
-          ? tilesets.find((candidate) => !claimed.has(candidate.id) && candidate.tileWidth === tilemap.tileWidth && candidate.tileHeight === tilemap.tileHeight)
+          ? tilesets.find((candidate) => !claimed.has(candidate.id) && !explicitIds.has(candidate.id) && candidate.tileWidth === tilemap.tileWidth && candidate.tileHeight === tilemap.tileHeight)
           : undefined
       }
       if (tileset) layer.tilemapTilesetId = tileset.id
     }
     if (!tileset) continue
-    tileset.name = layer.name
-    claimed.add(tileset.id)
+    if (!explicitIds.has(tileset.id)) claimed.add(tileset.id)
+  }
+  const ownersByTileset = new Map<string, RasterLayer[]>()
+  for (const layer of document.layers) {
+    if (layer.kind !== 'tilemap' || !layer.tilemapTilesetId) continue
+    const owners = ownersByTileset.get(layer.tilemapTilesetId) ?? []
+    owners.push(layer)
+    ownersByTileset.set(layer.tilemapTilesetId, owners)
+  }
+  for (const [tilesetId, owners] of ownersByTileset) {
+    if (owners.length !== 1) continue
+    const tileset = tilesetsById.get(tilesetId)
+    if (tileset) tileset.name = owners[0].name
   }
 }
 

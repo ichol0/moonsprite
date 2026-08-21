@@ -5,13 +5,13 @@ MoonSprite 以一个完整 `dev.X` 为开发单位。默认持续开发和 Debug
 ## 一、开始需求
 
 1. 检查 `git status`，区分已有未提交内容与本次将修改的文件；不得覆盖、回滚或把无关旧改动混入验证范围。
-2. 阅读 `AGENTS.md`、`docs/README.md` 和任务直接相关的契约。开发期间不读取历史更新日志，不为普通任务遍历 `docs/changelog/` 或 `docs/archive/`。
+2. 阅读 `AGENTS.md`、`docs/README.md` 和任务直接相关的契约。D0/D1 不加载发布、性能、历史审计和 ADR 细节；开发期间不读取历史更新日志，不为普通任务遍历 `docs/changelog/` 或 `docs/archive/`。
 3. 将任务归入下表的风险等级。只在产品选择无法从最新用户要求、代码和契约推断时询问。
 
 | 风险 | 典型范围 | 开发期最低检查 |
 | --- | --- | --- |
 | D0 | 文档、文案、CSS、纯视觉布局 | 无应用检查，用户验收 |
-| D1 | 普通组件、菜单、弹窗、低频交互 | 类型检查和模块边界检查 |
+| D1 | 普通组件、菜单、弹窗、低频交互 | 类型检查和变更文件定向模块边界检查 |
 | D2 | 一般 Store、共享状态、快捷键、Core/Shared Debug | 类型检查；仅在明确有价值时显式附带相关测试 |
 | D3 | 坐标、选区、撤销、文件格式、持久化、平台安全、共享核心算法、复发或难发现 Bug | `--risk=high` 和定向回归测试；Rust 追加对应 `cargo check` |
 
@@ -40,7 +40,7 @@ pnpm check:dev -- --risk=high <源文件...> <相关测试文件...>
 - TypeScript 代码触发类型检查。
 - 普通 Core、Store、Shared Debug 不因目录位置自动要求测试；显式列出测试时只运行这些测试，不使用 `vitest related` 扩散范围。
 - `--risk=high` 必须同时显式列出至少一个相关测试文件，否则检查直接失败。
-- Renderer 变化运行快速模块边界检查。
+- Renderer 变化只对本次显式传入的变更文件运行定向模块边界检查，不遍历整个 Renderer；完整边界扫描只在发布、架构审计或显式调用 `pnpm check:boundaries`（不带 `--files`）时运行。
 - Rust 与缩略图变化只运行对应 `cargo check`，不构建安装包。
 
 5. D3 Bug，以及曾复发、难以人工识别或共享算法中的 Bug，应补最小回归测试；其他 Bug 不要求先写失败测试，也不要求登记回归矩阵。
@@ -119,7 +119,7 @@ pnpm check:release
 - 一次打开只执行一次完整解码；初始合成复用解码结果。标记为异步的保存、恢复和工程任务不得先在 UI 线程完整遍历、复制或压缩文档，再把结果交给 Worker。
 - 恢复错误必须上报、记录或反馈给调用方，空 `catch` 和仅注释的 `catch` 均视为静默吞错。
 - `core/` 生产运行时循环、在 `workspace.ts` 重建巨型根 `WorkspaceState`、渲染键像素序列化和按文件边界白名单均被禁止；新命令必须进入 `workspace-state.ts` 的明确领域契约。
-- `pnpm check:boundaries` 使用静态导入检查依赖方向，不再按文件放行历史例外。`pnpm check:architecture` 执行完整架构契约扫描；只有触及上述边界的开发任务才在最低检查中追加它，普通 UI 与 Debug 不额外运行。
+- `check:dev` 使用静态导入检查只扫描本次变更文件，不以此改变历史债务预算；`pnpm check:boundaries` 不带 `--files` 时执行完整依赖方向扫描，不使用按文件放行历史例外。`pnpm check:architecture` 执行完整架构契约扫描；只有触及上述边界的开发任务才在最低检查中追加它，普通 UI 与 Debug 不额外运行。
 - `scripts/architecture-debt-budget.json` 是现有迁移债务的唯一额度。额度必须等于扫描实数；债务减少时必须同步下调，禁止回升或推迟到期版本。`check:maintenance` 和发布门禁固定验证该契约。
 - 坐标转换复用统一几何函数；视图状态不进入文档撤销历史。
 - 文件格式变化必须包含兼容、迁移和失败回滚测试，必要时新增 ADR。

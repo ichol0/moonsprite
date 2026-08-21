@@ -4,15 +4,30 @@ export const COMMAND_SCOPE_EVENT = 'moonsprite:command-scope'
 export const TILESET_DELETE_COMMAND_EVENT = 'moonsprite:delete-tileset-selection'
 export const BRUSH_LIBRARY_DELETE_COMMAND_EVENT = 'moonsprite:delete-brush-selection'
 
-export type DeleteCommandTarget = 'selection' | 'layers' | 'palette' | 'tileset' | 'brushes' | null
+export type DeleteCommandTarget = 'selection' | 'animation' | 'free-tile-instance' | 'layers' | 'palette' | 'tileset' | 'brushes' | null
 export type CopyCommandTarget = 'selection' | 'layers' | null
 
-export function resolveDeleteCommand(scope: EditorCommandScope, hasSelection: boolean): DeleteCommandTarget {
+export interface AnimationDeleteSelectionContext {
+  selectedFrameCount: number
+  selectedCellCount: number
+  selectedMaskCellCount: number
+  cellSelectionExplicit: boolean
+}
+
+export const hasAnimationDeleteSelection = (context: AnimationDeleteSelectionContext): boolean =>
+  context.selectedFrameCount > 0
+  || context.selectedMaskCellCount > 0
+  || (context.cellSelectionExplicit && context.selectedCellCount > 1)
+
+export function resolveDeleteCommand(scope: EditorCommandScope, hasSelection: boolean, hasAnimationSelection = false, hasFreeTileInstanceSelection = false): DeleteCommandTarget {
+  if (scope === 'layers' && hasFreeTileInstanceSelection) return 'free-tile-instance'
+  if (scope === 'layers' && hasAnimationSelection) return 'animation'
   if (scope === 'layers') return 'layers'
   if (scope === 'palette') return 'palette'
   if (scope === 'tileset') return 'tileset'
   if (scope === 'brushes') return 'brushes'
-  return hasSelection ? 'selection' : null
+  if (hasSelection) return 'selection'
+  return hasFreeTileInstanceSelection ? 'free-tile-instance' : null
 }
 
 export function resolveCopyCommand(scope: EditorCommandScope, hasSelection: boolean): CopyCommandTarget {

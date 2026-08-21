@@ -138,7 +138,7 @@ export function AdjustmentDialog({ kind, onClose }: { kind: AdjustmentKind; onCl
   const [balanceTone, setBalanceTone] = useState<'shadows' | 'midtones' | 'highlights'>('midtones')
   const [preserveLuminosity, setPreserveLuminosity] = useState(true)
   const histogramLayer = baseline?.layers[0]
-  const histogram = useMemo(() => histogramLayer ? buildCurveHistogram(histogramLayer.pixels, histogramLayer.pixels instanceof Uint8ClampedArray ? 'rgba' : 'indexed', baseline?.palette ?? []) : null, [baseline, histogramLayer])
+  const histogram = useMemo(() => kind === 'curves' && histogramLayer ? buildCurveHistogram(histogramLayer.pixels, histogramLayer.pixels instanceof Uint8ClampedArray ? 'rgba' : 'indexed', baseline?.palette ?? []) : null, [baseline, histogramLayer, kind])
   const [balance, setBalance] = useState({
     shadowsCyanRed: 0, shadowsMagentaGreen: 0, shadowsYellowBlue: 0,
     midtonesCyanRed: 0, midtonesMagentaGreen: 0, midtonesYellowBlue: 0,

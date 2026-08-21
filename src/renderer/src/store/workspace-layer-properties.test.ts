@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest'
-import { createDocument } from '@/core/document'
+import { createDocument, expandLayerStyleInvalidationRect, layerContentBounds, writeLayerColor } from '@/core/document'
 import { useWorkspace, type LayerPropertyValues } from './workspace'
 
 const values = (overrides: Partial<LayerPropertyValues> = {}): LayerPropertyValues => ({
@@ -70,6 +70,30 @@ describe('layer property document transactions', () => {
     expect(layer.name).toBe('Layer preview')
     expect(layer.opacity).toBe(0.5)
     expect(layer.blendMode).toBe('multiply')
+  })
+
+  it('keeps a single layer opacity preview bounded through commit, cancel, undo, and redo', () => {
+    const document = createDocument('bounded opacity', 32, 24, 'rgba')
+    useWorkspace.getState().addSession(document)
+    const layer = document.layers[0]
+    writeLayerColor(document, layer, 8 * layer.width + 12, { r: 41, g: 121, b: 255, a: 255 })
+    const bounds = layerContentBounds(document, layer)!
+    const expectedRect = expandLayerStyleInvalidationRect(document, bounds, [layer.id])
+    const transactionId = useWorkspace.getState().beginLayerPropertiesTransaction([{ id: layer.id, kind: 'layer' }])!
+
+    useWorkspace.getState().previewLayerPropertiesTransaction(transactionId, values({ opacity: 0.5, blendMode: 'normal' }), ['opacity'])
+    expect(useWorkspace.getState().sessions[0].contentInvalidation).toMatchObject({ kind: 'region', rect: expectedRect })
+
+    useWorkspace.getState().commitLayerPropertiesTransaction(transactionId, values({ opacity: 0.5, blendMode: 'normal' }), ['opacity'])
+    expect(useWorkspace.getState().sessions[0].contentInvalidation).toMatchObject({ kind: 'region', rect: expectedRect })
+
+    useWorkspace.getState().undo()
+    expect(layer.opacity).toBe(1)
+    expect(useWorkspace.getState().sessions[0].contentInvalidation).toMatchObject({ kind: 'region', rect: expectedRect })
+
+    useWorkspace.getState().redo()
+    expect(layer.opacity).toBe(0.5)
+    expect(useWorkspace.getState().sessions[0].contentInvalidation).toMatchObject({ kind: 'region', rect: expectedRect })
   })
 
   it('cancels an active preview when switching documents', () => {

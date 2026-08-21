@@ -88,6 +88,29 @@ fn confirm_unsaved(_name: String) -> String {
     "cancel".to_string()
 }
 
+#[cfg(windows)]
+fn primary_pointer_is_pressed() -> bool {
+    use windows_sys::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_LBUTTON};
+
+    unsafe { GetAsyncKeyState(VK_LBUTTON as i32) < 0 }
+}
+
+#[cfg(not(windows))]
+fn primary_pointer_is_pressed() -> bool {
+    true
+}
+
+#[tauri::command]
+fn start_window_drag_if_primary_pressed(
+    window: tauri::WebviewWindow,
+) -> Result<bool, String> {
+    if !primary_pointer_is_pressed() {
+        return Ok(false);
+    }
+    window.start_dragging().map_err(|error| error.to_string())?;
+    Ok(true)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let startup_files = startup_file_paths();
@@ -181,6 +204,7 @@ pub fn run() {
             platform_gallery::ensure_builtin_example,
             platform_gallery::open_project_in_folder,
             platform_gallery::open_external_url,
+            start_window_drag_if_primary_pressed,
             cancel_close,
             approve_close,
             confirm_unsaved

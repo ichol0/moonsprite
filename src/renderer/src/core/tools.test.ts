@@ -486,6 +486,32 @@ describe('pixel tools', () => {
     ])
   })
 
+  it('replaces paint-mode image brush pixels in path order and skips transparent source pixels', () => {
+    const document = createDocument('image brush overwrite', 4, 1, 'rgba')
+    const layer = getActiveLayer(document)
+    const base = { r: 40, g: 180, b: 80, a: 255 }
+    const translucentRed = { r: 255, g: 0, b: 0, a: 128 }
+    const translucentBlue = { r: 0, g: 0, b: 255, a: 128 }
+    const transparent = { r: 0, g: 0, b: 0, a: 0 }
+    for (let index = 0; index < 4; index += 1) writeLayerColor(document, layer, index, base)
+    const brush = {
+      id: 'overwrite.png',
+      name: 'Overwrite',
+      width: 3,
+      height: 1,
+      coverage: new Uint8Array([0, 128, 128]),
+      colors: new Uint32Array([packColor(transparent), packColor(translucentRed), packColor(translucentBlue)]),
+      intrinsicSize: true
+    }
+
+    paintLine(document, layer, beginPixelEdit(layer.id), 1, 0, 2, 0, 1, red, null, 'square', 'solid', 1, brush, undefined, 0, 'paint')
+
+    expect(readLayerColorAt(document, layer, 0, 0)).toEqual(base)
+    expect(readLayerColorAt(document, layer, 1, 0)).toEqual(translucentRed)
+    expect(readLayerColorAt(document, layer, 2, 0)).toEqual(translucentRed)
+    expect(readLayerColorAt(document, layer, 3, 0)).toEqual(translucentBlue)
+  })
+
   it('uses each dynamic point size for raster and balanced stamp spacing', () => {
     const paintDynamicLine = (algorithm: 'raster' | 'balanced') => {
       const document = createDocument(`dynamic ${algorithm}`, 80, 21, 'rgba')
@@ -535,6 +561,30 @@ describe('pixel tools', () => {
     paintLine(document, layer, divider, 2, 0, 2, 3, 1, blue)
     const fill = floodFill(document, layer, 0, 0, { r: 255, g: 0, b: 0, a: 255 })!
     expect(fill.before.size).toBe(8)
+  })
+
+  it('virtually closes line-art gaps and fills through the virtual bridge', () => {
+    const createGappedOutline = () => {
+      const document = createDocument('smart closure fill', 10, 10, 'rgba')
+      const layer = getActiveLayer(document)
+      for (let y = 2; y <= 7; y += 1) for (let x = 2; x <= 7; x += 1) {
+        if (x !== 2 && x !== 7 && y !== 2 && y !== 7) continue
+        if (y === 2 && (x === 4 || x === 5)) continue
+        writeLayerColor(document, layer, y * document.width + x, blue)
+      }
+      return { document, layer }
+    }
+
+    const leaking = createGappedOutline()
+    floodFill(leaking.document, leaking.layer, 4, 4, red)
+    expect(readLayerColorAt(leaking.document, leaking.layer, 0, 0)).toEqual(red)
+
+    const closed = createGappedOutline()
+    floodFill(closed.document, closed.layer, 4, 4, red, null, true, null, 1, undefined, 'solid', 1, 0, 'paint', 0, 2)
+    expect(readLayerColorAt(closed.document, closed.layer, 4, 4)).toEqual(red)
+    expect(readLayerColorAt(closed.document, closed.layer, 0, 0).a).toBe(0)
+    expect(readLayerColorAt(closed.document, closed.layer, 4, 2)).toEqual(red)
+    expect(readLayerColorAt(closed.document, closed.layer, 3, 2)).toEqual(blue)
   })
 
   it('fills colors within tolerance while preserving contiguous boundaries', () => {
@@ -2282,6 +2332,24 @@ describe('pixel tools', () => {
     expect(selectionContains(selection, 0, 0)).toBe(true)
     expect(selectionContains(selection, 1, 0)).toBe(true)
     expect(selectionContains(selection, 2, 0)).toBe(false)
+  })
+
+  it('uses the same virtual gap boundary for smart-closure magic-wand selections', () => {
+    const document = createDocument('smart closure wand', 10, 10, 'rgba')
+    const layer = getActiveLayer(document)
+    for (let y = 2; y <= 7; y += 1) for (let x = 2; x <= 7; x += 1) {
+      if (x !== 2 && x !== 7 && y !== 2 && y !== 7) continue
+      if (y === 2 && (x === 4 || x === 5)) continue
+      writeLayerColor(document, layer, y * document.width + x, blue)
+    }
+
+    const leaking = magicWandSelection(document, layer, 4, 4)
+    const closed = magicWandSelection(document, layer, 4, 4, 0, true, 2)
+
+    expect(selectionContains(leaking, 0, 0)).toBe(true)
+    expect(selectionContains(closed, 4, 4)).toBe(true)
+    expect(selectionContains(closed, 0, 0)).toBe(false)
+    expect(selectionContains(closed, 4, 2)).toBe(true)
   })
 
   it('supports magic-wand tolerance and non-contiguous matching', () => {

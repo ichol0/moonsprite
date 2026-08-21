@@ -1,6 +1,7 @@
 import type { CanvasAnchor, RasterLayer, SelectionMask, SelectionMode, SelectionRect, SpriteDocument } from '@shared/types'
 import { getPaletteEntry } from './document'
 import { isInBounds, packColor, pixelIndex } from './raster'
+import { contiguousMatchingRegion } from './contiguous-region'
 
 export const rasterLinePoints = (from: { x: number; y: number }, to: { x: number; y: number }): Array<{ x: number; y: number }> => {
   const points: Array<{ x: number; y: number }> = []
@@ -821,7 +822,7 @@ export const packedColorMatchesTolerance = (a: number, b: number, tolerance: num
     Math.abs((a >>> 24) - (b >>> 24))
   ) <= tolerance
 
-export const magicWandSelection = (document: SpriteDocument, layer: RasterLayer, startX: number, startY: number, tolerance = 0, contiguous = true): SelectionMask | null => {
+export const magicWandSelection = (document: SpriteDocument, layer: RasterLayer, startX: number, startY: number, tolerance = 0, contiguous = true, gapClosingThreshold = 0): SelectionMask | null => {
   if (!isInBounds(document.width, document.height, startX, startY)) return null
   const normalizedTolerance = Math.max(0, Math.min(255, Math.round(tolerance)))
   const palette = layer.format === 'indexed'
@@ -856,25 +857,8 @@ export const magicWandSelection = (document: SpriteDocument, layer: RasterLayer,
   if (!contiguous) {
     for (let index = 0; index < total; index += 1) if (matches(index)) add(index)
   } else {
-    const visited = new Uint8Array(total)
-    const stack = new Uint32Array(total)
-    let stackSize = 0
-    const push = (index: number): void => {
-      if (visited[index]) return
-      visited[index] = 1
-      if (matches(index)) stack[stackSize++] = index
-    }
-    const start = pixelIndex(document.width, startX, startY)
-    push(start)
-    while (stackSize > 0) {
-      const index = stack[--stackSize]
-      add(index)
-      const x = index % document.width; const y = Math.floor(index / document.width)
-      if (x > 0) push(index - 1)
-      if (x + 1 < document.width) push(index + 1)
-      if (y > 0) push(index - document.width)
-      if (y + 1 < document.height) push(index + document.width)
-    }
+    const region = contiguousMatchingRegion(document.width, document.height, startX, startY, matches, gapClosingThreshold)
+    if (region) for (let index = 0; index < total; index += 1) if (region[index] === 1) add(index)
   }
   if (maxX < minX || maxY < minY) return null
   const width = maxX - minX + 1; const height = maxY - minY + 1

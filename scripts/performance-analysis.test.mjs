@@ -41,8 +41,10 @@ test('生产 Canvas 与 profiling Canvas 使用互不混合的指标', () => {
 
 test('Vitest 与包体积报告归一化为统一指标', () => {
   const vitest = normalizeVitestBenchmark({ files: [{ groups: [{ fullName: 'group', benchmarks: [{ id: 'bench-1', name: 'select contiguous noise background', median: 18, rme: 3, sampleCount: 20 }] }] }] }, 'selection')
+  const adjustment = normalizeVitestBenchmark({ files: [{ groups: [{ fullName: 'adjustments', benchmarks: [{ id: 'adjustment-1', name: 'adjust 4000x4000 hue saturation', median: 145, rme: 2, sampleCount: 10 }] }] }] }, 'adjustments')
   assert.equal(vitest[0].budget, 22)
   assert.equal(vitest[0].noisePercent, 3)
+  assert.equal(adjustment[0].budget, 180)
   assert.equal(normalizeBundleReport({ chunks: [{ file: 'index.js', gzipBytes: 1000 }, { file: 'style.css', gzipBytes: 500 }] }).length, 1)
 })
 

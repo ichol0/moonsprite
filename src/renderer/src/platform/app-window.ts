@@ -1,4 +1,5 @@
 import { PhysicalPosition, PhysicalSize } from '@tauri-apps/api/dpi'
+import { invoke } from '@tauri-apps/api/core'
 import { availableMonitors, getCurrentWindow } from '@tauri-apps/api/window'
 import type { WorkspaceLayout } from '@shared/types'
 
@@ -7,6 +8,19 @@ export type AppWindowLayout = NonNullable<WorkspaceLayout['mainWindow']>
 const currentDesktopWindow = () => typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
   ? getCurrentWindow()
   : null
+
+let maximizeCursorResetPending = false
+let maximizeCursorResetInFlight = false
+let maximizeCursorResetGeneration = 0
+
+const resetAppWindowNativeCursor = async (appWindow: NonNullable<ReturnType<typeof currentDesktopWindow>>): Promise<boolean> => {
+  try {
+    await appWindow.setCursorIcon('default')
+    return true
+  } catch {
+    return false
+  }
+}
 
 const windowLayoutIsVisible = async (layout: AppWindowLayout): Promise<boolean> => {
   try {
@@ -78,6 +92,11 @@ export async function showAppWindow(): Promise<void> {
   await currentDesktopWindow()?.show()
 }
 
+export async function startAppWindowDragging(): Promise<boolean> {
+  if (!currentDesktopWindow()) return false
+  return invoke<boolean>('start_window_drag_if_primary_pressed')
+}
+
 export async function minimizeAppWindow(): Promise<void> {
   await currentDesktopWindow()?.minimize()
 }
@@ -86,7 +105,30 @@ export async function toggleAppWindowMaximized(): Promise<boolean> {
   const appWindow = currentDesktopWindow()
   if (!appWindow) return false
   await appWindow.toggleMaximize()
-  return appWindow.isMaximized()
+  const maximized = await appWindow.isMaximized()
+  // Windows can overwrite this first reset with a later non-client hit test.
+  // Keep one deferred reset armed for the next button-free client pointer move.
+  maximizeCursorResetGeneration += 1
+  maximizeCursorResetPending = true
+  await resetAppWindowNativeCursor(appWindow)
+  return maximized
+}
+
+export async function settleAppWindowCursorAfterMaximize(): Promise<boolean> {
+  if (!maximizeCursorResetPending || maximizeCursorResetInFlight) return false
+  const appWindow = currentDesktopWindow()
+  if (!appWindow) {
+    maximizeCursorResetPending = false
+    return false
+  }
+  const generation = maximizeCursorResetGeneration
+  maximizeCursorResetInFlight = true
+  try {
+    return await resetAppWindowNativeCursor(appWindow)
+  } finally {
+    if (generation === maximizeCursorResetGeneration) maximizeCursorResetPending = false
+    maximizeCursorResetInFlight = false
+  }
 }
 
 export async function closeAppWindow(): Promise<void> {

@@ -30,8 +30,13 @@
 | 最近文件清理边界 | 路径确实不存在时移除最近记录；文件仍存在但解析失败时保留，不能把读取错误当成用户删除 | `HomeWorkspace.test.tsx`、Rust `platform_files` 测试 |
 | 剪贴板快照隔离 | 系统剪贴板不可读时回退内部快照；粘贴、变换和跨文档操作不得改写复制来源像素 | `clipboard-service.test.ts`、`workspace.test.ts` |
 | Tileset 槽位兼容 | 空槽布局保存重开后保持；旧 v13 紧凑布局可读取；重复、缺失或越界槽位明确拒绝，槽位移动不改变瓦片像素和稳定引用 | `project-format.test.ts`、`tilemap.test.ts`、`workspace-tilemap.test.ts` |
+| Tilemap 共享 Tileset | 新建 Tilemap 图层默认新建 Tileset，也可复用已有 Tilemap Tileset；尺寸跟随、删除引用不误删资源、保存重开后共享 ID 保持 | `project-format.test.ts`、`workspace-tilemap.test.ts` |
 | 图层转换为 Tilemap | 普通或背景图层按画布网格裁切全部帧，相同瓦片去重、边缘补透明；转换、重命名、背景身份、Tileset 与会话选择通过同一个 Undo/Redo 完整恢复 | `tilemap.test.ts`、`workspace-tilemap.test.ts`、`LayersPanel.test.tsx` |
+| 栅格选区粘贴到自由瓦片 | 未选实例时普通画布选区按原坐标裁切并创建源、Tileset 与实例；已选实例时只编辑其共享源并同步全部同源实例；Undo/Redo 不遗留资源，普通动画 cel 仍拒绝粘贴到自由瓦片或实例时间轴 | `free-tile.test.ts`、`workspace-tilemap.test.ts`、`command-context.test.ts` |
+| 自由瓦片实例选区变换 | 新建选区只落在当前实例；普通及旋转/镜像实例按显示朝向移动、缩放、旋转和倾斜，移动预览不落后一帧，结果逆向写回共享源并实时刷新同源实例；其他实例不出现选区覆盖层，源像素、选区和轴心通过一次 Undo/Redo 同步恢复 | `free-tile.test.ts`、`workspace-tilemap.test.ts` |
+| 自由瓦片实例属性与行手势 | 非正方形实例旋转、镜像后的边界、命中、合成和源同步正确；属性变换保持显示左上角，保存重开与 Undo/Redo 保留状态；实例眼睛/锁支持图层一致的 `Alt` 全部操作和按住跨行操作；多选实例的属性与删除各自只产生一个可完整撤销的历史步骤 | `free-tile.test.ts`、`workspace-tilemap.test.ts`、`project-format.test.ts`、`LayersPanel.test.tsx` |
 | 偏好与语言回退 | 损坏、未知或旧版偏好安全回退；切换语言不翻译工程名、图层名和用户输入 | `file-preferences.test.ts`、`localization.test.ts` |
+| 原生标题栏拖动安全 | 单击标题栏只激活窗口；只有主键仍处于物理按下状态且指针超过拖动阈值时才进入系统拖动，异步请求到达时若已松键必须拒绝，双击最大化和标题按钮保持可用；最大化或还原完成后先重置一次原生指针，并在下一次无按键的标题栏客户端移动时再次清除 Windows 顶部边框遗留的上下缩放指针 | `AppWindowTitleBar.test.tsx`、`app-window.test.ts`、Rust `cargo check` |
 
 ## 历史与会话
 
@@ -62,7 +67,7 @@
 | 平铺工具预览 | 铅笔、橡皮擦、直线、形状、渐变、喷枪和瓦片绘制预览同步出现在全部可见平铺副本；大笔刷越界轮廓保持连续几何，采样坐标按启用轴折回，边缘不裁断、不错误重组且不复制鼠标指针 | `tilemap.test.ts` |
 | 跨轴缩放翻转 | 选区缩放越过对侧边界时切换对应镜像，预览与提交一致并只产生一次撤销 | `canvas-input.test.ts`、`tools.test.ts`、`selection.test.ts` |
 | 多帧画布尺寸 | 调整画布尺寸时所有 frame/cel 使用同一偏移；扩大、裁切、Undo/Redo 后保持相对位置 | `animation.test.ts`、`workspace.test.ts`、`document.test.ts` |
-| 调整预览基线 | 调整期间移动、变换或加减选时始终从未调整基线计算，不闪回、不重复叠加、不污染范围外像素 | `AdjustmentDialog.test.tsx`、`adjustment-preview-lifecycle.test.ts` |
+| 调整预览基线 | 调整期间移动、变换或加减选时始终从未调整基线计算，不闪回、不重复叠加、不污染范围外像素；链接 Cel 预览不提前写入共享源，确认和 Undo/Redo 保持链接语义 | `AdjustmentDialog.test.tsx`、`adjustment-preview-lifecycle.test.ts`、`adjustments.test.ts`、`workspace.test.ts` |
 | 对称变换闭包 | 多轴绘制、填充和选区计算闭包并去重，轴线像素只写一次，结果合并为一次历史 | `symmetry.test.ts`、`tools.test.ts`、`selection.test.ts` |
 | 对称轴首次定位 | 每个工程中的每种对称轴首次启用时使用当前画布中心；同轴重复开关不跳动，不同工程的首次使用状态互不串联 | `workspace.test.ts` |
 | 洋葱皮合成 | 相邻帧按完整可见图层合成，当前帧内容和多图层遮挡不改变应显示的洋葱皮结果 | `onion-skin.test.ts` |

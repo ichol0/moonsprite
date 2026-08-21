@@ -1,6 +1,7 @@
+import { existsSync } from 'node:fs'
 import { execFileSync, spawnSync } from 'node:child_process'
 import { evaluateDevValidationRequest } from './dev-validation-policy.mjs'
-import { classifyValidationScope } from './validation-scope.mjs'
+import { classifyValidationScope, getRendererCodeFiles } from './validation-scope.mjs'
 
 const requestedMode = process.argv[2]
 const modeAliases = { fast: 'dev', integration: 'release' }
@@ -71,7 +72,7 @@ const versionFilesChanged = scope.files.some((file) => new Set([
   'src/renderer/src/core/app-meta.ts',
   'src/renderer/src/components/LatestReleaseDialog.tsx',
 ]).has(file))
-const rendererCodeChanged = scope.files.some((file) => /^src\/renderer\/src\/.*\.[cm]?[jt]sx?$/.test(file))
+const rendererCodeFiles = getRendererCodeFiles(scope.files).filter((file) => existsSync(file))
 
 console.log(`验证模式：${mode === 'dev' ? 'dev.X 开发' : 'dev.X 发布'}`)
 if (mode === 'dev') console.log(`风险：${highRisk ? '高风险（要求定向测试）' : '普通'}`)
@@ -83,8 +84,8 @@ if (mode === 'release') {
   run(process.execPath, ['--test', 'scripts/module-boundaries.test.mjs'])
   runPnpm(['check:boundaries'])
   run(process.execPath, ['scripts/check-version-contract.mjs', '--release'])
-} else if (rendererCodeChanged) {
-  runPnpm(['check:boundaries'])
+} else if (rendererCodeFiles.length > 0) {
+  run(process.execPath, ['scripts/check-module-boundaries.mjs', '--files', ...rendererCodeFiles])
 }
 
 if (mode === 'dev' && nodeTestFiles.length > 0) {

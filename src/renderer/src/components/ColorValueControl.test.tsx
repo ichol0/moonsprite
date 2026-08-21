@@ -98,8 +98,11 @@ describe('ColorValueControl', () => {
     fireEvent.change(slider, { target: { value: '200' } })
     expect(currentSwatch.style.background).toBe(previousStyle)
 
+    slider.focus()
+    expect(slider).toHaveFocus()
     fireEvent.pointerUp(slider)
     expect(currentSwatch.style.background).not.toBe(previousStyle)
+    expect(slider).not.toHaveFocus()
   })
 
   it('copies the confirmed color HEX and shows feedback on the clicked swatch', async () => {

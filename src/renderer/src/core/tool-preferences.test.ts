@@ -59,6 +59,8 @@ describe('tool preferences persistence boundary', () => {
     expect(settings.proceduralAntialiasStrength).toBe(100)
     expect(settings.selectionMode).toBe('replace')
     expect(settings.fillTolerance).toBe(0)
+    expect(settings.fillGapClosing).toBe(false)
+    expect(settings.fillGapThreshold).toBe(2)
     expect(settings.gradientTolerance).toBe(0)
     expect(settings.gradientContiguous).toBe(true)
     expect(settings.brushPressure).toEqual(DEFAULT_BRUSH_PRESSURE_SETTINGS)
@@ -169,10 +171,13 @@ describe('tool preferences persistence boundary', () => {
     expect(loadToolSettings(storage)).toMatchObject({ brushSize: 1, moveAutoSelect: true, selectionMode: 'replace', fillKind: 'bucket', gradientTolerance: 0, gradientContiguous: true, gradientDither: 'none' })
   })
 
-  it('persists independent paint-bucket and gradient range settings', () => {
+  it('persists independent paint-bucket, magic-wand, and gradient range settings', () => {
     const storage = createStorage()
-    saveToolSettings({ ...defaultToolSettings, fillKind: 'gradient', gradientDither: 'bayer-4', fillTolerance: 37, gradientTolerance: 82, gradientContiguous: false }, storage)
-    expect(loadToolSettings(storage)).toMatchObject({ fillKind: 'gradient', gradientDither: 'bayer-4', fillTolerance: 37, gradientTolerance: 82, gradientContiguous: false })
+    saveToolSettings({ ...defaultToolSettings, fillKind: 'gradient', gradientDither: 'bayer-4', fillTolerance: 37, fillGapClosing: true, fillGapThreshold: 6, gradientTolerance: 82, gradientContiguous: false, wandGapClosing: true, wandGapThreshold: 9 }, storage)
+    expect(loadToolSettings(storage)).toMatchObject({ fillKind: 'gradient', gradientDither: 'bayer-4', fillTolerance: 37, fillGapClosing: true, fillGapThreshold: 6, gradientTolerance: 82, gradientContiguous: false, wandGapClosing: true, wandGapThreshold: 9 })
+
+    storage.setItem(TOOL_SETTINGS_KEY, JSON.stringify({ fillGapThreshold: 0, wandGapThreshold: 99 }))
+    expect(loadToolSettings(storage)).toMatchObject({ fillGapThreshold: 1, wandGapThreshold: 16 })
   })
 
   it('normalizes and persists airbrush settings', () => {

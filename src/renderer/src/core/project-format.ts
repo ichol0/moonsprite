@@ -1,5 +1,5 @@
 import { inflateSync, strFromU8, strToU8, unzipSync, zipSync, type Zippable } from 'fflate'
-import { BLEND_MODES, type AnimationCelSurface, type AnimationFrame, type BackgroundLayerSettings, type BlendMode, type ColorMode, type LayerGroup, type LayerMask, type LayerStyles, type PaletteEntry, type ProjectBrush, type RasterFormat, type RasterLayer, type RgbaColor, type RuntimeRasterTiles, type SpriteDocument, type TextCelData, type TilemapCelData, type TilemapCell, type Tileset, type TimelapseSettings } from '@shared/types'
+import { BLEND_MODES, type AnimationCelSurface, type AnimationFrame, type BackgroundLayerSettings, type BlendMode, type ColorMode, type FreeTileCelData, type FreeTileInstance, type FreeTileSourceLayer, type LayerGroup, type LayerMask, type LayerStyles, type PaletteEntry, type ProjectBrush, type RasterFormat, type RasterLayer, type RgbaColor, type RuntimeRasterTiles, type SpriteDocument, type TextCelData, type TilemapCelData, type TilemapCell, type Tileset, type TimelapseSettings } from '@shared/types'
 import { compositeDocument, createCompositePointSampler, createId, createNormalCompositePointSampler, getLayerStorageOrigin, getRasterContentRevision, paletteColorIdForCanvas, remapIndexedDocumentToVisiblePalette, setLayerStorageOrigin } from './document'
 import { createDefaultAnimationTimeline, ensureAnimationDocument, normalizeAnimationTimeline, refreshActiveAnimationFrame, syncActiveAnimationLayers } from './animation'
 import { normalizeOutlineSettings } from './outline-settings'
@@ -15,14 +15,18 @@ import { normalizeTextCelData } from './text-cel-data'
 import { cloneLayerStyles, normalizeLayerStyles } from './layer-styles'
 import { normalizeBackgroundLayerSettings } from './background-patterns'
 import { MAX_TILE_SIZE, MAX_TILEMAP_CELLS, MAX_TILEMAP_SURFACE_PIXELS, MAX_TILESET_LAYOUT_SLOTS, MAX_TILESET_PIXELS, compactTilesetTileSlots, normalizeTilemapCell, renderTilemapSurface } from './tilemap'
+import { MAX_FREE_TILE_INSTANCES, freeTileSourceRefs, normalizeFreeTileCelData, renderFreeTileSurface, type FreeTileSourceCollection } from './free-tile'
+import { ensureFreeTileTilesetOwnership, freeTileSourcesForLayer } from './free-tile-document'
 
 interface ManifestLayer {
   id: string
   name: string
   displayColor?: RgbaColor
   description?: string
-  kind?: 'text' | 'tilemap'
+  kind?: 'text' | 'tilemap' | 'free-tile'
   tilemapTilesetId?: string
+  freeTileTilesetId?: string
+  freeTileSources?: FreeTileSourceLayer[]
   visible: boolean
   locked: boolean
   opacity: number
@@ -84,6 +88,10 @@ interface ManifestTilemapCelData {
   cells: ManifestTilemapCell[]
 }
 
+interface ManifestFreeTileCelData {
+  instances: FreeTileInstance[]
+}
+
 interface ManifestCel {
   id: string
   layerId: string
@@ -100,6 +108,7 @@ interface ManifestCel {
   mask?: ManifestMask
   text?: TextCelData
   tilemap?: ManifestTilemapCelData
+  freeTiles?: ManifestFreeTileCelData
 }
 
 interface ManifestGroupMask {
@@ -131,7 +140,9 @@ interface ManifestTimelapse extends Omit<TimelapseSettings, 'snapshots'> {
 
 type RasterDataEncoding = 'raw' | 'sparse-tiles-v1'
 
-export const PROJECT_SCHEMA_VERSION = 13
+export const PROJECT_SCHEMA_VERSION = 15
+const FREE_TILE_SOURCE_PROJECT_SCHEMA_VERSION = 15
+const FREE_TILE_PROJECT_SCHEMA_VERSION = 14
 const TILEMAP_PROJECT_SCHEMA_VERSION = 13
 const BACKGROUND_LAYER_PROJECT_SCHEMA_VERSION = 12
 const LAYER_STYLES_PROJECT_SCHEMA_VERSION = 11
@@ -492,6 +503,36 @@ const normalizeDisplayColor = (value: unknown): RgbaColor | null => {
   return { r: Math.max(0, Math.min(255, Math.round(color.r!))), g: Math.max(0, Math.min(255, Math.round(color.g!))), b: Math.max(0, Math.min(255, Math.round(color.b!))), a: Math.max(0, Math.min(255, Math.round(color.a!))) }
 }
 
+const normalizeManifestFreeTileSources = (value: unknown): FreeTileSourceLayer[] => {
+  if (!Array.isArray(value)) return []
+  const ids = new Set<string>()
+  const tilesetIds = new Set<string>()
+  const sources: FreeTileSourceLayer[] = []
+  for (const entry of value) {
+    if (!entry || typeof entry !== 'object') return []
+    const source = entry as Partial<FreeTileSourceLayer>
+    if (typeof source.id !== 'string' || !source.id || ids.has(source.id)
+      || typeof source.tilesetId !== 'string' || !source.tilesetId || tilesetIds.has(source.tilesetId)) return []
+    ids.add(source.id)
+    tilesetIds.add(source.tilesetId)
+    const displayColor = normalizeDisplayColor(source.displayColor)
+    sources.push({
+      id: source.id,
+      name: typeof source.name === 'string' && source.name ? source.name : tr('core.document.layer'),
+      tilesetId: source.tilesetId,
+      ...(typeof source.description === 'string' && source.description ? { description: source.description } : {}),
+      ...(displayColor ? { displayColor } : {}),
+      visible: source.visible !== false,
+      locked: source.locked === true,
+      opacity: Number.isFinite(source.opacity) ? Math.max(0, Math.min(1, Number(source.opacity))) : 1,
+      blendMode: normalizeBlendMode(source.blendMode),
+      offsetX: Number.isSafeInteger(source.offsetX) ? source.offsetX! : 0,
+      offsetY: Number.isSafeInteger(source.offsetY) ? source.offsetY! : 0
+    })
+  }
+  return sources
+}
+
 const normalizeManifestAnimation = (value: unknown): ManifestAnimation => {
   const normalized = normalizeAnimationTimeline(value)
   const frameIds = new Set(normalized.frames.map((frame) => frame.id))
@@ -504,8 +545,8 @@ const normalizeManifestAnimation = (value: unknown): ManifestAnimation => {
     loop: normalized.loop,
     cels: normalized.cels.map((cel) => {
       const raw = rawCels.find((candidate) => candidate && typeof candidate === 'object' && (candidate as { id?: unknown }).id === cel.id) as Partial<ManifestCel> | undefined
-      const { mask: _runtimeMask, surface: _runtimeSurface, tilemap: _runtimeTilemap, ...normalizedCel } = cel
-      return { ...normalizedCel, ...(Number.isFinite(raw?.opacity) ? { opacity: Math.max(0, Math.min(1, Number(raw!.opacity))) } : {}), ...(raw?.format === 'rgba' || raw?.format === 'indexed' ? { format: raw.format } : {}), ...(Number.isSafeInteger(raw?.width) ? { width: raw!.width } : {}), ...(Number.isSafeInteger(raw?.height) ? { height: raw!.height } : {}), ...(Number.isFinite(raw?.offsetX) ? { offsetX: Math.trunc(raw!.offsetX!) } : {}), ...(Number.isFinite(raw?.offsetY) ? { offsetY: Math.trunc(raw!.offsetY!) } : {}), ...(typeof raw?.dataFile === 'string' ? { dataFile: raw.dataFile } : {}), ...(raw?.dataEncoding === 'raw' || raw?.dataEncoding === 'sparse-tiles-v1' ? { dataEncoding: raw.dataEncoding } : {}), ...(raw?.mask ? { mask: raw.mask } : {}), ...(raw?.text && typeof raw.text === 'object' ? { text: normalizeTextCelData(raw.text) } : {}), ...(raw?.tilemap && typeof raw.tilemap === 'object' ? { tilemap: raw.tilemap } : {}) }
+      const { mask: _runtimeMask, surface: _runtimeSurface, tilemap: _runtimeTilemap, freeTiles: _runtimeFreeTiles, ...normalizedCel } = cel
+      return { ...normalizedCel, ...(Number.isFinite(raw?.opacity) ? { opacity: Math.max(0, Math.min(1, Number(raw!.opacity))) } : {}), ...(raw?.format === 'rgba' || raw?.format === 'indexed' ? { format: raw.format } : {}), ...(Number.isSafeInteger(raw?.width) ? { width: raw!.width } : {}), ...(Number.isSafeInteger(raw?.height) ? { height: raw!.height } : {}), ...(Number.isFinite(raw?.offsetX) ? { offsetX: Math.trunc(raw!.offsetX!) } : {}), ...(Number.isFinite(raw?.offsetY) ? { offsetY: Math.trunc(raw!.offsetY!) } : {}), ...(typeof raw?.dataFile === 'string' ? { dataFile: raw.dataFile } : {}), ...(raw?.dataEncoding === 'raw' || raw?.dataEncoding === 'sparse-tiles-v1' ? { dataEncoding: raw.dataEncoding } : {}), ...(raw?.mask ? { mask: raw.mask } : {}), ...(raw?.text && typeof raw.text === 'object' ? { text: normalizeTextCelData(raw.text) } : {}), ...(raw?.tilemap && typeof raw.tilemap === 'object' ? { tilemap: raw.tilemap } : {}), ...(raw?.freeTiles && typeof raw.freeTiles === 'object' ? { freeTiles: raw.freeTiles } : {}) }
     }),
     groupMasks: value && typeof value === 'object' && Array.isArray((value as { groupMasks?: unknown }).groupMasks)
       ? (value as { groupMasks: unknown[] }).groupMasks.flatMap((item) => {
@@ -525,6 +566,10 @@ const manifestTilemapFromData = (tilemap: TilemapCelData): ManifestTilemapCelDat
   columns: tilemap.columns,
   rows: tilemap.rows,
   cells: tilemap.cells.flatMap((cell, index) => cell ? [{ index, ...cell }] : [])
+})
+
+const manifestFreeTilesFromData = (freeTiles: FreeTileCelData): ManifestFreeTileCelData => ({
+  instances: freeTiles.instances.map((instance) => ({ ...instance }))
 })
 
 export interface ProjectEncodeOptions {
@@ -640,8 +685,9 @@ const createProjectArchiveFiles = (
       name: layer.name,
       ...(layer.displayColor ? { displayColor: layer.displayColor } : {}),
       ...(layer.description ? { description: layer.description } : {}),
-      ...(layer.kind === 'text' || layer.kind === 'tilemap' ? { kind: layer.kind } : {}),
+      ...(layer.kind === 'text' || layer.kind === 'tilemap' || layer.kind === 'free-tile' ? { kind: layer.kind } : {}),
       ...(layer.kind === 'tilemap' && layer.tilemapTilesetId ? { tilemapTilesetId: layer.tilemapTilesetId } : {}),
+      ...(layer.kind === 'free-tile' && layer.freeTileSources ? { freeTileSources: layer.freeTileSources.map((source) => ({ ...source, displayColor: source.displayColor ? { ...source.displayColor } : undefined })) } : {}),
       visible: layer.visible,
       locked: layer.locked,
       opacity: layer.opacity,
@@ -708,7 +754,8 @@ const createProjectArchiveFiles = (
         } : {}),
         ...(cel.mask ? { mask: encodeMask(`cel-mask:${cel.id}`, cel.mask) } : {}),
         ...(cel.text ? { text: normalizeTextCelData(cel.text) } : {}),
-        ...(cel.tilemap && !cel.linkedCelId ? { tilemap: manifestTilemapFromData(cel.tilemap) } : {})
+        ...(cel.tilemap && !cel.linkedCelId ? { tilemap: manifestTilemapFromData(cel.tilemap) } : {}),
+        ...(cel.freeTiles && !cel.linkedCelId ? { freeTiles: manifestFreeTilesFromData(cel.freeTiles) } : {})
       }]
     })
   }
@@ -1037,7 +1084,7 @@ export function migrateProjectManifest(input: unknown): ProjectManifest {
   const candidate = input as { app?: unknown; schemaVersion?: unknown; document?: Record<string, unknown> }
   if (candidate.app !== 'MoonSprite' || !candidate.document) throw new Error(tr('core.project.unsupportedVersion'))
   const version = Number(candidate.schemaVersion)
-  if (![1, 2, 3, LEGACY_PROJECT_SCHEMA_VERSION, SPARSE_RASTER_PROJECT_SCHEMA_VERSION, SLICES_PROJECT_SCHEMA_VERSION, EDITABLE_TEXT_PROJECT_SCHEMA_VERSION, STYLED_TEXT_PROJECT_SCHEMA_VERSION, TEXT_BOX_PROJECT_SCHEMA_VERSION, DOCUMENT_COLOR_MODE_PROJECT_SCHEMA_VERSION, LAYER_STYLES_PROJECT_SCHEMA_VERSION, BACKGROUND_LAYER_PROJECT_SCHEMA_VERSION, PROJECT_SCHEMA_VERSION].includes(version) || candidate.document.schemaVersion !== candidate.schemaVersion) throw new Error(tr('core.project.unsupportedVersion'))
+  if (![1, 2, 3, LEGACY_PROJECT_SCHEMA_VERSION, SPARSE_RASTER_PROJECT_SCHEMA_VERSION, SLICES_PROJECT_SCHEMA_VERSION, EDITABLE_TEXT_PROJECT_SCHEMA_VERSION, STYLED_TEXT_PROJECT_SCHEMA_VERSION, TEXT_BOX_PROJECT_SCHEMA_VERSION, DOCUMENT_COLOR_MODE_PROJECT_SCHEMA_VERSION, LAYER_STYLES_PROJECT_SCHEMA_VERSION, BACKGROUND_LAYER_PROJECT_SCHEMA_VERSION, TILEMAP_PROJECT_SCHEMA_VERSION, FREE_TILE_PROJECT_SCHEMA_VERSION, PROJECT_SCHEMA_VERSION].includes(version) || candidate.document.schemaVersion !== candidate.schemaVersion) throw new Error(tr('core.project.unsupportedVersion'))
   if (version >= SPARSE_RASTER_PROJECT_SCHEMA_VERSION) {
     const layers = Array.isArray(candidate.document.layers) ? candidate.document.layers : []
     const animation = candidate.document.animation && typeof candidate.document.animation === 'object' ? candidate.document.animation as { cels?: unknown } : null
@@ -1061,6 +1108,15 @@ export function migrateProjectManifest(input: unknown): ProjectManifest {
         const background = version >= BACKGROUND_LAYER_PROJECT_SCHEMA_VERSION ? normalizeBackgroundLayerSettings(next.background) : undefined
         if (background) next.background = background
         else delete next.background
+        if (version < FREE_TILE_PROJECT_SCHEMA_VERSION) {
+          if (next.kind === 'free-tile') delete next.kind
+          delete next.freeTileTilesetId
+          delete next.freeTileSources
+        } else if (version < FREE_TILE_SOURCE_PROJECT_SCHEMA_VERSION) {
+          delete next.freeTileSources
+        } else {
+          delete next.freeTileTilesetId
+        }
         return next as unknown as ManifestLayer
       })
     : candidate.document.layers
@@ -1077,6 +1133,7 @@ export function migrateProjectManifest(input: unknown): ProjectManifest {
   const cels = animation.cels.map((cel) => {
     const next = legacy && cel.dataFile ? { ...cel, dataEncoding: 'raw' as const } : { ...cel }
     if (version < TILEMAP_PROJECT_SCHEMA_VERSION) delete next.tilemap
+    if (version < FREE_TILE_PROJECT_SCHEMA_VERSION) delete next.freeTiles
     return next
   })
   const tilesets = version >= TILEMAP_PROJECT_SCHEMA_VERSION && Array.isArray(candidate.document.tilesets)
@@ -1401,6 +1458,20 @@ const decodeManifestTilemap = (
   return { tileWidth, tileHeight, columns, rows, cells }
 }
 
+const decodeManifestFreeTiles = (
+  value: ManifestFreeTileCelData,
+  sources: FreeTileSourceCollection,
+  name: string
+): FreeTileCelData => {
+  if (!Array.isArray(value?.instances) || value.instances.length > MAX_FREE_TILE_INSTANCES) throw new Error(tr('core.project.layerCorrupt', { name }))
+  if (Array.isArray(sources) && value.instances.some((instance) => !instance || typeof instance !== 'object' || typeof instance.sourceId !== 'string' || !instance.sourceId || typeof instance.tileId === 'string')) {
+    throw new Error(tr('core.project.layerCorrupt', { name }))
+  }
+  const normalized = normalizeFreeTileCelData(value, sources, true)
+  if (!normalized) throw new Error(tr('core.project.layerCorrupt', { name }))
+  return normalized
+}
+
 export function decodeProject(input: Uint8Array, onProgress?: (value: number) => void): SpriteDocument {
   const reportProgress = (value: number): void => onProgress?.(Math.max(0, Math.min(1, value)))
   reportProgress(0)
@@ -1536,8 +1607,10 @@ export function decodeProject(input: Uint8Array, onProgress?: (value: number) =>
       ...(metadata.clippingMask === true ? { clippingMask: true } : {}),
       ...(layerStyles ? { layerStyles } : {}),
       ...(background ? { background } : {}),
-      ...(metadata.kind === 'text' || metadata.kind === 'tilemap' ? { kind: metadata.kind } : {}),
+      ...(metadata.kind === 'text' || metadata.kind === 'tilemap' || metadata.kind === 'free-tile' ? { kind: metadata.kind } : {}),
       ...(metadata.kind === 'tilemap' && typeof metadata.tilemapTilesetId === 'string' ? { tilemapTilesetId: metadata.tilemapTilesetId } : {}),
+      ...(metadata.kind === 'free-tile' && typeof metadata.freeTileTilesetId === 'string' ? { freeTileTilesetId: metadata.freeTileTilesetId } : {}),
+      ...(metadata.kind === 'free-tile' && Array.isArray(metadata.freeTileSources) ? { freeTileSources: normalizeManifestFreeTileSources(metadata.freeTileSources) } : {}),
       groupId: typeof metadata.groupId === 'string' ? metadata.groupId : null,
       ...(normalizeDisplayColor(metadata.displayColor) ? { displayColor: normalizeDisplayColor(metadata.displayColor)! } : {}),
       width: decoded.width,
@@ -1554,6 +1627,30 @@ export function decodeProject(input: Uint8Array, onProgress?: (value: number) =>
     return layer
   })
   if (layers.length === 0) throw new Error(tr('core.project.noLayers'))
+  const tilemapTilesetIds = new Set(layers.flatMap((layer) => layer.kind === 'tilemap' && layer.tilemapTilesetId ? [layer.tilemapTilesetId] : []))
+  const freeTileOwnerIds = new Set<string>()
+  const freeTileSourceIds = new Set<string>()
+  const legacyFreeTiles = (manifest.sourceSchemaVersion ?? PROJECT_SCHEMA_VERSION) < FREE_TILE_SOURCE_PROJECT_SCHEMA_VERSION
+  for (const layer of layers) {
+    if (layer.kind !== 'free-tile') continue
+    if (legacyFreeTiles) {
+      if (!layer.freeTileTilesetId
+        || tilemapTilesetIds.has(layer.freeTileTilesetId)
+        || freeTileOwnerIds.has(layer.freeTileTilesetId)
+        || !tilesetsById.has(layer.freeTileTilesetId)) throw new Error(tr('core.project.layerCorrupt', { name: layer.name }))
+      freeTileOwnerIds.add(layer.freeTileTilesetId)
+      continue
+    }
+    if (!layer.freeTileSources?.length) throw new Error(tr('core.project.layerCorrupt', { name: layer.name }))
+    for (const source of layer.freeTileSources) {
+      if (freeTileSourceIds.has(source.id)) throw new Error(tr('core.project.layerCorrupt', { name: layer.name }))
+      const tileset = tilesetsById.get(source.tilesetId)
+      if (!tileset || tileset.tileIds.length !== 1 || tileset.columns !== 1 || tileset.rows !== 1
+        || tilemapTilesetIds.has(source.tilesetId) || freeTileOwnerIds.has(source.tilesetId)) throw new Error(tr('core.project.layerCorrupt', { name: layer.name }))
+      freeTileSourceIds.add(source.id)
+      freeTileOwnerIds.add(source.tilesetId)
+    }
+  }
   const sourceGroups = Array.isArray(source.groups) ? source.groups : []
   const groups = normalizeLayerGroups(sourceGroups)
   const groupIds = new Set(groups.map((group) => group.id))
@@ -1598,9 +1695,15 @@ export function decodeProject(input: Uint8Array, onProgress?: (value: number) =>
     const layer = layersById.get(cel.layerId)
     if (!layer) return []
     const tilemap = metadata.tilemap ? decodeManifestTilemap(metadata.tilemap, tilesetsById, cel.id) : undefined
+    const freeTileTileset = layer.kind === 'free-tile' && layer.freeTileTilesetId ? tilesetsById.get(layer.freeTileTilesetId) : undefined
+    const freeTileSources = layer.kind === 'free-tile' ? freeTileSourceRefs(layer.freeTileSources, tilesets) : []
+    const freeTileCollection: FreeTileSourceCollection | undefined = freeTileSources.length > 0 ? freeTileSources : freeTileTileset
+    const freeTiles = metadata.freeTiles && freeTileCollection ? decodeManifestFreeTiles(metadata.freeTiles, freeTileCollection, cel.id) : undefined
     if (layer.kind === 'tilemap') {
-      if (metadata.text || (!cel.linkedCelId && !tilemap)) throw new Error(tr('core.project.layerCorrupt', { name: cel.id }))
-    } else if (tilemap) throw new Error(tr('core.project.layerCorrupt', { name: cel.id }))
+      if (metadata.text || metadata.freeTiles || (!cel.linkedCelId && !tilemap)) throw new Error(tr('core.project.layerCorrupt', { name: cel.id }))
+    } else if (layer.kind === 'free-tile') {
+      if (metadata.text || metadata.tilemap || !freeTileCollection || (!cel.linkedCelId && !freeTiles)) throw new Error(tr('core.project.layerCorrupt', { name: cel.id }))
+    } else if (tilemap || freeTiles || metadata.freeTiles) throw new Error(tr('core.project.layerCorrupt', { name: cel.id }))
     const mask = decodeMask(metadata.mask, cel.id)
     if (!metadata.dataFile) {
       reportItem()
@@ -1616,7 +1719,7 @@ export function decodeProject(input: Uint8Array, onProgress?: (value: number) =>
       : { format: 'indexed' as const, width: decoded.width, height: decoded.height, offsetX: Math.trunc(metadata.offsetX ?? 0) + decoded.storageOffsetX, offsetY: Math.trunc(metadata.offsetY ?? 0) + decoded.storageOffsetY, storageOriginX: decoded.storageOffsetX, storageOriginY: decoded.storageOffsetY, pixels: decoded.pixels as Uint32Array }
     if (decoded.runtimeRaster) installRuntimeRaster(surface, decoded.runtimeRaster)
     reportItem()
-    return [{ ...cel, text: metadata.text ? normalizeTextCelData(metadata.text) : cel.text, ...(tilemap ? { tilemap } : {}), surface, mask }]
+    return [{ ...cel, text: metadata.text ? normalizeTextCelData(metadata.text) : cel.text, ...(tilemap ? { tilemap } : {}), ...(freeTiles ? { freeTiles } : {}), surface, mask }]
   })
   const manifestGroupMasks = Array.isArray(source.animation?.groupMasks) ? source.animation.groupMasks : []
   const decodedGroupMaskSlots = new Set<string>()
@@ -1678,16 +1781,35 @@ export function decodeProject(input: Uint8Array, onProgress?: (value: number) =>
     updatedAt: new Date().toISOString()
   }
   document.layerPanelState = normalizeProjectLayerPanelState(document, source.layerPanelState)
+  ensureFreeTileTilesetOwnership(document)
   for (const cel of animation.cels) {
-    if (!cel.tilemap || !cel.surface) continue
-    cel.surface = renderTilemapSurface(
-      cel.tilemap,
-      tilesets,
-      document.colorMode,
-      cel.surface.offsetX,
-      cel.surface.offsetY,
-      document.colorMode === 'indexed' ? (color) => paletteColorIdForCanvas(document, color) : undefined
-    )
+    if (!cel.surface) continue
+    if (cel.tilemap) {
+      cel.surface = renderTilemapSurface(
+        cel.tilemap,
+        document.tilesets ?? [],
+        document.colorMode,
+        cel.surface.offsetX,
+        cel.surface.offsetY,
+        document.colorMode === 'indexed' ? (color) => paletteColorIdForCanvas(document, color) : undefined
+      )
+      continue
+    }
+    if (cel.freeTiles) {
+      const layer = layersById.get(cel.layerId)
+      const sources = layer?.kind === 'free-tile' ? freeTileSourcesForLayer(document, layer) : []
+      if (sources.length === 0) throw new Error(tr('core.project.layerCorrupt', { name: cel.id }))
+      cel.surface = renderFreeTileSurface(
+        cel.freeTiles,
+        sources,
+        document.colorMode,
+        cel.surface.width,
+        cel.surface.height,
+        cel.surface.offsetX,
+        cel.surface.offsetY,
+        document.colorMode === 'indexed' ? (color) => paletteColorIdForCanvas(document, color) : undefined
+      )
+    }
   }
   rgbaPixelsByFile.clear()
   indexedPixelsByFile.clear()

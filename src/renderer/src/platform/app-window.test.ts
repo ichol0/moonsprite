@@ -2,8 +2,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
   availableMonitors: vi.fn(),
-  getCurrentWindow: vi.fn()
+  getCurrentWindow: vi.fn(),
+  invoke: vi.fn()
 }))
+
+vi.mock('@tauri-apps/api/core', () => ({ invoke: mocks.invoke }))
 
 vi.mock('@tauri-apps/api/dpi', () => ({
   PhysicalPosition: class PhysicalPosition {
@@ -19,7 +22,7 @@ vi.mock('@tauri-apps/api/window', () => ({
   getCurrentWindow: mocks.getCurrentWindow
 }))
 
-import { applyAppWindowLayout, initializeAppWindow, readAppWindowLayout } from './app-window'
+import { applyAppWindowLayout, initializeAppWindow, readAppWindowLayout, settleAppWindowCursorAfterMaximize, startAppWindowDragging, toggleAppWindowMaximized } from './app-window'
 
 const createWindow = () => ({
   isMaximized: vi.fn(async () => false),
@@ -35,6 +38,7 @@ const createWindow = () => ({
   onResized: vi.fn(async () => vi.fn()),
   minimize: vi.fn(async () => {}),
   toggleMaximize: vi.fn(async () => {}),
+  setCursorIcon: vi.fn(async () => {}),
   close: vi.fn(async () => {})
 })
 
@@ -44,6 +48,7 @@ beforeEach(() => {
   mocks.availableMonitors.mockResolvedValue([{
     workArea: { position: { x: 0, y: 0 }, size: { width: 1920, height: 1080 } }
   }])
+  mocks.invoke.mockResolvedValue(true)
 })
 
 describe('app window platform adapter', () => {
@@ -95,5 +100,29 @@ describe('app window platform adapter', () => {
     dispose()
     expect(removeMoved).toHaveBeenCalledTimes(1)
     expect(removeResized).toHaveBeenCalledTimes(1)
+  })
+
+  it('routes guarded titlebar dragging through the native command', async () => {
+    mocks.getCurrentWindow.mockReturnValue(createWindow())
+
+    await expect(startAppWindowDragging()).resolves.toBe(true)
+
+    expect(mocks.invoke).toHaveBeenCalledWith('start_window_drag_if_primary_pressed')
+  })
+
+  it('restores the default native cursor after maximize state changes', async () => {
+    const appWindow = createWindow()
+    appWindow.isMaximized.mockResolvedValue(true)
+    mocks.getCurrentWindow.mockReturnValue(appWindow)
+
+    await expect(toggleAppWindowMaximized()).resolves.toBe(true)
+
+    expect(appWindow.toggleMaximize).toHaveBeenCalledTimes(1)
+    expect(appWindow.setCursorIcon).toHaveBeenCalledWith('default')
+
+    await expect(settleAppWindowCursorAfterMaximize()).resolves.toBe(true)
+    expect(appWindow.setCursorIcon).toHaveBeenCalledTimes(2)
+    await expect(settleAppWindowCursorAfterMaximize()).resolves.toBe(false)
+    expect(appWindow.setCursorIcon).toHaveBeenCalledTimes(2)
   })
 })

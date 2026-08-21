@@ -3,7 +3,7 @@ import type { Tileset } from '@shared/types'
 import { getRasterContentRevision } from '@/core/document'
 import { readTilesetTilePixels } from '@/core/tilemap'
 
-export function TilesetTileThumbnail({ tileset, tileId, previewPixels, className }: { tileset: Tileset; tileId: string; previewPixels?: Uint8ClampedArray; className?: string }) {
+export function TilesetTileThumbnail({ tileset, tileId, previewPixels, className, renderRevision }: { tileset: Tileset; tileId: string; previewPixels?: Uint8ClampedArray; className?: string; renderRevision?: number }) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const revision = getRasterContentRevision(tileset.pixels)
 
@@ -15,7 +15,7 @@ export function TilesetTileThumbnail({ tileset, tileId, previewPixels, className
     const image = context.createImageData(tileset.tileWidth, tileset.tileHeight)
     image.data.set(pixels)
     context.putImageData(image, 0, 0)
-  }, [previewPixels, revision, tileId, tileset])
+  }, [previewPixels, revision, renderRevision, tileId, tileset])
 
   return <canvas
     ref={canvasRef}

@@ -1,8 +1,8 @@
 import { create } from 'zustand'
-import type { AnimationCel, AnimationCelSurface, BackgroundPatternId, BlendMode, BrushPaintMode, BrushShape, BrushTexture, CanvasAnchor, ColorMode, DocumentSlice, FillKind, FillMode, GradientDither, ImageBrush, ImageBrushSettings, ImageResizeInterpolation, LayerGroup, LayerMask, LayerStyles, LineKind, MoveKind, OutlineDirections, OutlineKernel, OutlinePosition, PaletteEntry, PaletteSlotLayout, ProceduralBrushId, ProceduralBrushSettings, RasterLayer, RecoveryRecord, RgbaColor, SelectionKind, SelectionMask, SelectionMode, SelectionRect, ShapeKind, ShapeRatio, SpriteDocument, TextCelData, TilemapCell, TileRepeatMode, Tileset, TimelapseSettings, TimelapseVideoFormat, ToolId, ViewState } from '@shared/types'
+import type { AnimationCel, AnimationCelSurface, BackgroundPatternId, BlendMode, BrushPaintMode, BrushShape, BrushTexture, CanvasAnchor, ColorMode, DocumentSlice, FillKind, FillMode, FreeTileCelData, FreeTileInstance, FreeTileSourceLayer, GradientDither, ImageBrush, ImageBrushSettings, ImageResizeInterpolation, LayerGroup, LayerMask, LayerStyles, LineKind, MoveKind, OutlineDirections, OutlineKernel, OutlinePosition, PaletteEntry, PaletteSlotLayout, ProceduralBrushId, ProceduralBrushSettings, RasterLayer, RecoveryRecord, RgbaColor, SelectionKind, SelectionMask, SelectionMode, SelectionRect, ShapeKind, ShapeRatio, SpriteDocument, TextCelData, TilemapCell, TileRepeatMode, Tileset, TimelapseSettings, TimelapseVideoFormat, ToolId, ViewState } from '@shared/types'
 import { checkResourceLimit } from '@/core/resource-policy'
 import { beginPixelEdit, commitPixelEdit, HistoryStack, recordPixel, revertPixelEdit, type ContentInvalidationHint, type HistoryEntry, type PixelEdit } from '@/core/history'
-import { animationMaskAt, animationMaskSlotAt, captureDocumentImageResizeSnapshot, compositeRegion, convertDocumentColorMode, createDocument, createId, createLayer, createSparseLayer, createLayerMask as createAttachedLayerMask, documentImageResizeSnapshotBytes, documentVisibleContentBounds, duplicateLayer, expandLayerStyleInvalidationRect, findLayerMask, findOrAddPaletteColor, getDescendantGroupIds, getGroup, getGroupLockingAncestor, getLayerIdsInGroup, getLayer, getActiveLayer, getLayerLockingGroup, isGroupEffectivelyLocked, isLayerEffectivelyLocked, isLayerEffectivelyVisible, isLayerMask, layerContentBounds, markRasterStorageContentChanged, paletteColorIdForCanvas, readLayerColor, readLayerColorAt, resolveAnimationMask, resizeDocumentAt, resizeDocumentImage, restoreDocumentImageResizeSnapshot, writeLayerColor } from '@/core/document'
+import { animationMaskAt, animationMaskSlotAt, cachedLayerContentBounds, captureDocumentImageResizeSnapshot, compositeRegion, convertDocumentColorMode, createDocument, createId, createLayer, createSparseLayer, createLayerMask as createAttachedLayerMask, documentImageResizeSnapshotBytes, documentVisibleContentBounds, duplicateLayer, expandLayerStyleInvalidationRect, findLayerMask, findOrAddPaletteColor, getDescendantGroupIds, getGroup, getGroupLockingAncestor, getLayerIdsInGroup, getLayer, getActiveLayer, getLayerLockingGroup, isGroupEffectivelyLocked, isLayerEffectivelyLocked, isLayerEffectivelyVisible, isLayerMask, layerContentBounds, markRasterStorageContentChanged, normalCompositeLayers, paletteColorIdForCanvas, readLayerColor, readLayerColorAt, resolveAnimationMask, resizeDocumentAt, resizeDocumentImage, restoreDocumentImageResizeSnapshot, writeLayerColor } from '@/core/document'
 import { activateAnimationFrame, addBlankAnimationFrame, animationCelContentSelection, animationCelHasContent, animationCelKey, animationGroupMaskAt, animationLayerAtFrame, cloneAnimationCel, cloneAnimationCelSurface, cloneAnimationCelsForLayer, cloneAnimationGroupMask, cloneDocumentForAnimationFrame, connectAnimationCels, deleteAnimationFrame, disconnectAnimationCels, duplicateAnimationFrame, ensureAnimationDocument, linkAnimationFrameCels, mapAnimationCelBlock, nextAnimationFrameId, parseAnimationCelKey, refreshActiveAnimationFrame, removeAnimationCelsForLayers, resolveAnimationCel, resizeAnimationCelsAt, restoreAnimationCels, setAnimationFrameDuration, setAnimationLoop, syncActiveAnimationFrame, syncActiveAnimationLayer } from '@/core/animation'
 import { flushViewPreview } from '@/core/view-preview-lifecycle'
 import { consumePendingCanvasGestureHistory } from '@/core/canvas-input'
@@ -12,6 +12,7 @@ import { saveProgress } from '@/core/save-progress'
 import { createSelectionBrush, encodeBrushPng } from '@/core/brushes'
 import { createHorizontalSpriteSheetDocument } from '@/core/sprite-sheet'
 import { applySelectionTransform, applySelectionTranslationCommit, applySelectionTranslationPreview, captureSelectionTransform, clampSelection, clearSelection, fillSelectionOrCanvas, flipLayer, flipSelection, flipSelectionTransformSource, moveSelection, outlineSelection, replaceLayerColor, restoreSelectionTranslationPreview, selectionTranslationPreviewEdit, transformSelectionCopy, type SelectionTransformLayerState, type SelectionTransformSource, type SelectionTranslationPreview } from '@/core/tools'
+import { applySelectionTransformLayerState, captureAnimationFrameSelectionTransformStates, selectionTransformLayerForState } from '@/core/selection-transform-targets'
 import { applyRelativeLuminance, colorEquals, packColor, pixelIndex, relativeLuminanceColor, unpackColor } from '@/core/raster'
 import { combineSelection, flipSelectionMask, invertSelectionMask, selectionContains, shiftSelection, transformSelectionMask, type SelectionShearTransform } from '@/core/selection'
 import { recordRecentProject } from '@/core/home-history'
@@ -19,16 +20,17 @@ import { createProceduralBrush, isProceduralBrushId, normalizeProceduralBrushSet
 import { publishBrushLibraryChanged } from '@/core/brush-library-events'
 import { brushLibraryLocation } from '@/core/brush-library-location'
 import { mergeLayerDown, mergeLayerGroup, mergeRasterLayers, mergeVisibleLayers as mergeVisibleDocumentLayers, type LayerMergeSuccess } from '@/core/layer-merge'
-import { applyColorAdjustment, type ColorAdjustment } from '@/core/adjustments'
+import { applyColorAdjustment, applyColorAdjustmentDirect, type ColorAdjustment } from '@/core/adjustments'
 import { assignGroupToGroup as assignGroupToGroupOperation, assignGroupToRoot as assignGroupToRootOperation, assignLayersAboveGroup as assignLayersAboveGroupOperation, assignLayersToGroup as assignLayersToGroupOperation, assignLayersToRoot as assignLayersToRootOperation, canMoveGroupInto, createLayerGroup as createLayerGroupOperation, moveGroupToRootEdge as moveGroupToRootEdgeOperation, moveLayerPanelRows as moveLayerPanelRowsOperation, moveLayersToRootEdge as moveLayersToRootEdgeOperation, positionGroupNextToLayer as positionGroupNextToLayerOperation, reorderGroup as reorderGroupOperation, reorderLayers as reorderLayersOperation, ungroupSelected as ungroupSelectedOperation, type LayerPanelRowMoveTarget } from '@/core/layer-operations'
 import { buildLayerPanelTree, getLayerPanelAncestorGroupIds } from '@/core/layer-panel-layout'
-import { loadEditorPreferences, SAVE_FORMAT_PREFERENCE_KEY, saveImageKindForPreference } from '@/core/file-preferences'
+import { DEFAULT_LAYER_DISPLAY_COLOR_PRESETS, loadEditorPreferences, SAVE_FORMAT_PREFERENCE_KEY, saveImageKindForPreference } from '@/core/file-preferences'
 import { normalizeProjectDisplaySettings, normalizeProjectStatistics, normalizeTimelapseSettings } from '@/core/project-metadata'
 import { clampSliceRect, sanitizeSliceName } from '@/core/slices'
 import { commitPreparedTimelapseSnapshot, createTimelapseCaptureCache, prepareTimelapseSnapshot, type TimelapseCaptureCache, type TimelapseExportOptions } from '@/core/timelapse'
 import { translate, type TranslationKey, type TranslationParams } from '@/core/localization'
 import { resolveClipboardPlacement } from '@/core/clipboard-placement'
 import { cloneProceduralSettings, defaultToolSettings, loadToolSettings, normalizePersistedBrushProfile, saveToolSettings, type BrushTool, type PersistedBrushProfile, type PersistedToolSettings } from '@/core/tool-preferences'
+import { normalizeGapClosingThreshold } from '@/core/contiguous-region'
 import { readStoredString } from '@/core/storage'
 import { persistProjectLayerPanelState } from '@/core/layer-panel-state'
 import { defaultSymmetryCenter, type SymmetryAxes, type SymmetryCenter } from '@/core/symmetry'
@@ -37,18 +39,22 @@ import { cloneTextCelData, convertTextSurface, normalizeTextCelData, rasterizeTe
 import { cloneLayerStyles, hasEnabledLayerStyles, layerStyleOutputBounds, layerStylesEqual, layerStylesHistoryBytes } from '@/core/layer-styles'
 import { renderBackgroundPatternIndexed, renderBackgroundPatternRgba, renderBackgroundTileIndexed, renderBackgroundTileRgba, type BackgroundPatternTile } from '@/core/background-patterns'
 import { activeTilemapCelTarget, applyTilemapDocumentEdit, applyTilemapSelectionCellMove, applyTilemapTilesetDocumentEdit, applyTilesetTileReferences, captureTilesetTileReferences, convertTilemapPixelEdit, rerenderTilesetReferences, rerenderTilesetTileReferences } from '@/core/tilemap-document'
-import { appendBlankTilesetTile, cloneTilemapCelData, cloneTileset, compactTilesetTileSlots, createBlankTileset, createTilemapCelData, deleteTilesetTiles as deleteTilesetTilesData, renderTilemapSurface, reorderTilesetTiles as reorderTilesetTilesData, setTilesetTileSlots as setTilesetTileSlotsData, sliceRasterSurfaceToTilemap, tileRepeatFitZoom, tilemapCellBounds, tilemapCellIndexAtPoint, tilemapCellTranslationForSelection, tilemapEditBytes, tilemapTilesetEditBytes, tilemapTilesetEditHasChanges, wrapSelectionMaskForTileRepeat, writeTilesetTilePixels, type TilemapDrawingMode, type TilemapEdit, type TilemapTilesetEdit } from '@/core/tilemap'
+import { appendBlankTilesetTile, cloneTilemapCelData, cloneTileset, compactTilesetTileSlots, createBlankTileset, createTilemapCelData, deleteTilesetTiles as deleteTilesetTilesData, MAX_TILE_SIZE, renderTilemapSurface, reorderTilesetTiles as reorderTilesetTilesData, setTilesetTileSlots as setTilesetTileSlotsData, sliceRasterSurfaceToTilemap, tileRepeatFitZoom, tilemapCellBounds, tilemapCellIndexAtPoint, tilemapCellTranslationForSelection, tilemapEditBytes, tilemapTilesetEditBytes, tilemapTilesetEditHasChanges, wrapSelectionMaskForTileRepeat, writeTilesetTilePixels, type TilemapDrawingMode, type TilemapEdit, type TilemapTilesetEdit } from '@/core/tilemap'
+import { cloneFreeTileCelData, createFreeTileCelData, freeTileCelDataEqual, freeTileInstanceBounds, freeTileSourceForInstance, renderFreeTileSurface, type FreeTileDrawingMode } from '@/core/free-tile'
+import { activeFreeTileCelTarget, applyFreeTilePlacementEdit, applyFreeTileReferences, applyFreeTileSourceSnapshot, captureFreeTileImageResizeState, captureFreeTileReferences, captureFreeTileSourceReferences, captureFreeTileSourceSnapshot, ensureFreeTileTilesetOwnership, freeTileCelTargetAt, freeTileLayerTilesets, freeTileSourceEditSnapshotBytes, freeTileSourceEditSnapshotsEqual, freeTileSourceOwnerForId, freeTileSourcesForLayer, rasterSurfaceToFreeTileStamps, rerenderFreeTileReferences, rerenderFreeTileSourceReferences, resizeFreeTileDocumentImage, validateFreeTileImageResize, type FreeTileCelTarget, type FreeTilePlacementEdit, type FreeTileSourceEditSnapshot } from '@/core/free-tile-document'
+import { createFreeTileSourceEditRaster, freeTileSourceSnapshotFromEditRaster, freeTileTransformTargetToEditRaster } from '@/core/free-tile-edit'
 import { exportDocumentFile, exportTimelapseFile, openDocumentFile, saveDocumentFile, type ExportOptions, type SaveAsOptions } from './document-file-service'
 import { RecoveryService } from './recovery-service'
-import { ClipboardService, selectionClipboardImage, type LayerClipboard, type LayerCollectionClipboard, type LayerMaskClipboard } from './clipboard-service'
-import { captureAdjustmentSnapshot, captureLayerUi, commitLayerMerge, restoreAdjustmentSnapshot } from './workspace-history'
+import { ClipboardService, selectionClipboardImage, type LayerClipboard, type LayerCollectionClipboard, type LayerMaskClipboard, type SelectionClipboard } from './clipboard-service'
+import { captureAdjustmentSnapshot, captureLayerUi, commitLayerMerge, prepareAdjustmentSnapshotTargets, restoreAdjustmentSnapshot, restorePreparedAdjustmentSnapshotLayer } from './workspace-history'
 import { captureDocumentCanvasResizeSnapshot, captureDocumentColorModeSnapshot, captureDocumentStructureSnapshot, captureLayerContentSnapshot, documentCanvasResizeSnapshotBytes, documentColorModeSnapshotBytes, documentStructureDeltaBytes, layerContentSnapshotBytes, restoreDocumentCanvasResizeSnapshot, restoreDocumentColorModeSnapshot, restoreDocumentStructureSnapshot, restoreLayerContentSnapshot, type DocumentStructureSnapshot } from './workspace-document-history'
 import { activePaintLayer, applyBrushProfile, brushProfileFromSession, clearSelectionBrushPaintColors, cloneSelectionMask, isBrushTool, isToolAvailableForSession, persistToolSettings, remapSelectionBrushColors, rememberBrushProfile, selectedTransformLayersForSession, sessionFromDocument, touch, touchMetadata } from './workspace-session'
 import { addPaletteColor as addPaletteColorCommand, applyPalette as applyPaletteCommand, deletePaletteColors as deletePaletteColorsCommand, gradientPaletteColors as gradientPaletteColorsCommand, gradientPaletteSlots as gradientPaletteSlotsCommand, movePaletteColor as movePaletteColorCommand, reorderPaletteColors as reorderPaletteColorsCommand, reversePaletteColors as reversePaletteColorsCommand, selectPaletteColor as selectPaletteColorCommand, selectPaletteColors as selectPaletteColorsCommand, sortPaletteColors as sortPaletteColorsCommand, updatePaletteColor as updatePaletteColorCommand } from './workspace-palette'
 import { DocumentTransactionRegistry } from './document-transactions'
+import { beginFreeTileInstancePropertiesTransaction as beginFreeTileInstancePropertiesTransactionCommand, beginFreeTileSourcePropertiesTransaction as beginFreeTileSourcePropertiesTransactionCommand, cancelFreeTileInstancePropertiesTransaction as cancelFreeTileInstancePropertiesTransactionCommand, cancelFreeTileSourcePropertiesTransaction as cancelFreeTileSourcePropertiesTransactionCommand, commitFreeTileInstancePropertiesTransaction as commitFreeTileInstancePropertiesTransactionCommand, commitFreeTileSourcePropertiesTransaction as commitFreeTileSourcePropertiesTransactionCommand, previewFreeTileInstancePropertiesTransaction as previewFreeTileInstancePropertiesTransactionCommand, previewFreeTileSourcePropertiesTransaction as previewFreeTileSourcePropertiesTransactionCommand } from './workspace-free-tile-properties'
 import { beginLayerPropertiesTransaction as beginLayerPropertiesTransactionCommand, cancelLayerPropertiesTransaction as cancelLayerPropertiesTransactionCommand, commitLayerPropertiesTransaction as commitLayerPropertiesTransactionCommand, previewLayerPropertiesTransaction as previewLayerPropertiesTransactionCommand, type LayerPropertyField, type LayerPropertyTarget, type LayerPropertyValues } from './workspace-layer-properties'
 import { beginLayerMoveDuplicatePreview as beginLayerMoveDuplicatePreviewCommand, cancelLayerMovePreview as cancelLayerMovePreviewCommand, createLayerMoveHistoryEntry, previewLayerMove as previewLayerMoveCommand, type LayerMoveDuplicateResult, type LayerMoveState } from './workspace-layer-move'
-import type { ColorReplacementPreview, ColorReplacementTarget, TextCelPreview, TextLayerDraftTarget, WorkspaceState } from './workspace-state'
+import type { ColorReplacementPreview, ColorReplacementTarget, FreeTileInstancePropertyChanges, TextCelPreview, TextLayerDraftTarget, WorkspaceState } from './workspace-state'
 import type { PaletteSortDirection, PaletteSortMode } from '@/core/palette'
 import type { AdjustmentSnapshot, AnimationFrameClipboardItem, AnimationMaskClipboardItem, AppDialog, CanvasResizePreview, DocumentSession, FloatingPaste, OutlinePreview, SelectionPivot } from './workspace-types'
 
@@ -56,7 +62,7 @@ export type { ExportOptions, SaveAsOptions } from './document-file-service'
 export type { AdjustmentSnapshot, AppDialog, CanvasResizePreview, DialogChoice, DocumentSession, FloatingPaste, OutlinePreview, SelectionPivot } from './workspace-types'
 export type { LayerPropertyField, LayerPropertyTarget, LayerPropertyValues } from './workspace-layer-properties'
 export type { LayerMoveDuplicateResult, LayerMoveState } from './workspace-layer-move'
-export type { ColorReplacementPreview, ColorReplacementTarget, TextCelPreview, TextLayerDraftTarget, TilemapLayerOptions, WorkspaceState } from './workspace-state'
+export type { ColorReplacementPreview, ColorReplacementTarget, FreeTileInstancePropertyChanges, FreeTileLayerOptions, TextCelPreview, TextLayerDraftTarget, TilemapLayerOptions, WorkspaceState } from './workspace-state'
 
 function activeSession(state: WorkspaceState): DocumentSession | null {
   return state.sessions.find((session) => session.document.id === state.activeId) ?? null
@@ -88,6 +94,7 @@ interface TextLayerDraftState {
   beforeSelection: ReturnType<typeof captureLayerUi>
   selectedAnimationCellKeys: string[]
   animationCellSelectionAnchorKey: string | null
+  animationCellSelectionExplicit: boolean
   selectedAnimationFrameIds: string[]
   animationFrameSelectionAnchorId: string | null
   dirty: boolean
@@ -174,6 +181,18 @@ const restoreSelectionTransformLayerPreview = (document: SpriteDocument, layerSt
   else if (layerState.previewEdit) revertPixelEdit(document, layerState.previewEdit)
 }
 
+const previewFloatingFreeTileSource = (session: DocumentSession, pending: FloatingPaste): boolean => {
+  if (!pending.freeTile) return false
+  const changed = applyFreeTileSourceSnapshot(session.document, freeTileSourceSnapshotFromEditRaster(pending.freeTile.edit))
+  if (!changed) return false
+  const fromRevision = session.contentRevision
+  session.revision += 1
+  session.contentRevision += 1
+  session.layersPanelRevision += 1
+  session.contentInvalidation = { kind: 'full', fromRevision, revision: session.contentRevision }
+  return true
+}
+
 const restoreFloatingPreview = (session: DocumentSession): void => {
   const pending = session.pendingPaste
   if (!pending || pending.previewDeferred) return
@@ -181,8 +200,9 @@ const restoreFloatingPreview = (session: DocumentSession): void => {
     for (const layerState of pending.layers) restoreSelectionTransformLayerPreview(session.document, layerState)
     return
   }
-  if (pending.translationPreview) restoreSelectionTranslationPreview(session.document, pending.translationPreview)
-  else if (pending.previewEdit) revertPixelEdit(session.document, pending.previewEdit)
+  const previewDocument = pending.freeTile?.edit.document ?? session.document
+  if (pending.translationPreview) restoreSelectionTranslationPreview(previewDocument, pending.translationPreview)
+  else if (pending.previewEdit) revertPixelEdit(previewDocument, pending.previewEdit)
 }
 
 const selectionMasksEqual = (left: SelectionMask | null, right: SelectionMask | null): boolean => {
@@ -364,10 +384,10 @@ const cloneAnimationCelsForLayerIds = (document: SpriteDocument, layerIds: reado
     })
 }
 
-type LayerContentKind = 'raster' | 'text' | 'tilemap'
+type LayerContentKind = 'raster' | 'text' | 'tilemap' | 'free-tile'
 
 const layerContentKind = (layer: RasterLayer | undefined): LayerContentKind => layer?.kind ?? 'raster'
-const animationCelContentKind = (cel: AnimationCel): LayerContentKind => cel.tilemap ? 'tilemap' : cel.text ? 'text' : 'raster'
+const animationCelContentKind = (cel: AnimationCel): LayerContentKind => cel.tilemap ? 'tilemap' : cel.freeTiles ? 'free-tile' : cel.text ? 'text' : 'raster'
 
 type LayerRowSelectionMode = boolean | 'replace' | 'toggle' | 'range'
 
@@ -379,6 +399,7 @@ const selectedDirectLayerRows = (session: DocumentSession): string[] =>
 
 const ensureTileSelection = (session: DocumentSession): void => {
   if (session.tilemapMode !== 'create' && session.tilemapMode !== 'hybrid' && session.tilemapMode !== 'paint' && session.tilemapMode !== 'edit') session.tilemapMode = 'hybrid'
+  if (session.freeTileMode !== 'paint' && session.freeTileMode !== 'edit') session.freeTileMode = 'paint'
   const tilesets = session.document.tilesets ?? []
   if (tilesets.length === 0) {
     session.selectedTilesetId = null
@@ -386,10 +407,13 @@ const ensureTileSelection = (session: DocumentSession): void => {
     session.secondaryTileId = null
     return
   }
-  const target = activeTilemapCelTarget(session.document)
-  const compatible = target
-    ? tilesets.filter((tileset) => tileset.tileWidth === target.tilemap.tileWidth && tileset.tileHeight === target.tilemap.tileHeight)
-    : tilesets
+  const freeTarget = activeFreeTileCelTarget(session.document)
+  const target = freeTarget ? null : activeTilemapCelTarget(session.document)
+  const compatible = freeTarget
+    ? tilesets.filter((tileset) => freeTarget.sources.some((source) => source.tileset.id === tileset.id))
+    : target
+      ? tilesets.filter((tileset) => tileset.tileWidth === target.tilemap.tileWidth && tileset.tileHeight === target.tilemap.tileHeight)
+      : tilesets
   const selected = compatible.find((tileset) => tileset.id === session.selectedTilesetId) ?? compatible[0] ?? null
   session.selectedTilesetId = selected?.id ?? null
   session.selectedTileId = selected?.tileIds.includes(session.selectedTileId ?? '')
@@ -400,9 +424,102 @@ const ensureTileSelection = (session: DocumentSession): void => {
     : selected?.tileIds[0] ?? null
 }
 
+const clearFreeTileInstanceSelection = (session: DocumentSession): void => {
+  session.selectedFreeTileInstanceId = null
+  session.selectedFreeTileInstanceIds = []
+  session.freeTileInstanceSelectionAnchorId = null
+}
+
+const setFreeTileInstanceSelectionState = (
+  session: DocumentSession,
+  instanceIds: readonly string[],
+  primaryInstanceId: string | null,
+  anchorInstanceId: string | null = primaryInstanceId
+): void => {
+  const target = activeFreeTileCelTarget(session.document)
+  if (!target) {
+    clearFreeTileInstanceSelection(session)
+    return
+  }
+  const validIds = new Set(target.freeTiles.instances.map((instance) => instance.id))
+  const selectedIds = [...new Set(instanceIds)].filter((id) => validIds.has(id))
+  const primaryId = primaryInstanceId && validIds.has(primaryInstanceId)
+    ? primaryInstanceId
+    : selectedIds.at(-1) ?? null
+  if (!primaryId) {
+    clearFreeTileInstanceSelection(session)
+    return
+  }
+  if (!selectedIds.includes(primaryId)) selectedIds.push(primaryId)
+  session.selectedFreeTileInstanceId = primaryId
+  session.selectedFreeTileInstanceIds = selectedIds
+  session.freeTileInstanceSelectionAnchorId = anchorInstanceId && validIds.has(anchorInstanceId)
+    ? anchorInstanceId
+    : primaryId
+}
+
+const ensureFreeTileInstanceSelection = (session: DocumentSession): void => {
+  const primaryId = session.selectedFreeTileInstanceId
+  if (!primaryId) {
+    clearFreeTileInstanceSelection(session)
+    return
+  }
+  setFreeTileInstanceSelectionState(
+    session,
+    session.selectedFreeTileInstanceIds ?? [],
+    primaryId,
+    session.freeTileInstanceSelectionAnchorId
+  )
+}
+
+const syncFreeTileInstanceSourceSelection = (
+  session: DocumentSession,
+  instanceId: string,
+  role: 'primary' | 'secondary' = 'primary'
+): boolean => {
+  const target = activeFreeTileCelTarget(session.document)
+  const instance = target?.freeTiles.instances.find((candidate) => candidate.id === instanceId)
+  const source = target && instance ? freeTileSourceForInstance(target.sources, instance) : null
+  const tileId = source?.tileset.tileIds[0] ?? null
+  if (!instance || !source || !tileId) return false
+  session.selectedTilesetId = source.tileset.id
+  if (role === 'secondary') session.secondaryTileId = tileId
+  else session.selectedTileId = tileId
+  session.selectedTileId = source.tileset.tileIds.includes(session.selectedTileId ?? '') ? session.selectedTileId : tileId
+  session.secondaryTileId = source.tileset.tileIds.includes(session.secondaryTileId ?? '') ? session.secondaryTileId : tileId
+  return true
+}
+
 const requestTilesetPanelVisibility = (visible: boolean): void => {
   window.dispatchEvent(new CustomEvent(`moonsprite:${visible ? 'show' : 'hide'}-workspace-panel`, { detail: { id: 'tileset' } }))
 }
+
+const documentUsesTilesetPanel = (document: SpriteDocument | null | undefined): boolean =>
+  Boolean(document?.layers.some((layer) => layer.kind === 'tilemap' || layer.kind === 'free-tile'))
+
+const defaultFreeTileSourceDisplayColor = (index: number): RgbaColor => {
+  const presets = loadEditorPreferences().layerDisplayColorPresets
+  const available = presets.length > 0 ? presets : DEFAULT_LAYER_DISPLAY_COLOR_PRESETS
+  return { ...available[index % available.length] }
+}
+
+const cloneFreeTileSourceLayer = (source: FreeTileSourceLayer): FreeTileSourceLayer => ({
+  ...source,
+  displayColor: source.displayColor ? { ...source.displayColor } : undefined
+})
+
+const freeTileSourceLayerEqual = (left: FreeTileSourceLayer, right: FreeTileSourceLayer): boolean =>
+  left.id === right.id
+  && left.name === right.name
+  && left.tilesetId === right.tilesetId
+  && left.description === right.description
+  && left.visible === right.visible
+  && left.locked === right.locked
+  && left.opacity === right.opacity
+  && left.blendMode === right.blendMode
+  && left.offsetX === right.offsetX
+  && left.offsetY === right.offsetY
+  && JSON.stringify(left.displayColor ?? null) === JSON.stringify(right.displayColor ?? null)
 
 interface IndexedTilesetSnapshot {
   index: number
@@ -411,36 +528,66 @@ interface IndexedTilesetSnapshot {
 
 const tilemapTilesetBytes = (tileset: Tileset): number => tileset.pixels.byteLength + tileset.tileIds.length * 32 + (tileset.tileSlots?.length ?? tileset.tileIds.length) * 8
 
-const cloneOwnedTilemapTilesets = (
+const cloneOwnedLayerTilesets = (
   document: SpriteDocument,
   pairs: readonly { source: RasterLayer; target: RasterLayer }[]
 ): Tileset[] => {
   const timeline = ensureAnimationDocument(document)
   const created: Tileset[] = []
   for (const { source, target } of pairs) {
-    if (source.kind !== 'tilemap' || target.kind !== 'tilemap' || !source.tilemapTilesetId) continue
-    const sourceTileset = document.tilesets?.find((tileset) => tileset.id === source.tilemapTilesetId)
-    if (!sourceTileset) continue
-    const tileset = { ...cloneTileset(sourceTileset), id: createId('tileset'), name: target.name }
-    target.tilemapTilesetId = tileset.id
-    for (const cel of timeline.cels) {
-      if (cel.layerId !== target.id || !cel.tilemap) continue
-      for (const cell of cel.tilemap.cells) if (cell?.tilesetId === sourceTileset.id) cell.tilesetId = tileset.id
+    if (source.kind !== target.kind || (target.kind !== 'tilemap' && target.kind !== 'free-tile')) continue
+    if (source.kind === 'tilemap' && target.kind === 'tilemap') {
+      const sourceTileset = document.tilesets?.find((tileset) => tileset.id === source.tilemapTilesetId)
+      if (!sourceTileset) continue
+      const tileset = { ...cloneTileset(sourceTileset), id: createId('tileset'), name: target.name }
+      target.tilemapTilesetId = tileset.id
+      for (const cel of timeline.cels) {
+        if (cel.layerId !== target.id || !cel.tilemap) continue
+        for (const cell of cel.tilemap.cells) if (cell?.tilesetId === sourceTileset.id) cell.tilesetId = tileset.id
+      }
+      created.push(tileset)
+      continue
     }
-    created.push(tileset)
+    if (source.kind !== 'free-tile' || target.kind !== 'free-tile') continue
+    const sourceIdMap = new Map<string, string>()
+    target.freeTileSources = (source.freeTileSources ?? []).flatMap((sourceLayer) => {
+      const sourceTileset = document.tilesets?.find((tileset) => tileset.id === sourceLayer.tilesetId)
+      if (!sourceTileset) return []
+      const nextSourceId = createId('free-tile-source')
+      const tileset = { ...cloneTileset(sourceTileset), id: createId('tileset'), name: sourceLayer.name }
+      sourceIdMap.set(sourceLayer.id, nextSourceId)
+      created.push(tileset)
+      return [{ ...cloneFreeTileSourceLayer(sourceLayer), id: nextSourceId, tilesetId: tileset.id }]
+    })
+    delete target.freeTileTilesetId
+    for (const cel of timeline.cels) {
+      if (cel.layerId !== target.id || !cel.freeTiles) continue
+      cel.freeTiles.instances = cel.freeTiles.instances.flatMap((instance) => {
+        const sourceId = instance.sourceId ? sourceIdMap.get(instance.sourceId) : undefined
+        return sourceId ? [{ ...instance, sourceId, tileId: undefined }] : []
+      })
+    }
   }
   if (created.length > 0) document.tilesets = [...(document.tilesets ?? []), ...created]
   return created
 }
 
-const removableOwnedTilesets = (document: SpriteDocument, removedLayerIds: ReadonlySet<string>): IndexedTilesetSnapshot[] => {
-  const candidateIds = new Set(document.layers
-    .filter((layer) => removedLayerIds.has(layer.id) && layer.kind === 'tilemap' && layer.tilemapTilesetId)
-    .map((layer) => layer.tilemapTilesetId!))
+const removableOwnedTilesets = (
+  document: SpriteDocument,
+  removedLayerIds: ReadonlySet<string>,
+  ownerLayers: readonly RasterLayer[] = document.layers
+): IndexedTilesetSnapshot[] => {
+  const candidateIds = new Set(ownerLayers
+    .filter((layer) => removedLayerIds.has(layer.id))
+    .flatMap((layer) => layer.kind === 'tilemap' && layer.tilemapTilesetId
+      ? [layer.tilemapTilesetId]
+      : layer.kind === 'free-tile' ? (layer.freeTileSources ?? []).map((source) => source.tilesetId) : []))
   if (candidateIds.size === 0) return []
   const retainedOwnerIds = new Set(document.layers
-    .filter((layer) => !removedLayerIds.has(layer.id) && layer.tilemapTilesetId)
-    .map((layer) => layer.tilemapTilesetId!))
+    .filter((layer) => !removedLayerIds.has(layer.id))
+    .flatMap((layer) => layer.kind === 'tilemap' && layer.tilemapTilesetId
+      ? [layer.tilemapTilesetId]
+      : layer.kind === 'free-tile' ? (layer.freeTileSources ?? []).map((source) => source.tilesetId) : []))
   const retainedReferenceIds = new Set((document.animation?.cels ?? [])
     .filter((cel) => !removedLayerIds.has(cel.layerId) && cel.tilemap)
     .flatMap((cel) => cel.tilemap!.cells.flatMap((cell) => cell ? [cell.tilesetId] : [])))
@@ -462,10 +609,30 @@ const restoreTilesetSnapshots = (document: SpriteDocument, snapshots: readonly I
   }
 }
 
+const commitLayerMergeWithOwnedTilesets = (
+  session: DocumentSession,
+  beforeDocument: DocumentStructureSnapshot,
+  beforeUi: ReturnType<typeof captureLayerUi>,
+  result: LayerMergeSuccess,
+  label: string
+): boolean => {
+  const hadTilesetPanelContent = beforeDocument.layers.some((layer) => layer.kind === 'tilemap' || layer.kind === 'free-tile')
+  const removedLayerIds = new Set(result.removedLayerIds)
+  const removedFreeTileLayerIds = new Set(beforeDocument.layers
+    .filter((layer) => removedLayerIds.has(layer.id) && layer.kind === 'free-tile')
+    .map((layer) => layer.id))
+  removeTilesetSnapshots(session.document, removableOwnedTilesets(session.document, removedFreeTileLayerIds, beforeDocument.layers))
+  commitLayerMerge(session, beforeDocument, beforeUi, result, label)
+  return hadTilesetPanelContent && !documentUsesTilesetPanel(session.document)
+}
+
 const applyLayerName = (document: SpriteDocument, layer: RasterLayer, name: string): void => {
   layer.name = name
-  if (layer.kind !== 'tilemap' || !layer.tilemapTilesetId) return
-  const tileset = document.tilesets?.find((candidate) => candidate.id === layer.tilemapTilesetId)
+  const tilesetId = layer.kind === 'tilemap' ? layer.tilemapTilesetId : undefined
+  if (!tilesetId) return
+  const tilemapOwners = document.layers.filter((candidate) => candidate.kind === 'tilemap' && candidate.tilemapTilesetId === tilesetId)
+  if (tilemapOwners.length > 1) return
+  const tileset = document.tilesets?.find((candidate) => candidate.id === tilesetId)
   if (tileset) tileset.name = name
 }
 
@@ -492,6 +659,7 @@ const ensureLayerSelection = (session: DocumentSession): void => {
     session.layerSelectionAnchorId = session.selectedGroupIds.at(-1) ?? session.selectedLayerIds.at(-1) ?? fallbackLayerId ?? null
   }
   ensureTileSelection(session)
+  ensureFreeTileInstanceSelection(session)
 }
 
 const applyLayerCurrentFrameCellSelection = (session: DocumentSession, layerIds: readonly string[], anchorLayerId: string): void => {
@@ -504,6 +672,7 @@ const applyLayerCurrentFrameCellSelection = (session: DocumentSession, layerIds:
   session.animationMaskCellSelectionAnchorKey = null
   session.selectedAnimationCellKeys = selectedKeys
   session.animationCellSelectionAnchorKey = selectedKeys.includes(anchorKey) ? anchorKey : selectedKeys.at(-1) ?? null
+  session.animationCellSelectionExplicit = false
 }
 
 const clearAnimationItemSelection = (session: DocumentSession): void => {
@@ -511,6 +680,7 @@ const clearAnimationItemSelection = (session: DocumentSession): void => {
   session.animationFrameSelectionAnchorId = null
   session.selectedAnimationCellKeys = []
   session.animationCellSelectionAnchorKey = null
+  session.animationCellSelectionExplicit = false
   session.selectedAnimationMaskCellKeys = []
   session.animationMaskCellSelectionAnchorKey = null
 }
@@ -524,12 +694,102 @@ const assignLayerStyles = (layer: RasterLayer | LayerGroup, styles: LayerStyles 
   else delete layer.layerStyles
 }
 
+const layerStyleOwnerForTarget = (document: SpriteDocument, target: LayerPropertyTarget): RasterLayer | LayerGroup | null =>
+  target.kind === 'layer'
+    ? document.layers.find((layer) => layer.id === target.id) ?? null
+    : document.groups.find((group) => group.id === target.id) ?? null
+
+const uniqueLayerStyleTargets = (document: SpriteDocument, targets: readonly LayerPropertyTarget[]): LayerPropertyTarget[] => {
+  const seen = new Set<string>()
+  return targets.filter((target) => {
+    const key = `${target.kind}:${target.id}`
+    if (seen.has(key) || !layerStyleOwnerForTarget(document, target)) return false
+    seen.add(key)
+    return true
+  })
+}
+
 const unionRects = (left: SelectionRect, right: SelectionRect): SelectionRect => {
   const x = Math.min(left.x, right.x)
   const y = Math.min(left.y, right.y)
   const toX = Math.max(left.x + left.width, right.x + right.width)
   const toY = Math.max(left.y + left.height, right.y + right.height)
   return { x, y, width: toX - x, height: toY - y }
+}
+
+const layerReorderInvalidation = (
+  document: SpriteDocument,
+  beforeRenderOrder: readonly RasterLayer[] | null,
+  afterRenderOrder: readonly RasterLayer[] | null
+): ContentInvalidationHint => {
+  if (!beforeRenderOrder || !afterRenderOrder || beforeRenderOrder.length !== afterRenderOrder.length) return { kind: 'full' }
+  const beforePositions = new Map(beforeRenderOrder.map((layer, index) => [layer.id, index]))
+  if (afterRenderOrder.some((layer) => !beforePositions.has(layer.id))) return { kind: 'full' }
+  const changedLayers = afterRenderOrder.filter((layer, index) => beforePositions.get(layer.id) !== index)
+  if (changedLayers.length === 0) return { kind: 'full' }
+  let rect: SelectionRect | null = null
+  for (const layer of changedLayers) {
+    const bounds = cachedLayerContentBounds(document, layer)
+    if (bounds === undefined) return { kind: 'full' }
+    if (!bounds) continue
+    const expanded = expandLayerStyleInvalidationRect(document, bounds, [layer.id])
+    rect = rect ? unionRects(rect, expanded) : expanded
+  }
+  return rect ? { kind: 'region', rect } : { kind: 'full' }
+}
+
+const layerVisibilityInvalidation = (document: SpriteDocument, layer: RasterLayer): ContentInvalidationHint => {
+  const bounds = cachedLayerContentBounds(document, layer)
+  return bounds
+    ? { kind: 'region', rect: expandLayerStyleInvalidationRect(document, bounds, [layer.id]) }
+    : { kind: 'full' }
+}
+
+const groupVisibilityInvalidation = (document: SpriteDocument, groupId: string): ContentInvalidationHint => {
+  if (!normalCompositeLayers(document)) return { kind: 'full' }
+  const layerIds = new Set(getLayerIdsInGroup(document, groupId))
+  let rect: SelectionRect | null = null
+  for (const layer of document.layers) {
+    if (!layerIds.has(layer.id)) continue
+    const bounds = cachedLayerContentBounds(document, layer)
+    if (bounds === undefined) return { kind: 'full' }
+    if (!bounds) continue
+    const expanded = expandLayerStyleInvalidationRect(document, bounds, [layer.id])
+    rect = rect ? unionRects(rect, expanded) : expanded
+  }
+  return rect ? { kind: 'region', rect } : { kind: 'full' }
+}
+
+const commitVisibilityChange = (
+  session: DocumentSession,
+  target: { visible: boolean },
+  label: string,
+  invalidationForCurrentFrame: () => ContentInvalidationHint,
+  affectedLayerIds?: readonly string[],
+  refreshPanelForRegion = false
+): void => {
+  const before = target.visible
+  target.visible = !before
+  const invalidation = invalidationForCurrentFrame()
+  let entry: HistoryEntry
+  const apply = (visible: boolean): void => {
+    target.visible = visible
+    entry.invalidation = invalidationForCurrentFrame()
+    if (refreshPanelForRegion && entry.invalidation.kind === 'region') session.layersPanelRevision += 1
+  }
+  entry = {
+    label,
+    bytes: 8,
+    undo: () => { apply(before) },
+    redo: () => { apply(!before) },
+    invalidation,
+    affectedLayerIds: affectedLayerIds ? [...affectedLayerIds] : undefined,
+    requiresAnimationSync: false
+  }
+  if (refreshPanelForRegion && invalidation.kind === 'region') session.layersPanelRevision += 1
+  session.history.push(entry)
+  touch(session, true, invalidation)
+  recordDocumentOperation(session)
 }
 
 const applyLayerRowSelection = (session: DocumentSession, layerIds: readonly string[], groupIds: readonly string[], focus: { kind: 'layer' | 'group'; id: string }): void => {
@@ -551,8 +811,11 @@ const applyLayerRowSelection = (session: DocumentSession, layerIds: readonly str
     if (member) session.document.activeLayerId = member.id
   }
   const activeLayer = session.document.layers.find((layer) => layer.id === session.document.activeLayerId)
-  const ownedTileset = activeLayer?.kind === 'tilemap' && activeLayer.tilemapTilesetId
-    ? session.document.tilesets?.find((tileset) => tileset.id === activeLayer.tilemapTilesetId)
+  const ownedTilesetId = activeLayer?.kind === 'tilemap'
+    ? activeLayer.tilemapTilesetId
+    : activeLayer?.kind === 'free-tile' ? activeLayer.freeTileSources?.[0]?.tilesetId : undefined
+  const ownedTileset = ownedTilesetId
+    ? session.document.tilesets?.find((tileset) => tileset.id === ownedTilesetId)
     : null
   if (ownedTileset) {
     session.selectedTilesetId = ownedTileset.id
@@ -716,6 +979,293 @@ const invalidateColorReplacementPreview = (session: DocumentSession): void => {
 const tr = (key: TranslationKey, params?: TranslationParams): string => translate(loadEditorPreferences().language, key, params)
 const paletteEditSynchronizationLocked = (): boolean => readStoredString('moonsprite.palette-edit-locked') !== 'false'
 const paletteColorSynchronizationEnabled = (): boolean => readStoredString('moonsprite.palette-sync-colors') === 'true'
+
+interface FreeTileRasterPasteResult {
+  createdSources: FreeTileSourceLayer[]
+  createdTilesets: Tileset[]
+  createdInstances: FreeTileInstance[]
+  edit: FreeTilePlacementEdit
+  pixelCount: number
+}
+
+interface FreeTilePasteSelectionState {
+  selectedTilesetId: string | null
+  selectedTileId: string | null
+  secondaryTileId: string | null
+  selectedFreeTileInstanceId: string | null
+  selectedFreeTileInstanceIds: string[]
+  freeTileInstanceSelectionAnchorId: string | null
+  freeTileMode: FreeTileDrawingMode
+}
+
+const captureFreeTilePasteSelectionState = (session: DocumentSession): FreeTilePasteSelectionState => ({
+  selectedTilesetId: session.selectedTilesetId,
+  selectedTileId: session.selectedTileId,
+  secondaryTileId: session.secondaryTileId,
+  selectedFreeTileInstanceId: session.selectedFreeTileInstanceId,
+  selectedFreeTileInstanceIds: [...session.selectedFreeTileInstanceIds],
+  freeTileInstanceSelectionAnchorId: session.freeTileInstanceSelectionAnchorId,
+  freeTileMode: session.freeTileMode
+})
+
+const applyFreeTilePasteSelectionState = (session: DocumentSession, state: FreeTilePasteSelectionState): void => {
+  session.selectedTilesetId = state.selectedTilesetId
+  session.selectedTileId = state.selectedTileId
+  session.secondaryTileId = state.secondaryTileId
+  session.selectedFreeTileInstanceId = state.selectedFreeTileInstanceId
+  session.selectedFreeTileInstanceIds = [...state.selectedFreeTileInstanceIds]
+  session.freeTileInstanceSelectionAnchorId = state.freeTileInstanceSelectionAnchorId
+  session.freeTileMode = state.freeTileMode
+}
+
+const commitFreeTileSourceEditInSession = (
+  session: DocumentSession,
+  sourceId: string,
+  before: FreeTileSourceEditSnapshot,
+  after: FreeTileSourceEditSnapshot,
+  label: string,
+  placementEdit?: FreeTilePlacementEdit,
+  selectionEdit?: {
+    before: SelectionMask | null
+    after: SelectionMask | null
+    beforePivot: SelectionPivot | null
+    afterPivot: SelectionPivot | null
+  }
+): HistoryEntry | null => {
+  const sourceChanged = !freeTileSourceEditSnapshotsEqual(before, after)
+  const placementChanged = Boolean(placementEdit && !freeTileCelDataEqual(placementEdit.before, placementEdit.after))
+  const beforeSelection = cloneSelectionMask(selectionEdit?.before ?? null)
+  const afterSelection = cloneSelectionMask(selectionEdit?.after ?? null)
+  const beforeSelectionPivot = selectionEdit?.beforePivot ? { ...selectionEdit.beforePivot } : null
+  const afterSelectionPivot = selectionEdit?.afterPivot ? { ...selectionEdit.afterPivot } : null
+  const selectionChanged = Boolean(selectionEdit && (
+    !selectionMasksEqual(beforeSelection, afterSelection)
+    || beforeSelectionPivot?.x !== afterSelectionPivot?.x
+    || beforeSelectionPivot?.y !== afterSelectionPivot?.y
+  ))
+  if (!sourceChanged && !placementChanged && !selectionChanged) return null
+  const owner = freeTileSourceOwnerForId(session.document, sourceId)
+  if (!owner || owner.source.id !== before.sourceId || owner.source.id !== after.sourceId) return null
+  const applyBefore = (): void => {
+    if (placementEdit) applyFreeTilePlacementEdit(session.document, placementEdit, 'before')
+    if (sourceChanged) applyFreeTileSourceSnapshot(session.document, before)
+    if (selectionEdit) {
+      session.selection = cloneSelectionMask(beforeSelection)
+      session.selectionPivot = beforeSelectionPivot ? { ...beforeSelectionPivot } : null
+    }
+  }
+  const applyAfter = (): void => {
+    if (sourceChanged) applyFreeTileSourceSnapshot(session.document, after)
+    if (placementEdit) applyFreeTilePlacementEdit(session.document, placementEdit, 'after')
+    if (selectionEdit) {
+      session.selection = cloneSelectionMask(afterSelection)
+      session.selectionPivot = afterSelectionPivot ? { ...afterSelectionPivot } : null
+    }
+  }
+  applyAfter()
+  const contentChanged = sourceChanged || placementChanged
+  const entry: HistoryEntry = {
+    label,
+    bytes: freeTileSourceEditSnapshotBytes(before) + freeTileSourceEditSnapshotBytes(after)
+      + (placementEdit ? (placementEdit.before.instances.length + placementEdit.after.instances.length) * 72 : 0)
+      + (beforeSelection?.mask?.byteLength ?? 0)
+      + (afterSelection?.mask?.byteLength ?? 0)
+      + (selectionEdit ? 64 : 0),
+    undo: applyBefore,
+    redo: applyAfter,
+    ...(contentChanged ? { invalidation: { kind: 'full' as const } } : {}),
+    affectedLayerIds: [owner.layer.id],
+    documentChanged: contentChanged,
+    contentChanged,
+    requiresAnimationSync: false
+  }
+  session.history.push(entry)
+  if (contentChanged) {
+    touch(session, true, { kind: 'full' })
+    recordDocumentOperation(session, { stroke: true })
+  }
+  return entry
+}
+
+const selectionClipboardSurface = (clipboard: SelectionClipboard, x: number, y: number): AnimationCelSurface => {
+  const pixels = new Uint8ClampedArray(clipboard.width * clipboard.height * 4)
+  for (let index = 0; index < clipboard.pixels.length; index += 1) {
+    if (clipboard.mask && clipboard.mask[index] !== 1) continue
+    const color = unpackColor(clipboard.pixels[index])
+    const offset = index * 4
+    pixels[offset] = color.r
+    pixels[offset + 1] = color.g
+    pixels[offset + 2] = color.b
+    pixels[offset + 3] = color.a
+  }
+  return { format: 'rgba', width: clipboard.width, height: clipboard.height, offsetX: x, offsetY: y, pixels }
+}
+
+const pasteRasterSurfaceIntoFreeTileTarget = (
+  document: SpriteDocument,
+  target: FreeTileCelTarget,
+  surface: AnimationCelSurface
+): FreeTileRasterPasteResult | null => {
+  const stamps = rasterSurfaceToFreeTileStamps(surface, document.palette)
+  if (stamps.length === 0) return null
+  const existingSources = target.layer.freeTileSources ?? []
+  const usedNames = new Set(existingSources.map((source) => source.name))
+  const createdSources: FreeTileSourceLayer[] = []
+  const createdTilesets: Tileset[] = []
+  const createdInstances: FreeTileInstance[] = []
+  let sourceNumber = 1
+  let pixelCount = 0
+  for (const stamp of stamps) {
+    while (usedNames.has(tr('workspace.freeTile.sourceName', { index: sourceNumber }))) sourceNumber += 1
+    const name = tr('workspace.freeTile.sourceName', { index: sourceNumber })
+    sourceNumber += 1
+    usedNames.add(name)
+    const sourceId = createId('free-tile-source')
+    const tileId = createId('tile')
+    const tileset = createBlankTileset(createId('tileset'), name, stamp.width, stamp.height, tileId, 1)
+    if (!writeTilesetTilePixels(tileset, tileId, stamp.pixels)) return null
+    const source: FreeTileSourceLayer = {
+      id: sourceId,
+      name,
+      tilesetId: tileset.id,
+      displayColor: defaultFreeTileSourceDisplayColor(existingSources.length + createdSources.length),
+      visible: true,
+      locked: false,
+      opacity: 1,
+      blendMode: 'normal',
+      offsetX: 0,
+      offsetY: 0
+    }
+    const instance: FreeTileInstance = {
+      id: createId('free-tile-instance'),
+      sourceId,
+      x: stamp.x - target.surface.offsetX,
+      y: stamp.y - target.surface.offsetY,
+      opacity: 1,
+      blendMode: 'normal'
+    }
+    createdSources.push(source)
+    createdTilesets.push(tileset)
+    createdInstances.push(instance)
+    for (let offset = 3; offset < stamp.pixels.length; offset += 4) if (stamp.pixels[offset] > 0) pixelCount += 1
+  }
+  target.layer.freeTileSources = [...existingSources.map(cloneFreeTileSourceLayer), ...createdSources.map(cloneFreeTileSourceLayer)]
+  document.tilesets = [...(document.tilesets ?? []), ...createdTilesets]
+  const before = cloneFreeTileCelData(target.freeTiles)
+  const after: FreeTileCelData = { instances: [...before.instances, ...createdInstances] }
+  const edit: FreeTilePlacementEdit = { layerId: target.layer.id, frameId: target.cel.frameId, before, after, dirtyRect: null }
+  applyFreeTilePlacementEdit(document, edit, 'after')
+  return { createdSources, createdTilesets, createdInstances, edit, pixelCount }
+}
+
+const pasteSelectionClipboardIntoFreeTile = (
+  session: DocumentSession,
+  target: FreeTileCelTarget,
+  clipboard: SelectionClipboard,
+  x: number,
+  y: number
+): FreeTileRasterPasteResult | null => {
+  const layer = target.layer
+  const beforeSources = (layer.freeTileSources ?? []).map(cloneFreeTileSourceLayer)
+  const beforeSelection = captureFreeTilePasteSelectionState(session)
+  const result = pasteRasterSurfaceIntoFreeTileTarget(session.document, target, selectionClipboardSurface(clipboard, x, y))
+  if (!result) return null
+  const afterSources = (layer.freeTileSources ?? []).map(cloneFreeTileSourceLayer)
+  const createdTilesets = result.createdTilesets.map(cloneTileset)
+  const createdTilesetIds = new Set(createdTilesets.map((tileset) => tileset.id))
+  const selectedSource = result.createdSources.at(-1) ?? null
+  const selectedInstance = result.createdInstances.at(-1) ?? null
+  const selectedTileset = selectedSource
+    ? session.document.tilesets?.find((tileset) => tileset.id === selectedSource.tilesetId) ?? null
+    : null
+  const selectedTileId = selectedTileset?.tileIds[0] ?? null
+  const afterSelection: FreeTilePasteSelectionState = {
+    selectedTilesetId: selectedTileset?.id ?? beforeSelection.selectedTilesetId,
+    selectedTileId: selectedTileId ?? beforeSelection.selectedTileId,
+    secondaryTileId: selectedTileId ?? beforeSelection.secondaryTileId,
+    selectedFreeTileInstanceId: selectedInstance?.id ?? beforeSelection.selectedFreeTileInstanceId,
+    selectedFreeTileInstanceIds: selectedInstance ? [selectedInstance.id] : [...beforeSelection.selectedFreeTileInstanceIds],
+    freeTileInstanceSelectionAnchorId: selectedInstance?.id ?? beforeSelection.freeTileInstanceSelectionAnchorId,
+    freeTileMode: selectedSource ? 'edit' : beforeSelection.freeTileMode
+  }
+  const restoreBefore = (): void => {
+    applyFreeTilePlacementEdit(session.document, result.edit, 'before')
+    layer.freeTileSources = beforeSources.map(cloneFreeTileSourceLayer)
+    session.document.tilesets = (session.document.tilesets ?? []).filter((tileset) => !createdTilesetIds.has(tileset.id))
+    applyFreeTilePasteSelectionState(session, beforeSelection)
+  }
+  const restoreAfter = (): void => {
+    for (const tileset of createdTilesets) {
+      if (!session.document.tilesets?.some((candidate) => candidate.id === tileset.id)) {
+        session.document.tilesets = [...(session.document.tilesets ?? []), cloneTileset(tileset)]
+      }
+    }
+    layer.freeTileSources = afterSources.map(cloneFreeTileSourceLayer)
+    applyFreeTilePlacementEdit(session.document, result.edit, 'after')
+    applyFreeTilePasteSelectionState(session, afterSelection)
+  }
+  applyFreeTilePasteSelectionState(session, afterSelection)
+  session.history.push({
+    label: tr('workspace.history.pasteToLayer'),
+    bytes: createdTilesets.reduce((sum, tileset) => sum + tilemapTilesetBytes(tileset), 0)
+      + (beforeSources.length + afterSources.length) * 96
+      + (result.edit.before.instances.length + result.edit.after.instances.length) * 72,
+    undo: restoreBefore,
+    redo: restoreAfter,
+    invalidation: { kind: 'full' },
+    affectedLayerIds: [layer.id],
+    contentChanged: true,
+    requiresAnimationSync: false
+  })
+  touch(session, true, { kind: 'full' })
+  recordDocumentOperation(session)
+  return result
+}
+
+type FreeTileSelectedInstancePasteResult =
+  | { status: 'pasted'; pixelCount: number }
+  | { status: 'outside' | 'too-large' | 'unavailable'; pixelCount: 0 }
+
+const pasteSelectionClipboardIntoSelectedFreeTileInstance = (
+  session: DocumentSession,
+  target: FreeTileCelTarget,
+  instance: FreeTileInstance,
+  clipboard: SelectionClipboard,
+  x: number,
+  y: number
+): FreeTileSelectedInstancePasteResult => {
+  const source = freeTileSourceForInstance(target.sources, instance)
+  const sourceLayer = source ? target.layer.freeTileSources?.find((candidate) => candidate.id === source.id) : null
+  if (!source || source.visible === false || sourceLayer?.locked === true || instance.visible === false || instance.locked === true) {
+    return { status: 'unavailable', pixelCount: 0 }
+  }
+  const bounds = freeTileInstanceBounds(instance, target.sources, target.surface.offsetX, target.surface.offsetY)
+  const sourceEdit = createFreeTileSourceEditRaster(session.document, source, bounds, { x, y }, instance)
+  if (!sourceEdit) return { status: 'outside', pixelCount: 0 }
+  let pixelCount = 0
+  for (let sourceY = 0; sourceY < clipboard.height; sourceY += 1) {
+    for (let sourceX = 0; sourceX < clipboard.width; sourceX += 1) {
+      const sourceIndex = sourceY * clipboard.width + sourceX
+      if (clipboard.mask && clipboard.mask[sourceIndex] !== 1) continue
+      const localX = x + sourceX - sourceEdit.origin.x
+      const localY = y + sourceY - sourceEdit.origin.y
+      if (localX < 0 || localY < 0 || localX >= sourceEdit.layer.width || localY >= sourceEdit.layer.height) continue
+      writeLayerColor(sourceEdit.document, sourceEdit.layer, localY * sourceEdit.layer.width + localX, unpackColor(clipboard.pixels[sourceIndex]))
+      pixelCount += 1
+    }
+  }
+  if (pixelCount === 0) return { status: 'outside', pixelCount: 0 }
+  const after = freeTileSourceSnapshotFromEditRaster(sourceEdit)
+  if (after.width > MAX_TILE_SIZE || after.height > MAX_TILE_SIZE) return { status: 'too-large', pixelCount: 0 }
+  commitFreeTileSourceEditInSession(session, source.id, sourceEdit.before, after, tr('workspace.history.pasteToLayer'))
+  const tileId = source.tileset.tileIds[0] ?? null
+  session.selectedTilesetId = source.tileset.id
+  session.selectedTileId = tileId
+  session.secondaryTileId = tileId
+  setFreeTileInstanceSelectionState(session, [instance.id], instance.id)
+  session.freeTileMode = 'edit'
+  return { status: 'pasted', pixelCount }
+}
 
 const updatePaletteColorWithSynchronization = (session: DocumentSession, id: number, color: RgbaColor): boolean => {
   const entry = session.document.palette.find((candidate) => candidate.id === id)
@@ -912,6 +1462,7 @@ function layerClipboardFromDocument(document: SpriteDocument, layer: RasterLayer
       opacity: cel.opacity,
       text: cel.text ? cloneTextCelData(cel.text) : undefined,
       tilemap: cel.tilemap ? cloneTilemapCelData(cel.tilemap) : undefined,
+      freeTiles: cel.freeTiles ? cloneFreeTileCelData(cel.freeTiles) : undefined,
       pixels: rgba,
       mask: layerMaskClipboard(animationMaskAt(timeline, layer.id, frame.id) ?? undefined)
     }]
@@ -920,6 +1471,7 @@ function layerClipboardFromDocument(document: SpriteDocument, layer: RasterLayer
     name: layer.name,
     kind: layer.kind,
     tilemapTilesetId: layer.tilemapTilesetId,
+    freeTileSources: layer.freeTileSources?.map(cloneFreeTileSourceLayer),
     width: layer.width,
     height: layer.height,
     offsetX: layer.offsetX,
@@ -943,7 +1495,8 @@ function applyLayerClipboardAnimationCel(
   document: SpriteDocument,
   layer: RasterLayer,
   source: NonNullable<LayerClipboard['animationCels']>[number],
-  tilesetIdMap: ReadonlyMap<string, string> = new Map()
+  tilesetIdMap: ReadonlyMap<string, string> = new Map(),
+  freeTileSourceIdMap?: ReadonlyMap<string, string>
 ): void {
   const timeline = ensureAnimationDocument(document)
   const frame = timeline.frames[source.frameIndex]
@@ -955,6 +1508,15 @@ function applyLayerClipboardAnimationCel(
     ...cloneTilemapCelData(source.tilemap),
     cells: source.tilemap.cells.map((cell) => cell ? { ...cell, tilesetId: tilesetIdMap.get(cell.tilesetId) ?? cell.tilesetId } : null)
   } : undefined
+  cel.freeTiles = source.freeTiles
+    ? {
+        instances: source.freeTiles.instances.flatMap((instance) => {
+          if (!freeTileSourceIdMap || !instance.sourceId) return [{ ...instance }]
+          const sourceId = freeTileSourceIdMap.get(instance.sourceId)
+          return sourceId ? [{ ...instance, sourceId, tileId: undefined }] : []
+        })
+      }
+    : undefined
   cel.surface = layer.format === 'rgba'
     ? { format: 'rgba', width: source.width, height: source.height, offsetX: source.offsetX, offsetY: source.offsetY, storageOriginX: source.storageOriginX, storageOriginY: source.storageOriginY, pixels: document.colorMode === 'grayscale' ? applyRelativeLuminance(source.pixels.slice()) : source.pixels.slice() }
     : {
@@ -972,6 +1534,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
   activeId: null,
   sharedPrimaryColor: { r: 41, g: 121, b: 255, a: 255 },
   sharedSecondaryColor: { r: 241, g: 244, b: 248, a: 255 },
+  layerStyleClipboard: null,
   message: null,
   saveProgress: null,
   dialog: null,
@@ -1075,14 +1638,17 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       const resource = await window.moonSprite.getResourceInfo()
       const check = checkResourceLimit(width, height, current.document.layers.length, current.document.colorMode, resource)
       if (!check.allowed) throw new Error(check.reason)
+      validateFreeTileImageResize(current.document, width, height)
       get().mutateActive((session) => {
         const before = captureDocumentImageResizeSnapshot(session.document)
+        const freeTileResize = captureFreeTileImageResizeState(session.document)
         const beforeSelection = session.selection ? { ...session.selection } : null
         const sourceWidth = session.document.width
         const sourceHeight = session.document.height
         const scaleX = width / sourceWidth
         const scaleY = height / sourceHeight
         resizeDocumentImage(session.document, width, height, interpolation)
+        resizeFreeTileDocumentImage(session.document, freeTileResize, interpolation)
         if (beforeSelection) {
           const nextX = Math.floor(beforeSelection.x * scaleX)
           const nextY = Math.floor(beforeSelection.y * scaleY)
@@ -1129,7 +1695,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     session.primaryColor = { ...get().sharedPrimaryColor }
     session.secondaryColor = { ...get().sharedSecondaryColor }
     set((state) => ({ sessions: [...state.sessions, session], activeId: document.id, message: null }))
-    requestTilesetPanelVisibility(document.layers.some((layer) => layer.kind === 'tilemap'))
+    requestTilesetPanelVisibility(documentUsesTilesetPanel(document))
   },
 
   reorderSessions(documentIds) {
@@ -1154,7 +1720,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     if (current && current.document.id !== id) documentTransactions.cancelDocument(current.document.id, current)
     const target = state.sessions.find((session) => session.document.id === id)
     set({ sessions: [...state.sessions], activeId: id })
-    requestTilesetPanelVisibility(Boolean(target?.document.layers.some((layer) => layer.kind === 'tilemap')))
+    requestTilesetPanelVisibility(documentUsesTilesetPanel(target?.document))
   },
   setTool(tool) {
     get().commitFloatingPaste()
@@ -1479,6 +2045,8 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
   },
   setFillKind(kind) { get().mutateActive((session) => { session.fillKind = kind; persistToolSettings(session) }, false) },
   setFillTolerance(tolerance) { get().mutateActive((session) => { session.fillTolerance = Math.max(0, Math.min(255, Math.round(tolerance) || 0)); persistToolSettings(session) }, false) },
+  setFillGapClosing(enabled) { get().mutateActive((session) => { session.fillGapClosing = enabled; persistToolSettings(session) }, false) },
+  setFillGapThreshold(threshold) { get().mutateActive((session) => { session.fillGapThreshold = normalizeGapClosingThreshold(threshold); persistToolSettings(session) }, false) },
   setGradientTolerance(tolerance) { get().mutateActive((session) => { session.gradientTolerance = Math.max(0, Math.min(255, Math.round(tolerance) || 0)); persistToolSettings(session) }, false) },
   setGradientContiguous(contiguous) { get().mutateActive((session) => { session.gradientContiguous = contiguous; persistToolSettings(session) }, false) },
   setGradientDither(dither) { get().mutateActive((session) => { session.gradientDither = dither; persistToolSettings(session) }, false) },
@@ -1884,6 +2452,8 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
   setSelectionMode(mode) { get().mutateActive((session) => { session.selectionMode = mode; persistToolSettings(session) }, false) },
   setWandTolerance(tolerance) { get().mutateActive((session) => { session.wandTolerance = Math.max(0, Math.min(255, Math.round(tolerance) || 0)); persistToolSettings(session) }, false) },
   setWandContiguous(contiguous) { get().mutateActive((session) => { session.wandContiguous = contiguous; persistToolSettings(session) }, false) },
+  setWandGapClosing(enabled) { get().mutateActive((session) => { session.wandGapClosing = enabled; persistToolSettings(session) }, false) },
+  setWandGapThreshold(threshold) { get().mutateActive((session) => { session.wandGapThreshold = normalizeGapClosingThreshold(threshold); persistToolSettings(session) }, false) },
   setPerfectPixels(enabled) { get().mutateActive((session) => { session.perfectPixels = enabled; persistToolSettings(session) }, false) },
   setSymmetryAxis(axis, enabled) {
     get().mutateActive((session) => {
@@ -2023,6 +2593,13 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     const session = activeSession(state)
     if (!session) return
     mutator(session)
+    const freeTileInstanceLayer = session.freeTileInstanceLayerId
+      ? session.document.layers.find((layer) => layer.id === session.freeTileInstanceLayerId && layer.kind === 'free-tile')
+      : null
+    if (session.freeTileInstanceLayerId && (!freeTileInstanceLayer || session.document.activeLayerId !== freeTileInstanceLayer.id)) {
+      session.freeTileInstanceLayerId = null
+      clearFreeTileInstanceSelection(session)
+    }
     if (session.activeLayerMaskId && !findLayerMask(session.document, session.activeLayerMaskId)) session.activeLayerMaskId = null
     if (dirty === true) syncActiveAnimationFrame(session.document)
     ensureLayerSelection(session)
@@ -2166,16 +2743,571 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     }, false)
   },
 
+  setFreeTileMode(mode) {
+    get().mutateActive((session) => {
+      session.freeTileMode = mode
+    }, false)
+  },
+
+  setFreeTileInstanceLayerView(layerId) {
+    get().mutateActive((session) => {
+      if (!layerId) {
+        session.freeTileInstanceLayerId = null
+        clearFreeTileInstanceSelection(session)
+        return
+      }
+      const layer = session.document.layers.find((candidate) => candidate.id === layerId && candidate.kind === 'free-tile')
+      session.freeTileInstanceLayerId = layer && session.document.activeLayerId === layer.id ? layer.id : null
+      if (!session.freeTileInstanceLayerId) clearFreeTileInstanceSelection(session)
+    }, false)
+  },
+
+  setSelectedFreeTileInstance(instanceId, mode, role = 'primary') {
+    get().mutateActive((session) => {
+      if (!instanceId) {
+        clearFreeTileInstanceSelection(session)
+        return
+      }
+      if (!syncFreeTileInstanceSourceSelection(session, instanceId, role)) {
+        clearFreeTileInstanceSelection(session)
+        return
+      }
+      setFreeTileInstanceSelectionState(session, [instanceId], instanceId)
+      if (mode) session.freeTileMode = mode
+    }, false)
+  },
+
+  selectFreeTileInstanceRow(instanceId, mode = 'replace', orderedInstanceIds = []) {
+    get().mutateActive((session) => {
+      const target = activeFreeTileCelTarget(session.document)
+      if (!target || !target.freeTiles.instances.some((instance) => instance.id === instanceId)) {
+        clearFreeTileInstanceSelection(session)
+        return
+      }
+      ensureFreeTileInstanceSelection(session)
+      const validIds = new Set(target.freeTiles.instances.map((instance) => instance.id))
+      const displayOrder = [...new Set(orderedInstanceIds)].filter((id) => validIds.has(id))
+      const orderedIds = displayOrder.length > 0
+        ? displayOrder
+        : target.freeTiles.instances.map((instance) => instance.id).reverse()
+      const currentIds = session.selectedFreeTileInstanceIds.filter((id) => validIds.has(id))
+      if (mode === 'range') {
+        const anchorId = session.freeTileInstanceSelectionAnchorId && validIds.has(session.freeTileInstanceSelectionAnchorId)
+          ? session.freeTileInstanceSelectionAnchorId
+          : currentIds.find((id) => validIds.has(id)) ?? instanceId
+        const anchorIndex = orderedIds.indexOf(anchorId)
+        const targetIndex = orderedIds.indexOf(instanceId)
+        const rangeIds = anchorIndex >= 0 && targetIndex >= 0
+          ? orderedIds.slice(Math.min(anchorIndex, targetIndex), Math.max(anchorIndex, targetIndex) + 1)
+          : [instanceId]
+        setFreeTileInstanceSelectionState(session, rangeIds, instanceId, anchorId)
+      } else if (mode === 'toggle') {
+        const selectedIds = currentIds.includes(instanceId)
+          ? currentIds.filter((id) => id !== instanceId)
+          : [...currentIds, instanceId]
+        const nextIds = selectedIds.length > 0 ? selectedIds : [instanceId]
+        setFreeTileInstanceSelectionState(session, nextIds, nextIds.includes(instanceId) ? instanceId : nextIds.at(-1) ?? null, instanceId)
+      } else {
+        setFreeTileInstanceSelectionState(session, [instanceId], instanceId)
+      }
+      if (session.selectedFreeTileInstanceId && syncFreeTileInstanceSourceSelection(session, session.selectedFreeTileInstanceId)) {
+        session.freeTileMode = 'edit'
+      }
+    }, false)
+  },
+
+  addFreeTileSource(layerId) {
+    let addedSourceId: string | null = null
+    get().mutateActive((session) => {
+      const layer = session.document.layers.find((candidate) => candidate.id === (layerId ?? session.document.activeLayerId) && candidate.kind === 'free-tile')
+      if (!layer) return
+      ensureFreeTileTilesetOwnership(session.document)
+      const beforeSources = (layer.freeTileSources ?? []).map(cloneFreeTileSourceLayer)
+      const beforeSelection = { tilesetId: session.selectedTilesetId, tileId: session.selectedTileId, secondaryTileId: session.secondaryTileId, mode: session.freeTileMode }
+      const sourceId = createId('free-tile-source')
+      const nextSourceIndex = (() => {
+        let index = 1
+        while (beforeSources.some((candidate) => candidate.name === tr('workspace.freeTile.sourceName', { index }))) index += 1
+        return index
+      })()
+      const name = tr('workspace.freeTile.sourceName', { index: nextSourceIndex })
+      const tileset = createBlankTileset(createId('tileset'), name, 1, 1, createId('tile'), 1)
+      const source: FreeTileSourceLayer = { id: sourceId, name, tilesetId: tileset.id, displayColor: defaultFreeTileSourceDisplayColor(beforeSources.length), visible: true, locked: false, opacity: 1, blendMode: 'normal', offsetX: 0, offsetY: 0 }
+      const afterSources = [...beforeSources, source]
+      const afterSelection = { tilesetId: tileset.id, tileId: tileset.tileIds[0] ?? null, secondaryTileId: tileset.tileIds[0] ?? null, mode: 'edit' as FreeTileDrawingMode }
+      const apply = (sources: readonly FreeTileSourceLayer[], includeTileset: boolean, selection: typeof beforeSelection): void => {
+        layer.freeTileSources = sources.map(cloneFreeTileSourceLayer)
+        if (includeTileset) {
+          if (!session.document.tilesets?.some((candidate) => candidate.id === tileset.id)) session.document.tilesets = [...(session.document.tilesets ?? []), cloneTileset(tileset)]
+        } else session.document.tilesets = (session.document.tilesets ?? []).filter((candidate) => candidate.id !== tileset.id)
+        session.selectedTilesetId = selection.tilesetId
+        session.selectedTileId = selection.tileId
+        session.secondaryTileId = selection.secondaryTileId
+        clearFreeTileInstanceSelection(session)
+        session.freeTileMode = selection.mode
+      }
+      apply(afterSources, true, afterSelection)
+      session.history.push({
+        label: tr('workspace.history.addTilesetTile'),
+        bytes: tilemapTilesetBytes(tileset) + (beforeSources.length + afterSources.length) * 96,
+        undo: () => apply(beforeSources, false, beforeSelection),
+        redo: () => apply(afterSources, true, afterSelection),
+        invalidation: { kind: 'full' },
+        affectedLayerIds: [layer.id],
+        contentChanged: true,
+        requiresAnimationSync: false
+      })
+      touch(session, true, { kind: 'full' })
+      recordDocumentOperation(session)
+      addedSourceId = sourceId
+    }, false)
+    if (addedSourceId) requestTilesetPanelVisibility(true)
+    return addedSourceId
+  },
+
+  deleteFreeTileSource(sourceId) {
+    let deleted = false
+    get().mutateActive((session) => {
+      const owner = freeTileSourceOwnerForId(session.document, sourceId)
+      if (!owner || (owner.layer.freeTileSources?.length ?? 0) <= 1) return
+      const sourceIndex = owner.layer.freeTileSources!.findIndex((source) => source.id === owner.source.id)
+      const tilesetIndex = (session.document.tilesets ?? []).findIndex((tileset) => tileset.id === owner.tileset.id)
+      if (sourceIndex < 0 || tilesetIndex < 0) return
+      const source = cloneFreeTileSourceLayer(owner.source)
+      const tileset = cloneTileset(owner.tileset)
+      const references = captureFreeTileSourceReferences(session.document, owner.source.id)
+      const beforeSelection = { tilesetId: session.selectedTilesetId, tileId: session.selectedTileId, secondaryTileId: session.secondaryTileId }
+      const remaining = owner.layer.freeTileSources!.filter((candidate) => candidate.id !== owner.source.id)
+      const fallback = remaining[Math.min(sourceIndex, remaining.length - 1)]
+      const fallbackTileset = fallback ? session.document.tilesets?.find((candidate) => candidate.id === fallback.tilesetId) : undefined
+      const afterSelection = session.selectedTilesetId === owner.tileset.id
+        ? { tilesetId: fallbackTileset?.id ?? null, tileId: fallbackTileset?.tileIds[0] ?? null, secondaryTileId: fallbackTileset?.tileIds[0] ?? null }
+        : beforeSelection
+      const applySelection = (selection: typeof beforeSelection): void => {
+        session.selectedTilesetId = selection.tilesetId
+        session.selectedTileId = selection.tileId
+        session.secondaryTileId = selection.secondaryTileId
+      }
+      const remove = (): void => {
+        owner.layer.freeTileSources = (owner.layer.freeTileSources ?? []).filter((candidate) => candidate.id !== source.id)
+        session.document.tilesets = (session.document.tilesets ?? []).filter((candidate) => candidate.id !== tileset.id)
+        applyFreeTileReferences(session.document, references, 'clear')
+        clearFreeTileInstanceSelection(session)
+        applySelection(afterSelection)
+      }
+      const restore = (): void => {
+        const sources = [...(owner.layer.freeTileSources ?? [])]
+        if (!sources.some((candidate) => candidate.id === source.id)) sources.splice(Math.min(sourceIndex, sources.length), 0, cloneFreeTileSourceLayer(source))
+        owner.layer.freeTileSources = sources
+        const tilesets = [...(session.document.tilesets ?? [])]
+        if (!tilesets.some((candidate) => candidate.id === tileset.id)) tilesets.splice(Math.min(tilesetIndex, tilesets.length), 0, cloneTileset(tileset))
+        session.document.tilesets = tilesets
+        applyFreeTileReferences(session.document, references, 'restore')
+        rerenderFreeTileSourceReferences(session.document, source.id)
+        applySelection(beforeSelection)
+      }
+      remove()
+      session.history.push({
+        label: tr('workspace.history.deleteTilesetTile'),
+        bytes: tilemapTilesetBytes(tileset) + references.length * 72 + 128,
+        undo: restore,
+        redo: remove,
+        invalidation: { kind: 'full' },
+        affectedLayerIds: [owner.layer.id],
+        contentChanged: true,
+        requiresAnimationSync: false
+      })
+      touch(session, true, { kind: 'full' })
+      recordDocumentOperation(session)
+      deleted = true
+    }, false)
+    return deleted
+  },
+
+  deleteFreeTileInstance(instanceId) {
+    return get().deleteFreeTileInstances([instanceId])
+  },
+
+  deleteFreeTileInstances(instanceIds) {
+    let deleted = false
+    get().mutateActive((session) => {
+      const target = activeFreeTileCelTarget(session.document)
+      if (!target) return
+      const requestedIds = new Set(instanceIds)
+      const removed = target.freeTiles.instances.filter((instance) => requestedIds.has(instance.id))
+      if (removed.length === 0 || removed.some((instance) => instance.locked === true)) return
+      const removedIds = new Set(removed.map((instance) => instance.id))
+      const before = cloneFreeTileCelData(target.freeTiles)
+      const after = { instances: before.instances.filter((instance) => !removedIds.has(instance.id)) }
+      const edit: FreeTilePlacementEdit = { layerId: target.layer.id, frameId: target.cel.frameId, before, after, dirtyRect: null }
+      applyFreeTilePlacementEdit(session.document, edit, 'after')
+      setFreeTileInstanceSelectionState(
+        session,
+        session.selectedFreeTileInstanceIds.filter((id) => !removedIds.has(id)),
+        session.selectedFreeTileInstanceId && removedIds.has(session.selectedFreeTileInstanceId) ? null : session.selectedFreeTileInstanceId,
+        session.freeTileInstanceSelectionAnchorId && removedIds.has(session.freeTileInstanceSelectionAnchorId) ? null : session.freeTileInstanceSelectionAnchorId
+      )
+      session.history.push({
+        label: tr('canvas.history.eraseFreeTiles'),
+        bytes: (before.instances.length + after.instances.length) * 72,
+        undo: () => { applyFreeTilePlacementEdit(session.document, edit, 'before') },
+        redo: () => { applyFreeTilePlacementEdit(session.document, edit, 'after') },
+        invalidation: { kind: 'full' },
+        affectedLayerIds: [target.layer.id],
+        contentChanged: true,
+        requiresAnimationSync: false
+      })
+      touch(session, true, { kind: 'full' })
+      recordDocumentOperation(session)
+      deleted = true
+    }, false)
+    return deleted
+  },
+
+  showOnlyFreeTileInstance(instanceId) {
+    let changed = false
+    get().mutateActive((session) => {
+      const target = activeFreeTileCelTarget(session.document)
+      if (!target || !target.freeTiles.instances.some((instance) => instance.id === instanceId)) return
+      const before = cloneFreeTileCelData(target.freeTiles)
+      const after: FreeTileCelData = {
+        instances: before.instances.map((instance) => ({ ...instance, visible: instance.id === instanceId }))
+      }
+      if (freeTileCelDataEqual(before, after)) return
+      const edit: FreeTilePlacementEdit = { layerId: target.layer.id, frameId: target.cel.frameId, before, after, dirtyRect: null }
+      applyFreeTilePlacementEdit(session.document, edit, 'after')
+      setFreeTileInstanceSelectionState(session, [instanceId], instanceId)
+      session.history.push({
+        label: tr('workspace.history.showOnlyFreeTileInstance'),
+        bytes: (before.instances.length + after.instances.length) * 72,
+        undo: () => { applyFreeTilePlacementEdit(session.document, edit, 'before') },
+        redo: () => { applyFreeTilePlacementEdit(session.document, edit, 'after') },
+        invalidation: { kind: 'full' },
+        affectedLayerIds: [target.layer.id],
+        contentChanged: true,
+        requiresAnimationSync: false
+      })
+      touch(session, true, { kind: 'full' })
+      recordDocumentOperation(session)
+      changed = true
+    }, false)
+    return changed
+  },
+
+  setFreeTileInstanceProperties(instanceId, changes: FreeTileInstancePropertyChanges, selectInstance = true) {
+    let changed = false
+    get().mutateActive((session) => {
+      const target = activeFreeTileCelTarget(session.document)
+      if (!target) return
+      const current = target.freeTiles.instances.find((instance) => instance.id === instanceId)
+      if (!current) return
+      const source = freeTileSourceForInstance(target.sources, current)
+      if (!source) return
+      const before = cloneFreeTileCelData(target.freeTiles)
+      const after = cloneFreeTileCelData(target.freeTiles)
+      const next = after.instances.find((instance) => instance.id === instanceId)
+      if (!next) return
+      if (current.locked !== true) {
+        const currentBounds = freeTileInstanceBounds(current, target.sources, target.surface.offsetX, target.surface.offsetY)
+        if (changes.rotation !== undefined && (changes.rotation === 0 || changes.rotation === 1 || changes.rotation === 2 || changes.rotation === 3)) {
+          if (changes.rotation === 0) delete next.rotation
+          else next.rotation = changes.rotation
+        }
+        if (changes.flipHorizontal !== undefined) {
+          if (changes.flipHorizontal) next.flipHorizontal = true
+          else delete next.flipHorizontal
+        }
+        if (changes.flipVertical !== undefined) {
+          if (changes.flipVertical) next.flipVertical = true
+          else delete next.flipVertical
+        }
+        const transformedBounds = freeTileInstanceBounds(next, target.sources, target.surface.offsetX, target.surface.offsetY)
+        const desiredX = changes.x !== undefined && Number.isFinite(changes.x) ? Math.trunc(changes.x) : currentBounds.x
+        const desiredY = changes.y !== undefined && Number.isFinite(changes.y) ? Math.trunc(changes.y) : currentBounds.y
+        next.x += desiredX - transformedBounds.x
+        next.y += desiredY - transformedBounds.y
+      }
+      if (changes.visible !== undefined) next.visible = changes.visible
+      if (changes.locked !== undefined) next.locked = changes.locked
+      if (changes.opacity !== undefined && Number.isFinite(changes.opacity)) next.opacity = Math.max(0, Math.min(1, changes.opacity))
+      if (changes.blendMode !== undefined) next.blendMode = changes.blendMode
+      if (freeTileCelDataEqual(before, after)) return
+      const edit: FreeTilePlacementEdit = { layerId: target.layer.id, frameId: target.cel.frameId, before, after, dirtyRect: null }
+      applyFreeTilePlacementEdit(session.document, edit, 'after')
+      if (selectInstance) setFreeTileInstanceSelectionState(session, [instanceId], instanceId)
+      session.history.push({
+        label: tr('workspace.history.freeTileInstanceProperties'),
+        bytes: (before.instances.length + after.instances.length) * 72,
+        undo: () => { applyFreeTilePlacementEdit(session.document, edit, 'before') },
+        redo: () => { applyFreeTilePlacementEdit(session.document, edit, 'after') },
+        invalidation: { kind: 'full' },
+        affectedLayerIds: [target.layer.id],
+        contentChanged: true,
+        requiresAnimationSync: false
+      })
+      touch(session, true, { kind: 'full' })
+      recordDocumentOperation(session)
+      changed = true
+    }, false)
+    return changed
+  },
+
+  beginFreeTileInstancePropertiesTransaction(instanceIds) {
+    let id: string | null = null
+    get().mutateActive((session) => {
+      id = beginFreeTileInstancePropertiesTransactionCommand(documentTransactions, session, instanceIds)
+    }, false)
+    return id
+  },
+
+  previewFreeTileInstancePropertiesTransaction(id, changes) {
+    let changed = false
+    get().mutateActive((session) => {
+      changed = previewFreeTileInstancePropertiesTransactionCommand(documentTransactions, session, id, changes)
+    }, false)
+    return changed
+  },
+
+  commitFreeTileInstancePropertiesTransaction(id, changes) {
+    let changed = false
+    get().mutateActive((session) => {
+      changed = commitFreeTileInstancePropertiesTransactionCommand(documentTransactions, session, id, changes)
+      if (!changed) return
+      touch(session, true, { kind: 'full' })
+      recordDocumentOperation(session)
+    }, false)
+    return changed
+  },
+
+  cancelFreeTileInstancePropertiesTransaction(id) {
+    let canceled = false
+    get().mutateActive((session) => {
+      canceled = cancelFreeTileInstancePropertiesTransactionCommand(documentTransactions, session, id)
+    }, false)
+    return canceled
+  },
+
+  reorderFreeTileInstance(instanceId, targetInstanceId, position) {
+    let changed = false
+    get().mutateActive((session) => {
+      const target = activeFreeTileCelTarget(session.document)
+      if (!target || instanceId === targetInstanceId) return
+      const before = cloneFreeTileCelData(target.freeTiles)
+      const fromIndex = before.instances.findIndex((instance) => instance.id === instanceId)
+      if (fromIndex < 0 || before.instances[fromIndex].locked === true || !before.instances.some((instance) => instance.id === targetInstanceId)) return
+      const instances = before.instances.filter((instance) => instance.id !== instanceId)
+      const targetIndex = instances.findIndex((instance) => instance.id === targetInstanceId)
+      if (targetIndex < 0) return
+      const insertIndex = position === 'before' ? targetIndex + 1 : targetIndex
+      instances.splice(insertIndex, 0, before.instances[fromIndex])
+      const after: FreeTileCelData = { instances }
+      if (freeTileCelDataEqual(before, after)) return
+      const edit: FreeTilePlacementEdit = { layerId: target.layer.id, frameId: target.cel.frameId, before, after, dirtyRect: null }
+      applyFreeTilePlacementEdit(session.document, edit, 'after')
+      const selectedIds = session.selectedFreeTileInstanceIds.includes(instanceId)
+        ? session.selectedFreeTileInstanceIds
+        : [instanceId]
+      setFreeTileInstanceSelectionState(session, selectedIds, instanceId, session.freeTileInstanceSelectionAnchorId)
+      session.history.push({
+        label: tr('workspace.history.reorderFreeTileInstance'),
+        bytes: (before.instances.length + after.instances.length) * 72,
+        undo: () => { applyFreeTilePlacementEdit(session.document, edit, 'before') },
+        redo: () => { applyFreeTilePlacementEdit(session.document, edit, 'after') },
+        invalidation: { kind: 'full' },
+        affectedLayerIds: [target.layer.id],
+        contentChanged: true,
+        requiresAnimationSync: false
+      })
+      touch(session, true, { kind: 'full' })
+      recordDocumentOperation(session)
+      changed = true
+    }, false)
+    return changed
+  },
+
+  setFreeTileSourceProperties(sourceId, changes) {
+    let changed = false
+    get().mutateActive((session) => {
+      const owner = freeTileSourceOwnerForId(session.document, sourceId)
+      if (!owner) return
+      const before = cloneFreeTileSourceLayer(owner.source)
+      const after = cloneFreeTileSourceLayer(owner.source)
+      if (changes.name !== undefined) after.name = changes.name.trim() || before.name
+      if (changes.description !== undefined) after.description = changes.description
+      if ('displayColor' in changes) after.displayColor = changes.displayColor ? { ...changes.displayColor } : undefined
+       if (changes.visible !== undefined) after.visible = changes.visible
+       if (changes.locked !== undefined) after.locked = changes.locked
+      if (changes.offsetX !== undefined) after.offsetX = Math.trunc(changes.offsetX)
+      if (changes.offsetY !== undefined) after.offsetY = Math.trunc(changes.offsetY)
+      if (freeTileSourceLayerEqual(before, after)) return
+      const apply = (snapshot: FreeTileSourceLayer): void => {
+        const current = freeTileSourceOwnerForId(session.document, snapshot.id)
+        if (!current) return
+        const normalized = cloneFreeTileSourceLayer(snapshot)
+        Object.assign(current.source, normalized)
+        if (normalized.description === undefined) delete current.source.description
+        if (normalized.displayColor === undefined) delete current.source.displayColor
+        current.tileset.name = snapshot.name
+        rerenderFreeTileSourceReferences(session.document, snapshot.id)
+      }
+      apply(after)
+      session.history.push({
+        label: tr('workspace.history.layerProperties'),
+        bytes: 256,
+        undo: () => apply(before),
+        redo: () => apply(after),
+        invalidation: { kind: 'full' },
+        affectedLayerIds: [owner.layer.id],
+        contentChanged: true,
+        requiresAnimationSync: false
+      })
+      touch(session, true, { kind: 'full' })
+      recordDocumentOperation(session)
+      changed = true
+    }, false)
+    return changed
+  },
+
+  beginFreeTileSourcePropertiesTransaction(sourceId) {
+    let id: string | null = null
+    get().mutateActive((session) => {
+      id = beginFreeTileSourcePropertiesTransactionCommand(documentTransactions, session, sourceId)
+    }, false)
+    return id
+  },
+
+  previewFreeTileSourcePropertiesTransaction(id, changes) {
+    let changed = false
+    get().mutateActive((session) => {
+      changed = previewFreeTileSourcePropertiesTransactionCommand(documentTransactions, session, id, changes)
+    }, false)
+    return changed
+  },
+
+  commitFreeTileSourcePropertiesTransaction(id, changes) {
+    let changed = false
+    get().mutateActive((session) => {
+      changed = commitFreeTileSourcePropertiesTransactionCommand(documentTransactions, session, id, changes)
+      if (!changed) return
+      touch(session, true, { kind: 'full' })
+      recordDocumentOperation(session)
+    }, false)
+    return changed
+  },
+
+  cancelFreeTileSourcePropertiesTransaction(id) {
+    let canceled = false
+    get().mutateActive((session) => {
+      canceled = cancelFreeTileSourcePropertiesTransactionCommand(documentTransactions, session, id)
+    }, false)
+    return canceled
+  },
+
+  previewFreeTileSource(sourceId, width, height, pixels, offsetX, offsetY) {
+    let changed = false
+    get().mutateActive((session) => {
+      const before = captureFreeTileSourceSnapshot(session.document, sourceId)
+      if (!before) return
+      changed = applyFreeTileSourceSnapshot(session.document, {
+        sourceId: before.sourceId,
+        tilesetId: before.tilesetId,
+        width,
+        height,
+        pixels,
+        offsetX,
+        offsetY
+      })
+      if (changed) {
+        const fromRevision = session.contentRevision
+        session.revision += 1
+        session.contentRevision += 1
+        session.layersPanelRevision += 1
+        session.contentInvalidation = { kind: 'full', fromRevision, revision: session.contentRevision }
+      }
+    }, false)
+    return changed
+  },
+
+  commitFreeTileSourceEdit(sourceId, before, after, label, placementEdit, selectionEdit) {
+    let committed: HistoryEntry | null = null
+    get().mutateActive((session) => {
+      committed = commitFreeTileSourceEditInSession(session, sourceId, before, after, label, placementEdit, selectionEdit)
+    }, false)
+    return committed
+  },
+
+  beginFreeTilePlacement() {
+    const session = activeSession(get())
+    const target = session ? activeFreeTileCelTarget(session.document) : null
+    return target ? {
+      layerId: target.layer.id,
+      frameId: target.cel.frameId,
+      before: cloneFreeTileCelData(target.freeTiles),
+      after: cloneFreeTileCelData(target.freeTiles),
+      dirtyRect: null
+    } : null
+  },
+
+  previewFreeTilePlacement(edit) {
+    let changed = false
+    get().mutateActive((session) => {
+      const target = activeFreeTileCelTarget(session.document)
+      if (!target || target.layer.id !== edit.layerId || target.cel.frameId !== edit.frameId) return
+      changed = applyFreeTilePlacementEdit(session.document, edit, 'after')
+      if (changed) {
+        const fromRevision = session.contentRevision
+        session.revision += 1
+        session.contentRevision += 1
+        session.contentInvalidation = { kind: 'full', fromRevision, revision: session.contentRevision }
+      }
+    }, false)
+    return changed
+  },
+
+  commitFreeTilePlacement(edit, label) {
+    if (freeTileCelDataEqual(edit.before, edit.after)) return null
+    let committed: HistoryEntry | null = null
+    get().mutateActive((session) => {
+      const target = activeFreeTileCelTarget(session.document)
+      if (!target || target.layer.id !== edit.layerId || target.cel.frameId !== edit.frameId) return
+      const entry: HistoryEntry = {
+        label,
+        bytes: (edit.before.instances.length + edit.after.instances.length) * 72,
+        undo: () => { applyFreeTilePlacementEdit(session.document, edit, 'before') },
+        redo: () => { applyFreeTilePlacementEdit(session.document, edit, 'after') },
+        invalidation: { kind: 'full' },
+        affectedLayerIds: [edit.layerId],
+        contentChanged: true,
+        requiresAnimationSync: false
+      }
+      session.history.push(entry)
+      touch(session, true, { kind: 'full' })
+      recordDocumentOperation(session, { stroke: true })
+      committed = entry
+    }, false)
+    return committed
+  },
+
+  cancelFreeTilePlacement(edit) {
+    get().mutateActive((session) => {
+      applyFreeTilePlacementEdit(session.document, edit, 'before')
+    }, false)
+  },
+
   setSelectedTileset(id) {
     get().mutateActive((session) => {
       const tileset = session.document.tilesets?.find((candidate) => candidate.id === id)
       if (!tileset) return
-      const owner = session.document.layers.find((layer) => layer.kind === 'tilemap' && layer.tilemapTilesetId === tileset.id)
+      const owner = session.document.layers.find((layer) => layer.id === session.document.activeLayerId && ((layer.kind === 'tilemap' && layer.tilemapTilesetId === tileset.id)
+        || (layer.kind === 'free-tile' && layer.freeTileSources?.some((source) => source.tilesetId === tileset.id))))
+        ?? session.document.layers.find((layer) => (layer.kind === 'tilemap' && layer.tilemapTilesetId === tileset.id)
+        || (layer.kind === 'free-tile' && layer.freeTileSources?.some((source) => source.tilesetId === tileset.id)))
       if (owner) {
         applyLayerRowSelection(session, [owner.id], [], { kind: 'layer', id: owner.id })
         session.layerSelectionAnchorId = owner.id
       }
       session.selectedTilesetId = tileset.id
+      clearFreeTileInstanceSelection(session)
       session.selectedTileId = tileset.tileIds.includes(session.selectedTileId ?? '') ? session.selectedTileId : tileset.tileIds[0] ?? null
       session.secondaryTileId = tileset.tileIds.includes(session.secondaryTileId ?? '') ? session.secondaryTileId : tileset.tileIds[0] ?? null
     }, false)
@@ -2186,6 +3318,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       const tileset = session.document.tilesets?.find((candidate) => candidate.id === tilesetId)
       if (!tileset?.tileIds.includes(tileId)) return
       session.selectedTilesetId = tileset.id
+      clearFreeTileInstanceSelection(session)
       if (role === 'secondary') session.secondaryTileId = tileId
       else session.selectedTileId = tileId
       session.selectedTileId = tileset.tileIds.includes(session.selectedTileId ?? '') ? session.selectedTileId : tileset.tileIds[0] ?? null
@@ -2206,6 +3339,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
         session.document.tilesets = (session.document.tilesets ?? []).map((candidate) => candidate.id === tilesetId ? replacement : candidate)
         markRasterStorageContentChanged(replacement.pixels)
         rerenderTilesetReferences(session.document, tilesetId)
+        rerenderFreeTileReferences(session.document, tilesetId)
       }
       replace(after)
       session.history.push({
@@ -2214,7 +3348,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
         undo: () => replace(before),
         redo: () => replace(after),
         invalidation: { kind: 'full' },
-        affectedLayerIds: session.document.layers.flatMap((layer) => layer.kind === 'tilemap' && layer.tilemapTilesetId === tilesetId ? [layer.id] : []),
+        affectedLayerIds: session.document.layers.flatMap((layer) => (layer.kind === 'tilemap' && layer.tilemapTilesetId === tilesetId) || (layer.kind === 'free-tile' && layer.freeTileSources?.some((source) => source.tilesetId === tilesetId)) ? [layer.id] : []),
         requiresAnimationSync: false
       })
       touch(session, true, { kind: 'full' })
@@ -2301,6 +3435,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       const retainedTileIds = new Set(after.tileIds)
       const deletedTileIds = before.tileIds.filter((tileId) => !retainedTileIds.has(tileId))
       const references = deletedTileIds.flatMap((tileId) => captureTilesetTileReferences(session.document, tilesetId, tileId))
+      const freeTileReferences = deletedTileIds.flatMap((tileId) => captureFreeTileReferences(session.document, tilesetId, tileId))
       const beforeSelection = { tilesetId: session.selectedTilesetId, tileId: session.selectedTileId, secondaryTileId: session.secondaryTileId }
       const replace = (snapshot: Tileset): void => {
         const replacement = cloneTileset(snapshot)
@@ -2309,6 +3444,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       }
       replace(after)
       applyTilesetTileReferences(session.document, references, 'clear')
+      applyFreeTileReferences(session.document, freeTileReferences, 'clear')
       session.selectedTilesetId = tilesetId
       const firstDeletedIndex = Math.min(...deletedTileIds.map((tileId) => before.tileIds.indexOf(tileId)))
       const fallbackTileId = after.tileIds[Math.min(firstDeletedIndex, after.tileIds.length - 1)] ?? after.tileIds[0] ?? null
@@ -2317,10 +3453,11 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       const afterSelection = { tilesetId: session.selectedTilesetId, tileId: session.selectedTileId, secondaryTileId: session.secondaryTileId }
       session.history.push({
         label: tr('workspace.history.deleteTilesetTile'),
-        bytes: before.pixels.byteLength + after.pixels.byteLength + references.length * 96,
+        bytes: before.pixels.byteLength + after.pixels.byteLength + references.length * 96 + freeTileReferences.length * 72,
         undo: () => {
           replace(before)
           applyTilesetTileReferences(session.document, references, 'restore')
+          applyFreeTileReferences(session.document, freeTileReferences, 'restore')
           session.selectedTilesetId = beforeSelection.tilesetId
           session.selectedTileId = beforeSelection.tileId
           session.secondaryTileId = beforeSelection.secondaryTileId
@@ -2328,6 +3465,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
         redo: () => {
           replace(after)
           applyTilesetTileReferences(session.document, references, 'clear')
+          applyFreeTileReferences(session.document, freeTileReferences, 'clear')
           session.selectedTilesetId = afterSelection.tilesetId
           session.selectedTileId = afterSelection.tileId
           session.secondaryTileId = afterSelection.secondaryTileId
@@ -2349,6 +3487,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       if (!tileset || !writeTilesetTilePixels(tileset, tileId, pixels)) return
       markRasterStorageContentChanged(tileset.pixels)
       rerenderTilesetTileReferences(session.document, tilesetId, tileId)
+      rerenderFreeTileReferences(session.document, tilesetId, tileId)
       changed = true
     }, false)
     return changed
@@ -2367,6 +3506,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
         if (!current || !writeTilesetTilePixels(current, tileId, pixels)) return
         markRasterStorageContentChanged(current.pixels)
         rerenderTilesetTileReferences(session.document, tilesetId, tileId)
+        rerenderFreeTileReferences(session.document, tilesetId, tileId)
       }
       apply(afterPixels)
       session.history.push({
@@ -2459,7 +3599,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     if (session?.pendingPaste) { get().cancelFloatingPaste(); return }
     if (session?.textBoxTransform) get().cancelTextBoxTransform()
     if (!session?.history.canUndo) return
-    const hadTilemapLayer = session.document.layers.some((layer) => layer.kind === 'tilemap')
+    const hadTilesetPanelContent = documentUsesTilesetPanel(session.document)
     get().mutateActive((session) => {
       const view = { ...session.view }
       const entry = session.history.undo()
@@ -2476,8 +3616,8 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
         recordDocumentOperation(session, undefined, entry.contentChanged !== false)
       }
     }, false)
-    const hasTilemapLayer = Boolean(activeSession(get())?.document.layers.some((layer) => layer.kind === 'tilemap'))
-    if (hadTilemapLayer !== hasTilemapLayer) requestTilesetPanelVisibility(hasTilemapLayer)
+    const hasTilesetPanelContent = documentUsesTilesetPanel(activeSession(get())?.document)
+    if (hadTilesetPanelContent !== hasTilesetPanelContent) requestTilesetPanelVisibility(hasTilesetPanelContent)
   },
 
   redo() {
@@ -2488,7 +3628,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     session = activeSession(get())
     if (session && consumePendingCanvasGestureHistory(session.document.id, 'redo')) return
     if (!session?.history.canRedo) return
-    const hadTilemapLayer = session.document.layers.some((layer) => layer.kind === 'tilemap')
+    const hadTilesetPanelContent = documentUsesTilesetPanel(session.document)
     get().mutateActive((session) => {
       const view = { ...session.view }
       const entry = session.history.redo()
@@ -2505,8 +3645,8 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
         recordDocumentOperation(session, undefined, entry.contentChanged !== false)
       }
     }, false)
-    const hasTilemapLayer = Boolean(activeSession(get())?.document.layers.some((layer) => layer.kind === 'tilemap'))
-    if (hadTilemapLayer !== hasTilemapLayer) requestTilesetPanelVisibility(hasTilemapLayer)
+    const hasTilesetPanelContent = documentUsesTilesetPanel(activeSession(get())?.document)
+    if (hadTilesetPanelContent !== hasTilesetPanelContent) requestTilesetPanelVisibility(hasTilesetPanelContent)
   },
 
   setActiveAnimationFrame(frameId) {
@@ -2564,6 +3704,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       if (!timeline.frames.some((frame) => frame.id === frameId)) return
       session.selectedAnimationCellKeys = []
       session.animationCellSelectionAnchorKey = null
+      session.animationCellSelectionExplicit = false
       session.selectedAnimationMaskCellKeys = []
       session.animationMaskCellSelectionAnchorKey = null
       const current = new Set(session.selectedAnimationFrameIds)
@@ -2630,6 +3771,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
         current.add(key)
       }
       session.selectedAnimationCellKeys = [...current]
+      session.animationCellSelectionExplicit = current.size > 0
       if (preservedLayerIds) session.selectedLayerIds = preservedLayerIds
       else {
         const focusKey = current.has(key) ? key : session.selectedAnimationCellKeys.at(-1)
@@ -2669,6 +3811,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       session.animationFrameSelectionAnchorId = null
       session.selectedAnimationCellKeys = []
       session.animationCellSelectionAnchorKey = null
+      session.animationCellSelectionExplicit = false
       applyLayerRowSelection(session, ownerKind === 'layer' ? [target.layerId] : [], ownerKind === 'group' ? [target.layerId] : [], { kind: ownerKind, id: target.layerId })
       const current = new Set(session.selectedAnimationMaskCellKeys)
       if (mode === 'toggle') {
@@ -2728,6 +3871,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       session.selectedAnimationMaskCellKeys = []
       session.animationFrameSelectionAnchorId = null
       session.animationCellSelectionAnchorKey = null
+      session.animationCellSelectionExplicit = false
       session.animationMaskCellSelectionAnchorKey = null
     }, false)
   },
@@ -2863,6 +4007,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
         session.activeLayerMaskId = null
         session.selectedAnimationFrameIds = previousSelectedFrameIds
         session.selectedAnimationCellKeys = []
+        session.animationCellSelectionExplicit = false
       }
       const reapplyInserted = (): void => {
         const current = ensureAnimationDocument(session.document)
@@ -2875,6 +4020,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
         session.activeLayerMaskId = null
         session.selectedAnimationFrameIds = insertedFrames.map((frame) => frame.id)
         session.selectedAnimationCellKeys = []
+        session.animationCellSelectionExplicit = false
       }
       timeline.frames.splice(insertIndex, 0, ...insertedFrames)
       timeline.cels.push(...insertedCels)
@@ -2884,6 +4030,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       session.activeLayerMaskId = null
       session.selectedAnimationFrameIds = insertedFrames.map((frame) => frame.id)
       session.selectedAnimationCellKeys = []
+      session.animationCellSelectionExplicit = false
       session.history.push({ label: tr('workspace.history.pasteAnimationFrame'), bytes: insertedCels.reduce((sum, cel) => sum + (cel.surface?.pixels.byteLength ?? 0), 0) + insertedGroupMasks.reduce((sum, entry) => sum + entry.mask.pixels.byteLength, 0) + insertedFrames.length * 64, undo: restoreInserted, redo: reapplyInserted })
     })
   },
@@ -2930,6 +4077,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       const maximumDestination = targetFrameIndex + Math.max(...sourceFrameIndexes.map((index) => index - sourceAnchorFrameIndex))
       const appendedFrames = Array.from({ length: Math.max(0, maximumDestination - timeline.frames.length + 1) }, () => ({ id: createId('frame'), duration: 100 }))
       const previousSelection = [...session.selectedAnimationCellKeys]
+      const previousSelectionExplicit = session.animationCellSelectionExplicit
       if (appendedFrames.length > 0) timeline.frames.push(...appendedFrames)
       ensureAnimationDocument(session.document)
       const appendedFrameIds = new Set(appendedFrames.map((frame) => frame.id))
@@ -2961,12 +4109,14 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
         shared.opacity = source.opacity
         shared.text = source.text ? cloneTextCelData(source.text) : undefined
         shared.tilemap = source.tilemap ? cloneTilemapCelData(source.tilemap) : undefined
+        shared.freeTiles = source.freeTiles ? cloneFreeTileCelData(source.freeTiles) : undefined
         shared.mask = layerMaskFromClipboard(layerMaskClipboard(source.mask), shared.id)
         if (destination !== shared) delete destination.mask
       }
       refreshActiveAnimationFrame(session.document)
       session.activeLayerMaskId = null
       session.selectedAnimationCellKeys = placements.map(({ target: destination }) => animationCelKey(destination.layerId, destination.frameId))
+      session.animationCellSelectionExplicit = true
       const after = writeTargets.map(cloneAnimationCel)
       const afterSelection = [...session.selectedAnimationCellKeys]
       if (after.length) session.history.push({
@@ -2978,6 +4128,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
           current.frames = current.frames.filter((frame) => !appendedFrameIds.has(frame.id))
           current.cels = current.cels.filter((cel) => !appendedFrameIds.has(cel.frameId))
           session.selectedAnimationCellKeys = previousSelection
+          session.animationCellSelectionExplicit = previousSelectionExplicit
           refreshActiveAnimationFrame(session.document)
         },
         redo: () => {
@@ -2986,6 +4137,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
           ensureAnimationDocument(session.document)
           restoreAnimationCels(session.document, [...appendedBaseCels, ...after])
           session.selectedAnimationCellKeys = afterSelection
+          session.animationCellSelectionExplicit = true
           refreshActiveAnimationFrame(session.document)
         }
       })
@@ -3028,6 +4180,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       if (ensureAnimationDocument(session.document).activeFrameId !== frameId) activateAnimationFrame(session.document, frameId)
       session.activeLayerMaskId = null
       session.selectedAnimationCellKeys = placements.map(({ target: destination }) => animationCelKey(destination.layerId, destination.frameId))
+      session.animationCellSelectionExplicit = true
       const after = [...affected.keys()].flatMap((key) => {
         const parsed = parseAnimationCelKey(key)
         const cel = parsed ? timeline.cels.find((candidate) => candidate.layerId === parsed.layerId && candidate.frameId === parsed.frameId) : null
@@ -3289,6 +4442,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
         session.activeLayerMaskId = null
         const after = affected.map((cel) => cloneAnimationCel(timeline.cels.find((candidate) => candidate.id === cel.id) ?? cel))
         session.selectedAnimationCellKeys = []
+        session.animationCellSelectionExplicit = false
         if (before.length) session.history.push({ label: tr('workspace.history.deleteAnimationCel'), bytes: [...before, ...after].reduce((sum, cel) => sum + (cel.surface?.pixels.byteLength ?? 0), 0), undo: () => restoreAnimationCels(session.document, before), redo: () => restoreAnimationCels(session.document, after) })
       })
       return
@@ -3553,10 +4707,16 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     const documentId = current.document.id
     try {
       let created = false
-      const tileWidth = Math.max(1, Math.trunc(options.tileWidth))
-      const tileHeight = Math.max(1, Math.trunc(options.tileHeight))
+      const requestedTilesetId = typeof options.tilesetId === 'string' && options.tilesetId.trim() ? options.tilesetId : null
+      const requestedTileset = requestedTilesetId
+        ? current.document.tilesets?.find((tileset) => tileset.id === requestedTilesetId) ?? null
+        : null
+      if (requestedTilesetId && (!requestedTileset || !current.document.layers.some((layer) => layer.kind === 'tilemap' && layer.tilemapTilesetId === requestedTilesetId))) {
+        throw new Error(tr('workspace.tilemap.tilesetUnavailable'))
+      }
+      const tileWidth = requestedTileset?.tileWidth ?? Math.max(1, Math.trunc(options.tileWidth))
+      const tileHeight = requestedTileset?.tileHeight ?? Math.max(1, Math.trunc(options.tileHeight))
       const layerName = options.name.trim() || tr('workspace.tilemap.layerName')
-      createTilemapCelData(current.document.width, current.document.height, tileWidth, tileHeight)
       const resource = await window.moonSprite.getResourceInfo()
       const check = checkResourceLimit(current.document.width, current.document.height, current.document.layers.length + 1, current.document.colorMode, resource)
       if (!check.allowed) throw new Error(check.reason)
@@ -3567,15 +4727,17 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
         const before = captureDocumentStructureSnapshot(document)
         const beforeSelection = captureLayerUi(session)
         const beforeTileSelection = { tilesetId: session.selectedTilesetId, tileId: session.selectedTileId, secondaryTileId: session.secondaryTileId, mode: session.tilemapMode }
-        const tilesetId = createId('tileset')
-        const tileset = createBlankTileset(tilesetId, layerName, tileWidth, tileHeight, createId('tile'))
-        document.tilesets = [...(document.tilesets ?? []), tileset]
+        const tileset = requestedTilesetId
+          ? document.tilesets?.find((candidate) => candidate.id === requestedTilesetId) ?? null
+          : createBlankTileset(createId('tileset'), layerName, tileWidth, tileHeight, createId('tile'))
+        if (!tileset || tileset.tileWidth !== tileWidth || tileset.tileHeight !== tileHeight) throw new Error(tr('workspace.tilemap.tilesetUnavailable'))
+        if (!requestedTilesetId) document.tilesets = [...(document.tilesets ?? []), tileset]
 
         const placement = selectedRowInsertionTarget(session)
         const layer = createSparseLayer(layerName, document.colorMode)
         layer.kind = 'tilemap'
         layer.tilemapTilesetId = tileset.id
-        tileset.name = layer.name
+        if (!requestedTilesetId) tileset.name = layer.name
         const targetGroupId = insertionTargetParent(document, placement)
         if (targetGroupId) layer.groupId = targetGroupId
         document.layers.push(layer)
@@ -3608,6 +4770,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
         session.secondaryTileId = tileset.tileIds[0] ?? null
         session.tilemapMode = 'hybrid'
         session.selectedAnimationCellKeys = [animationCelKey(layer.id, timeline.activeFrameId)]
+        session.animationCellSelectionExplicit = false
         moveLayerPanelRowsOperation(session, [layer.id], [], placement)
         const after = captureDocumentStructureSnapshot(document)
         const afterSelection = captureLayerUi(session)
@@ -3629,6 +4792,105 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
         }
         session.history.push({
           label: tr('workspace.history.newTilemapLayer'),
+          bytes: documentStructureDeltaBytes(before, after),
+          undo: () => restore(before, beforeSelection, beforeTileSelection),
+          redo: () => restore(after, afterSelection, afterTileSelection),
+          invalidation: { kind: 'full' },
+          requiresAnimationSync: false
+        })
+        created = true
+      })
+      if (created) requestTilesetPanelVisibility(true)
+    } catch (error) {
+      set({ message: error instanceof Error ? error.message : tr('workspace.canvasCreateError') })
+    }
+  },
+
+  async createFreeTileLayer(options) {
+    get().commitFloatingPaste()
+    const current = activeSession(get())
+    if (!current) return
+    const documentId = current.document.id
+    try {
+      let created = false
+      const layerName = options.name.trim() || tr('workspace.freeTile.layerName')
+      const resource = await window.moonSprite.getResourceInfo()
+      const check = checkResourceLimit(current.document.width, current.document.height, current.document.layers.length + 1, current.document.colorMode, resource)
+      if (!check.allowed) throw new Error(check.reason)
+      get().mutateActive((session) => {
+        if (session.document.id !== documentId) return
+        const document = session.document
+        syncActiveAnimationFrame(document)
+        const before = captureDocumentStructureSnapshot(document)
+        const beforeSelection = captureLayerUi(session)
+        const beforeTileSelection = { tilesetId: session.selectedTilesetId, tileId: session.selectedTileId, secondaryTileId: session.secondaryTileId, mode: session.freeTileMode }
+        const sourceId = createId('free-tile-source')
+        const sourceName = tr('workspace.freeTile.sourceName', { index: 1 })
+        const tileset = createBlankTileset(createId('tileset'), sourceName, 1, 1, createId('tile'), 1)
+        document.tilesets = [...(document.tilesets ?? []), tileset]
+
+        const placement = selectedRowInsertionTarget(session)
+        const layer = createSparseLayer(layerName, document.colorMode)
+        layer.kind = 'free-tile'
+        layer.freeTileSources = [{ id: sourceId, name: sourceName, tilesetId: tileset.id, displayColor: defaultFreeTileSourceDisplayColor(0), visible: true, locked: false, opacity: 1, blendMode: 'normal', offsetX: 0, offsetY: 0 }]
+        const targetGroupId = insertionTargetParent(document, placement)
+        if (targetGroupId) layer.groupId = targetGroupId
+        document.layers.push(layer)
+        const sources = freeTileSourcesForLayer(document, layer)
+        const timeline = ensureAnimationDocument(document)
+        for (const frame of timeline.frames) {
+          const freeTiles = createFreeTileCelData()
+          const cel = timeline.cels.find((candidate) => candidate.layerId === layer.id && candidate.frameId === frame.id)
+          if (!cel) continue
+          delete cel.linkedCelId
+          delete cel.text
+          delete cel.tilemap
+          cel.freeTiles = freeTiles
+          cel.surface = renderFreeTileSurface(
+            freeTiles,
+            sources,
+            document.colorMode,
+            document.width,
+            document.height,
+            0,
+            0,
+            document.colorMode === 'indexed' ? (color) => paletteColorIdForCanvas(document, color) : undefined
+          )
+          cel.opacity = layer.opacity
+        }
+        refreshActiveAnimationFrame(document)
+        document.activeLayerId = layer.id
+        session.selectedGroupId = null
+        session.selectedGroupIds = []
+        session.selectedLayerIds = [layer.id]
+        session.layerSelectionAnchorId = layer.id
+        session.selectedTilesetId = tileset.id
+        session.selectedTileId = tileset.tileIds[0] ?? null
+        session.secondaryTileId = tileset.tileIds[0] ?? null
+        session.freeTileMode = 'edit'
+        session.selectedAnimationCellKeys = [animationCelKey(layer.id, timeline.activeFrameId)]
+        session.animationCellSelectionExplicit = false
+        moveLayerPanelRowsOperation(session, [layer.id], [], placement)
+        const after = captureDocumentStructureSnapshot(document)
+        const afterSelection = captureLayerUi(session)
+        const afterTileSelection = { tilesetId: session.selectedTilesetId, tileId: session.selectedTileId, secondaryTileId: session.secondaryTileId, mode: session.freeTileMode }
+        const restore = (
+          snapshot: DocumentStructureSnapshot,
+          selection: ReturnType<typeof captureLayerUi>,
+          tileSelection: { tilesetId: string | null; tileId: string | null; secondaryTileId: string | null; mode: FreeTileDrawingMode }
+        ): void => {
+          restoreDocumentStructureSnapshot(document, snapshot)
+          session.selectedLayerIds = [...selection.selectedLayerIds]
+          session.selectedGroupId = selection.selectedGroupId
+          session.selectedGroupIds = [...selection.selectedGroupIds]
+          session.collapsedGroupIds = [...selection.collapsedGroupIds]
+          session.selectedTilesetId = tileSelection.tilesetId
+          session.selectedTileId = tileSelection.tileId
+          session.secondaryTileId = tileSelection.secondaryTileId
+          session.freeTileMode = tileSelection.mode
+        }
+        session.history.push({
+          label: tr('workspace.history.newFreeTileLayer'),
           bytes: documentStructureDeltaBytes(before, after),
           undo: () => restore(before, beforeSelection, beforeTileSelection),
           redo: () => restore(after, afterSelection, afterTileSelection),
@@ -3706,6 +4968,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
         session.secondaryTileId = tileset.tileIds[0] ?? null
         session.tilemapMode = 'hybrid'
         session.selectedAnimationCellKeys = [animationCelKey(layer.id, timeline.activeFrameId)]
+        session.animationCellSelectionExplicit = false
         const after = captureLayerContentSnapshot(document, layerId)
         const afterTileSelection = { tilesetId: session.selectedTilesetId, tileId: session.selectedTileId, secondaryTileId: session.secondaryTileId, mode: session.tilemapMode }
         const restore = (
@@ -3790,16 +5053,39 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       if (!layer || layer.kind || Boolean(layer.background) === enabled) return
       const before = layer.background ? { ...layer.background } : undefined
       const after = enabled ? { mode: 'canvas' as const } : undefined
+      const preservedSelection = {
+        activeLayerId: document.activeLayerId,
+        selectedLayerIds: [...session.selectedLayerIds],
+        selectedGroupId: session.selectedGroupId,
+        selectedGroupIds: [...session.selectedGroupIds]
+      }
+      const moveHistory = enabled ? moveLayersToRootEdgeOperation(session, [layer.id], 'bottom') : null
+      document.activeLayerId = preservedSelection.activeLayerId
+      session.selectedLayerIds = preservedSelection.selectedLayerIds
+      session.selectedGroupId = preservedSelection.selectedGroupId
+      session.selectedGroupIds = preservedSelection.selectedGroupIds
       const apply = (value: typeof before): void => {
         if (value) layer.background = { ...value }
         else delete layer.background
       }
+      const applyMovePreservingActiveLayer = (operation: (() => void) | undefined): void => {
+        if (!operation) return
+        const activeLayerId = document.activeLayerId
+        operation()
+        document.activeLayerId = activeLayerId
+      }
       apply(after)
       session.history.push({
         label: tr(enabled ? 'workspace.history.convertToBackgroundLayer' : 'workspace.history.convertToRasterLayer'),
-        bytes: 24,
-        undo: () => apply(before),
-        redo: () => apply(after),
+        bytes: 24 + (moveHistory?.bytes ?? 0),
+        undo: () => {
+          apply(before)
+          applyMovePreservingActiveLayer(moveHistory?.undo)
+        },
+        redo: () => {
+          apply(after)
+          applyMovePreservingActiveLayer(moveHistory?.redo)
+        },
         affectedLayerIds: [layer.id],
         requiresAnimationSync: false,
         invalidation: { kind: 'full' }
@@ -3839,6 +5125,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       session.selectedGroupIds = []
       session.selectedLayerIds = [layer.id]
       session.selectedAnimationCellKeys = [animationCelKey(layer.id, timeline.activeFrameId)]
+      session.animationCellSelectionExplicit = false
       syncActiveAnimationLayer(document, layer.id)
       moveLayerPanelRowsOperation(session, [layer.id], [], placement)
       const after = captureDocumentStructureSnapshot(document)
@@ -3867,6 +5154,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
         beforeSelection,
         selectedAnimationCellKeys: [...session.selectedAnimationCellKeys],
         animationCellSelectionAnchorKey: session.animationCellSelectionAnchorKey,
+        animationCellSelectionExplicit: session.animationCellSelectionExplicit,
         selectedAnimationFrameIds: [...session.selectedAnimationFrameIds],
         animationFrameSelectionAnchorId: session.animationFrameSelectionAnchorId,
         dirty: document.dirty,
@@ -3899,6 +5187,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       session.selectedLayerIds = [layer.id]
       session.selectedAnimationCellKeys = [animationCelKey(layer.id, timeline.activeFrameId)]
       session.animationCellSelectionAnchorKey = animationCelKey(layer.id, timeline.activeFrameId)
+      session.animationCellSelectionExplicit = false
       syncActiveAnimationLayer(document, layer.id)
       moveLayerPanelRowsOperation(session, [layer.id], [], placement)
       textLayerDrafts.set(layer.id, draftState)
@@ -3964,6 +5253,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       session.collapsedGroupIds = [...draft.beforeSelection.collapsedGroupIds]
       session.selectedAnimationCellKeys = [...draft.selectedAnimationCellKeys]
       session.animationCellSelectionAnchorKey = draft.animationCellSelectionAnchorKey
+      session.animationCellSelectionExplicit = draft.animationCellSelectionExplicit
       session.selectedAnimationFrameIds = [...draft.selectedAnimationFrameIds]
       session.animationFrameSelectionAnchorId = draft.animationFrameSelectionAnchorId
       textLayerDrafts.delete(layerId)
@@ -4060,10 +5350,12 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
   },
 
   rasterizeLayer(layerId) {
+    let shouldHideTilesetPanel = false
     get().mutateActive((session) => {
       const document = session.document
       const layer = document.layers.find((candidate) => candidate.id === layerId)
       if (!layer || (!layer.background && !layer.kind && !hasEnabledLayerStyles(layer.layerStyles))) return
+      const wasFreeTileLayer = layer.kind === 'free-tile'
       syncActiveAnimationFrame(document)
       const before = captureLayerContentSnapshot(document, layerId)
       const timeline = ensureAnimationDocument(document)
@@ -4116,16 +5408,20 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       for (const cel of timeline.cels) if (cel.layerId === layerId) {
         delete cel.text
         delete cel.tilemap
+        delete cel.freeTiles
       }
       delete layer.kind
       delete layer.tilemapTilesetId
+      delete layer.freeTileTilesetId
       delete layer.layerStyles
       delete layer.background
       removeTilesetSnapshots(document, rasterizedTilesets)
       refreshActiveAnimationFrame(document)
       const after = captureLayerContentSnapshot(document, layerId)
       session.history.push({ label: tr('workspace.history.convertToRasterLayer'), bytes: layerContentSnapshotBytes(before) + layerContentSnapshotBytes(after), undo: () => restoreLayerContentSnapshot(document, before), redo: () => restoreLayerContentSnapshot(document, after), invalidation: { kind: 'full' }, affectedLayerIds: [layerId], requiresAnimationSync: false })
+      shouldHideTilesetPanel = wasFreeTileLayer && !documentUsesTilesetPanel(document)
     })
+    if (shouldHideTilesetPanel) requestTilesetPanelVisibility(false)
   },
 
   duplicateActiveLayer() {
@@ -4136,7 +5432,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       const source = getLayer(document, priorId)
       const copy = duplicateLayer(document, priorId)
       cloneAnimationCelsForLayer(document, priorId, copy)
-      const copiedTilesets = cloneOwnedTilemapTilesets(document, [{ source, target: copy }])
+      const copiedTilesets = cloneOwnedLayerTilesets(document, [{ source, target: copy }])
       const animationCels = cloneAnimationCelsForLayerIds(document, [copy.id])
       session.selectedGroupId = null
       session.selectedGroupIds = []
@@ -4167,7 +5463,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
         return copy
       })
       if (copies.length === 0) return
-      const copiedTilesets = cloneOwnedTilemapTilesets(document, copies.map((copy, index) => ({ source: sourceLayers[index], target: copy })))
+      const copiedTilesets = cloneOwnedLayerTilesets(document, copies.map((copy, index) => ({ source: sourceLayers[index], target: copy })))
       createdIds.push(...copies.map((copy) => copy.id))
       const placements = copies.map((copy) => ({ copy, index: document.layers.indexOf(copy) }))
       const animationCels = cloneAnimationCelsForLayerIds(document, createdIds)
@@ -4263,7 +5559,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       timeline.groupMasks.push(...groupMasks)
       document.layers.splice(insertionIndex, 0, ...layers)
       layers.forEach((layer, index) => cloneAnimationCelsForLayer(document, sourceLayers[index].id, layer))
-      const copiedTilesets = cloneOwnedTilemapTilesets(document, layers.map((layer, index) => ({ source: sourceLayers[index], target: layer })))
+      const copiedTilesets = cloneOwnedLayerTilesets(document, layers.map((layer, index) => ({ source: sourceLayers[index], target: layer })))
       const animationCels = cloneAnimationCelsForLayerIds(document, layers.map((layer) => layer.id))
       document.activeLayerId = layers.at(-1)?.id ?? previousActiveId
       session.collapsedGroupIds = [...new Set([...previousCollapsedGroupIds, ...copiedCollapsedGroupIds])]
@@ -4331,7 +5627,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       session.selectedGroupId = null
       session.selectedGroupIds = []
       session.selectedLayerIds = [nextId]
-      shouldHideTilesetPanel = removed.kind === 'tilemap' && !document.layers.some((layer) => layer.kind === 'tilemap')
+      shouldHideTilesetPanel = (removed.kind === 'tilemap' || removed.kind === 'free-tile') && !documentUsesTilesetPanel(document)
       session.history.push({
         label: tr('workspace.history.deleteLayer'), bytes: layerHistoryBytes(removed) + removedTilesets.reduce((sum, snapshot) => sum + tilemapTilesetBytes(snapshot.tileset), 0),
         undo: () => { restoreTilesetSnapshots(document, removedTilesets); document.layers.splice(index, 0, removed); restoreAnimationCels(document, animationCels); document.activeLayerId = removed.id },
@@ -4380,7 +5676,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       session.selectedGroupId = null
       session.selectedGroupIds = []
       session.selectedLayerIds = [nextId]
-      shouldHideTilesetPanel = removed.some(({ layer }) => layer.kind === 'tilemap') && !document.layers.some((layer) => layer.kind === 'tilemap')
+      shouldHideTilesetPanel = removed.some(({ layer }) => layer.kind === 'tilemap' || layer.kind === 'free-tile') && !documentUsesTilesetPanel(document)
       session.history.push({
         label: removedGroups.length > 0 ? tr('workspace.history.deleteGroup') : removed.length === 1 ? tr('workspace.history.deleteLayer') : tr('workspace.history.deleteLayers'),
         bytes: removed.reduce((sum, item) => sum + layerHistoryBytes(item.layer), 0) + removedTilesets.reduce((sum, snapshot) => sum + tilemapTilesetBytes(snapshot.tileset), 0) + removedGroups.reduce((sum, item) => sum + groupHistoryBytes(item.group), 0) + removedGroupMasks.reduce((sum, entry) => sum + entry.mask.pixels.byteLength, 0),
@@ -4421,8 +5717,9 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     const beforeUi = captureLayerUi(session)
     const result = mergeRasterLayers(session.document, session.selectedLayerIds)
     if (!result.ok) { set({ message: result.reason }); return }
-    commitLayerMerge(session, beforeDocument, beforeUi, result, tr('workspace.history.mergeSelected'))
+    const shouldHideTilesetPanel = commitLayerMergeWithOwnedTilesets(session, beforeDocument, beforeUi, result, tr('workspace.history.mergeSelected'))
     set({ sessions: [...state.sessions], message: tr('workspace.layer.mergedSelected') })
+    if (shouldHideTilesetPanel) requestTilesetPanelVisibility(false)
   },
 
   mergeActiveLayerDown() {
@@ -4434,8 +5731,9 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     const beforeUi = captureLayerUi(session)
     const result = mergeLayerDown(session.document, session.document.activeLayerId)
     if (!result.ok) { set({ message: result.reason }); return }
-    commitLayerMerge(session, beforeDocument, beforeUi, result, tr('workspace.history.mergeDown'))
+    const shouldHideTilesetPanel = commitLayerMergeWithOwnedTilesets(session, beforeDocument, beforeUi, result, tr('workspace.history.mergeDown'))
     set({ sessions: [...state.sessions], message: tr('workspace.layer.mergedDown') })
+    if (shouldHideTilesetPanel) requestTilesetPanelVisibility(false)
   },
 
   mergeSelectedGroup() {
@@ -4447,8 +5745,9 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     const beforeUi = captureLayerUi(session)
     const result = mergeLayerGroup(session.document, session.selectedGroupId)
     if (!result.ok) { set({ message: result.reason }); return }
-    commitLayerMerge(session, beforeDocument, beforeUi, result, tr('workspace.history.mergeGroup'))
+    const shouldHideTilesetPanel = commitLayerMergeWithOwnedTilesets(session, beforeDocument, beforeUi, result, tr('workspace.history.mergeGroup'))
     set({ sessions: [...state.sessions], message: tr('workspace.group.merged') })
+    if (shouldHideTilesetPanel) requestTilesetPanelVisibility(false)
   },
 
   mergeVisibleLayers() {
@@ -4460,8 +5759,9 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     const beforeUi = captureLayerUi(session)
     const result = mergeVisibleDocumentLayers(session.document)
     if (!result.ok) { set({ message: result.reason }); return }
-    commitLayerMerge(session, beforeDocument, beforeUi, result, tr('workspace.history.mergeVisible'))
+    const shouldHideTilesetPanel = commitLayerMergeWithOwnedTilesets(session, beforeDocument, beforeUi, result, tr('workspace.history.mergeVisible'))
     set({ sessions: [...state.sessions], message: tr('workspace.layers.visibleMerged') })
+    if (shouldHideTilesetPanel) requestTilesetPanelVisibility(false)
   },
 
   moveLayer(direction) {
@@ -4540,10 +5840,32 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
   reorderLayers(layerIds, targetLayerId, insertAfterTarget = true) {
     const current = activeSession(get())
     if (current && lockedLayerStructure(current.document, layerIds)) { set({ message: tr('workspace.layer.lockedMove') }); return }
+    const beforeRenderOrder = current ? normalCompositeLayers(current.document) : null
     get().mutateActive((session) => {
       const history = reorderLayersOperation(session, layerIds, targetLayerId, insertAfterTarget)
-      if (history) session.history.push({ ...history, requiresAnimationSync: false })
-    }, 'content')
+      if (!history) return
+      const invalidation = layerReorderInvalidation(session.document, beforeRenderOrder, normalCompositeLayers(session.document))
+      let entry: HistoryEntry
+      const applyWithCurrentFrameInvalidation = (apply: () => void): void => {
+        const before = normalCompositeLayers(session.document)
+        apply()
+        entry.invalidation = layerReorderInvalidation(session.document, before, normalCompositeLayers(session.document))
+        if (entry.invalidation.kind === 'region') session.layersPanelRevision += 1
+      }
+      entry = {
+        ...history,
+        invalidation,
+        requiresAnimationSync: false,
+        undo: () => { applyWithCurrentFrameInvalidation(history.undo) },
+        redo: () => { applyWithCurrentFrameInvalidation(history.redo) }
+      }
+      if (invalidation.kind === 'region') {
+        session.layersPanelRevision += 1
+      }
+      session.history.push(entry)
+      touch(session, true, invalidation)
+      recordDocumentOperation(session)
+    }, false)
   },
 
   assignLayerToGroup(layerId, groupId) {
@@ -4685,10 +6007,14 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
   toggleLayerVisibility(layerId) {
     get().mutateActive((session) => {
       const layer = getLayer(session.document, layerId)
-      const before = layer.visible
-      layer.visible = !before
-      session.history.push({ label: tr('workspace.history.showLayer'), bytes: 8, undo: () => { layer.visible = before }, redo: () => { layer.visible = !before }, requiresAnimationSync: false })
-    }, 'content')
+      commitVisibilityChange(
+        session,
+        layer,
+        tr('workspace.history.showLayer'),
+        () => layerVisibilityInvalidation(session.document, layer),
+        [layer.id]
+      )
+    }, false)
   },
 
   selectLayer(layerId, mode = 'replace') {
@@ -4708,7 +6034,9 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
         applyLayerRowSelection(session, [layerId], [], { kind: 'layer', id: layerId })
         session.layerSelectionAnchorId = layerId
       }
-      if (selectionMode !== 'replace') applyLayerCurrentFrameCellSelection(session, selectedDirectLayerRows(session), layerId)
+      if (selectionMode !== 'replace' && session.selectedAnimationFrameIds.length === 0) {
+        applyLayerCurrentFrameCellSelection(session, selectedDirectLayerRows(session), layerId)
+      }
     }, false)
   },
 
@@ -4717,6 +6045,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     get().mutateActive((session) => {
       if (!session.document.layers.some((layer) => layer.id === layerId)) return
       const currentLayerIds = selectedDirectLayerRows(session)
+      const preserveFrameSelection = session.selectedAnimationFrameIds.length > 0
       const toggledLayerIds = additive
         ? currentLayerIds.includes(layerId)
           ? currentLayerIds.filter((candidate) => candidate !== layerId)
@@ -4724,7 +6053,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
         : [layerId]
       const selectedLayerIds = toggledLayerIds.length > 0 ? toggledLayerIds : [layerId]
       applyLayerRowSelection(session, selectedLayerIds, [], { kind: 'layer', id: layerId })
-      applyLayerCurrentFrameCellSelection(session, selectedLayerIds, layerId)
+      if (!preserveFrameSelection) applyLayerCurrentFrameCellSelection(session, selectedLayerIds, layerId)
     }, false)
   },
 
@@ -4806,10 +6135,15 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
   toggleGroupVisibility(groupId) {
     get().mutateActive((session) => {
       const group = getGroup(session.document, groupId)
-      const before = group.visible
-      group.visible = !before
-      session.history.push({ label: tr('workspace.history.showGroup'), bytes: 8, undo: () => { group.visible = before }, redo: () => { group.visible = !before }, requiresAnimationSync: false })
-    }, 'content')
+      commitVisibilityChange(
+        session,
+        group,
+        tr('workspace.history.showGroup'),
+        () => groupVisibilityInvalidation(session.document, group.id),
+        undefined,
+        true
+      )
+    }, false)
   },
 
   selectLayerMask(celId, additive = false) {
@@ -4826,6 +6160,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       const key = animationCelKey(cel.layerId, cel.frameId)
       session.selectedAnimationCellKeys = []
       session.animationCellSelectionAnchorKey = null
+      session.animationCellSelectionExplicit = false
       const selected = new Set(additive ? session.selectedAnimationMaskCellKeys : [])
       selected.add(key)
       session.selectedAnimationMaskCellKeys = [...selected]
@@ -4846,6 +6181,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       const key = animationCelKey(groupId, frameId)
       session.selectedAnimationCellKeys = []
       session.animationCellSelectionAnchorKey = null
+      session.animationCellSelectionExplicit = false
       const selected = new Set(additive ? session.selectedAnimationMaskCellKeys : [])
       selected.add(key)
       session.selectedAnimationMaskCellKeys = [...selected]
@@ -4907,6 +6243,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       const key = animationCelKey(targetLayerId, targetFrameId)
       session.selectedAnimationCellKeys = []
       session.animationCellSelectionAnchorKey = null
+      session.animationCellSelectionExplicit = false
       session.selectedAnimationMaskCellKeys = [key]
       session.animationMaskCellSelectionAnchorKey = key
       session.history.push({
@@ -4957,6 +6294,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       session.layerMaskIsolatedView = false
       session.selectedAnimationCellKeys = []
       session.animationCellSelectionAnchorKey = null
+      session.animationCellSelectionExplicit = false
       session.selectedAnimationMaskCellKeys = activeMask ? [animationCelKey(layerId, timeline.activeFrameId)] : []
       session.animationMaskCellSelectionAnchorKey = session.selectedAnimationMaskCellKeys[0] ?? null
       refreshActiveAnimationFrame(session.document)
@@ -5004,6 +6342,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       const key = animationCelKey(groupId, targetFrameId)
       session.selectedAnimationCellKeys = []
       session.animationCellSelectionAnchorKey = null
+      session.animationCellSelectionExplicit = false
       session.selectedAnimationMaskCellKeys = [key]
       session.animationMaskCellSelectionAnchorKey = key
       const restore = (): void => { if (!timeline.groupMasks?.some((candidate) => candidate.mask.id === mask.id)) timeline.groupMasks?.push(entry) }
@@ -5286,12 +6625,12 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
 
   commitLayerPropertiesTransaction(id, values, changedFields) {
     get().mutateActive((session) => {
-      const kind = commitLayerPropertiesTransactionCommand(documentTransactions, session, id, values, changedFields)
-      if (kind === 'content') {
+      const result = commitLayerPropertiesTransactionCommand(documentTransactions, session, id, values, changedFields)
+      if (result.kind === 'content') {
         syncActiveAnimationFrame(session.document)
-        touch(session, true, { kind: 'full' })
+        touch(session, true, result.invalidation)
         recordDocumentOperation(session)
-      } else if (kind === 'metadata') {
+      } else if (result.kind === 'metadata') {
         touchMetadata(session)
         recordDocumentOperation(session, undefined, false)
       }
@@ -5305,58 +6644,98 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
   },
 
   previewLayerStyles(ownerKind, ownerId, styles) {
+    get().previewLayerStyleEntries([{ target: { kind: ownerKind, id: ownerId }, styles }])
+  },
+
+  previewLayerStyleEntries(entries) {
     const current = activeSession(get())
-    const currentOwner = ownerKind === 'layer'
-      ? current?.document.layers.find((layer) => layer.id === ownerId)
-      : current?.document.groups.find((group) => group.id === ownerId)
-    if (!current || !currentOwner || layerStylesEqual(currentOwner.layerStyles, styles)) return
+    if (!current) return
+    const seen = new Set<string>()
+    const changes = entries.flatMap((entry) => {
+      const key = `${entry.target.kind}:${entry.target.id}`
+      if (seen.has(key)) return []
+      seen.add(key)
+      const owner = layerStyleOwnerForTarget(current.document, entry.target)
+      return owner && !layerStylesEqual(owner.layerStyles, entry.styles) ? [{ target: entry.target, styles: entry.styles }] : []
+    })
+    if (changes.length === 0) return
     const operationProbe = window.__moonSpriteCanvasProbe
     const previewStartedAt = operationProbe?.recordOperationStage ? performance.now() : 0
     get().mutateActive((session) => {
-      const owner = ownerKind === 'layer'
-        ? session.document.layers.find((candidate) => candidate.id === ownerId)
-        : session.document.groups.find((candidate) => candidate.id === ownerId)
-      if (!owner || layerStylesEqual(owner.layerStyles, styles)) return
-      const sourceBounds = ownerKind === 'layer' ? layerContentBounds(session.document, owner as RasterLayer) : null
-      const beforeBounds = sourceBounds ? expandLayerStyleInvalidationRect(session.document, sourceBounds, [ownerId]) : null
-      assignLayerStyles(owner, styles)
-      const afterBounds = sourceBounds ? expandLayerStyleInvalidationRect(session.document, sourceBounds, [ownerId]) : null
+      let changed = false
+      for (const change of changes) {
+        const owner = layerStyleOwnerForTarget(session.document, change.target)
+        if (!owner || layerStylesEqual(owner.layerStyles, change.styles)) continue
+        assignLayerStyles(owner, change.styles)
+        changed = true
+      }
+      if (!changed) return
       const fromRevision = session.contentRevision
       session.revision += 1
       session.contentRevision += 1
       session.layersPanelRevision += 1
-      session.contentInvalidation = beforeBounds && afterBounds
-        ? { kind: 'region', rect: unionRects(beforeBounds, afterBounds), fromRevision, revision: session.contentRevision }
-        : { kind: 'full', fromRevision, revision: session.contentRevision }
+      session.contentInvalidation = { kind: 'full', fromRevision, revision: session.contentRevision }
     }, false)
-    operationProbe?.recordOperationStage?.('layer-style.preview-mutation', performance.now() - previewStartedAt, { ownerKind })
+    operationProbe?.recordOperationStage?.('layer-style.preview-mutation', performance.now() - previewStartedAt, { targets: changes.length })
   },
 
   setLayerStyles(ownerKind, ownerId, styles) {
+    get().setLayerStylesForTargets([{ kind: ownerKind, id: ownerId }], styles)
+  },
+
+  setLayerStylesForTargets(targets, styles, action = 'edit') {
     const current = activeSession(get())
-    const currentOwner = ownerKind === 'layer'
-      ? current?.document.layers.find((layer) => layer.id === ownerId)
-      : current?.document.groups.find((group) => group.id === ownerId)
-    if (!current || !currentOwner || layerStylesEqual(currentOwner.layerStyles, styles)) return
+    if (!current) return false
+    const uniqueTargets = uniqueLayerStyleTargets(current.document, targets)
+    if (!uniqueTargets.some((target) => {
+      const owner = layerStyleOwnerForTarget(current.document, target)
+      return Boolean(owner && !layerStylesEqual(owner.layerStyles, styles))
+    })) return false
+    let committed = false
     get().mutateActive((session) => {
-      const owner = ownerKind === 'layer'
-        ? session.document.layers.find((candidate) => candidate.id === ownerId)
-        : session.document.groups.find((candidate) => candidate.id === ownerId)
-      if (!owner) return
-      const before = cloneLayerStyles(owner.layerStyles)
-      const after = cloneLayerStyles(styles)
-      if (layerStylesEqual(before, after)) return
-      assignLayerStyles(owner, after)
+      const changes = uniqueTargets.flatMap((target) => {
+        const owner = layerStyleOwnerForTarget(session.document, target)
+        if (!owner || layerStylesEqual(owner.layerStyles, styles)) return []
+        return [{ owner, before: cloneLayerStyles(owner.layerStyles), after: cloneLayerStyles(styles) }]
+      })
+      if (changes.length === 0) return
+      for (const change of changes) assignLayerStyles(change.owner, change.after)
+      const label = action === 'paste'
+        ? tr('workspace.history.pasteLayerStyles')
+        : action === 'clear'
+          ? tr('workspace.history.clearLayerStyles')
+          : tr('workspace.history.layerStyles')
       session.history.push({
-        label: tr('workspace.history.layerStyles'),
-        bytes: layerStylesHistoryBytes(before) + layerStylesHistoryBytes(after),
-        undo: () => assignLayerStyles(owner, before),
-        redo: () => assignLayerStyles(owner, after),
+        label,
+        bytes: changes.reduce((bytes, change) => bytes + layerStylesHistoryBytes(change.before) + layerStylesHistoryBytes(change.after), 0),
+        undo: () => { for (const change of changes) assignLayerStyles(change.owner, change.before) },
+        redo: () => { for (const change of changes) assignLayerStyles(change.owner, change.after) },
         contentChanged: true,
         requiresAnimationSync: false,
         invalidation: { kind: 'full' }
       })
+      committed = true
     }, 'content')
+    return committed
+  },
+
+  copyLayerStyles(ownerKind, ownerId) {
+    const session = activeSession(get())
+    if (!session) return false
+    const owner = layerStyleOwnerForTarget(session.document, { kind: ownerKind, id: ownerId })
+    const styles = cloneLayerStyles(owner?.layerStyles)
+    if (!styles) return false
+    set({ layerStyleClipboard: styles })
+    return true
+  },
+
+  pasteLayerStyles(targets) {
+    const styles = cloneLayerStyles(get().layerStyleClipboard ?? undefined)
+    return styles ? get().setLayerStylesForTargets(targets, styles, 'paste') : false
+  },
+
+  clearLayerStyles(targets) {
+    return get().setLayerStylesForTargets(targets, undefined, 'clear')
   },
   applyActiveLayerAdjustment(adjustment) {
     get().mutateActive((session) => {
@@ -5383,11 +6762,13 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
   },
   previewActiveLayerAdjustment(adjustment, baseline, selection) {
     get().mutateActive((session) => {
-      restoreAdjustmentSnapshot(session, baseline)
+      prepareAdjustmentSnapshotTargets(session, baseline)
       const targetSelection = selection === undefined ? session.selection : selection
       for (const layerSnapshot of baseline.layers) {
         const layer = session.document.layers.find((candidate) => candidate.id === layerSnapshot.layerId)
-        if (layer && !layer.kind && !isLayerEffectivelyLocked(session.document, layer)) applyColorAdjustment(session.document, layer, adjustment, targetSelection)
+        if (!layer) continue
+        if (!layer.kind && !isLayerEffectivelyLocked(session.document, layer)) applyColorAdjustmentDirect(session.document, layer, adjustment, targetSelection, layerSnapshot.pixels)
+        else restorePreparedAdjustmentSnapshotLayer(session, layerSnapshot)
       }
       session.revision += 1
       session.contentRevision += 1
@@ -5402,15 +6783,13 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
   },
   applyActiveLayerAdjustmentFromSnapshot(adjustment, baseline) {
     get().mutateActive((session) => {
-      const before = {
-        ...baseline,
-        layers: baseline.layers.map((layer) => ({ ...layer, pixels: layer.pixels instanceof Uint8ClampedArray ? new Uint8ClampedArray(layer.pixels) : new Uint32Array(layer.pixels) })),
-        palette: baseline.palette.map((entry) => ({ ...entry, color: { ...entry.color } }))
-      }
-      restoreAdjustmentSnapshot(session, before)
+      const before = baseline
+      prepareAdjustmentSnapshotTargets(session, before)
       for (const layerSnapshot of before.layers) {
         const layer = session.document.layers.find((candidate) => candidate.id === layerSnapshot.layerId)
-        if (layer && !layer.kind && !isLayerEffectivelyLocked(session.document, layer)) applyColorAdjustment(session.document, layer, adjustment, session.selection)
+        if (!layer) continue
+        if (!layer.kind && !isLayerEffectivelyLocked(session.document, layer)) applyColorAdjustmentDirect(session.document, layer, adjustment, session.selection, layerSnapshot.pixels)
+        else restorePreparedAdjustmentSnapshotLayer(session, layerSnapshot)
       }
       const after = captureAdjustmentSnapshot(session, before.layers.map((layer) => layer.layerId))
       const labels: Record<ColorAdjustment['kind'], string> = {
@@ -5519,6 +6898,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     const layerClipboards = layers.map((layer) => layerClipboardFromDocument(document, layer, layer.groupId && selectedGroupIdSet.has(layer.groupId) ? layer.groupId : null))
     const referencedTilesetIds = new Set([
       ...layerClipboards.flatMap((layer) => layer.tilemapTilesetId ? [layer.tilemapTilesetId] : []),
+      ...layerClipboards.flatMap((layer) => layer.freeTileSources?.map((source) => source.tilesetId) ?? []),
       ...layerClipboards.flatMap((layer) => layer.animationCels ?? [])
         .flatMap((cel) => cel.tilemap?.cells ?? [])
         .flatMap((cell) => cell ? [cell.tilesetId] : [])
@@ -5561,6 +6941,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       const timeline = ensureAnimationDocument(document)
       syncActiveAnimationFrame(document)
       const tilesetIdMap = new Map<string, string>()
+      const freeTileSourceIdMaps = new Map<string, Map<string, string>>()
       const pastedTilesets: Tileset[] = []
       for (const source of clipboard.tilesets ?? []) {
         const id = createId('tileset')
@@ -5610,6 +6991,18 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
         const layer = createLayer(`${source.name} ${tr('canvas.history.copySuffix')}`, source.width, source.height, document.colorMode)
         layer.kind = source.kind
         if (source.kind === 'tilemap' && source.tilemapTilesetId) layer.tilemapTilesetId = tilesetIdMap.get(source.tilemapTilesetId)
+        if (source.kind === 'free-tile' && source.freeTileSources) {
+          const sourceIdMap = new Map<string, string>()
+          layer.freeTileSources = source.freeTileSources.flatMap((sourceLayer) => {
+            const tilesetId = tilesetIdMap.get(sourceLayer.tilesetId)
+            if (!tilesetId) return []
+            const sourceId = createId('free-tile-source')
+            sourceIdMap.set(sourceLayer.id, sourceId)
+            return [{ ...cloneFreeTileSourceLayer(sourceLayer), id: sourceId, tilesetId }]
+          })
+          freeTileSourceIdMaps.set(layer.id, sourceIdMap)
+          delete layer.freeTileTilesetId
+        }
         layer.offsetX = source.offsetX
         layer.offsetY = source.offsetY
         layer.visible = source.visible
@@ -5630,9 +7023,15 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
         return layer
       })
       for (const layer of layers) {
-        if (layer.kind !== 'tilemap' || !layer.tilemapTilesetId) continue
-        const tileset = pastedTilesets.find((candidate) => candidate.id === layer.tilemapTilesetId)
-        if (tileset) tileset.name = layer.name
+        const ownedTilesetIds = layer.kind === 'tilemap'
+          ? layer.tilemapTilesetId ? [layer.tilemapTilesetId] : []
+          : layer.kind === 'free-tile' ? (layer.freeTileSources ?? []).map((source) => source.tilesetId) : []
+        for (const ownedTilesetId of ownedTilesetIds) {
+          const tileset = pastedTilesets.find((candidate) => candidate.id === ownedTilesetId)
+          const source = layer.freeTileSources?.find((candidate) => candidate.tilesetId === ownedTilesetId)
+          const sharedTilemap = layer.kind === 'tilemap' && layers.filter((candidate) => candidate.kind === 'tilemap' && candidate.tilemapTilesetId === ownedTilesetId).length > 1
+          if (tileset && !sharedTilemap) tileset.name = source?.name ?? layer.name
+        }
       }
       const index = targetContainerTopIndex(document, targetGroupId)
       const previousActiveId = document.activeLayerId
@@ -5644,7 +7043,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       document.layers.splice(index, 0, ...layers)
       ensureAnimationDocument(document)
       layers.forEach((layer, layerIndex) => {
-        for (const cel of clipboard.layers[layerIndex].animationCels ?? []) applyLayerClipboardAnimationCel(document, layer, cel, tilesetIdMap)
+        for (const cel of clipboard.layers[layerIndex].animationCels ?? []) applyLayerClipboardAnimationCel(document, layer, cel, tilesetIdMap, freeTileSourceIdMaps.get(layer.id))
       })
       refreshActiveAnimationFrame(document)
       const pastedIds = layers.map((layer) => layer.id)
@@ -5702,6 +7101,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       session.history.endCompound(layers.length === 1 && groups.length === 0 ? tr('workspace.history.pasteLayer') : tr('workspace.history.pasteCollection'))
     })
     set({ message: clipboard.groups.length > 0 ? tr('workspace.clipboard.pastedLayer') : clipboard.layers.length === 1 ? tr('workspace.copy.layer', { name: clipboard.layers[0].name }) : tr('workspace.copy.layers', { count: clipboard.layers.length }) })
+    if (clipboard.layers.some((layer) => layer.kind === 'free-tile')) requestTilesetPanelVisibility(true)
     return true
   },
 
@@ -5753,10 +7153,8 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       if (!clipboard) { set({ message: tr('workspace.clipboard.emptyPixels') }); return }
       const document = session.document
       const layer = activePaintLayer(session)
-      if (layer.kind) { set({ message: tr('workspace.animation.incompatibleCel') }); return }
+      if (layer.kind && layer.kind !== 'free-tile') { set({ message: tr('workspace.animation.incompatibleCel') }); return }
       if (isLayerEffectivelyLocked(document, layer)) { set({ message: tr('workspace.clipboard.layerLocked') }); return }
-      const beforeSelection = cloneSelectionMask(session.selection)
-      const beforeSelectionPivot = session.selectionPivot ? { ...session.selectionPivot } : null
       // Keep the entire clipboard image, even when it is larger than the
       // document. The floating selection can then be moved until any part of
       // it reaches the canvas instead of losing off-canvas pixels on paste.
@@ -5774,6 +7172,28 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       })
       const width = clipboard.width
       const height = clipboard.height
+      if (layer.kind === 'free-tile') {
+        const target = activeFreeTileCelTarget(document)
+        const selectedInstance = target && session.selectedFreeTileInstanceId
+          ? target.freeTiles.instances.find((instance) => instance.id === session.selectedFreeTileInstanceId) ?? null
+          : null
+        if (target && selectedInstance) {
+          const result = pasteSelectionClipboardIntoSelectedFreeTileInstance(session, target, selectedInstance, clipboard, x, y)
+          if (result.status === 'unavailable') set({ message: tr('workspace.clipboard.freeTileInstanceUnavailable') })
+          else if (result.status === 'too-large') set({ message: tr('workspace.clipboard.freeTileSourceTooLarge') })
+          else if (result.status === 'outside') set({ message: tr('workspace.clipboard.outside') })
+          else set({ message: tr('workspace.clipboard.pastedFreeTileSource', { count: result.pixelCount }) })
+          if (result.status === 'pasted') requestTilesetPanelVisibility(true)
+          return
+        }
+        const pasted = target ? pasteSelectionClipboardIntoFreeTile(session, target, clipboard, x, y) : null
+        if (!pasted) { set({ message: tr('workspace.clipboard.outside') }); return }
+        set({ message: tr('workspace.clipboard.pastedFreeTiles', { count: pasted.pixelCount }) })
+        requestTilesetPanelVisibility(true)
+        return
+      }
+      const beforeSelection = cloneSelectionMask(session.selection)
+      const beforeSelectionPivot = session.selectionPivot ? { ...session.selectionPivot } : null
       const pastedMask = clipboard.mask
       const convertsRgbaValues = layer.format === 'rgba' && (isLayerMask(layer) || document.colorMode === 'grayscale')
       const values = layer.format === 'rgba'
@@ -5947,12 +7367,79 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     }, false)
   },
 
+  beginFreeTileFloatingSelectionTransform(options) {
+    get().mutateActive((session) => {
+      const activeLayer = activePaintLayer(session)
+      session.pendingPaste = {
+        layerId: activeLayer.id,
+        beforeSelection: cloneSelectionMask(options.before),
+        beforeSelectionPivot: session.selectionPivot ? { ...session.selectionPivot } : null,
+        source: options.source,
+        target: cloneSelectionMask(options.target)!,
+        transformTarget: options.transformTarget
+          ? { ...options.transformTarget }
+          : { x: options.target.x, y: options.target.y, width: options.target.width, height: options.target.height },
+        transformAngle: options.transformAngle ?? 0,
+        transformShear: options.transformShear ? { ...options.transformShear } : undefined,
+        previewEdit: options.previewEdit,
+        translationPreview: options.translationPreview ?? null,
+        previewDeferred: false,
+        copy: options.copy,
+        label: options.label,
+        freeTile: {
+          sourceId: options.sourceId,
+          instanceId: options.instanceId,
+          edit: options.edit,
+          selectionSource: cloneSelectionMask(options.selectionSource)!
+        }
+      }
+      session.selection = cloneSelectionMask(options.target)
+      markFloatingOverlayChanged(session)
+    }, false)
+  },
+
   commitFloatingPaste(deselectLabel) {
     const current = activeSession(get())
     if (!current?.pendingPaste) return
     get().mutateActive((session) => {
       const pending = session.pendingPaste
       if (!pending) return
+      if (pending.freeTile) {
+        const beforeSelection = cloneSelectionMask(pending.beforeSelection)
+        const afterSelection = cloneSelectionMask(pending.target)
+        const beforeSelectionPivot = pending.beforeSelectionPivot ? { ...pending.beforeSelectionPivot } : null
+        const afterSelectionPivot = session.selectionPivot ? { ...session.selectionPivot } : null
+        const freeTile = pending.freeTile
+        session.pendingPaste = null
+        commitFreeTileSourceEditInSession(
+          session,
+          freeTile.sourceId,
+          freeTile.edit.before,
+          freeTileSourceSnapshotFromEditRaster(freeTile.edit),
+          pending.label,
+          undefined,
+          {
+            before: beforeSelection,
+            after: afterSelection,
+            beforePivot: beforeSelectionPivot,
+            afterPivot: afterSelectionPivot
+          }
+        )
+        if (deselectLabel && afterSelection) {
+          session.selection = null
+          session.selectionPivot = null
+          session.history.push({
+            label: deselectLabel,
+            bytes: 48 + (afterSelection.mask?.byteLength ?? 0),
+            undo: () => { session.selection = cloneSelectionMask(afterSelection); session.selectionPivot = afterSelectionPivot ? { ...afterSelectionPivot } : null },
+            redo: () => { session.selection = null; session.selectionPivot = null },
+            documentChanged: false,
+            contentChanged: false,
+            requiresAnimationSync: false
+          })
+        }
+        return
+      }
       if (pending.layers?.length) {
         const transformTarget = pending.transformTarget ?? { x: pending.target.x, y: pending.target.y, width: pending.target.width, height: pending.target.height }
         const simpleTranslation = (pending.transformAngle ?? 0) % 360 === 0
@@ -5963,10 +7450,12 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
           && !transformTarget.flipVertical
         const entries: HistoryEntry[] = []
         for (const layerState of pending.layers) {
-          const layer = session.document.layers.find((candidate) => candidate.id === layerState.layerId)
+          const layer = selectionTransformLayerForState(session.document, layerState)
           if (!layer || layer.kind) continue
           const edit = pending.previewDeferred
-            ? simpleTranslation
+            ? layerState.frameId
+              ? applySelectionTransformLayerState(session.document, layerState, transformTarget, pending.transformAngle ?? 0, pending.copy, pending.transformShear)
+              : simpleTranslation
               ? applySelectionTranslationCommit(session.document, layerState.source, transformTarget, pending.copy, layer, session.view.tileRepeatMode)
               : applySelectionTransform(session.document, layerState.source, transformTarget, pending.transformAngle ?? 0, pending.copy, pending.transformShear, undefined, undefined, layer)
             : layerState.previewEdit ?? (layerState.translationPreview ? selectionTranslationPreviewEdit(session.document, layerState.translationPreview) : null)
@@ -6185,6 +7674,20 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     get().mutateActive((session) => {
       const pending = session.pendingPaste
       if (!pending) return
+      if (pending.freeTile) {
+        const restored = applyFreeTileSourceSnapshot(session.document, pending.freeTile.edit.before)
+        session.selection = cloneSelectionMask(pending.beforeSelection)
+        session.selectionPivot = pending.beforeSelectionPivot ? { ...pending.beforeSelectionPivot } : null
+        session.pendingPaste = null
+        if (restored) {
+          const fromRevision = session.contentRevision
+          session.revision += 1
+          session.contentRevision += 1
+          session.layersPanelRevision += 1
+          session.contentInvalidation = { kind: 'full', fromRevision, revision: session.contentRevision }
+        } else markFloatingOverlayChanged(session)
+        return
+      }
       restoreFloatingPreview(session)
       session.selection = cloneSelectionMask(pending.beforeSelection)
       session.selectionPivot = pending.beforeSelectionPivot ? { ...pending.beforeSelectionPivot } : null
@@ -6218,6 +7721,54 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
           height: pending.target.height
         }
         const nextTransformTarget = { ...transformTarget, x: transformTarget.x + actualX, y: transformTarget.y + actualY }
+        if (pending.freeTile) {
+          restoreFloatingPreview(session)
+          const nextSelection = transformSelectionMask(
+            pending.freeTile.selectionSource,
+            nextTransformTarget,
+            session.document.width,
+            session.document.height,
+            angle,
+            shear,
+            false
+          )
+          if (!nextSelection) return
+          const localTarget = freeTileTransformTargetToEditRaster(pending.freeTile.edit, nextTransformTarget)
+          const simpleTranslation = angle % 360 === 0
+            && !shear
+            && nextTransformTarget.width === pending.source.selection.width
+            && nextTransformTarget.height === pending.source.selection.height
+            && !nextTransformTarget.flipHorizontal
+            && !nextTransformTarget.flipVertical
+          pending.previewEdit = null
+          pending.translationPreview = simpleTranslation
+            ? applySelectionTranslationPreview(
+                pending.freeTile.edit.document,
+                pending.source,
+                localTarget,
+                pending.copy,
+                pending.translationPreview,
+                pending.freeTile.edit.layer
+              )
+            : null
+          if (!simpleTranslation) pending.previewEdit = applySelectionTransform(
+            pending.freeTile.edit.document,
+            pending.source,
+            localTarget,
+            angle,
+            pending.copy,
+            shear,
+            undefined,
+            undefined,
+            pending.freeTile.edit.layer
+          )
+          pending.target = cloneSelectionMask(nextSelection)!
+          pending.transformTarget = nextTransformTarget
+          session.selection = cloneSelectionMask(nextSelection)
+          if (session.selectionPivot) session.selectionPivot = { x: session.selectionPivot.x + actualX, y: session.selectionPivot.y + actualY }
+          if (!previewFloatingFreeTileSource(session, pending)) markFloatingOverlayChanged(session)
+          return
+        }
         restoreFloatingPreview(session)
         const nextSelection = transformSelectionMask(pending.source.selection, nextTransformTarget, session.document.width, session.document.height, angle, shear, false)
         if (!nextSelection) return
@@ -6229,13 +7780,15 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
           && !nextTransformTarget.flipVertical
         if (pending.layers?.length) {
           for (const layerState of pending.layers) {
-            const layer = session.document.layers.find((candidate) => candidate.id === layerState.layerId)
-            if (!layer || layer.kind) continue
             layerState.previewEdit = null
-            layerState.translationPreview = simpleTranslation
-              ? applySelectionTranslationPreview(session.document, layerState.source, nextTransformTarget, pending.copy, layerState.translationPreview, layer, undefined, session.view.tileRepeatMode)
-              : null
-            if (!simpleTranslation) layerState.previewEdit = applySelectionTransform(session.document, layerState.source, nextTransformTarget, angle, pending.copy, shear, undefined, undefined, layer)
+            if (simpleTranslation && !layerState.frameId) {
+              const layer = selectionTransformLayerForState(session.document, layerState)
+              if (!layer || layer.kind) continue
+              layerState.translationPreview = applySelectionTranslationPreview(session.document, layerState.source, nextTransformTarget, pending.copy, layerState.translationPreview, layer, undefined, session.view.tileRepeatMode)
+            } else {
+              layerState.translationPreview = null
+              layerState.previewEdit = applySelectionTransformLayerState(session.document, layerState, nextTransformTarget, angle, pending.copy, shear)
+            }
           }
           syncFloatingPrimaryLayerState(pending)
           pending.target = cloneSelectionMask(nextSelection)!
@@ -6256,6 +7809,43 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
         session.selection = cloneSelectionMask(nextSelection)
         if (session.selectionPivot) session.selectionPivot = { x: session.selectionPivot.x + actualX, y: session.selectionPivot.y + actualY }
         markFloatingPreviewChanged(session, previousTarget, nextSelection)
+        return
+      }
+
+      if (session.selectedAnimationFrameIds.length > 1) {
+        const selectedLayers = selectedTransformLayersForSession(session)
+        if (session.activeLayerMaskId || selectedLayers.length === 0 || selectedLayers.some((layer) => layer.kind
+          || !isLayerEffectivelyVisible(session.document, layer)
+          || isLayerEffectivelyLocked(session.document, layer))) return
+        const layers = captureAnimationFrameSelectionTransformStates(
+          session.document,
+          session.selectedAnimationFrameIds,
+          selectedLayers.map((layer) => layer.id),
+          currentSelection
+        )
+        if (layers.length === 0) return
+        const nextSelection = { ...currentSelection, x: nextX, y: nextY }
+        for (const layerState of layers) {
+          layerState.previewEdit = applySelectionTransformLayerState(session.document, layerState, nextSelection)
+        }
+        const primary = layers[0]
+        session.pendingPaste = {
+          layerId: primary.layerId,
+          layers,
+          beforeSelection: cloneSelectionMask(currentSelection),
+          beforeSelectionPivot: session.selectionPivot ? { ...session.selectionPivot } : null,
+          source: primary.source,
+          target: cloneSelectionMask(nextSelection)!,
+          transformTarget: { x: nextSelection.x, y: nextSelection.y, width: nextSelection.width, height: nextSelection.height },
+          transformAngle: 0,
+          previewEdit: primary.previewEdit,
+          translationPreview: null,
+          copy: false,
+          label: tr('workspace.history.moveSelectionContent')
+        }
+        session.selection = cloneSelectionMask(nextSelection)
+        if (session.selectionPivot) session.selectionPivot = { x: session.selectionPivot.x + actualX, y: session.selectionPivot.y + actualY }
+        markFloatingPreviewChanged(session, currentSelection, nextSelection)
         return
       }
 
@@ -6318,10 +7908,11 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
           for (const layerState of pending.layers) layerState.source = flipSelectionTransformSource(layerState.source, axis)
           syncFloatingPrimaryLayerState(pending)
         } else pending.source = flipSelectionTransformSource(pending.source, axis)
+        if (pending.freeTile) pending.freeTile.selectionSource = flipSelectionMask(pending.freeTile.selectionSource, axis)
         const transformTarget = pending.transformTarget ?? { x: pending.target.x, y: pending.target.y, width: pending.target.width, height: pending.target.height }
         const angle = pending.transformAngle ?? 0
         const shear = pending.transformShear
-        const transformed = transformSelectionMask(pending.source.selection, transformTarget, session.document.width, session.document.height, angle, shear, false)
+        const transformed = transformSelectionMask(pending.freeTile?.selectionSource ?? pending.source.selection, transformTarget, session.document.width, session.document.height, angle, shear, false)
         if (!transformed) return
         pending.target = transformed
         session.selection = cloneSelectionMask(transformed)
@@ -6331,13 +7922,25 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
         if (previewDeferred) markFloatingOverlayChanged(session)
         else if (pending.layers?.length) {
           for (const layerState of pending.layers) {
-            const layer = session.document.layers.find((candidate) => candidate.id === layerState.layerId)
-            if (!layer || layer.kind) continue
-            layerState.previewEdit = applySelectionTransform(session.document, layerState.source, transformTarget, angle, pending.copy, shear, undefined, undefined, layer)
+            layerState.previewEdit = applySelectionTransformLayerState(session.document, layerState, transformTarget, angle, pending.copy, shear)
             layerState.translationPreview = null
           }
           syncFloatingPrimaryLayerState(pending)
           markFloatingPreviewChanged(session, previousTarget, transformed)
+        }
+        else if (pending.freeTile) {
+          pending.previewEdit = applySelectionTransform(
+            pending.freeTile.edit.document,
+            pending.source,
+            freeTileTransformTargetToEditRaster(pending.freeTile.edit, transformTarget),
+            angle,
+            pending.copy,
+            shear,
+            undefined,
+            undefined,
+            pending.freeTile.edit.layer
+          )
+          if (!previewFloatingFreeTileSource(session, pending)) markFloatingOverlayChanged(session)
         }
         else {
           const preview = applySelectionTransform(session.document, pending.source, transformTarget, angle, pending.copy, shear, undefined, undefined, activePaintLayer(session))
@@ -6608,7 +8211,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       return { sessions, activeId: state.activeId === id ? (sessions.at(-1)?.document.id ?? null) : state.activeId }
     })
     const active = activeSession(get())
-    requestTilesetPanelVisibility(Boolean(active?.document.layers.some((layer) => layer.kind === 'tilemap')))
+    requestTilesetPanelVisibility(documentUsesTilesetPanel(active?.document))
   },
 
   async restoreRecoveries() {

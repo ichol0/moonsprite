@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { BRUSH_SPEED_STOP_MS, CanvasInputState, SELECTION_CORNER_RESIZE_HIT_RADIUS, SELECTION_RESIZE_HIT_RADIUS, appendCanvasPathStep, appendPolygonLassoVertex, beginBrushSpeedTracking, beginTemporaryCenteredMarqueeResize, brushLineConnectionOverridesTemporaryMove, cachedSelectionTransformSource, canvasGestureForPreview, centerMarqueeBoundsAtCreationPoint, centeredShapeBounds, clampCanvasZoom, coalescedPointerClientPoints, constrainedTranslation, consumePendingCanvasGestureHistory, createCanvasPanDrag, createMarqueeResizeStart, deferredSelectionCommitInvalidationRects, deferredSelectionPreviewOwner, finalizeMarqueeSelection, floatingSelectionCopyMode, isPendingCanvasPathGesture, isQuickSelectionSecondPress, marqueeSelectionCommit, normalizeCanvasWheelDelta, paletteSamplingShortcutStartsPrimarySample, polygonLassoClosedPathPoints, polygonLassoPreviewPoints, quickSelectCellDragBounds, quickSelectCellSelection, redoCanvasPathStep, registerPendingCanvasGestureHistory, resizeRotatedMarqueeBounds, resizeSelectionBounds, resizeTransformedSelectionBounds, resolveMarqueeModifierMode, restoreCanvasDragAfterPan, restoreTemporaryCenteredMarqueeResize, revertCancelledCanvasDragPixelChanges, rotationHandles, sampledForegroundColorToAdd, selectionGestureMoved, selectionInteractionHit, selectionInteractionOverridesTemporaryMove, selectionMarqueeUsesConstraint, selectionMovePointerDelta, selectionOverlayMaskForDrag, selectionPivotAfterResize, selectionPivotAtDragPoint, selectionPivotHit, selectionResizeHit, selectionRotationAngle, selectionRotationHit, selectionShearHit, selectionTransformedInteractionHit, selectionTransformDeferredPreviewEnabled, selectionTransformModifiers, selectionTransformPreviewChanged, shapeBounds, shouldClosePolygonLasso, shouldRestartFloatingSelectionForCopy, shouldStartCanvasPan, shouldUseTemporaryMoveForCanvasInteraction, shouldUseTemporaryMoveTool, snapSelectionRotation, steppedCanvasZoom, temporaryMoveSuppressesToolPreview, temporaryTransformOffset, translatedSelectionRect, undoActiveCanvasPathGesture, undoCanvasPathStep, updateBrushSpeedTracking, wheelCanvasZoom, zoomDragModeForModifiers, zoomDragTarget, type CanvasDragState } from './canvas-input'
+import { BRUSH_SPEED_STOP_MS, CanvasInputState, SELECTION_CORNER_RESIZE_HIT_RADIUS, SELECTION_RESIZE_HIT_RADIUS, appendCanvasPathStep, appendPolygonLassoVertex, beginBrushSpeedTracking, beginTemporaryCenteredMarqueeResize, brushLineConnectionOverridesTemporaryMove, cachedSelectionTransformSource, canvasGestureForPreview, centerMarqueeBoundsAtCreationPoint, centeredShapeBounds, clampCanvasZoom, coalescedPointerClientPoints, constrainedTranslation, consumePendingCanvasGestureHistory, createCanvasPanDrag, createMarqueeResizeStart, deferredSelectionCommitInvalidationRects, deferredSelectionPreviewOwner, finalizeMarqueeSelection, floatingSelectionCopyMode, isPendingCanvasPathGesture, isQuickSelectionSecondPress, marqueeSelectionCommit, normalizeCanvasWheelDelta, paletteSamplingShortcutStartsPrimarySample, polygonLassoClosedPathPoints, polygonLassoPreviewPoints, quickSelectCellDragBounds, quickSelectCellSelection, redoCanvasPathStep, registerPendingCanvasGestureHistory, resizeRotatedMarqueeBounds, resizeSelectionBounds, resizeTransformedSelectionBounds, resolveMarqueeModifierMode, restoreCanvasDragAfterPan, restoreTemporaryCenteredMarqueeResize, revertCancelledCanvasDragPixelChanges, rotationHandles, sampledForegroundColorToAdd, selectionGestureMoved, selectionInteractionHit, selectionInteractionOverridesTemporaryMove, selectionMarqueeUsesConstraint, selectionMovePointerDelta, selectionOverlayFrameForDrag, selectionOverlayMaskForDrag, selectionPivotAfterResize, selectionPivotAtDragPoint, selectionPivotHit, selectionResizeHit, selectionRotationAngle, selectionRotationHit, selectionShearHit, selectionTransformedInteractionHit, selectionTransformDeferredPreviewEnabled, selectionTransformModifiers, selectionTransformPreviewChanged, shapeBounds, shouldClosePolygonLasso, shouldRestartFloatingSelectionForCopy, shouldStartCanvasPan, shouldUseTemporaryMoveForCanvasInteraction, shouldUseTemporaryMoveTool, snapSelectionRotation, steppedCanvasZoom, temporaryMoveSuppressesToolPreview, temporaryTransformOffset, translatedSelectionRect, undoActiveCanvasPathGesture, undoCanvasPathStep, updateBrushSpeedTracking, wheelCanvasZoom, zoomDragModeForModifiers, zoomDragTarget, type CanvasDragState } from './canvas-input'
 import { balancedStairLinePoints } from './pixel-line'
 import { createDocument, getActiveLayer, readLayerColor } from './document'
 import { beginPixelEdit } from './history'
@@ -388,6 +388,45 @@ describe('canvas input helpers', () => {
     expect(deferredSelectionPreviewOwner(rotating, true)).toBe('pending')
     expect(deferredSelectionPreviewOwner({ ...rotating, selectionPreparationPending: false }, true)).toBe('active')
     expect(deferredSelectionPreviewOwner({ ...rotating, selectionPreparationPending: false, deferredSelectionPreview: false }, true)).toBeNull()
+  })
+
+  it('keeps Free Tile overlay geometry on the last applied pixel preview', () => {
+    const appliedSelection = { x: 3, y: 4, width: 6, height: 5 }
+    const pendingSelection = { x: 14, y: 2, width: 6, height: 5 }
+    const drag: CanvasDragState = {
+      kind: 'move-content',
+      start: { x: 0, y: 0 },
+      last: { x: 0, y: 0 },
+      freeTileSelectionTransform: true,
+      previewSelection: pendingSelection,
+      previewTarget: pendingSelection,
+      previewAngle: 90,
+      previewPivot: { x: 17, y: 4 },
+      appliedSelection,
+      appliedPreviewTarget: appliedSelection,
+      appliedPreviewAngle: 0,
+      appliedPreviewPivot: { x: 6, y: 6 }
+    }
+
+    expect(selectionOverlayFrameForDrag(null, drag)).toEqual({
+      selection: appliedSelection,
+      target: appliedSelection,
+      angle: 0,
+      shear: undefined,
+      pivot: { x: 6, y: 6 }
+    })
+
+    drag.appliedSelection = pendingSelection
+    drag.appliedPreviewTarget = pendingSelection
+    drag.appliedPreviewAngle = 90
+    drag.appliedPreviewPivot = { x: 17, y: 4 }
+    expect(selectionOverlayFrameForDrag(null, drag)).toEqual({
+      selection: pendingSelection,
+      target: pendingSelection,
+      angle: 90,
+      shear: undefined,
+      pivot: { x: 17, y: 4 }
+    })
   })
 
   it('keeps zoom levels within the supported range', () => {

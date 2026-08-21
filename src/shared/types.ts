@@ -142,8 +142,8 @@ export const BLEND_MODES: readonly BlendMode[] = [
   'overlay', 'soft-light', 'hard-light', 'vivid-light', 'linear-light', 'pin-light', 'hard-mix', 'difference',
   'exclusion', 'subtract', 'divide', 'hue', 'saturation', 'color', 'luminosity'
 ]
-export type ImageExportFormat = 'png' | 'jpeg' | 'webp' | 'svg' | 'gif' | 'mp4' | 'webm' | 'aseprite'
-export type SaveDialogFormat = 'moonsprite' | 'png' | 'jpeg' | 'webp' | 'ase' | 'aseprite'
+export type ImageExportFormat = 'png' | 'jpeg' | 'webp' | 'svg' | 'gif' | 'psd' | 'mp4' | 'webm' | 'aseprite'
+export type SaveDialogFormat = 'moonsprite' | 'png' | 'jpeg' | 'webp' | 'psd' | 'ase' | 'aseprite'
 
 export interface RgbaColor {
   r: number
@@ -233,6 +233,54 @@ export interface TilemapCelData {
   cells: Array<TilemapCell | null>
 }
 
+/** A reusable source owned by one free-tile layer. Source dimensions come from its Tileset. */
+export interface FreeTileSourceLayer {
+  id: string
+  name: string
+  /** The one-tile Tileset that stores this source's pixels. */
+  tilesetId: string
+  description?: string
+  displayColor?: RgbaColor
+  visible: boolean
+  locked: boolean
+  /** Legacy source-wide appearance values. New instances override these values. */
+  opacity: number
+  /** Legacy source-wide appearance values. New instances override these values. */
+  blendMode: BlendMode
+  /** Source-local layer offset retained for layer-like editing and future group transforms. */
+  offsetX: number
+  offsetY: number
+}
+
+export interface FreeTileInstance {
+  /** Stable instance ID; array order is the compositing order from back to front. */
+  id: string
+  /** Source layer in the owning Free Tile Layer. */
+  sourceId?: string
+  /** Legacy source tile ID used by schema v14 projects. */
+  tileId?: string
+  /** Pixel position in the cel surface's local coordinate system. */
+  x: number
+  y: number
+  /** Instance-level visibility; omitted legacy values are visible. */
+  visible?: boolean
+  /** Instance-level edit lock; omitted legacy values are unlocked. */
+  locked?: boolean
+  /** Instance opacity. Omitted legacy values inherit the source opacity. */
+  opacity?: number
+  /** Instance blend mode. Omitted legacy values inherit the source blend mode. */
+  blendMode?: BlendMode
+  /** Clockwise quarter turns applied only to this instance. */
+  rotation?: TilemapQuarterTurns
+  /** Instance-only mirrors; source pixels remain unchanged. */
+  flipHorizontal?: boolean
+  flipVertical?: boolean
+}
+
+export interface FreeTileCelData {
+  instances: FreeTileInstance[]
+}
+
 export interface Tileset {
   id: string
   name: string
@@ -311,9 +359,13 @@ export interface RgbaLayer {
   /** Optional user-facing note shown when hovering the layer row. */
   description?: string
   /** Editable text layers retain raster surfaces for the existing compositor. */
-  kind?: 'text' | 'tilemap'
+  kind?: 'text' | 'tilemap' | 'free-tile'
   /** Project Tileset owned by this Tilemap layer. */
   tilemapTilesetId?: string
+  /** Legacy v14 Free Tile ownership, retained only while decoding and migrating older projects. */
+  freeTileTilesetId?: string
+  /** Reusable source layers owned by this Free Tile layer. */
+  freeTileSources?: FreeTileSourceLayer[]
   visible: boolean
   locked: boolean
   opacity: number
@@ -344,9 +396,13 @@ export interface IndexedLayer {
   /** Optional user-facing note shown when hovering the layer row. */
   description?: string
   /** Editable text layers retain raster surfaces for the existing compositor. */
-  kind?: 'text' | 'tilemap'
+  kind?: 'text' | 'tilemap' | 'free-tile'
   /** Project Tileset owned by this Tilemap layer. */
   tilemapTilesetId?: string
+  /** Legacy v14 Free Tile ownership, retained only while decoding and migrating older projects. */
+  freeTileTilesetId?: string
+  /** Reusable source layers owned by this Free Tile layer. */
+  freeTileSources?: FreeTileSourceLayer[]
   visible: boolean
   locked: boolean
   opacity: number
@@ -447,6 +503,8 @@ export interface AnimationCel {
   text?: TextCelData
   /** Editable tile references for Tilemap cels. The surface remains the rendered cache. */
   tilemap?: TilemapCelData
+  /** Arbitrarily positioned reusable tile instances. The surface remains the rendered cache. */
+  freeTiles?: FreeTileCelData
   /** Independent grayscale surface for this cell; transparent pixels are neutral/unpainted. */
   mask?: LayerMask
 }
@@ -511,7 +569,7 @@ export interface DocumentSlice {
 }
 
 export interface SpriteDocument {
-  schemaVersion: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13
+  schemaVersion: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15
   id: string
   name: string
   width: number

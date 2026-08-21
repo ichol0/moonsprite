@@ -1,8 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { MoonSpriteApi } from '@shared/types'
 import { addBlankAnimationFrame, ensureAnimationDocument, resolveAnimationCel } from '@/core/animation'
-import { createDocument, getActiveLayer } from '@/core/document'
+import { createDocument, createLayer, getActiveLayer } from '@/core/document'
 import type { BackgroundPatternTile } from '@/core/background-patterns'
+import { buildLayerPanelTree } from '@/core/layer-panel-layout'
 import { useWorkspace } from './workspace'
 
 beforeEach(() => {
@@ -84,20 +85,62 @@ describe('workspace background layers', () => {
     ])
   })
 
-  it('converts raster layers to and from background layers with undo and redo', () => {
+  it('moves converted root layers to the bottom and restores both changes through one undo step', () => {
     const document = createDocument('converted background', 4, 4, 'rgba')
-    const layer = getActiveLayer(document)
+    const bottom = getActiveLayer(document)
+    const layer = createLayer('Convert me', 4, 4, 'rgba')
+    const top = createLayer('Top', 4, 4, 'rgba')
+    document.layers.push(layer, top)
+    document.activeLayerId = layer.id
     useWorkspace.getState().addSession(document)
 
     useWorkspace.getState().setLayerBackground(layer.id, true)
-    expect(getActiveLayer(document).background).toEqual({ mode: 'canvas' })
+    expect(layer.background).toEqual({ mode: 'canvas' })
+    expect(document.layers.map((candidate) => candidate.id)).toEqual([layer.id, bottom.id, top.id])
 
     useWorkspace.getState().undo()
-    expect(getActiveLayer(document).background).toBeUndefined()
+    expect(layer.background).toBeUndefined()
+    expect(document.layers.map((candidate) => candidate.id)).toEqual([bottom.id, layer.id, top.id])
+    expect(useWorkspace.getState().sessions[0].history.canUndo).toBe(false)
+
     useWorkspace.getState().redo()
-    expect(getActiveLayer(document).background).toEqual({ mode: 'canvas' })
+    expect(layer.background).toEqual({ mode: 'canvas' })
+    expect(document.layers.map((candidate) => candidate.id)).toEqual([layer.id, bottom.id, top.id])
 
     useWorkspace.getState().setLayerBackground(layer.id, false)
-    expect(getActiveLayer(document).background).toBeUndefined()
+    expect(layer.background).toBeUndefined()
+    expect(document.layers.map((candidate) => candidate.id)).toEqual([layer.id, bottom.id, top.id])
+  })
+
+  it('moves converted grouped layers to the absolute root bottom and restores their group on undo', () => {
+    const document = createDocument('grouped converted background', 4, 4, 'rgba')
+    const layer = getActiveLayer(document)
+    const root = createLayer('Root', 4, 4, 'rgba')
+    const groupId = 'background-source-group'
+    layer.groupId = groupId
+    document.layers.push(root)
+    document.groups.push({ id: groupId, name: 'Group', parentGroupId: null, visible: true, locked: false, opacity: 1, blendMode: 'normal' })
+    document.activeLayerId = layer.id
+    useWorkspace.getState().addSession(document)
+    const beforeOrder = document.layers.map((candidate) => candidate.id)
+    const beforePanelOrder = buildLayerPanelTree(document).map((node) => node.id)
+
+    useWorkspace.getState().setLayerBackground(layer.id, true)
+
+    expect(layer.background).toEqual({ mode: 'canvas' })
+    expect(layer.groupId).toBeNull()
+    expect(document.layers[0].id).toBe(layer.id)
+    expect(buildLayerPanelTree(document).filter((node) => node.depth === 0).at(-1)?.id).toBe(layer.id)
+
+    useWorkspace.getState().undo()
+    expect(layer.background).toBeUndefined()
+    expect(layer.groupId).toBe(groupId)
+    expect(document.layers.map((candidate) => candidate.id)).toEqual(beforeOrder)
+    expect(buildLayerPanelTree(document).map((node) => node.id)).toEqual(beforePanelOrder)
+
+    useWorkspace.getState().redo()
+    expect(layer.background).toEqual({ mode: 'canvas' })
+    expect(layer.groupId).toBeNull()
+    expect(buildLayerPanelTree(document).filter((node) => node.depth === 0).at(-1)?.id).toBe(layer.id)
   })
 })

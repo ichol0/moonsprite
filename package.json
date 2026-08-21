@@ -1,6 +1,6 @@
 {
   "name": "moonsprite",
-  "version": "0.1.0-dev.5",
+  "version": "0.1.0-dev.6",
   "description": "An original, source-available pixel art workstation for Windows.",
   "author": "MoonSprite contributors",
   "license": "SEE LICENSE IN LICENSE",
@@ -45,7 +45,9 @@
     "website:build": "pnpm --dir website build",
     "website:capture": "node website/scripts/capture-product.mjs"
   },
-  "dependencies": {},
+  "dependencies": {
+    "ag-psd": "31.0.2"
+  },
   "devDependencies": {
     "@tauri-apps/api": "2.11.1",
     "@tauri-apps/cli": "2.11.4",

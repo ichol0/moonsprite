@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type FocusEvent as ReactFocusEvent, type PointerEvent as ReactPointerEvent, type WheelEvent as ReactWheelEvent } from 'react'
-import { PixelUtilityIcon } from '@/components/PixelUtilityIcon'
+import { createPortal } from 'react-dom'
+import { PixelUtilityIcon, type PixelUtilityIconKind } from '@/components/PixelUtilityIcon'
 import { SegmentedControl } from '@/components/SegmentedControl'
 import { ThemedSelect } from '@/components/ThemedSelect'
 import { TilesetTileThumbnail } from '@/components/TilesetTileThumbnail'
@@ -10,12 +11,16 @@ import { repositionTilesetTileSlots, tilesetTileSlots, type TilemapDrawingMode }
 import { PALETTE_SWATCH_GAP, PALETTE_SWATCH_PIXELS, paletteSlotRange, type PaletteSwatchSize } from '@/core/palette-layout'
 import { readStoredString, writeStoredString } from '@/core/panel-preferences'
 import { activeTilemapCelTarget, tilemapLayerTilesets } from '@/core/tilemap-document'
+import { type FreeTileDrawingMode } from '@/core/free-tile'
 import { TILESET_DELETE_COMMAND_EVENT } from '@/core/command-context'
 import { useWorkspace, type DocumentSession } from '@/store/workspace'
 import { useI18n } from '@/components/I18nProvider'
+import { FreeTileSourcePropertiesDialog } from '@/components/FreeTileSourcePropertiesDialog'
 
 const TILESET_SWATCH_SIZE_STORAGE_KEY = 'moonsprite.tileset-swatch-size'
+const FREE_TILE_SWATCH_SIZE_STORAGE_KEY = 'moonsprite.free-tile-swatch-size'
 const TILESET_SWATCH_SIZE_ORDER: PaletteSwatchSize[] = ['tiny', 'small', 'medium', 'large', 'huge']
+type TilesetPanelProps = { session: DocumentSession } & DockDragProps
 
 interface TileSelectionGesture {
   pointerId: number
@@ -39,15 +44,16 @@ const tileIdsInSlotRange = (slots: readonly (string | null)[], columns: number, 
   return tileIds
 }
 
-export function TilesetPanel({ session, docked = false, onDockDragStart, onPanelContextMenu, onFloatingDock }: { session: DocumentSession } & DockDragProps) {
+function TilemapTilesetPanel({ session, docked = false, onDockDragStart, onPanelContextMenu, onFloatingDock }: TilesetPanelProps) {
   const { t } = useI18n()
   const store = useWorkspace.getState()
   const floating = useFloatingPanel(null, false, true, 'moonsprite.tileset-panel.v1', true, onFloatingDock, docked)
-  const target = activeTilemapCelTarget(session.document)
+  const tilemapTarget = activeTilemapCelTarget(session.document)
   const entries = tilemapLayerTilesets(session.document)
   const tilesets = entries.map((entry) => entry.tileset)
+  const targetTilesetId = tilemapTarget?.layer.tilemapTilesetId
   const selectedTileset = tilesets.find((tileset) => tileset.id === session.selectedTilesetId)
-    ?? tilesets.find((tileset) => tileset.id === target?.layer.tilemapTilesetId)
+    ?? tilesets.find((tileset) => tileset.id === targetTilesetId)
     ?? tilesets[0]
     ?? null
   const selectedTileId = selectedTileset?.tileIds.includes(session.selectedTileId ?? '') ? session.selectedTileId! : selectedTileset?.tileIds[0] ?? null
@@ -83,10 +89,10 @@ export function TilesetPanel({ session, docked = false, onDockDragStart, onPanel
         return { left: Math.min(range.left, point.left), top: Math.min(range.top, point.top), right: Math.max(range.right, point.right), bottom: Math.max(range.bottom, point.bottom) }
       }, paletteSlotRange(gridCapacity.columns, selectedTileIndices[0], selectedTileIndices[0]))
     : null)
-  const modeOptions = [
-    { value: 'edit' as const, icon: 'tileModeEdit' as const, label: t('tileset.mode.edit'), description: t('tileset.mode.editDescription') },
-    { value: 'create' as const, icon: 'tileModeCreate' as const, label: t('tileset.mode.create'), description: t('tileset.mode.createDescription') },
-    { value: 'hybrid' as const, icon: 'tileModeHybrid' as const, label: t('tileset.mode.hybrid'), description: t('tileset.mode.hybridDescription') }
+  const modeOptions: Array<{ value: TilemapDrawingMode; icon: PixelUtilityIconKind; label: string; description: string }> = [
+    { value: 'edit', icon: 'tileModeEdit', label: t('tileset.mode.edit'), description: t('tileset.mode.editDescription') },
+    { value: 'create', icon: 'tileModeCreate', label: t('tileset.mode.create'), description: t('tileset.mode.createDescription') },
+    { value: 'hybrid', icon: 'tileModeHybrid', label: t('tileset.mode.hybrid'), description: t('tileset.mode.hybridDescription') }
   ]
 
   const resetTileDrag = (): void => {
@@ -390,9 +396,11 @@ export function TilesetPanel({ session, docked = false, onDockDragStart, onPanel
     writeStoredString(TILESET_SWATCH_SIZE_STORAGE_KEY, next)
   }
 
+  const panelTitle = t('panel.tileset')
+
   return <><section ref={floating.ref} className={`panel tileset-panel ${floating.style ? 'floating-panel' : ''}`} data-command-scope="tileset" style={floating.style} onPointerDown={floating.bringToFront} onContextMenu={onPanelContextMenu}>
-    <header aria-label={t('panel.tileset')} onPointerDown={(event) => floating.style ? floating.startDrag(event) : onDockDragStart?.(event, floating.startDetachedDrag)}>
-      <strong>{t('panel.tileset')}</strong>
+    <header aria-label={panelTitle} onPointerDown={(event) => floating.style ? floating.startDrag(event) : onDockDragStart?.(event, floating.startDetachedDrag)}>
+      <strong>{panelTitle}</strong>
       <span className="panel-actions" onPointerDown={(event) => event.stopPropagation()}>
         <button type="button" className={session.tilemapMode === 'paint' ? 'selected' : ''} aria-pressed={session.tilemapMode === 'paint'} title={t('tileset.mode.paint')} aria-label={t('tileset.mode.paint')} onClick={() => store.setTilemapMode('paint')}><PixelUtilityIcon kind="tilePaint" /></button>
         <button type="button" disabled={!selectedTileset || (!selectedTileId && displayedSelectedTileIds.length === 0) || selectedTileset.tileIds.length <= 1} title={t('tileset.deleteTile')} aria-label={t('tileset.deleteTile')} onClick={deleteSelectedTiles}><PixelUtilityIcon kind="delete" /></button>
@@ -400,7 +408,7 @@ export function TilesetPanel({ session, docked = false, onDockDragStart, onPanel
     </header>
     {selectedTileset ? <div className="tileset-panel-body">
       <div className="tileset-panel-toolbar">
-        <ThemedSelect<string> density="compact" value={selectedTileset.id} label={t('toolOptions.tileset')} groups={[{ label: t('toolOptions.tileset'), options: entries.map(({ layer, tileset }) => ({ value: tileset.id, label: layer.name, description: `${tileset.tileWidth} x ${tileset.tileHeight}px` })) }]} onChange={store.setSelectedTileset} />
+        <ThemedSelect<string> density="compact" value={selectedTileset.id} label={panelTitle} groups={[{ label: panelTitle, options: entries.map(({ layer, tileset }) => ({ value: tileset.id, label: tileset.name || layer.name, description: `${tileset.tileWidth} x ${tileset.tileHeight}px` })) }]} onChange={store.setSelectedTileset} />
         <SegmentedControl<TilemapDrawingMode> className="tileset-mode-control" label={t('tileset.mode')} value={session.tilemapMode} options={modeOptions.map((option) => ({
           value: option.value,
           ariaLabel: option.label,
@@ -435,4 +443,153 @@ export function TilesetPanel({ session, docked = false, onDockDragStart, onPanel
     </div> : <div className="tileset-empty-state">{t('tileset.empty')}</div>}
     {floating.style && <PanelResizeHandles onResize={floating.startResize} />}
   </section><FloatingDockPreview style={floating.dockPreview} /></>
+}
+
+function FreeTileSourcesPanel({ session, docked = false, onDockDragStart, onPanelContextMenu, onFloatingDock }: TilesetPanelProps) {
+  const { t } = useI18n()
+  const store = useWorkspace.getState()
+  const floating = useFloatingPanel(null, false, true, 'moonsprite.tileset-panel.v1', true, onFloatingDock, docked)
+  const activeLayer = session.document.layers.find((layer) => layer.id === session.document.activeLayerId && layer.kind === 'free-tile') ?? null
+  const freeTileLayers = session.document.layers.filter((layer) => layer.kind === 'free-tile')
+  const sourceEntries = activeLayer
+    ? (activeLayer.freeTileSources ?? []).flatMap((source) => {
+        const tileset = session.document.tilesets?.find((candidate) => candidate.id === source.tilesetId)
+        return tileset ? [{ source, tileset }] : []
+      })
+    : []
+  const selectedEntry = sourceEntries.find(({ tileset }) => tileset.id === session.selectedTilesetId) ?? sourceEntries[0] ?? null
+  const [swatchSize, setSwatchSize] = useState<PaletteSwatchSize>(() => {
+    const stored = readStoredString(FREE_TILE_SWATCH_SIZE_STORAGE_KEY)
+    return TILESET_SWATCH_SIZE_ORDER.includes(stored as PaletteSwatchSize) ? stored as PaletteSwatchSize : 'medium'
+  })
+  const [ctrlHeld, setCtrlHeld] = useState(false)
+  const [sourceContextMenu, setSourceContextMenu] = useState<{ sourceId: string; x: number; y: number } | null>(null)
+  const [sourcePropertiesId, setSourcePropertiesId] = useState<string | null>(null)
+  const panelTitle = t('panel.tileset')
+  const modeOptions: Array<{ value: FreeTileDrawingMode; icon: PixelUtilityIconKind; label: string; description: string }> = [
+    { value: 'edit', icon: 'tileModeEdit', label: t('freeTiles.mode.edit'), description: t('freeTiles.mode.editDescription') }
+  ]
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent): void => { if (event.key === 'Control' || event.ctrlKey) setCtrlHeld(true) }
+    const handleKeyUp = (event: KeyboardEvent): void => { if (event.key === 'Control' || !event.ctrlKey) setCtrlHeld(false) }
+    const handleBlur = (): void => setCtrlHeld(false)
+    window.addEventListener('keydown', handleKeyDown)
+    window.addEventListener('keyup', handleKeyUp)
+    window.addEventListener('blur', handleBlur)
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown)
+      window.removeEventListener('keyup', handleKeyUp)
+      window.removeEventListener('blur', handleBlur)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!sourceContextMenu) return
+    const close = (event: PointerEvent): void => {
+      const target = event.target as Element | null
+      if (!target?.closest('.free-tile-context-menu')) setSourceContextMenu(null)
+    }
+    const escape = (event: KeyboardEvent): void => {
+      if (event.key !== 'Escape') return
+      setSourceContextMenu(null)
+    }
+    window.addEventListener('pointerdown', close, true)
+    window.addEventListener('keydown', escape, true)
+    return () => {
+      window.removeEventListener('pointerdown', close, true)
+      window.removeEventListener('keydown', escape, true)
+    }
+  }, [sourceContextMenu])
+
+  useEffect(() => {
+    if (!selectedEntry || session.selectedTilesetId === selectedEntry.tileset.id) return
+    const tileId = selectedEntry.tileset.tileIds[0]
+    if (tileId) store.setSelectedTile(selectedEntry.tileset.id, tileId)
+  }, [selectedEntry?.tileset.id, session.selectedTilesetId])
+
+  const selectSource = (tilesetId: string, paint = false): void => {
+    const entry = sourceEntries.find(({ tileset }) => tileset.id === tilesetId)
+    const tileId = entry?.tileset.tileIds[0]
+    if (!entry || !tileId) return
+    store.setSelectedTile(entry.tileset.id, tileId)
+    if (paint) store.setFreeTileMode('paint')
+  }
+  const sourceEntryForId = (sourceId: string): { source: typeof sourceEntries[number]['source']; tileset: typeof sourceEntries[number]['tileset'] } | null => sourceEntries.find(({ source }) => source.id === sourceId) ?? null
+  const openSourceProperties = (sourceId: string): void => {
+    const entry = sourceEntryForId(sourceId)
+    if (!entry) return
+    if (session.selectedTilesetId !== entry.tileset.id) selectSource(entry.tileset.id)
+    setSourceContextMenu(null)
+    setSourcePropertiesId(sourceId)
+  }
+  const addSource = (): void => {
+    if (!activeLayer) return
+    store.addFreeTileSource(activeLayer.id)
+  }
+  const placeInstance = (): void => {
+    if (!selectedEntry) return
+    store.setFreeTileMode('paint')
+  }
+  const deleteSource = (sourceId?: string): void => {
+    const target = sourceId ? sourceEntryForId(sourceId) : selectedEntry
+    if (target) store.deleteFreeTileSource(target.source.id)
+  }
+  const handleWheel = (event: ReactWheelEvent<HTMLDivElement>): void => {
+    if (!event.ctrlKey && !event.metaKey) return
+    event.preventDefault()
+    event.stopPropagation()
+    const delta = Math.abs(event.deltaY) >= Math.abs(event.deltaX) ? event.deltaY : event.deltaX
+    if (delta === 0) return
+    const currentIndex = TILESET_SWATCH_SIZE_ORDER.indexOf(swatchSize)
+    const nextIndex = Math.max(0, Math.min(TILESET_SWATCH_SIZE_ORDER.length - 1, currentIndex + (delta < 0 ? 1 : -1)))
+    if (nextIndex === currentIndex) return
+    const next = TILESET_SWATCH_SIZE_ORDER[nextIndex]
+    setSwatchSize(next)
+    writeStoredString(FREE_TILE_SWATCH_SIZE_STORAGE_KEY, next)
+  }
+
+  const sourcePropertiesEntry = sourcePropertiesId ? sourceEntryForId(sourcePropertiesId) : null
+
+  return <><section ref={floating.ref} className={`panel tileset-panel free-tiles-panel ${floating.style ? 'floating-panel' : ''}`} data-command-scope="tileset" style={floating.style} onPointerDown={floating.bringToFront} onContextMenu={onPanelContextMenu}>
+    <header aria-label={panelTitle} onPointerDown={(event) => floating.style ? floating.startDrag(event) : onDockDragStart?.(event, floating.startDetachedDrag)}>
+      <strong>{panelTitle}</strong>
+      <span className="panel-actions" onPointerDown={(event) => event.stopPropagation()}>
+        <button type="button" disabled={!selectedEntry} className={session.freeTileMode === 'paint' ? 'active' : ''} title={t('freeTiles.mode.paint')} aria-label={t('freeTiles.mode.paint')} aria-pressed={session.freeTileMode === 'paint'} onClick={placeInstance}><PixelUtilityIcon kind="tilePaint" /></button>
+        <button type="button" disabled={!activeLayer} title={t('freeTiles.addTile')} aria-label={t('freeTiles.addTile')} onClick={addSource}><PixelUtilityIcon kind="plus" /></button>
+        <button type="button" disabled={!selectedEntry || sourceEntries.length <= 1} title={t('tileset.deleteTile')} aria-label={t('tileset.deleteTile')} onClick={() => deleteSource()}><PixelUtilityIcon kind="delete" /></button>
+      </span>
+    </header>
+    {activeLayer && selectedEntry ? <div className="tileset-panel-body free-tile-source-panel-body">
+      <div className="tileset-panel-toolbar">
+        <ThemedSelect<string> density="compact" value={activeLayer.id} label={panelTitle} groups={[{ label: panelTitle, options: freeTileLayers.map((layer) => ({ value: layer.id, label: layer.name, description: t('freeTiles.sourceCount', { count: layer.freeTileSources?.length ?? 0 }) })) }]} onChange={(layerId) => store.selectLayer(layerId)} />
+        <SegmentedControl<FreeTileDrawingMode> className="tileset-mode-control free-tile-mode-control" label={t('freeTiles.mode')} value={session.freeTileMode} options={modeOptions.map((option) => ({
+          value: option.value,
+          ariaLabel: option.label,
+          label: <PixelUtilityIcon kind={option.icon} />,
+          description: <><strong>{option.label}</strong><span>{option.description}</span></>
+        }))} onChange={store.setFreeTileMode} />
+      </div>
+      <div className="swatch-grid tileset-tile-grid free-tile-source-grid component-scrollbar" role="listbox" aria-label={t('freeTiles.sources')} style={{ '--swatch-size': `${PALETTE_SWATCH_PIXELS[swatchSize]}px`, '--palette-swatch-gap': `${PALETTE_SWATCH_GAP}px` } as CSSProperties} onWheel={handleWheel}>
+        {sourceEntries.map(({ source, tileset }, index) => {
+          const tileId = tileset.tileIds[0]
+          const selected = selectedEntry.source.id === source.id
+          return <span key={source.id} className="palette-swatch-wrap tileset-tile-wrap"><button type="button" role="option" aria-selected={selected} className={`swatch palette-slot occupied tileset-tile free-tile-source-swatch ${selected ? 'selected primary' : ''}`} title={`${source.name} · ${tileset.tileWidth} x ${tileset.tileHeight}px`} onClick={() => selectSource(tileset.id, true)} onDoubleClick={() => openSourceProperties(source.id)} onContextMenu={(event) => { event.preventDefault(); event.stopPropagation(); selectSource(tileset.id); setSourceContextMenu({ sourceId: source.id, x: event.clientX, y: event.clientY }) }}>{tileId && <><TilesetTileThumbnail tileset={tileset} tileId={tileId} renderRevision={session.contentRevision} />{ctrlHeld && <span className="tileset-tile-id">{index}</span>}</>}</button>{selected && <span data-free-tile-source-selection-outline className="palette-selection-box free-tile-source-selection-box" aria-hidden="true" />}</span>
+        })}
+      </div>
+    </div> : <div className="tileset-empty-state">{t('freeTiles.empty')}</div>}
+    {floating.style && <PanelResizeHandles onResize={floating.startResize} />}
+  </section><FloatingDockPreview style={floating.dockPreview} />
+  {sourceContextMenu && createPortal(<div className="context-menu free-tile-context-menu free-tile-source-context-menu" role="menu" aria-label={t('freeTiles.sourceProperties')} style={{ left: Math.min(sourceContextMenu.x, Math.max(8, window.innerWidth - 238)), top: Math.min(sourceContextMenu.y, Math.max(8, window.innerHeight - 92)) }} onContextMenu={(event) => event.preventDefault()}>
+    <button className="context-menu-item" type="button" role="menuitem" onClick={() => openSourceProperties(sourceContextMenu.sourceId)}><PixelUtilityIcon kind="properties" /><span>{t('freeTiles.sourceProperties')}</span></button>
+    <span className="context-menu-divider" />
+    <button className="context-menu-item danger" type="button" role="menuitem" disabled={sourceEntries.length <= 1} onClick={() => { deleteSource(sourceContextMenu.sourceId); setSourceContextMenu(null) }}><PixelUtilityIcon kind="delete" /><span>{t('tileset.deleteTile')}</span></button>
+  </div>, document.body)}
+  {sourcePropertiesEntry && <FreeTileSourcePropertiesDialog source={sourcePropertiesEntry.source} onClose={() => setSourcePropertiesId(null)} />}
+  </>
+}
+
+export function TilesetPanel(props: TilesetPanelProps) {
+  const activeLayer = props.session.document.layers.find((layer) => layer.id === props.session.document.activeLayerId)
+  return activeLayer?.kind === 'free-tile' ? <FreeTileSourcesPanel {...props} /> : <TilemapTilesetPanel {...props} />
 }

@@ -42,6 +42,7 @@ export const EYEDROPPER_MAGNIFIER_STYLE_PREFERENCE_KEY = 'moonsprite.preference.
 export const EYEDROPPER_MAGNIFIER_DISTORTION_ENABLED_PREFERENCE_KEY = 'moonsprite.preference.eyedropper-magnifier-distortion-enabled'
 export const MOVE_LAYER_CONTENT_PREVIEW_ENABLED_PREFERENCE_KEY = 'moonsprite.preference.move-layer-content-preview-enabled'
 export const MOVE_LAYER_CLICK_FLASH_ENABLED_PREFERENCE_KEY = 'moonsprite.preference.move-layer-click-flash-enabled'
+export const MOVE_LAYER_CLICK_FLASH_DURATION_PREFERENCE_KEY = 'moonsprite.preference.move-layer-click-flash-duration'
 export const SELECTION_CROSSHAIR_PREFERENCE_KEY = 'moonsprite.preference.selection-crosshair'
 export const BALANCED_SHIFT_LINE_ENABLED_PREFERENCE_KEY = 'moonsprite.preference.balanced-shift-line-enabled'
 export const LINE_DIRECTION_STEP_PREFERENCE_KEY = 'moonsprite.preference.line-direction-step'
@@ -63,6 +64,8 @@ export type RelativeLuminanceScope = 'canvas' | 'app'
 export type ZoomToolDragMode = 'smooth' | 'stepped'
 export type WheelZoomMode = 'smooth' | 'stepped'
 export type CursorScale = 1 | 1.25 | 1.5 | 2
+export type MoveLayerClickFlashDuration = 80 | 120 | 180
+export const MOVE_LAYER_CLICK_FLASH_DURATIONS: readonly MoveLayerClickFlashDuration[] = [80, 120, 180]
 export const UI_SCALE_VALUES = [0.75, 1, 1.5, 2] as const
 export type UiScale = typeof UI_SCALE_VALUES[number]
 export type ToolIconScale = 1 | 2
@@ -311,8 +314,8 @@ export const DEFAULT_SYMMETRY_AXIS_PREFERENCES: SymmetryAxisPreferences = {
   thickness: 1
 }
 
-export type SaveFormatPreference = 'moonsprite' | 'png' | 'jpeg' | 'webp' | 'ase' | 'aseprite'
-export type ExportFormatPreference = 'png' | 'jpeg' | 'webp' | 'svg' | 'gif'
+export type SaveFormatPreference = 'moonsprite' | 'png' | 'jpeg' | 'webp' | 'psd' | 'ase' | 'aseprite'
+export type ExportFormatPreference = 'png' | 'jpeg' | 'webp' | 'svg' | 'gif' | 'psd'
 
 export interface EditorPreferences {
   language: AppLocale
@@ -352,6 +355,7 @@ export interface EditorPreferences {
   eyedropperMagnifierDistortionEnabled: boolean
   moveLayerContentPreviewEnabled: boolean
   moveLayerClickFlashEnabled: boolean
+  moveLayerClickFlashDuration: MoveLayerClickFlashDuration
   selectionCrosshair: boolean
   balancedShiftLineEnabled: boolean
   lineDirectionStep: number
@@ -405,6 +409,7 @@ export const DEFAULT_EDITOR_PREFERENCES: EditorPreferences = {
   eyedropperMagnifierDistortionEnabled: true,
   moveLayerContentPreviewEnabled: true,
   moveLayerClickFlashEnabled: true,
+  moveLayerClickFlashDuration: 120,
   selectionCrosshair: false,
   balancedShiftLineEnabled: true,
   lineDirectionStep: 1,
@@ -620,6 +625,7 @@ export function imageExportKindForPreference(value: string | null): ImageExportK
   if (value === 'jpeg') return 'jpeg'
   if (value === 'webp') return 'webp'
   if (value === 'svg') return 'svg'
+  if (value === 'psd') return 'psd'
   if (value === 'png-rgba') return 'png-rgba'
   return 'png-auto'
 }
@@ -629,16 +635,17 @@ export function saveImageKindForPreference(value: string | null): SaveImageKind 
   if (value === 'ase' || value === 'aseprite') return value
   if (value === 'jpeg') return 'jpeg'
   if (value === 'webp') return 'webp'
+  if (value === 'psd') return 'psd'
   if (value === 'png') return 'png-auto'
   return null
 }
 
 function parseSaveFormat(value: string | null): SaveFormatPreference {
-  return value === 'png' || value === 'jpeg' || value === 'webp' || value === 'ase' || value === 'aseprite' ? value : 'moonsprite'
+  return value === 'png' || value === 'jpeg' || value === 'webp' || value === 'psd' || value === 'ase' || value === 'aseprite' ? value : 'moonsprite'
 }
 
 function parseExportFormat(value: string | null): ExportFormatPreference {
-  return value === 'jpeg' || value === 'webp' || value === 'svg' || value === 'gif' ? value : 'png'
+  return value === 'jpeg' || value === 'webp' || value === 'svg' || value === 'gif' || value === 'psd' ? value : 'png'
 }
 
 function parseDirectoryPreference(value: string | null): string {
@@ -655,6 +662,13 @@ export function parseRecoveryRetentionDays(value: string | null): number {
   if (!value?.trim()) return DEFAULT_EDITOR_PREFERENCES.recoveryRetentionDays
   const parsed = Number(value)
   return Number.isFinite(parsed) ? Math.max(1, Math.min(365, Math.round(parsed))) : DEFAULT_EDITOR_PREFERENCES.recoveryRetentionDays
+}
+
+export function parseMoveLayerClickFlashDuration(value: string | null): MoveLayerClickFlashDuration {
+  const parsed = Number(value)
+  return MOVE_LAYER_CLICK_FLASH_DURATIONS.includes(parsed as MoveLayerClickFlashDuration)
+    ? parsed as MoveLayerClickFlashDuration
+    : DEFAULT_EDITOR_PREFERENCES.moveLayerClickFlashDuration
 }
 
 export function loadEditorPreferences(storage?: Storage): EditorPreferences {
@@ -699,6 +713,7 @@ export function loadEditorPreferences(storage?: Storage): EditorPreferences {
     eyedropperMagnifierDistortionEnabled: get(EYEDROPPER_MAGNIFIER_DISTORTION_ENABLED_PREFERENCE_KEY) !== 'false',
     moveLayerContentPreviewEnabled: get(MOVE_LAYER_CONTENT_PREVIEW_ENABLED_PREFERENCE_KEY) !== 'false',
     moveLayerClickFlashEnabled: get(MOVE_LAYER_CLICK_FLASH_ENABLED_PREFERENCE_KEY) !== 'false',
+    moveLayerClickFlashDuration: parseMoveLayerClickFlashDuration(get(MOVE_LAYER_CLICK_FLASH_DURATION_PREFERENCE_KEY)),
     selectionCrosshair: get(SELECTION_CROSSHAIR_PREFERENCE_KEY) === 'true',
     balancedShiftLineEnabled: get(BALANCED_SHIFT_LINE_ENABLED_PREFERENCE_KEY) !== 'false',
     lineDirectionStep: parseLineDirectionStep(get(LINE_DIRECTION_STEP_PREFERENCE_KEY)),
@@ -757,6 +772,7 @@ export function saveEditorPreferences(preferences: EditorPreferences, storage?: 
     [EYEDROPPER_MAGNIFIER_DISTORTION_ENABLED_PREFERENCE_KEY]: String(preferences.eyedropperMagnifierDistortionEnabled),
     [MOVE_LAYER_CONTENT_PREVIEW_ENABLED_PREFERENCE_KEY]: String(preferences.moveLayerContentPreviewEnabled),
     [MOVE_LAYER_CLICK_FLASH_ENABLED_PREFERENCE_KEY]: String(preferences.moveLayerClickFlashEnabled),
+    [MOVE_LAYER_CLICK_FLASH_DURATION_PREFERENCE_KEY]: String(parseMoveLayerClickFlashDuration(String(preferences.moveLayerClickFlashDuration))),
     [SELECTION_CROSSHAIR_PREFERENCE_KEY]: String(preferences.selectionCrosshair),
     [BALANCED_SHIFT_LINE_ENABLED_PREFERENCE_KEY]: String(preferences.balancedShiftLineEnabled),
     [LINE_DIRECTION_STEP_PREFERENCE_KEY]: String(parseLineDirectionStep(String(preferences.lineDirectionStep))),

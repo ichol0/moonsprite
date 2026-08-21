@@ -10,7 +10,7 @@ import { exportAnimationGif } from './gif'
 import { compositeDocument } from './document'
 import { encodeBmp } from './bmp'
 
-export type SaveImageDialogFormat = 'png' | 'jpeg' | 'webp' | 'ase' | 'aseprite'
+export type SaveImageDialogFormat = 'png' | 'jpeg' | 'webp' | 'psd' | 'ase' | 'aseprite'
 
 export function fileNameFromPath(filePath: string): string {
   return filePath.split(/[\\/]/).pop() ?? filePath
@@ -29,14 +29,15 @@ export function joinDirectoryPath(directory: string, fileName: string): string {
 
 export function sanitizeFileStem(name: string, fallback: string): string {
   const stem = name
-    .replace(/\.(moonsprite|aseprite|ase|png|jpe?g|webp|bmp|svg|gif)$/i, '')
+    .replace(/\.(moonsprite|aseprite|ase|png|jpe?g|webp|bmp|svg|gif|psd)$/i, '')
     .replace(/[\\/:*?"<>|]/g, '_')
     .trim()
   return stem || fallback
 }
 
-export function saveImageExtension(format: SaveImageKind): 'png' | 'jpg' | 'webp' | 'svg' | 'ase' | 'aseprite' {
+export function saveImageExtension(format: SaveImageKind): 'png' | 'jpg' | 'webp' | 'svg' | 'psd' | 'ase' | 'aseprite' {
   if (format === 'jpeg') return 'jpg'
+  if (format === 'psd') return 'psd'
   if (format === 'ase') return 'ase'
   if (format === 'aseprite') return 'aseprite'
   if (format === 'svg') return 'svg'
@@ -47,6 +48,7 @@ export function saveImageExtension(format: SaveImageKind): 'png' | 'jpg' | 'webp
 export function saveImageDialogFormat(format: SaveImageKind): SaveImageDialogFormat {
   if (format === 'jpeg') return 'jpeg'
   if (format === 'webp') return 'webp'
+  if (format === 'psd') return 'psd'
   if (format === 'ase') return 'ase'
   if (format === 'aseprite') return 'aseprite'
   return 'png'
@@ -57,6 +59,7 @@ export function saveImageKindForPath(filePath: string): SaveImageKind | null {
   if (suffix === 'png') return 'png-auto'
   if (suffix === 'jpg' || suffix === 'jpeg') return 'jpeg'
   if (suffix === 'webp') return 'webp'
+  if (suffix === 'psd') return 'psd'
   if (suffix === 'ase') return 'ase'
   if (suffix === 'aseprite') return 'aseprite'
   return null
@@ -115,8 +118,8 @@ export function normalizeSaveDialogPath(filePath: string, format: SaveImageKind)
       ? /\.(ase|aseprite)$/i.test(filePath)
       : filePath.toLowerCase().endsWith(`.${extension}`)
   if (accepted) return filePath
-  return /\.(moonsprite|png|jpg|jpeg|webp|bmp|svg|gif|ase|aseprite)$/i.test(filePath)
-    ? filePath.replace(/\.(moonsprite|png|jpg|jpeg|webp|bmp|svg|gif|ase|aseprite)$/i, `.${extension}`)
+  return /\.(moonsprite|png|jpg|jpeg|webp|bmp|svg|gif|psd|ase|aseprite)$/i.test(filePath)
+    ? filePath.replace(/\.(moonsprite|png|jpg|jpeg|webp|bmp|svg|gif|psd|ase|aseprite)$/i, `.${extension}`)
     : `${filePath}.${extension}`
 }
 

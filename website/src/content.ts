@@ -9,7 +9,7 @@ export const copy = {
       description: 'MoonSprite 是面向 Windows 的原创源码可见像素画工作台。绘制、制作动画并管理完整创作流程。',
     },
     nav: { features: '功能', interface: '界面', work: '作品', faq: '常见问题', menu: '打开导航', close: '关闭导航' },
-    common: { dev: 'DEV.5 开发中', steam: '在 Steam 加入愿望单', steamSoon: '即将登陆 Steam', github: '查看 GitHub', external: '在新窗口打开' },
+    common: { dev: 'DEV.6 开发中', steam: '在 Steam 加入愿望单', steamSoon: '即将登陆 Steam', github: '查看 GitHub', external: '在新窗口打开' },
     hero: {
       eyebrow: '为像素创作者打造',
       title: 'MoonSprite',
@@ -17,8 +17,8 @@ export const copy = {
       description: '从第一笔、第一层，到逐帧动画与最终导出，在一个清晰、快速、可定制的工作空间里完成。',
       platform: 'Windows 10 / 11',
       license: '源码可见许可',
-      imageAlt: 'MoonSprite DEV.5 编辑器完整界面，中央显示像素作品，左右为颜色、图层和动画面板',
-      evidence: '真实 DEV.5 软件界面',
+      imageAlt: 'MoonSprite DEV.6 编辑器完整界面，中央显示像素作品，左右为颜色、图层和动画面板',
+      evidence: '真实 DEV.6 软件界面',
     },
     tour: {
       eyebrow: '工作区导览',
@@ -54,7 +54,7 @@ export const copy = {
     faq: {
       eyebrow: '常见问题', title: '开始之前，你可能想知道。',
       items: [
-        { q: 'MoonSprite 现在可以下载吗？', a: 'MoonSprite 目前仍处于 DEV.5 开发阶段，尚未公开分发。Steam 商店页面准备就绪后，官网会开放愿望单入口。' },
+        { q: 'MoonSprite 现在可以下载吗？', a: 'MoonSprite 目前仍处于 DEV.6 开发阶段，尚未公开分发。Steam 商店页面准备就绪后，官网会开放愿望单入口。' },
         { q: '支持哪些系统？', a: '当前产品专注 Windows 10 与 Windows 11，需要 WebView2 Runtime。其他桌面系统暂不在首发范围内。' },
         { q: '可以打开 Aseprite 文件吗？', a: '可以。MoonSprite 支持打开和导出 .ase 与 .aseprite 工程，也支持常见图片格式。复杂工程的兼容表现仍会随开发版持续完善。' },
         { q: '它和 Aseprite 有什么关系？', a: 'MoonSprite 是独立原创的源码可见像素画工作台，与 Aseprite 无隶属关系，也不使用其源码、品牌或视觉资产。' },
@@ -67,8 +67,8 @@ export const copy = {
   en: {
     meta: { title: 'MoonSprite - Pixel Art Workstation for Windows', description: 'MoonSprite is an original source-available pixel art workstation for Windows, built for drawing, animation, and a complete creative workflow.' },
     nav: { features: 'Features', interface: 'Interface', work: 'Artwork', faq: 'FAQ', menu: 'Open navigation', close: 'Close navigation' },
-    common: { dev: 'DEV.5 in development', steam: 'Wishlist on Steam', steamSoon: 'Coming soon to Steam', github: 'View on GitHub', external: 'Opens in a new window' },
-    hero: { eyebrow: 'Built for pixel artists', title: 'MoonSprite', subtitle: 'A Windows workstation focused on pixel art.', description: 'Take an idea from its first pixel and first layer through frame-by-frame animation and final export in one clear, fast, adaptable workspace.', platform: 'Windows 10 / 11', license: 'Source available', imageAlt: 'Full MoonSprite DEV.5 editor interface with pixel artwork in the center and color, layer, and animation panels around it', evidence: 'Actual DEV.5 interface' },
+    common: { dev: 'DEV.6 in development', steam: 'Wishlist on Steam', steamSoon: 'Coming soon to Steam', github: 'View on GitHub', external: 'Opens in a new window' },
+    hero: { eyebrow: 'Built for pixel artists', title: 'MoonSprite', subtitle: 'A Windows workstation focused on pixel art.', description: 'Take an idea from its first pixel and first layer through frame-by-frame animation and final export in one clear, fast, adaptable workspace.', platform: 'Windows 10 / 11', license: 'Source available', imageAlt: 'Full MoonSprite DEV.6 editor interface with pixel artwork in the center and color, layer, and animation panels around it', evidence: 'Actual DEV.6 interface' },
     tour: {
       eyebrow: 'Workspace tour', title: 'Tools stay close. Your work stays central.', description: 'Four real views show how MoonSprite brings drawing, animation, and delivery into one connected workflow.', tabsLabel: 'Software interface views',
       items: [
@@ -89,7 +89,7 @@ export const copy = {
     },
     work: { eyebrow: 'Built-in showcase', title: 'From tiny icons to complete worlds.', description: 'These pixel pieces ship with the MoonSprite project to demonstrate different scales, palettes, and compositions.', itemAlt: ['MoonSprite showcase: moonlit city, seaside workshop, and lunar base triptych', 'MoonSprite showcase: a moonlit seaside workshop and lighthouse', 'MoonSprite showcase: a future observatory city under a giant moon'] },
     facts: { eyebrow: 'Open and practical', title: 'Your work is yours. The tool stays transparent.', items: [{ title: 'Native Windows workflow', body: 'Designed for Windows 10 / 11 with file associations, system clipboard, recovery drafts, and Explorer thumbnails.' }, { title: 'Source available', body: 'The source, development history, and issue tracking can be inspected. Official binaries are distributed through MoonSprite-authorized channels.' }, { title: 'Connect existing assets', body: 'Import and export Aseprite projects, plus PNG, JPEG, WebP, BMP, GIF, and other everyday formats.' }] },
-    faq: { eyebrow: 'FAQ', title: 'A few things to know before you begin.', items: [{ q: 'Can I download MoonSprite now?', a: 'MoonSprite is currently in DEV.5 development and is not publicly distributed yet. The website will open its wishlist link when the Steam store page is ready.' }, { q: 'Which platforms are supported?', a: 'The current product focuses on Windows 10 and Windows 11 and requires WebView2 Runtime. Other desktop platforms are not part of the initial release scope.' }, { q: 'Can it open Aseprite files?', a: 'Yes. MoonSprite can open and export .ase and .aseprite projects and handles common image formats. Compatibility for complex projects continues to improve during development.' }, { q: 'Is it affiliated with Aseprite?', a: 'No. MoonSprite is an original, independent source-available pixel art workstation. It is not affiliated with Aseprite and does not use its source code, brand, or visual assets.' }, { q: 'Will it be paid software?', a: 'The source uses the MoonSprite Source-Available License. Official Steam and authorized-channel binaries are licensed per user and may be used for personal and commercial creative work.' }] },
+    faq: { eyebrow: 'FAQ', title: 'A few things to know before you begin.', items: [{ q: 'Can I download MoonSprite now?', a: 'MoonSprite is currently in DEV.6 development and is not publicly distributed yet. The website will open its wishlist link when the Steam store page is ready.' }, { q: 'Which platforms are supported?', a: 'The current product focuses on Windows 10 and Windows 11 and requires WebView2 Runtime. Other desktop platforms are not part of the initial release scope.' }, { q: 'Can it open Aseprite files?', a: 'Yes. MoonSprite can open and export .ase and .aseprite projects and handles common image formats. Compatibility for complex projects continues to improve during development.' }, { q: 'Is it affiliated with Aseprite?', a: 'No. MoonSprite is an original, independent source-available pixel art workstation. It is not affiliated with Aseprite and does not use its source code, brand, or visual assets.' }, { q: 'Will it be paid software?', a: 'The source uses the MoonSprite Source-Available License. Official Steam and authorized-channel binaries are licensed per user and may be used for personal and commercial creative work.' }] },
     cta: { eyebrow: 'The next frame is coming', title: 'Follow MoonSprite as it develops.', body: 'Wishlist on Steam when the store page goes live. For now, visit GitHub for source code, version progress, and known issues.' },
     footer: { description: 'An original source-available pixel art workstation for Windows.', source: 'Source code', license: 'Source-Available License', notice: 'MoonSprite is not affiliated with Aseprite.' },
   },

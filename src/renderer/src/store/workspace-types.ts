@@ -38,6 +38,8 @@ import type { SymmetryAxes, SymmetryCenter, SymmetryMode } from '@/core/symmetry
 import type { BrushTool } from '@/core/tool-preferences'
 import type { BrushDynamicsSettings, BrushPressureSettings } from '@/core/pressure'
 import type { TilemapDrawingMode } from '@/core/tilemap'
+import type { FreeTileDrawingMode } from '@/core/free-tile'
+import type { FreeTileSourceEditRaster } from '@/core/free-tile-edit'
 
 export interface CanvasResizePreview {
   width: number
@@ -103,6 +105,12 @@ export interface FloatingPaste {
   tilemapEditCellIndex?: number
   copy: boolean
   label: string
+  freeTile?: {
+    sourceId: string
+    instanceId: string
+    edit: FreeTileSourceEditRaster
+    selectionSource: SelectionMask
+  }
 }
 
 export interface TextBoxTransformState {
@@ -145,7 +153,16 @@ export interface DocumentSession {
   selectedTilesetId: string | null
   selectedTileId: string | null
   secondaryTileId: string | null
+  /** View-only instance selection inside the active Free Tile source page. */
+  selectedFreeTileInstanceId: string | null
+  /** View-only multi-selection for instance rows in the active Free Tile cel. */
+  selectedFreeTileInstanceIds: string[]
+  /** Range-selection anchor for Free Tile instance rows. */
+  freeTileInstanceSelectionAnchorId: string | null
+  /** View-only Free Tile layer whose instances are exposed as layer rows. */
+  freeTileInstanceLayerId: string | null
   tilemapMode: TilemapDrawingMode
+  freeTileMode: FreeTileDrawingMode
   primaryColor: RgbaColor
   secondaryColor: RgbaColor
   brushSize: number
@@ -170,6 +187,8 @@ export interface DocumentSession {
   fillMode: FillMode
   fillKind: FillKind
   fillTolerance: number
+  fillGapClosing: boolean
+  fillGapThreshold: number
   gradientTolerance: number
   gradientContiguous: boolean
   gradientDither: GradientDither
@@ -181,6 +200,8 @@ export interface DocumentSession {
   selectionMode: SelectionMode
   wandTolerance: number
   wandContiguous: boolean
+  wandGapClosing: boolean
+  wandGapThreshold: number
   perfectPixels: boolean
   symmetryAxes: SymmetryAxes
   symmetryAxesInitialized: Record<SymmetryMode, boolean>
@@ -216,6 +237,8 @@ export interface DocumentSession {
   animationFrameSelectionAnchorId: string | null
   selectedAnimationCellKeys: string[]
   animationCellSelectionAnchorKey: string | null
+  /** Distinguishes timeline cel selection from cells derived only for selected-layer highlighting. */
+  animationCellSelectionExplicit: boolean
   /** Timeline cells whose attached masks are selected in the panel. */
   selectedAnimationMaskCellKeys: string[]
   animationMaskCellSelectionAnchorKey: string | null

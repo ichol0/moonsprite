@@ -24,6 +24,7 @@ export function SaveAsDialog({ initialName, initialFormat, initialDirectory, onS
     { value: 'png-rgba', label: t('saveAs.format.pngRgba') },
     { value: 'jpeg', label: t('saveAs.format.jpeg') },
     { value: 'webp', label: t('saveAs.format.webp') },
+    { value: 'psd', label: t('saveAs.format.psd') },
     { value: 'ase', label: t('saveAs.format.ase') },
     { value: 'aseprite', label: t('saveAs.format.aseprite') }
   ]

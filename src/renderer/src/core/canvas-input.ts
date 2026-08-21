@@ -5,6 +5,8 @@ import { combineSelection, inverseTransformedSelectionPoint, rasterLinePoints, r
 import { balancedStairLinePoints } from './pixel-line'
 import { modifierShortcutHeld } from './shortcuts'
 import type { TilemapEdit, TilemapSelectionMoveSource } from './tilemap'
+import type { FreeTilePlacementEdit, FreeTileSourceEditSnapshot } from './free-tile-document'
+import type { FreeTileInstanceTransform } from './free-tile'
 
 const selectionHitBoundaryCache = new WeakMap<SelectionMask, Int32Array>()
 
@@ -232,7 +234,7 @@ export const selectionResizeHit = (
 }
 
 export interface CanvasDragState {
-  kind: 'draw' | 'tile-draw' | 'airbrush' | 'shape' | 'freeform-shape' | 'polygon-shape' | 'line-shape' | 'curve-shape' | 'gradient' | 'marquee' | 'lasso' | 'polygon-lasso' | 'magic-preview' | 'sample-color' | 'move-content' | 'move-selection' | 'move-selection-pivot' | 'transform-content' | 'rotate-content' | 'shear-content' | 'move-layer' | 'create-text-box' | 'transform-text-box' | 'create-slice' | 'move-slice' | 'resize-slice' | 'brush-size' | 'canvas-resize' | 'canvas-move' | 'zoom-drag' | 'rotate-view' | 'pan'
+  kind: 'draw' | 'tile-draw' | 'free-tile-draw' | 'free-tile-edit' | 'free-tile-instance-move' | 'airbrush' | 'shape' | 'freeform-shape' | 'polygon-shape' | 'line-shape' | 'curve-shape' | 'gradient' | 'marquee' | 'lasso' | 'polygon-lasso' | 'magic-preview' | 'sample-color' | 'move-content' | 'move-selection' | 'move-selection-pivot' | 'transform-content' | 'rotate-content' | 'shear-content' | 'move-layer' | 'create-text-box' | 'transform-text-box' | 'create-slice' | 'move-slice' | 'resize-slice' | 'brush-size' | 'canvas-resize' | 'canvas-move' | 'zoom-drag' | 'rotate-view' | 'pan'
   start: CanvasPoint
   last: CanvasPoint
   edit?: PixelEdit
@@ -243,6 +245,25 @@ export interface CanvasDragState {
   tilemapEditSelection?: SelectionMask
   tilemapSelectionMoveSource?: TilemapSelectionMoveSource
   tilemapSelectionMoveDelta?: { columns: number; rows: number }
+  freeTilePlacementEdit?: FreeTilePlacementEdit
+  freeTileSourceId?: string
+  freeTileInstanceId?: string
+  freeTileInstanceStart?: CanvasPoint
+  freeTileEditDocument?: SpriteDocument
+  freeTileEditLayer?: RasterLayer
+  freeTileSourceBefore?: FreeTileSourceEditSnapshot
+  freeTileEditOrigin?: CanvasPoint
+  freeTileEditSourceOffset?: CanvasPoint
+  freeTileEditInstanceTransform?: FreeTileInstanceTransform
+  freeTileEditTransformedSourceBounds?: SelectionRect
+  freeTileEditSelection?: SelectionMask | null
+  freeTileSelectionBounds?: SelectionRect
+  freeTileSelectionTransform?: boolean
+  freeTileSelectionSource?: SelectionMask
+  freeTileSelectionPivotBefore?: CanvasPoint | null
+  freeTileGradientPaintRegion?: SelectionMask | null
+  freeTileLastLocal?: CanvasPoint
+  freeTileLastStampOrigin?: CanvasPoint
   tileRepeatPoint?: CanvasPoint
   tileRepeatStart?: CanvasPoint
   selectionStart?: SelectionMask | null
@@ -280,6 +301,10 @@ export interface CanvasDragState {
   previewTarget?: SelectionRect
   previewAngle?: number
   previewShear?: SelectionShearTransform
+  appliedPreviewTarget?: SelectionRect
+  appliedPreviewAngle?: number
+  appliedPreviewShear?: SelectionShearTransform
+  appliedPreviewPivot?: CanvasPoint
   selectionPivotStart?: CanvasPoint
   previewPivot?: CanvasPoint
   selectionPivotCustom?: boolean
@@ -457,6 +482,52 @@ export const selectionOverlayMaskForDrag = (
   if (selectionCreationKinds.has(previewDrag.kind)) return previewDrag.selectionStart ?? null
   if (selectionPreviewKinds.has(previewDrag.kind)) return previewDrag.previewSelection ?? currentSelection
   return currentSelection
+}
+
+export interface SelectionOverlayFrame {
+  selection: SelectionMask | null
+  target?: SelectionRect
+  angle: number
+  shear?: SelectionShearTransform
+  pivot?: CanvasPoint
+}
+
+/** Keeps Free Tile pixels and transform chrome on the same applied preview update. */
+export const selectionOverlayFrameForDrag = (
+  currentSelection: SelectionMask | null,
+  drag: CanvasDragState | null | undefined
+): SelectionOverlayFrame => {
+  const previewDrag = canvasGestureForPreview(drag)
+  const transformed = previewDrag && selectionContentTransformKinds.has(previewDrag.kind) ? previewDrag : null
+  const useAppliedFreeTileFrame = Boolean(
+    transformed?.freeTileSelectionTransform
+    && transformed.appliedPreviewTarget
+  )
+  return {
+    selection: useAppliedFreeTileFrame
+      ? transformed?.appliedSelection === undefined ? currentSelection : transformed.appliedSelection
+      : selectionOverlayMaskForDrag(currentSelection, previewDrag),
+    target: transformed
+      ? useAppliedFreeTileFrame
+        ? transformed.appliedPreviewTarget
+        : transformed.previewTarget ?? transformed.transformStartTarget ?? transformed.selectionStart ?? undefined
+      : undefined,
+    angle: transformed
+      ? useAppliedFreeTileFrame
+        ? transformed.appliedPreviewAngle ?? transformed.previewAngle ?? transformed.startAngle ?? 0
+        : transformed.previewAngle ?? transformed.startAngle ?? 0
+      : 0,
+    shear: transformed
+      ? useAppliedFreeTileFrame
+        ? transformed.appliedPreviewShear
+        : transformed.previewShear ?? transformed.transformStartShear
+      : undefined,
+    pivot: previewDrag
+      ? useAppliedFreeTileFrame
+        ? transformed?.appliedPreviewPivot
+        : previewDrag.previewPivot
+      : undefined
+  }
 }
 
 export const createCanvasPanDrag = (

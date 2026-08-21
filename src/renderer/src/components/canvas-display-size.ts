@@ -1,14 +1,16 @@
-export function syncCanvasDisplaySize(canvas: HTMLCanvasElement, width: number, height: number, dpr: number): void {
+export function syncCanvasDisplaySize(canvas: HTMLCanvasElement, width: number, height: number, dpr: number, cssWidth = width, cssHeight = height): void {
   const displayWidth = Math.max(0, width)
   const displayHeight = Math.max(0, height)
+  const renderedCssWidth = Math.max(0, cssWidth)
+  const renderedCssHeight = Math.max(0, cssHeight)
   const pixelRatio = Number.isFinite(dpr) && dpr > 0 ? dpr : 1
-  const cssWidth = `${displayWidth}px`
-  const cssHeight = `${displayHeight}px`
+  const cssWidthValue = `${renderedCssWidth}px`
+  const cssHeightValue = `${renderedCssHeight}px`
 
   // Keep the last rendered CSS size fixed until the next draw. Otherwise a
   // percentage-sized canvas stretches its previous bitmap while a pane resizes.
-  if (canvas.style.width !== cssWidth) canvas.style.width = cssWidth
-  if (canvas.style.height !== cssHeight) canvas.style.height = cssHeight
+  if (canvas.style.width !== cssWidthValue) canvas.style.width = cssWidthValue
+  if (canvas.style.height !== cssHeightValue) canvas.style.height = cssHeightValue
 
   const backingWidth = Math.max(1, Math.round(displayWidth * pixelRatio))
   const backingHeight = Math.max(1, Math.round(displayHeight * pixelRatio))

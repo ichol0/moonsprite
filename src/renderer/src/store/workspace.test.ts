@@ -7,7 +7,7 @@ import { applySelectionTransform, applySelectionTranslationPreview, captureSelec
 import { builtInPalettes } from '@/core/built-in-palettes'
 import { createProceduralBrush } from '@/core/brushes'
 import { brushLibraryLocation } from '@/core/brush-library-location'
-import { addBlankAnimationFrame, animationCelAt, animationCelHasContent, animationCelKey, ensureAnimationDocument, resolveAnimationCel, setAnimationCelOffsetsForKeys } from '@/core/animation'
+import { addBlankAnimationFrame, animationCelAt, animationCelHasContent, animationCelKey, animationLayerAtFrame, ensureAnimationDocument, resolveAnimationCel, setAnimationCelOffsetsForKeys } from '@/core/animation'
 import { buildLayerPanelTree } from '@/core/layer-panel-layout'
 import { transformedSelectionBounds, transformSelectionMask } from '@/core/selection'
 import { registerViewPreviewFlusher } from '@/core/view-preview-lifecycle'
@@ -19,6 +19,7 @@ import { saveProgress } from '@/core/save-progress'
 import { repositionPaletteSlots } from '@/core/palette-layout'
 import { decodePng } from '@/core/png'
 import { createDefaultLayerStyles } from '@/core/layer-styles'
+import { adjustColor } from '@/core/adjustments'
 import { useWorkspace } from './workspace'
 
 const transparent = { r: 0, g: 0, b: 0, a: 0 }
@@ -882,6 +883,50 @@ describe('animation workspace', () => {
     useWorkspace.getState().selectAnimationFrame(first.id)
     expect(session.selectedAnimationCellKeys).toEqual([])
     expect(session.selectedAnimationFrameIds).toEqual([first.id])
+  })
+
+  it('keeps layer and frame multi-selection together in either selection order', () => {
+    const document = createDocument('combined frame and layer selection', 2, 1, 'rgba')
+    const bottom = getActiveLayer(document)
+    const top = createLayer('Top', 2, 1, 'rgba')
+    document.layers.push(top)
+    useWorkspace.getState().addSession(document)
+    useWorkspace.getState().duplicateAnimationFrame()
+    useWorkspace.getState().selectLayerRows([bottom.id, top.id], [])
+    const [first, second] = ensureAnimationDocument(document).frames
+
+    useWorkspace.getState().selectAnimationFrame(first.id)
+    useWorkspace.getState().selectAnimationFrame(second.id, 'range')
+
+    const session = useWorkspace.getState().sessions[0]
+    expect(session.selectedAnimationFrameIds).toEqual([first.id, second.id])
+    expect(session.selectedLayerIds).toEqual([bottom.id, top.id])
+    expect(session.selectedGroupIds).toEqual([])
+
+    useWorkspace.getState().selectLayer(top.id)
+    useWorkspace.getState().selectLayer(bottom.id, 'toggle')
+    expect(session.selectedLayerIds).toEqual([top.id, bottom.id])
+    expect(session.selectedAnimationFrameIds).toEqual([first.id, second.id])
+  })
+
+  it('deletes selected animation frames as one undoable action', () => {
+    const document = createDocument('delete selected animation frames', 1, 1, 'rgba')
+    useWorkspace.getState().addSession(document)
+    useWorkspace.getState().duplicateAnimationFrame()
+    useWorkspace.getState().duplicateAnimationFrame()
+    const timeline = ensureAnimationDocument(document)
+    const originalFrameIds = timeline.frames.map((frame) => frame.id)
+
+    useWorkspace.getState().selectAnimationFrame(originalFrameIds[0])
+    useWorkspace.getState().selectAnimationFrame(originalFrameIds[1], 'range')
+    useWorkspace.getState().deleteSelectedAnimationItems()
+
+    expect(timeline.frames.map((frame) => frame.id)).toEqual([originalFrameIds[2]])
+    expect(useWorkspace.getState().sessions[0].selectedAnimationFrameIds).toEqual([])
+    useWorkspace.getState().undo()
+    expect(timeline.frames.map((frame) => frame.id)).toEqual(originalFrameIds)
+    useWorkspace.getState().redo()
+    expect(timeline.frames.map((frame) => frame.id)).toEqual([originalFrameIds[2]])
   })
 
   it('creates a new frame linked only to the selected cel', () => {
@@ -2052,6 +2097,134 @@ describe('selection clipboard', () => {
     expect(session.selection).toEqual({ x: 1, y: 0, width: 1, height: 1 })
     expect(readLayerColorAt(document, layer, 1, 0)).toEqual(red)
     expect(readLayerColorAt(document, layer, 2, 0).a).toBe(0)
+  })
+
+  it('moves selection content across selected animation frames as one undoable action', () => {
+    const document = createDocument('multi-frame selection move', 4, 1, 'rgba')
+    const layer = getActiveLayer(document)
+    writeLayerColor(document, layer, 0, red)
+    useWorkspace.getState().addSession(document)
+    useWorkspace.getState().duplicateAnimationFrame()
+    writeLayerColor(document, getActiveLayer(document), 0, blue)
+    const timeline = ensureAnimationDocument(document)
+    const [first, second] = timeline.frames
+    useWorkspace.getState().selectAnimationFrame(first.id)
+    useWorkspace.getState().selectAnimationFrame(second.id, 'range')
+    useWorkspace.getState().setSelection({ x: 0, y: 0, width: 1, height: 1 })
+
+    useWorkspace.getState().moveActiveSelectionWithSelectionHistory(1, 0)
+    useWorkspace.getState().moveActiveSelectionWithSelectionHistory(1, 0)
+
+    const session = useWorkspace.getState().sessions[0]
+    expect(session.pendingPaste?.layers?.map((state) => state.frameId)).toEqual([second.id, first.id])
+    expect(readLayerColorAt(document, animationLayerAtFrame(document, layer.id, first.id)!, 2, 0)).toEqual(red)
+    expect(readLayerColorAt(document, animationLayerAtFrame(document, layer.id, second.id)!, 2, 0)).toEqual(blue)
+    useWorkspace.getState().commitFloatingPaste()
+
+    useWorkspace.getState().undo()
+    expect(session.selection).toEqual({ x: 0, y: 0, width: 1, height: 1 })
+    expect(readLayerColorAt(document, animationLayerAtFrame(document, layer.id, first.id)!, 0, 0)).toEqual(red)
+    expect(readLayerColorAt(document, animationLayerAtFrame(document, layer.id, second.id)!, 0, 0)).toEqual(blue)
+  })
+
+  it('moves selection content across selected layers and animation frames as one undoable action', () => {
+    const document = createDocument('multi-layer multi-frame selection move', 4, 1, 'rgba')
+    const bottom = getActiveLayer(document)
+    const top = createLayer('Top', 4, 1, 'rgba')
+    const green = { r: 0, g: 200, b: 80, a: 255 }
+    const yellow = { r: 240, g: 190, b: 0, a: 255 }
+    document.layers.push(top)
+    writeLayerColor(document, bottom, 0, red)
+    writeLayerColor(document, top, 0, blue)
+    useWorkspace.getState().addSession(document)
+    useWorkspace.getState().duplicateAnimationFrame()
+    writeLayerColor(document, bottom, 0, green)
+    writeLayerColor(document, top, 0, yellow)
+    const timeline = ensureAnimationDocument(document)
+    const [first, second] = timeline.frames
+    useWorkspace.getState().selectLayerRows([bottom.id, top.id], [])
+    useWorkspace.getState().selectAnimationFrame(first.id)
+    useWorkspace.getState().selectAnimationFrame(second.id, 'range')
+    useWorkspace.getState().setSelection({ x: 0, y: 0, width: 1, height: 1 })
+
+    useWorkspace.getState().moveActiveSelectionWithSelectionHistory(1, 0)
+
+    const session = useWorkspace.getState().sessions[0]
+    expect(session.pendingPaste?.layers?.map(({ layerId, frameId }) => `${layerId}:${frameId}`)).toEqual([
+      `${top.id}:${second.id}`,
+      `${bottom.id}:${second.id}`,
+      `${top.id}:${first.id}`,
+      `${bottom.id}:${first.id}`
+    ])
+    expect(readLayerColorAt(document, animationLayerAtFrame(document, bottom.id, first.id)!, 1, 0)).toEqual(red)
+    expect(readLayerColorAt(document, animationLayerAtFrame(document, top.id, first.id)!, 1, 0)).toEqual(blue)
+    expect(readLayerColorAt(document, animationLayerAtFrame(document, bottom.id, second.id)!, 1, 0)).toEqual(green)
+    expect(readLayerColorAt(document, animationLayerAtFrame(document, top.id, second.id)!, 1, 0)).toEqual(yellow)
+    useWorkspace.getState().commitFloatingPaste()
+
+    useWorkspace.getState().undo()
+    expect(readLayerColorAt(document, animationLayerAtFrame(document, bottom.id, first.id)!, 0, 0)).toEqual(red)
+    expect(readLayerColorAt(document, animationLayerAtFrame(document, top.id, first.id)!, 0, 0)).toEqual(blue)
+    expect(readLayerColorAt(document, animationLayerAtFrame(document, bottom.id, second.id)!, 0, 0)).toEqual(green)
+    expect(readLayerColorAt(document, animationLayerAtFrame(document, top.id, second.id)!, 0, 0)).toEqual(yellow)
+
+    useWorkspace.getState().redo()
+    expect(readLayerColorAt(document, animationLayerAtFrame(document, bottom.id, first.id)!, 1, 0)).toEqual(red)
+    expect(readLayerColorAt(document, animationLayerAtFrame(document, top.id, first.id)!, 1, 0)).toEqual(blue)
+    expect(readLayerColorAt(document, animationLayerAtFrame(document, bottom.id, second.id)!, 1, 0)).toEqual(green)
+    expect(readLayerColorAt(document, animationLayerAtFrame(document, top.id, second.id)!, 1, 0)).toEqual(yellow)
+  })
+
+  it('blocks a combined frame and layer selection move when any target layer is locked', () => {
+    const document = createDocument('locked multi-layer multi-frame selection move', 3, 1, 'rgba')
+    const bottom = getActiveLayer(document)
+    const top = createLayer('Top', 3, 1, 'rgba')
+    top.locked = true
+    document.layers.push(top)
+    writeLayerColor(document, bottom, 0, red)
+    writeLayerColor(document, top, 0, blue)
+    useWorkspace.getState().addSession(document)
+    useWorkspace.getState().duplicateAnimationFrame()
+    const [first, second] = ensureAnimationDocument(document).frames
+    useWorkspace.getState().selectLayerRows([bottom.id, top.id], [])
+    useWorkspace.getState().selectAnimationFrame(first.id)
+    useWorkspace.getState().selectAnimationFrame(second.id, 'range')
+    useWorkspace.getState().setSelection({ x: 0, y: 0, width: 1, height: 1 })
+
+    useWorkspace.getState().moveActiveSelectionWithSelectionHistory(1, 0)
+
+    const session = useWorkspace.getState().sessions[0]
+    expect(session.pendingPaste).toBeNull()
+    expect(session.selection).toEqual({ x: 0, y: 0, width: 1, height: 1 })
+    expect(readLayerColorAt(document, animationLayerAtFrame(document, bottom.id, first.id)!, 0, 0)).toEqual(red)
+    expect(readLayerColorAt(document, animationLayerAtFrame(document, bottom.id, first.id)!, 1, 0)).toEqual(transparent)
+  })
+
+  it('moves a linked cel source only once when both linked frames are selected', () => {
+    const document = createDocument('linked multi-frame selection move', 4, 1, 'rgba')
+    const layer = getActiveLayer(document)
+    writeLayerColor(document, layer, 0, red)
+    useWorkspace.getState().addSession(document)
+    useWorkspace.getState().duplicateAnimationFrame()
+    const timeline = ensureAnimationDocument(document)
+    const [first, second] = timeline.frames
+    useWorkspace.getState().selectAnimationCell(animationCelKey(layer.id, first.id))
+    useWorkspace.getState().selectAnimationCell(animationCelKey(layer.id, second.id), 'toggle')
+    useWorkspace.getState().connectSelectedAnimationCels()
+    useWorkspace.getState().selectAnimationFrame(first.id)
+    useWorkspace.getState().selectAnimationFrame(second.id, 'range')
+    useWorkspace.getState().setSelection({ x: 0, y: 0, width: 1, height: 1 })
+
+    useWorkspace.getState().moveActiveSelectionWithSelectionHistory(1, 0)
+
+    const session = useWorkspace.getState().sessions[0]
+    expect(session.pendingPaste?.layers).toHaveLength(1)
+    const linkedLayer = animationLayerAtFrame(document, layer.id, second.id)!
+    expect(readLayerColorAt(document, linkedLayer, 1, 0)).toEqual(red)
+    expect(readLayerColorAt(document, linkedLayer, 2, 0).a).toBe(0)
+    useWorkspace.getState().commitFloatingPaste()
+    useWorkspace.getState().undo()
+    expect(readLayerColorAt(document, animationLayerAtFrame(document, layer.id, first.id)!, 0, 0)).toEqual(red)
   })
 
   it('wraps a deferred tiled selection move on commit and preserves it through undo and redo', () => {
@@ -3875,6 +4048,46 @@ describe('linked animation cel history', () => {
 })
 
 describe('multi-layer adjustments', () => {
+  it('keeps a linked cel source unchanged during preview and updates it only on commit', () => {
+    const document = createDocument('linked adjustment preview', 1, 1, 'rgba')
+    const layer = getActiveLayer(document)
+    writeLayerColor(document, layer, 0, red)
+    const sourceFrameId = ensureAnimationDocument(document).activeFrameId
+    useWorkspace.getState().addSession(document)
+    useWorkspace.getState().selectAnimationCell(animationCelKey(layer.id, sourceFrameId))
+    useWorkspace.getState().addLinkedAnimationFrame()
+    const timeline = ensureAnimationDocument(document)
+    const linkedTarget = animationCelAt(timeline, layer.id, timeline.activeFrameId)!
+    const source = resolveAnimationCel(timeline, linkedTarget)!
+    const baseline = useWorkspace.getState().captureActiveLayerAdjustmentSnapshot()!
+
+    useWorkspace.getState().previewActiveLayerAdjustment({ kind: 'brightness-contrast', brightness: 20 }, baseline)
+
+    expect(Array.from(source.surface!.pixels)).toEqual([red.r, red.g, red.b, red.a])
+    expect(readLayerColor(document, layer, 0)).not.toEqual(red)
+    useWorkspace.getState().applyActiveLayerAdjustmentFromSnapshot({ kind: 'brightness-contrast', brightness: 20 }, baseline)
+    expect(Array.from(source.surface!.pixels)).not.toEqual([red.r, red.g, red.b, red.a])
+    expect(linkedTarget.linkedCelId).toBe(source.id)
+    useWorkspace.getState().undo()
+    expect(Array.from(resolveAnimationCel(timeline, linkedTarget)!.surface!.pixels)).toEqual([red.r, red.g, red.b, red.a])
+  })
+
+  it('recomputes previews from the immutable baseline instead of stacking prior values', () => {
+    const document = createDocument('adjustment preview baseline', 1, 1, 'rgba')
+    const layer = getActiveLayer(document)
+    writeLayerColor(document, layer, 0, { r: 20, g: 30, b: 40, a: 255 })
+    useWorkspace.getState().addSession(document)
+    const baseline = useWorkspace.getState().captureActiveLayerAdjustmentSnapshot()!
+
+    useWorkspace.getState().previewActiveLayerAdjustment({ kind: 'brightness-contrast', brightness: 20 }, baseline)
+    useWorkspace.getState().previewActiveLayerAdjustment({ kind: 'brightness-contrast', brightness: 40 }, baseline)
+
+    expect(readLayerColor(document, layer, 0)).toEqual(adjustColor({ r: 20, g: 30, b: 40, a: 255 }, { kind: 'brightness-contrast', brightness: 40 }))
+    expect(Array.from(baseline.layers[0].pixels)).toEqual([20, 30, 40, 255])
+    useWorkspace.getState().restoreActiveDocumentSnapshot(baseline)
+    expect(readLayerColor(document, layer, 0)).toEqual({ r: 20, g: 30, b: 40, a: 255 })
+  })
+
   it('undoes a later pixel operation before undoing the earlier adjustment', () => {
     const document = createDocument('ordered adjustment history', 2, 1, 'rgba')
     const layer = getActiveLayer(document)

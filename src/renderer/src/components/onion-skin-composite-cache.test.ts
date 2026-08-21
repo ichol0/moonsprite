@@ -101,4 +101,40 @@ describe('OnionSkinCompositeCache', () => {
     cache.draw({ ...options, revision: 2, invalidation: { kind: 'region', fromRevision: 1, revision: 2, frameId: timeline.activeFrameId, rect: { x: 0, y: 0, width: 1, height: 1 } } })
     expect(MockOffscreenCanvas.instances.filter((canvas) => canvas.context.putImageData.mock.calls.length > 0)).toHaveLength(1)
   })
+
+  it('rebuilds only onion-skin frames invalidated by a live animation preview', () => {
+    const document = createDocument('moving onion skin', 512, 512, 'rgba')
+    addBlankAnimationFrame(document)
+    const timeline = ensureAnimationDocument(document)
+    const refs = onionSkinFrameRefs(timeline, 1, 0)
+    const context = {
+      save: vi.fn(), restore: vi.fn(), beginPath: vi.fn(), rect: vi.fn(), clip: vi.fn(), drawImage: vi.fn(),
+      imageSmoothingEnabled: false, imageSmoothingQuality: 'low'
+    }
+    const cache = new OnionSkinCompositeCache()
+    const options = {
+      context: context as never,
+      document,
+      refs,
+      style,
+      originX: 0,
+      originY: 0,
+      canvasWidth: 512,
+      canvasHeight: 512,
+      fromX: 0,
+      fromY: 0,
+      toX: 512,
+      toY: 512,
+      zoom: 1,
+      revision: 1
+    }
+
+    cache.draw(options)
+    expect(MockOffscreenCanvas.instances.filter((canvas) => canvas.context.putImageData.mock.calls.length > 0)).toHaveLength(1)
+
+    cache.invalidateFrames([refs[0].frameId])
+    cache.draw(options)
+
+    expect(MockOffscreenCanvas.instances.filter((canvas) => canvas.context.putImageData.mock.calls.length > 0)).toHaveLength(2)
+  })
 })

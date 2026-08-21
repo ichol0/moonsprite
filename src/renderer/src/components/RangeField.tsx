@@ -2,6 +2,7 @@ import type { CSSProperties, FocusEventHandler, ReactNode } from 'react'
 
 interface RangeFieldProps {
   ariaLabel?: string
+  ariaValueText?: string
   autoFocus?: boolean
   className?: string
   density?: 'compact' | 'regular'
@@ -17,11 +18,11 @@ interface RangeFieldProps {
   valueLabel?: ReactNode
 }
 
-export function RangeField({ ariaLabel, autoFocus = false, className = '', density = 'regular', disabled = false, label, max, min, onBlur, onChange, step = 1, suffix, value, valueLabel }: RangeFieldProps) {
+export function RangeField({ ariaLabel, ariaValueText, autoFocus = false, className = '', density = 'regular', disabled = false, label, max, min, onBlur, onChange, step = 1, suffix, value, valueLabel }: RangeFieldProps) {
   const hasLabel = label !== undefined && label !== null
   const progress = max > min ? Math.max(0, Math.min(100, ((value - min) / (max - min)) * 100)) : 0
   const displayValue = valueLabel ?? `${value}${suffix ?? ''}`
-  const accessibleValueText = typeof displayValue === 'string' || typeof displayValue === 'number' ? String(displayValue) : undefined
+  const accessibleValueText = ariaValueText ?? (typeof displayValue === 'string' || typeof displayValue === 'number' ? String(displayValue) : undefined)
   const sliderStyle = {
     '--range-progress': `${progress}%`
   } as CSSProperties

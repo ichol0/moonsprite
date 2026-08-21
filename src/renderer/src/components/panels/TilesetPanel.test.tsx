@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, render } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { MoonSpriteApi } from '@shared/types'
 import { I18nProvider } from '@/components/I18nProvider'
@@ -22,6 +22,13 @@ afterEach(() => {
   vi.useRealTimers()
   vi.restoreAllMocks()
 })
+
+function ConnectedTilesetPanel() {
+  const revision = useWorkspace((state) => state.sessions[0]?.contentRevision ?? -1)
+  const session = useWorkspace.getState().sessions[0]
+  void revision
+  return session ? <I18nProvider><TilesetPanel session={session} docked /></I18nProvider> : null
+}
 
 describe('TilesetPanel tile previews', () => {
   it('shows and clears transient canvas edits in the matching tile thumbnail', async () => {
@@ -51,6 +58,88 @@ describe('TilesetPanel tile previews', () => {
 
     act(() => clearTilesetTilePreview(document.id, tileset.id))
     expect(Array.from(context.putImageData.mock.calls.at(-1)![0].data)).toEqual([0, 0, 0, 0])
+  })
+
+  it('refreshes a Free Tile source thumbnail on consecutive previews', async () => {
+    const context = {
+      createImageData: vi.fn((width: number, height: number) => ({ data: new Uint8ClampedArray(width * height * 4), width, height })),
+      putImageData: vi.fn()
+    }
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockImplementation(() => context as never)
+
+    const document = createDocument('free tile source preview', 4, 4, 'rgba')
+    useWorkspace.getState().addSession(document)
+    await useWorkspace.getState().createFreeTileLayer({ name: 'Source Preview' })
+    const source = document.layers.find((layer) => layer.kind === 'free-tile')!.freeTileSources![0]
+    const tileId = document.tilesets!.find((tileset) => tileset.id === source.tilesetId)!.tileIds[0]
+    const view = render(<ConnectedTilesetPanel />)
+
+    act(() => useWorkspace.getState().previewFreeTileSource(source.id, 1, 1, new Uint8ClampedArray([220, 40, 60, 255]), 0, 0))
+    expect(Array.from(context.putImageData.mock.calls.at(-1)![0].data)).toEqual([220, 40, 60, 255])
+
+    act(() => useWorkspace.getState().previewFreeTileSource(source.id, 1, 1, new Uint8ClampedArray([20, 80, 230, 255]), 0, 0))
+    expect(Array.from(context.putImageData.mock.calls.at(-1)![0].data)).toEqual([20, 80, 230, 255])
+    expect(tileId).toBeTruthy()
+  })
+
+  it('keeps Free Tile instance layers out of the Tileset panel', async () => {
+    const context = {
+      createImageData: vi.fn((width: number, height: number) => ({ data: new Uint8ClampedArray(width * height * 4), width, height })),
+      putImageData: vi.fn()
+    }
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockImplementation(() => context as never)
+
+    const document = createDocument('free tile instance rows', 6, 6, 'rgba')
+    useWorkspace.getState().addSession(document)
+    await useWorkspace.getState().createFreeTileLayer({ name: 'Instance Rows' })
+    const layer = document.layers.find((candidate) => candidate.kind === 'free-tile')!
+    const sourceId = layer.freeTileSources![0].id
+    const placement = useWorkspace.getState().beginFreeTilePlacement()!
+    placement.after.instances = [{ id: 'instance-row', sourceId, x: 1, y: 2 }]
+    act(() => useWorkspace.getState().previewFreeTilePlacement(placement))
+    const view = render(<ConnectedTilesetPanel />)
+
+    expect(view.container.querySelector('.free-tile-source-grid')).toBeTruthy()
+    expect(view.container.querySelector('[data-free-tile-source-selection-outline]')).toHaveClass('palette-selection-box')
+    expect(view.container.querySelector('.free-tile-instance-layer-list')).toBeNull()
+    expect(view.container.querySelector('[data-free-tile-instance-id]')).toBeNull()
+  })
+
+  it('previews source properties live and commits them when the dialog closes', async () => {
+    const context = {
+      createImageData: vi.fn((width: number, height: number) => ({ data: new Uint8ClampedArray(width * height * 4), width, height })),
+      putImageData: vi.fn()
+    }
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockImplementation(() => context as never)
+
+    const document = createDocument('free tile source properties dialog', 4, 4, 'rgba')
+    useWorkspace.getState().addSession(document)
+    await useWorkspace.getState().createFreeTileLayer({ name: 'Source Properties' })
+    const source = document.layers.find((layer) => layer.kind === 'free-tile')!.freeTileSources![0]
+    const tileset = document.tilesets!.find((candidate) => candidate.id === source.tilesetId)!
+    const originalName = source.name
+    const originalUpdatedAt = document.updatedAt
+    document.dirty = false
+    const view = render(<ConnectedTilesetPanel />)
+
+    fireEvent.doubleClick(view.container.querySelector<HTMLElement>('.free-tile-source-swatch')!)
+    const dialog = globalThis.document.body.querySelector<HTMLElement>('.free-tile-source-properties-dialog')!
+    expect(dialog.querySelector('.free-tile-source-properties-meta')).toBeNull()
+    expect(dialog.querySelector('footer')).toBeNull()
+    expect(within(dialog).queryByRole('button', { name: '保存' })).toBeNull()
+    expect(within(dialog).queryByRole('button', { name: '取消' })).toBeNull()
+
+    fireEvent.change(dialog.querySelector<HTMLInputElement>('input[type="text"]')!, { target: { value: 'Live Source' } })
+    expect(source.name).toBe('Live Source')
+    expect(tileset.name).toBe('Live Source')
+    expect(document.dirty).toBe(false)
+    expect(document.updatedAt).toBe(originalUpdatedAt)
+
+    fireEvent.click(screen.getByRole('button', { name: '关闭' }))
+    expect(document.dirty).toBe(true)
+    useWorkspace.getState().undo()
+    expect(source.name).toBe(originalName)
+    expect(tileset.name).toBe(originalName)
   })
 })
 

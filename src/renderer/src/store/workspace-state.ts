@@ -10,6 +10,8 @@ import type {
   DocumentSlice,
   FillKind,
   FillMode,
+  FreeTileInstance,
+  FreeTileSourceLayer,
   GradientDither,
   ImageBrush,
   ImageBrushSettings,
@@ -49,6 +51,9 @@ import type { SelectionShearTransform } from '@/core/selection'
 import type { SymmetryAxes, SymmetryCenter } from '@/core/symmetry'
 import type { SelectionTransformLayerState, SelectionTransformSource, SelectionTranslationPreview } from '@/core/tools'
 import type { TilemapDrawingMode, TilemapEdit, TilemapTilesetEdit } from '@/core/tilemap'
+import type { FreeTileDrawingMode } from '@/core/free-tile'
+import type { FreeTilePlacementEdit, FreeTileSourceEditSnapshot } from '@/core/free-tile-document'
+import type { FreeTileSourceEditRaster } from '@/core/free-tile-edit'
 import type { TimelapseExportOptions } from '@/core/timelapse'
 import type { ExportOptions, SaveAsOptions } from './document-file-service'
 import type { LayerMoveDuplicateResult, LayerMoveState } from './workspace-layer-move'
@@ -84,6 +89,12 @@ export interface TilemapLayerOptions {
   name: string
   tileWidth: number
   tileHeight: number
+  /** Reuse a project Tilemap Tileset; null or omitted creates a new one. */
+  tilesetId?: string | null
+}
+
+export interface FreeTileLayerOptions {
+  name: string
 }
 
 export interface WorkspaceData {
@@ -91,6 +102,7 @@ export interface WorkspaceData {
   activeId: string | null
   sharedPrimaryColor: RgbaColor
   sharedSecondaryColor: RgbaColor
+  layerStyleClipboard: LayerStyles | null
   message: string | null
   saveProgress: { title: string; value: number; label: string; requiresConfirmation?: boolean } | null
   dialog: AppDialog | null
@@ -149,6 +161,8 @@ export interface WorkspaceToolCommands {
   setFillMode(mode: FillMode): void
   setFillKind(kind: FillKind): void
   setFillTolerance(tolerance: number): void
+  setFillGapClosing(enabled: boolean): void
+  setFillGapThreshold(threshold: number): void
   setGradientTolerance(tolerance: number): void
   setGradientContiguous(contiguous: boolean): void
   setGradientDither(dither: GradientDither): void
@@ -205,6 +219,8 @@ export interface WorkspaceViewSelectionCommands {
   setSelectionMode(mode: SelectionMode): void
   setWandTolerance(tolerance: number): void
   setWandContiguous(contiguous: boolean): void
+  setWandGapClosing(enabled: boolean): void
+  setWandGapThreshold(threshold: number): void
   setCanvasResizePreview(preview: CanvasResizePreview | null): void
   togglePixelGrid(): void
   toggleGrid(): void
@@ -213,6 +229,22 @@ export interface WorkspaceViewSelectionCommands {
   setOutlinePreview(preview: OutlinePreview | null): void
   outlineActiveSelection(color: RgbaColor, thickness: number, position: OutlinePosition, directions?: OutlineDirections, kernel?: OutlineKernel, previewEnabled?: boolean): boolean
   beginFloatingSelectionTransform(source: SelectionTransformSource, edit: PixelEdit | null, before: SelectionMask, target: SelectionMask, copy: boolean, label: string, translationPreview?: SelectionTranslationPreview | null, transformTarget?: SelectionRect, transformAngle?: number, transformShear?: SelectionShearTransform, previewDeferred?: boolean, tilemapEditCellIndex?: number, layers?: SelectionTransformLayerState[]): void
+  beginFreeTileFloatingSelectionTransform(options: {
+    sourceId: string
+    instanceId: string
+    edit: FreeTileSourceEditRaster
+    selectionSource: SelectionMask
+    source: SelectionTransformSource
+    previewEdit: PixelEdit | null
+    before: SelectionMask
+    target: SelectionMask
+    copy: boolean
+    label: string
+    translationPreview?: SelectionTranslationPreview | null
+    transformTarget?: SelectionRect
+    transformAngle?: number
+    transformShear?: SelectionShearTransform
+  }): void
   commitFloatingPaste(deselectLabel?: string): void
   cancelFloatingPaste(): void
   updateFloatingPastePreview(edit: PixelEdit | null, target: SelectionMask, translationPreview?: SelectionTranslationPreview | null, transformTarget?: SelectionRect, transformAngle?: number, transformShear?: SelectionShearTransform, previewDeferred?: boolean, layers?: SelectionTransformLayerState[]): void
@@ -247,6 +279,60 @@ export interface WorkspaceTilemapCommands {
   previewTilesetTilePixels(tilesetId: string, tileId: string, pixels: Uint8ClampedArray): boolean
   commitTilesetTileEdit(tilesetId: string, tileId: string, before: Uint8ClampedArray, after: Uint8ClampedArray): boolean
 }
+
+export interface WorkspaceFreeTileCommands {
+  setFreeTileMode(mode: FreeTileDrawingMode): void
+  setFreeTileInstanceLayerView(layerId: string | null): void
+  setSelectedFreeTileInstance(instanceId: string | null, mode?: FreeTileDrawingMode, role?: 'primary' | 'secondary'): void
+  selectFreeTileInstanceRow(instanceId: string, mode?: 'replace' | 'toggle' | 'range', orderedInstanceIds?: readonly string[]): void
+  addFreeTileSource(layerId?: string): string | null
+  deleteFreeTileSource(sourceId: string): boolean
+  deleteFreeTileInstance(instanceId: string): boolean
+  deleteFreeTileInstances(instanceIds: readonly string[]): boolean
+  showOnlyFreeTileInstance(instanceId: string): boolean
+  setFreeTileInstanceProperties(instanceId: string, changes: FreeTileInstancePropertyChanges, selectInstance?: boolean): boolean
+  beginFreeTileInstancePropertiesTransaction(instanceIds: string | readonly string[]): string | null
+  previewFreeTileInstancePropertiesTransaction(id: string, changes: FreeTileInstancePropertyChanges): boolean
+  commitFreeTileInstancePropertiesTransaction(id: string, changes: FreeTileInstancePropertyChanges): boolean
+  cancelFreeTileInstancePropertiesTransaction(id: string): boolean
+  reorderFreeTileInstance(instanceId: string, targetInstanceId: string, position: 'before' | 'after'): boolean
+  setFreeTileSourceProperties(sourceId: string, changes: FreeTileSourcePropertyChanges): boolean
+  beginFreeTileSourcePropertiesTransaction(sourceId: string): string | null
+  previewFreeTileSourcePropertiesTransaction(id: string, changes: FreeTileSourcePropertyChanges): boolean
+  commitFreeTileSourcePropertiesTransaction(id: string, changes: FreeTileSourcePropertyChanges): boolean
+  cancelFreeTileSourcePropertiesTransaction(id: string): boolean
+  previewFreeTileSource(sourceId: string, width: number, height: number, pixels: Uint8ClampedArray, offsetX: number, offsetY: number): boolean
+  commitFreeTileSourceEdit(
+    sourceId: string,
+    before: FreeTileSourceEditSnapshot,
+    after: FreeTileSourceEditSnapshot,
+    label: string,
+    placementEdit?: FreeTilePlacementEdit,
+    selectionEdit?: {
+      before: SelectionMask | null
+      after: SelectionMask | null
+      beforePivot: SelectionPivot | null
+      afterPivot: SelectionPivot | null
+    }
+  ): HistoryEntry | null
+  beginFreeTilePlacement(): FreeTilePlacementEdit | null
+  previewFreeTilePlacement(edit: FreeTilePlacementEdit): boolean
+  commitFreeTilePlacement(edit: FreeTilePlacementEdit, label: string): HistoryEntry | null
+  cancelFreeTilePlacement(edit: FreeTilePlacementEdit): void
+}
+
+export type FreeTileInstancePropertyChanges = Partial<{
+  x: number
+  y: number
+  visible: boolean
+  locked: boolean
+  opacity: number
+  blendMode: FreeTileInstance['blendMode']
+  rotation: NonNullable<FreeTileInstance['rotation']>
+  flipHorizontal: boolean
+  flipVertical: boolean
+}>
+export type FreeTileSourcePropertyChanges = Partial<Pick<FreeTileSourceLayer, 'name' | 'description' | 'visible' | 'locked' | 'offsetX' | 'offsetY'>> & { displayColor?: RgbaColor | null }
 
 export interface WorkspaceAnimationCommands {
   setActiveAnimationFrame(frameId: string): void
@@ -287,6 +373,7 @@ export interface WorkspaceAnimationCommands {
 export interface WorkspaceLayerCommands {
   addLayer(): Promise<void>
   createTilemapLayer(options: TilemapLayerOptions): Promise<void>
+  createFreeTileLayer(options: FreeTileLayerOptions): Promise<void>
   convertLayerToTilemap(layerId: string, options: TilemapLayerOptions): Promise<void>
   createBackgroundLayer(pattern: BackgroundPatternId | BackgroundPatternTile): Promise<void>
   setLayerBackground(layerId: string, enabled: boolean): void
@@ -363,6 +450,11 @@ export interface WorkspaceLayerCommands {
   cancelLayerPropertiesTransaction(id: string): void
   previewLayerStyles(ownerKind: 'layer' | 'group', ownerId: string, styles?: LayerStyles): void
   setLayerStyles(ownerKind: 'layer' | 'group', ownerId: string, styles?: LayerStyles): void
+  previewLayerStyleEntries(entries: readonly { target: LayerPropertyTarget; styles?: LayerStyles }[]): void
+  setLayerStylesForTargets(targets: readonly LayerPropertyTarget[], styles?: LayerStyles, action?: 'edit' | 'paste' | 'clear'): boolean
+  copyLayerStyles(ownerKind: 'layer' | 'group', ownerId: string): boolean
+  pasteLayerStyles(targets: readonly LayerPropertyTarget[]): boolean
+  clearLayerStyles(targets: readonly LayerPropertyTarget[]): boolean
   applyActiveLayerAdjustment(adjustment: ColorAdjustment): void
   captureActiveLayerAdjustmentSnapshot(): AdjustmentSnapshot | null
   previewActiveLayerAdjustment(adjustment: ColorAdjustment, baseline: AdjustmentSnapshot, selection?: SelectionMask | null): void
@@ -417,6 +509,7 @@ export type WorkspaceState = WorkspaceData
   & WorkspaceViewSelectionCommands
   & WorkspaceHistoryCommands
   & WorkspaceTilemapCommands
+  & WorkspaceFreeTileCommands
   & WorkspaceAnimationCommands
   & WorkspaceLayerCommands
   & WorkspaceClipboardCommands

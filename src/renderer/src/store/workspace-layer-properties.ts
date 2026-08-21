@@ -1,6 +1,6 @@
 import type { BlendMode, LayerGroup, RasterLayer, RgbaColor } from '@shared/types'
-import { getGroupLockingAncestor, getLayerLockingGroup } from '@/core/document'
-import type { HistoryEntry } from '@/core/history'
+import { cachedLayerContentBounds, expandLayerStyleInvalidationRect, getGroupLockingAncestor, getLayerLockingGroup } from '@/core/document'
+import type { ContentInvalidationHint, HistoryEntry } from '@/core/history'
 import { translateCurrent as tr } from '@/core/localization'
 import type { DocumentTransactionRegistry } from './document-transactions'
 import type { DocumentSession } from './workspace-types'
@@ -28,9 +28,14 @@ interface LayerPropertiesTransactionData {
   targets: LayerPropertySnapshot[]
   previewContentChanged: boolean
   previewPanelChanged: boolean
+  previewInvalidation?: ContentInvalidationHint
 }
 
 export type LayerPropertyCommitKind = 'none' | 'metadata' | 'content'
+export interface LayerPropertyCommitResult {
+  kind: LayerPropertyCommitKind
+  invalidation?: ContentInvalidationHint
+}
 
 const TRANSACTION_KIND = 'layer-properties'
 const ALL_FIELDS: readonly LayerPropertyField[] = ['name', 'opacity', 'blendMode', 'cumulativeBlend', 'displayColor', 'description']
@@ -81,21 +86,48 @@ const applySnapshot = (session: DocumentSession, snapshot: LayerPropertySnapshot
   target.description = snapshot.description
 }
 
-const notifyPreviewChange = (session: DocumentSession, panelChanged: boolean, contentChanged: boolean): void => {
+const notifyPreviewChange = (session: DocumentSession, panelChanged: boolean, contentChanged: boolean, invalidation: ContentInvalidationHint = { kind: 'full' }): void => {
   if (panelChanged) session.layersPanelRevision += 1
   if (contentChanged) {
     const fromRevision = session.contentRevision
     session.revision += 1
     session.contentRevision += 1
-    session.contentInvalidation = { kind: 'full', fromRevision, revision: session.contentRevision }
+    session.contentInvalidation = invalidation.kind === 'region'
+      ? { ...invalidation, rect: { ...invalidation.rect }, fromRevision, revision: session.contentRevision }
+      : { kind: 'full', fromRevision, revision: session.contentRevision }
   }
+}
+
+const unionRects = (left: NonNullable<Extract<ContentInvalidationHint, { kind: 'region' }>['rect']>, right: NonNullable<Extract<ContentInvalidationHint, { kind: 'region' }>['rect']>) => {
+  const x = Math.min(left.x, right.x)
+  const y = Math.min(left.y, right.y)
+  const toX = Math.max(left.x + left.width, right.x + right.width)
+  const toY = Math.max(left.y + left.height, right.y + right.height)
+  return { x, y, width: toX - x, height: toY - y }
+}
+
+const combineInvalidations = (left?: ContentInvalidationHint, right?: ContentInvalidationHint): ContentInvalidationHint => {
+  if (!left) return right ?? { kind: 'full' }
+  if (!right) return left
+  if (left.kind !== 'region' || right.kind !== 'region' || left.frameId !== right.frameId) return { kind: 'full' }
+  return { kind: 'region', frameId: left.frameId, rect: unionRects(left.rect, right.rect) }
+}
+
+const contentInvalidationForTargets = (session: DocumentSession, targets: readonly LayerPropertySnapshot[]): ContentInvalidationHint => {
+  if (targets.length !== 1 || targets[0].kind !== 'layer') return { kind: 'full' }
+  const layer = session.document.layers.find((candidate) => candidate.id === targets[0].id)
+  const bounds = layer ? cachedLayerContentBounds(session.document, layer) : undefined
+  return layer && bounds
+    ? { kind: 'region', rect: expandLayerStyleInvalidationRect(session.document, bounds, [layer.id]) }
+    : { kind: 'full' }
 }
 
 const restoreTargets = (session: DocumentSession, data: LayerPropertiesTransactionData, notify = true): void => {
   for (const target of data.targets) applySnapshot(session, target)
-  if (notify) notifyPreviewChange(session, data.previewPanelChanged, data.previewContentChanged)
+  if (notify) notifyPreviewChange(session, data.previewPanelChanged, data.previewContentChanged, data.previewInvalidation)
   data.previewContentChanged = false
   data.previewPanelChanged = false
+  data.previewInvalidation = undefined
 }
 
 const nextSnapshot = (
@@ -146,7 +178,7 @@ const historyEntry = (session: DocumentSession, before: LayerPropertySnapshot, a
     contentChanged,
     affectedLayerIds: contentChanged && before.kind === 'layer' ? [before.id] : undefined,
     requiresAnimationSync: contentChanged,
-    invalidation: contentChanged ? { kind: 'full' } : undefined
+    invalidation: contentChanged ? contentInvalidationForTargets(session, [before]) : undefined
   }
 }
 
@@ -177,20 +209,31 @@ export const previewLayerPropertiesTransaction = (
   if (!transaction) return false
   const restoredPanel = transaction.data.previewPanelChanged
   const restoredContent = transaction.data.previewContentChanged
+  const restoredInvalidation = transaction.data.previewInvalidation
   restoreTargets(session, transaction.data, false)
   const fields = new Set(transaction.data.targets.length > 1 ? changedFields : ALL_FIELDS)
   const includeLocked = transaction.data.targets.length === 1
   let panelChanged = false
   let contentChanged = false
+  const contentTargets: LayerPropertySnapshot[] = []
   for (const before of transaction.data.targets) {
     const after = nextSnapshot(session, before, values, fields, includeLocked, false)
     panelChanged ||= metadataDiffers(before, after) || contentDiffers(before, after)
-    contentChanged ||= contentDiffers(before, after)
+    if (contentDiffers(before, after)) {
+      contentChanged = true
+      contentTargets.push(before)
+    }
     applySnapshot(session, after)
   }
   transaction.data.previewPanelChanged = panelChanged
   transaction.data.previewContentChanged = contentChanged
-  notifyPreviewChange(session, restoredPanel || panelChanged, restoredContent || contentChanged)
+  transaction.data.previewInvalidation = contentChanged ? contentInvalidationForTargets(session, contentTargets) : undefined
+  notifyPreviewChange(
+    session,
+    restoredPanel || panelChanged,
+    restoredContent || contentChanged,
+    combineInvalidations(restoredContent ? restoredInvalidation : undefined, transaction.data.previewInvalidation)
+  )
   return panelChanged
 }
 
@@ -200,11 +243,12 @@ export const commitLayerPropertiesTransaction = (
   id: string,
   values: LayerPropertyValues,
   changedFields: readonly LayerPropertyField[]
-): LayerPropertyCommitKind => {
+): LayerPropertyCommitResult => {
   const transaction = registry.finish<LayerPropertiesTransactionData>(id, session.document.id, TRANSACTION_KIND)
-  if (!transaction) return 'none'
+  if (!transaction) return { kind: 'none' }
   const restoredPanel = transaction.data.previewPanelChanged
   const restoredContent = transaction.data.previewContentChanged
+  const restoredInvalidation = transaction.data.previewInvalidation
   restoreTargets(session, transaction.data, false)
   const fields = new Set(transaction.data.targets.length > 1 ? changedFields : ALL_FIELDS)
   const includeLocked = transaction.data.targets.length === 1
@@ -222,8 +266,8 @@ export const commitLayerPropertiesTransaction = (
     metadataChanged ||= targetMetadataChanged
   }
   if (entries.length === 0) {
-    notifyPreviewChange(session, restoredPanel, restoredContent)
-    return 'none'
+    notifyPreviewChange(session, restoredPanel, restoredContent, restoredInvalidation)
+    return { kind: 'none' }
   }
   if (entries.length === 1) session.history.push(entries[0])
   else {
@@ -231,8 +275,10 @@ export const commitLayerPropertiesTransaction = (
     for (const entry of entries) session.history.push(entry)
     session.history.endCompound(tr('layers.multipleProperties'))
   }
-  if (!contentChanged && restoredContent) notifyPreviewChange(session, false, true)
-  return contentChanged ? 'content' : metadataChanged ? 'metadata' : 'none'
+  if (!contentChanged && restoredContent) notifyPreviewChange(session, false, true, restoredInvalidation)
+  return contentChanged
+    ? { kind: 'content', invalidation: session.history.latestUndoEntry?.invalidation }
+    : { kind: metadataChanged ? 'metadata' : 'none' }
 }
 
 export const cancelLayerPropertiesTransaction = (

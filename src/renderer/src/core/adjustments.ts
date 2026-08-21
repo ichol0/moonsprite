@@ -1,5 +1,5 @@
 import type { RasterLayer, RgbaColor, SelectionMask, SpriteDocument } from '@shared/types'
-import { getPaletteEntry, readLayerColor, writeLayerColor } from './document'
+import { isLayerMask, markLayerContentChanged, normalizeLayerPackedValue, readLayerColor } from './document'
 import { beginPixelEdit, recordPixel, type PixelEdit } from './history'
 import { translateCurrent as tr } from './localization'
 import { packColor, unpackColor } from './raster'
@@ -50,20 +50,40 @@ const identityCurve: CurvePoint[] = [{ x: 0, y: 0 }, { x: 255, y: 255 }]
 
 export function buildCurveHistogram(pixels: Uint8ClampedArray | Uint32Array, format: 'rgba' | 'indexed', palette: Array<{ id: number; color: RgbaColor }>): CurveHistogram {
   const histogram: CurveHistogram = { rgb: new Uint32Array(256), red: new Uint32Array(256), green: new Uint32Array(256), blue: new Uint32Array(256) }
-  const paletteMap = format === 'indexed' ? new Map(palette.map((entry) => [entry.id, entry.color])) : null
-  const add = (color: RgbaColor): void => {
-    if (color.a === 0) return
-    histogram.rgb[Math.round((color.r + color.g + color.b) / 3)] += 1
-    histogram.red[color.r] += 1
-    histogram.green[color.g] += 1
-    histogram.blue[color.b] += 1
-  }
   if (format === 'rgba') {
-    for (let index = 0; index < pixels.length; index += 4) add({ r: pixels[index], g: pixels[index + 1], b: pixels[index + 2], a: pixels[index + 3] })
+    const rgba = pixels as Uint8ClampedArray
+    if (rgba.byteOffset % 4 === 0) {
+      const words = new Uint32Array(rgba.buffer as ArrayBuffer, rgba.byteOffset, rgba.byteLength / 4)
+      for (let index = 0; index < words.length; index += 1) {
+        const current = words[index]
+        if ((current >>> 24) === 0) continue
+        const red = current & 0xff
+        const green = (current >>> 8) & 0xff
+        const blue = (current >>> 16) & 0xff
+        histogram.rgb[((red + green + blue + 1) / 3) | 0] += 1
+        histogram.red[red] += 1
+        histogram.green[green] += 1
+        histogram.blue[blue] += 1
+      }
+    } else for (let index = 0; index < rgba.length; index += 4) {
+      if (rgba[index + 3] === 0) continue
+      const red = rgba[index]
+      const green = rgba[index + 1]
+      const blue = rgba[index + 2]
+      histogram.rgb[((red + green + blue + 1) / 3) | 0] += 1
+      histogram.red[red] += 1
+      histogram.green[green] += 1
+      histogram.blue[blue] += 1
+    }
   } else {
+    const paletteMap = new Map(palette.map((entry) => [entry.id, entry.color]))
     for (const value of pixels) {
-      const color = paletteMap?.get(value)
-      if (color) add(color)
+      const color = paletteMap.get(value)
+      if (!color || color.a === 0) continue
+      histogram.rgb[((color.r + color.g + color.b + 1) / 3) | 0] += 1
+      histogram.red[color.r] += 1
+      histogram.green[color.g] += 1
+      histogram.blue[color.b] += 1
     }
   }
   return histogram
@@ -137,21 +157,51 @@ export interface PreparedCurveLuts {
   blue: Uint8Array
 }
 
-const rgbToHsl = (color: RgbaColor): { h: number; s: number; l: number } => {
-  const r = color.r / 255; const g = color.g / 255; const b = color.b / 255
+const prepareCurveLuts = (adjustment: ColorAdjustment): PreparedCurveLuts => ({
+  rgb: buildCurveLut(adjustment.curvePoints ?? [{ x: 0, y: 0 }, { x: 128, y: adjustment.curveMidpoint ?? 128 }, { x: 255, y: 255 }]),
+  red: buildCurveLut(adjustment.curveRedPoints ?? identityCurve),
+  green: buildCurveLut(adjustment.curveGreenPoints ?? identityCurve),
+  blue: buildCurveLut(adjustment.curveBluePoints ?? identityCurve)
+})
+
+const hueSaturationPackedRgb = (red: number, green: number, blue: number, adjustment: ColorAdjustment): number => {
+  const r = red / 255; const g = green / 255; const b = blue / 255
   const max = Math.max(r, g, b); const min = Math.min(r, g, b); const delta = max - min; const l = (max + min) / 2
-  if (delta === 0) return { h: 0, s: 0, l }
-  const s = delta / (1 - Math.abs(2 * l - 1))
-  const h = ((max === r ? (g - b) / delta : max === g ? (b - r) / delta + 2 : (r - g) / delta + 4) * 60 + 360) % 360
-  return { h, s, l }
+  const saturation = delta === 0 ? 0 : delta / (1 - Math.abs(2 * l - 1))
+  const hue = delta === 0 ? 0 : ((max === r ? (g - b) / delta : max === g ? (b - r) / delta + 2 : (r - g) / delta + 4) * 60 + 360) % 360
+  const lightnessDelta = (adjustment.lightness ?? 0) / 100
+  const lightness = lightnessDelta >= 0 ? l + (1 - l) * lightnessDelta : l * (1 + lightnessDelta)
+  const h = (((hue + (adjustment.hue ?? 0)) % 360) + 360) % 360 / 360
+  const s = Math.max(0, Math.min(1, saturation * (1 + (adjustment.saturation ?? 0) / 100)))
+  const nextLightness = Math.max(0, Math.min(1, lightness))
+  if (s === 0) {
+    const value = clamp(nextLightness * 255)
+    return value | (value << 8) | (value << 16)
+  }
+  const q = nextLightness < .5 ? nextLightness * (1 + s) : nextLightness + s - nextLightness * s; const p = 2 * nextLightness - q
+  const component = (shift: number): number => { let t = (h + shift) % 1; if (t < 0) t += 1; return clamp((p + (q - p) * (t < 1 / 6 ? 6 * t : t < .5 ? 1 : t < 2 / 3 ? (2 / 3 - t) * 6 : 0)) * 255) }
+  return component(1 / 3) | (component(0) << 8) | (component(-1 / 3) << 16)
 }
 
-const hslToRgb = (hue: number, saturation: number, lightness: number, alpha: number): RgbaColor => {
-  const h = ((hue % 360) + 360) % 360 / 360; const s = Math.max(0, Math.min(1, saturation)); const l = Math.max(0, Math.min(1, lightness))
-  if (s === 0) { const c = clamp(l * 255); return { r: c, g: c, b: c, a: alpha } }
-  const q = l < .5 ? l * (1 + s) : l + s - l * s; const p = 2 * l - q
-  const component = (shift: number): number => { let t = (h + shift) % 1; if (t < 0) t += 1; return clamp((p + (q - p) * (t < 1 / 6 ? 6 * t : t < .5 ? 1 : t < 2 / 3 ? (2 / 3 - t) * 6 : 0)) * 255) }
-  return { r: component(1 / 3), g: component(0), b: component(-1 / 3), a: alpha }
+const colorBalancePackedRgb = (red: number, green: number, blue: number, adjustment: ColorAdjustment): number => {
+  const luminance = (red * 0.2126 + green * 0.7152 + blue * 0.0722) / 255
+  const shadowsWeight = Math.max(0, Math.min(1, (0.5 - luminance) * 2))
+  const highlightsWeight = Math.max(0, Math.min(1, (luminance - 0.5) * 2))
+  const midtonesWeight = 1 - shadowsWeight - highlightsWeight
+  const weighted = (legacy: number | undefined, shadow: number | undefined, middle: number | undefined, highlight: number | undefined): number =>
+    (shadow ?? legacy ?? 0) * shadowsWeight + (middle ?? legacy ?? 0) * midtonesWeight + (highlight ?? legacy ?? 0) * highlightsWeight
+  const cyanRed = weighted(adjustment.midtones, adjustment.shadowsCyanRed ?? adjustment.shadows, adjustment.midtonesCyanRed, adjustment.highlightsCyanRed ?? adjustment.highlights)
+  const magentaGreen = weighted(undefined, adjustment.shadowsMagentaGreen, adjustment.midtonesMagentaGreen, adjustment.highlightsMagentaGreen)
+  const yellowBlue = weighted(undefined, adjustment.shadowsYellowBlue, adjustment.midtonesYellowBlue, adjustment.highlightsYellowBlue)
+  let nextRed = red + cyanRed - magentaGreen * 0.5 - yellowBlue * 0.5
+  let nextGreen = green - cyanRed * 0.5 + magentaGreen - yellowBlue * 0.5
+  let nextBlue = blue - cyanRed * 0.5 - magentaGreen * 0.5 + yellowBlue
+  if (adjustment.preserveLuminosity !== false) {
+    const nextLuminance = nextRed * 0.2126 + nextGreen * 0.7152 + nextBlue * 0.0722
+    const correction = red * 0.2126 + green * 0.7152 + blue * 0.0722 - nextLuminance
+    nextRed += correction; nextGreen += correction; nextBlue += correction
+  }
+  return clamp(nextRed) | (clamp(nextGreen) << 8) | (clamp(nextBlue) << 16)
 }
 
 export function adjustColor(color: RgbaColor, adjustment: ColorAdjustment, preparedCurve?: Uint8Array | PreparedCurveLuts): RgbaColor {
@@ -163,32 +213,12 @@ export function adjustColor(color: RgbaColor, adjustment: ColorAdjustment, prepa
     return { r: transform(color.r), g: transform(color.g), b: transform(color.b), a: color.a }
   }
   if (adjustment.kind === 'hue-saturation') {
-    const hsl = rgbToHsl(color)
-    const lightnessDelta = (adjustment.lightness ?? 0) / 100
-    const lightness = lightnessDelta >= 0
-      ? hsl.l + (1 - hsl.l) * lightnessDelta
-      : hsl.l * (1 + lightnessDelta)
-    return hslToRgb(hsl.h + (adjustment.hue ?? 0), hsl.s * (1 + (adjustment.saturation ?? 0) / 100), lightness, color.a)
+    const packed = hueSaturationPackedRgb(color.r, color.g, color.b, adjustment)
+    return { r: packed & 0xff, g: (packed >>> 8) & 0xff, b: (packed >>> 16) & 0xff, a: color.a }
   }
   if (adjustment.kind === 'color-balance') {
-    const luminance = (color.r * 0.2126 + color.g * 0.7152 + color.b * 0.0722) / 255
-    const shadowsWeight = Math.max(0, Math.min(1, (0.5 - luminance) * 2))
-    const highlightsWeight = Math.max(0, Math.min(1, (luminance - 0.5) * 2))
-    const midtonesWeight = 1 - shadowsWeight - highlightsWeight
-    const weighted = (legacy: number | undefined, shadow: number | undefined, middle: number | undefined, highlight: number | undefined): number =>
-      (shadow ?? legacy ?? 0) * shadowsWeight + (middle ?? legacy ?? 0) * midtonesWeight + (highlight ?? legacy ?? 0) * highlightsWeight
-    const cyanRed = weighted(adjustment.midtones, adjustment.shadowsCyanRed ?? adjustment.shadows, adjustment.midtonesCyanRed, adjustment.highlightsCyanRed ?? adjustment.highlights)
-    const magentaGreen = weighted(undefined, adjustment.shadowsMagentaGreen, adjustment.midtonesMagentaGreen, adjustment.highlightsMagentaGreen)
-    const yellowBlue = weighted(undefined, adjustment.shadowsYellowBlue, adjustment.midtonesYellowBlue, adjustment.highlightsYellowBlue)
-    let red = color.r + cyanRed - magentaGreen * 0.5 - yellowBlue * 0.5
-    let green = color.g - cyanRed * 0.5 + magentaGreen - yellowBlue * 0.5
-    let blue = color.b - cyanRed * 0.5 - magentaGreen * 0.5 + yellowBlue
-    if (adjustment.preserveLuminosity !== false) {
-      const nextLuminance = red * 0.2126 + green * 0.7152 + blue * 0.0722
-      const correction = color.r * 0.2126 + color.g * 0.7152 + color.b * 0.0722 - nextLuminance
-      red += correction; green += correction; blue += correction
-    }
-    return { r: clamp(red), g: clamp(green), b: clamp(blue), a: color.a }
+    const packed = colorBalancePackedRgb(color.r, color.g, color.b, adjustment)
+    return { r: packed & 0xff, g: (packed >>> 8) & 0xff, b: (packed >>> 16) & 0xff, a: color.a }
   }
   const midpoint = Math.max(1, Math.min(254, adjustment.curveMidpoint ?? 128))
   const curves: PreparedCurveLuts = preparedCurve && !(preparedCurve instanceof Uint8Array)
@@ -203,16 +233,229 @@ export function adjustColor(color: RgbaColor, adjustment: ColorAdjustment, prepa
   return { r: curves.red[rgb[color.r]], g: curves.green[rgb[color.g]], b: curves.blue[rgb[color.b]], a: color.a }
 }
 
+const adjustmentChannelLuts = (adjustment: ColorAdjustment): PreparedCurveLuts | null => {
+  if (adjustment.kind === 'brightness-contrast') {
+    const brightness = (adjustment.brightness ?? 0) * 2.55
+    const contrast = (adjustment.contrast ?? 0) / 100
+    const lut = new Uint8Array(256)
+    for (let value = 0; value < 256; value += 1) lut[value] = clamp((value - 128) * (1 + contrast) + 128 + brightness)
+    return { rgb: lut, red: lut, green: lut, blue: lut }
+  }
+  if (adjustment.kind !== 'curves') return null
+  const curves = prepareCurveLuts(adjustment)
+  const red = new Uint8Array(256)
+  const green = new Uint8Array(256)
+  const blue = new Uint8Array(256)
+  for (let value = 0; value < 256; value += 1) {
+    red[value] = curves.red[curves.rgb[value]]
+    green[value] = curves.green[curves.rgb[value]]
+    blue[value] = curves.blue[curves.rgb[value]]
+  }
+  return { rgb: curves.rgb, red, green, blue }
+}
+
+const visitAdjustmentIndices = (layer: RasterLayer, selection: SelectionMask | null, visit: (index: number) => void): void => {
+  if (!selection) {
+    const total = layer.width * layer.height
+    for (let index = 0; index < total; index += 1) visit(index)
+    return
+  }
+  const left = Math.max(0, selection.x - layer.offsetX)
+  const top = Math.max(0, selection.y - layer.offsetY)
+  const right = Math.min(layer.width, selection.x + selection.width - layer.offsetX)
+  const bottom = Math.min(layer.height, selection.y + selection.height - layer.offsetY)
+  if (left >= right || top >= bottom) return
+  if (!selection.mask) {
+    for (let y = top; y < bottom; y += 1) {
+      const row = y * layer.width
+      for (let x = left; x < right; x += 1) visit(row + x)
+    }
+    return
+  }
+  for (let y = top; y < bottom; y += 1) {
+    const row = y * layer.width
+    const maskRow = (y + layer.offsetY - selection.y) * selection.width - selection.x + layer.offsetX
+    for (let x = left; x < right; x += 1) if (selection.mask[maskRow + x] === 1) visit(row + x)
+  }
+}
+
+const applyRgbaChannelLuts = (
+  layer: RasterLayer,
+  selection: SelectionMask | null,
+  source: Uint8ClampedArray,
+  target: Uint8ClampedArray,
+  luts: PreparedCurveLuts
+): void => {
+  if (!selection && source.byteOffset % 4 === 0 && target.byteOffset % 4 === 0) {
+    const sourceWords = new Uint32Array(source.buffer as ArrayBuffer, source.byteOffset, source.byteLength / 4)
+    const targetWords = new Uint32Array(target.buffer as ArrayBuffer, target.byteOffset, target.byteLength / 4)
+    for (let index = 0; index < sourceWords.length; index += 1) {
+      const current = sourceWords[index]
+      const alpha = current >>> 24
+      targetWords[index] = alpha === 0
+        ? current
+        : (luts.red[current & 0xff] | (luts.green[(current >>> 8) & 0xff] << 8) | (luts.blue[(current >>> 16) & 0xff] << 16) | (alpha << 24)) >>> 0
+    }
+    return
+  }
+  visitAdjustmentIndices(layer, selection, (index) => {
+    const offset = index * 4
+    const alpha = source[offset + 3]
+    if (alpha === 0) {
+      target[offset] = source[offset]
+      target[offset + 1] = source[offset + 1]
+      target[offset + 2] = source[offset + 2]
+    } else {
+      target[offset] = luts.red[source[offset]]
+      target[offset + 1] = luts.green[source[offset + 1]]
+      target[offset + 2] = luts.blue[source[offset + 2]]
+    }
+    target[offset + 3] = alpha
+  })
+}
+
+const applyRgbaPackedTransform = (
+  layer: RasterLayer,
+  selection: SelectionMask | null,
+  source: Uint8ClampedArray,
+  target: Uint8ClampedArray,
+  transform: (red: number, green: number, blue: number) => number
+): void => {
+  let repeatedColorCache: Map<number, number> | null = new Map()
+  if (!selection && source.byteOffset % 4 === 0 && target.byteOffset % 4 === 0) {
+    const sourceWords = new Uint32Array(source.buffer as ArrayBuffer, source.byteOffset, source.byteLength / 4)
+    const targetWords = new Uint32Array(target.buffer as ArrayBuffer, target.byteOffset, target.byteLength / 4)
+    for (let index = 0; index < sourceWords.length; index += 1) {
+      const current = sourceWords[index]
+      const alpha = current >>> 24
+      if (alpha === 0) {
+        targetWords[index] = current
+        continue
+      }
+      const sourceRgb = current & 0x00ffffff
+      let packed = repeatedColorCache?.get(sourceRgb)
+      if (packed === undefined) {
+        packed = transform(sourceRgb & 0xff, (sourceRgb >>> 8) & 0xff, sourceRgb >>> 16)
+        if (repeatedColorCache) {
+          if (repeatedColorCache.size < 8192) repeatedColorCache.set(sourceRgb, packed)
+          else repeatedColorCache = null
+        }
+      }
+      targetWords[index] = (packed | (alpha << 24)) >>> 0
+    }
+    return
+  }
+  visitAdjustmentIndices(layer, selection, (index) => {
+    const offset = index * 4
+    const alpha = source[offset + 3]
+    if (alpha === 0) {
+      target[offset] = source[offset]
+      target[offset + 1] = source[offset + 1]
+      target[offset + 2] = source[offset + 2]
+      target[offset + 3] = alpha
+      return
+    }
+    const sourceRgb = source[offset] | (source[offset + 1] << 8) | (source[offset + 2] << 16)
+    let packed = repeatedColorCache?.get(sourceRgb)
+    if (packed === undefined) {
+      packed = transform(source[offset], source[offset + 1], source[offset + 2])
+      if (repeatedColorCache) {
+        if (repeatedColorCache.size < 8192) repeatedColorCache.set(sourceRgb, packed)
+        else repeatedColorCache = null
+      }
+    }
+    target[offset] = packed & 0xff
+    target[offset + 1] = (packed >>> 8) & 0xff
+    target[offset + 2] = (packed >>> 16) & 0xff
+    target[offset + 3] = alpha
+  })
+}
+
+/** Applies a preview/final adjustment without constructing per-pixel history data. */
+export function applyColorAdjustmentDirect(
+  document: SpriteDocument,
+  layer: RasterLayer,
+  adjustment: ColorAdjustment,
+  selection: SelectionMask | null = null,
+  sourcePixels: Uint8ClampedArray | Uint32Array = layer.pixels
+): void {
+  if ((layer.format === 'rgba') !== (sourcePixels instanceof Uint8ClampedArray)) throw new Error(tr('core.history.adjustmentFormatChanged'))
+  const expectedLength = layer.width * layer.height * (layer.format === 'rgba' ? 4 : 1)
+  if (sourcePixels.length !== expectedLength) throw new Error(tr('core.history.adjustmentFormatChanged'))
+  markLayerContentChanged(layer)
+
+  if (layer.format === 'rgba') {
+    const source = sourcePixels as Uint8ClampedArray
+    const target = layer.pixels as Uint8ClampedArray
+    if (selection && source !== target) target.set(source)
+    const channelLuts = document.colorMode === 'rgba' && !isLayerMask(layer) ? adjustmentChannelLuts(adjustment) : null
+    if (channelLuts) {
+      applyRgbaChannelLuts(layer, selection, source, target, channelLuts)
+      return
+    }
+    const packedRgbTransform = document.colorMode === 'rgba' && !isLayerMask(layer) && !channelLuts
+      ? adjustment.kind === 'hue-saturation'
+        ? (red: number, green: number, blue: number): number => hueSaturationPackedRgb(red, green, blue, adjustment)
+        : adjustment.kind === 'color-balance'
+          ? (red: number, green: number, blue: number): number => colorBalancePackedRgb(red, green, blue, adjustment)
+          : null
+      : null
+    if (packedRgbTransform) {
+      applyRgbaPackedTransform(layer, selection, source, target, packedRgbTransform)
+      return
+    }
+    const preparedCurve = adjustment.kind === 'curves' ? prepareCurveLuts(adjustment) : undefined
+    visitAdjustmentIndices(layer, selection, (index) => {
+      const offset = index * 4
+      const alpha = source[offset + 3]
+      const next = adjustColor({ r: source[offset], g: source[offset + 1], b: source[offset + 2], a: alpha }, adjustment, preparedCurve)
+      const packed = normalizeLayerPackedValue(document, layer, packColor(next))
+      target[offset] = packed & 0xff
+      target[offset + 1] = (packed >>> 8) & 0xff
+      target[offset + 2] = (packed >>> 16) & 0xff
+      target[offset + 3] = (packed >>> 24) & 0xff
+    })
+    return
+  }
+
+  const source = sourcePixels as Uint32Array
+  const target = layer.pixels as Uint32Array
+  if (selection && source !== target) target.set(source)
+  const paletteById = new Map(document.palette.map((entry) => [entry.id, entry.color]))
+  const paletteIdByColor = new Map<number, number>()
+  for (const entry of document.palette) {
+    const key = packColor(entry.color)
+    if (!paletteIdByColor.has(key)) paletteIdByColor.set(key, entry.id)
+  }
+  const preparedCurve = adjustment.kind === 'curves' ? prepareCurveLuts(adjustment) : undefined
+  const adjustedIdBySourceId = new Map<number, number>()
+  const adjustedId = (sourceId: number): number => {
+    const cached = adjustedIdBySourceId.get(sourceId)
+    if (cached !== undefined) return cached
+    const current = paletteById.get(sourceId) ?? { r: 0, g: 0, b: 0, a: 0 }
+    const next = adjustColor(current, adjustment, preparedCurve)
+    if (next.a === 0) {
+      adjustedIdBySourceId.set(sourceId, 0)
+      return 0
+    }
+    const key = packColor(next)
+    let id = paletteIdByColor.get(key)
+    if (id === undefined) {
+      id = document.nextColorId++
+      document.palette.push({ id, name: tr('core.document.colorName', { id }), color: next })
+      paletteById.set(id, next)
+      paletteIdByColor.set(key, id)
+    }
+    const normalized = normalizeLayerPackedValue(document, layer, id)
+    adjustedIdBySourceId.set(sourceId, normalized)
+    return normalized
+  }
+  visitAdjustmentIndices(layer, selection, (index) => { target[index] = adjustedId(source[index]) })
+}
+
 export function applyColorAdjustment(document: SpriteDocument, layer: RasterLayer, adjustment: ColorAdjustment, selection: SelectionMask | null = null): PixelEdit {
   const edit = beginPixelEdit(layer.id)
-  const preparedCurve = adjustment.kind === 'curves'
-    ? {
-        rgb: buildCurveLut(adjustment.curvePoints ?? [{ x: 0, y: 0 }, { x: 128, y: adjustment.curveMidpoint ?? 128 }, { x: 255, y: 255 }]),
-        red: buildCurveLut(adjustment.curveRedPoints ?? identityCurve),
-        green: buildCurveLut(adjustment.curveGreenPoints ?? identityCurve),
-        blue: buildCurveLut(adjustment.curveBluePoints ?? identityCurve)
-      }
-    : undefined
+  const preparedCurve = adjustment.kind === 'curves' ? prepareCurveLuts(adjustment) : undefined
   const total = layer.width * layer.height
   for (let index = 0; index < total; index += 1) {
     if (selection) {

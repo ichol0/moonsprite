@@ -1,8 +1,10 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
 import moonspriteLogo from '@/assets/moonsprite-logo.svg'
 import { useI18n } from '@/components/I18nProvider'
 import { APP_CHANNEL_LABEL } from '@/core/app-meta'
-import { closeAppWindow, minimizeAppWindow, observeAppWindowMaximized, toggleAppWindowMaximized } from '@/platform/app-window'
+import { closeAppWindow, minimizeAppWindow, observeAppWindowMaximized, settleAppWindowCursorAfterMaximize, startAppWindowDragging, toggleAppWindowMaximized } from '@/platform/app-window'
+
+const TITLEBAR_DRAG_THRESHOLD = 3
 
 const captionGlyphs = {
   minimize: '\uE921',
@@ -14,6 +16,7 @@ const captionGlyphs = {
 export function AppWindowTitleBar() {
   const { t } = useI18n()
   const [maximized, setMaximized] = useState(false)
+  const dragCandidateRef = useRef<{ pointerId: number; startX: number; startY: number } | null>(null)
 
   useEffect(() => observeAppWindowMaximized(setMaximized), [])
 
@@ -21,10 +24,39 @@ export function AppWindowTitleBar() {
     void toggleAppWindowMaximized().then(setMaximized).catch(() => {})
   }, [])
 
+  const beginDragCandidate = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0 || event.isPrimary === false) return
+    dragCandidateRef.current = { pointerId: event.pointerId, startX: event.clientX, startY: event.clientY }
+    event.currentTarget.setPointerCapture?.(event.pointerId)
+  }, [])
+
+  const moveDragCandidate = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    const candidate = dragCandidateRef.current
+    if (!candidate || candidate.pointerId !== event.pointerId) return
+    if ((event.buttons & 1) === 0) {
+      dragCandidateRef.current = null
+      return
+    }
+    if (Math.hypot(event.clientX - candidate.startX, event.clientY - candidate.startY) < TITLEBAR_DRAG_THRESHOLD) return
+    dragCandidateRef.current = null
+    if (event.currentTarget.hasPointerCapture?.(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId)
+    event.preventDefault()
+    void startAppWindowDragging().catch(() => {})
+  }, [])
+
+  const finishDragCandidate = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    if (dragCandidateRef.current?.pointerId === event.pointerId) dragCandidateRef.current = null
+    if (event.currentTarget.hasPointerCapture?.(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId)
+  }, [])
+
+  const settleMaximizeCursor = useCallback((event: ReactPointerEvent<HTMLElement>) => {
+    if (event.buttons === 0) void settleAppWindowCursorAfterMaximize()
+  }, [])
+
   const maximizeLabel = t(maximized ? 'app.window.restore' : 'app.window.maximize')
 
-  return <header className="app-window-titlebar">
-    <div className="app-window-titlebar-drag" data-tauri-drag-region="deep">
+  return <header className="app-window-titlebar" onPointerMoveCapture={settleMaximizeCursor}>
+    <div className="app-window-titlebar-drag" onPointerDown={beginDragCandidate} onPointerMove={moveDragCandidate} onPointerUp={finishDragCandidate} onPointerCancel={finishDragCandidate} onLostPointerCapture={finishDragCandidate} onDoubleClick={toggleMaximized}>
       <img className="app-window-titlebar-logo" src={moonspriteLogo} alt="" aria-hidden="true" />
       <span className="app-window-titlebar-text">MoonSprite {APP_CHANNEL_LABEL}</span>
     </div>

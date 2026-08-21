@@ -16,6 +16,7 @@ const ASEPRITE: &[&str] = &["aseprite"];
 const ASE_EXPORT: &[&str] = &["ase", "aseprite"];
 const SVG: &[&str] = &["svg"];
 const GIF: &[&str] = &["gif"];
+const PSD: &[&str] = &["psd"];
 const MP4: &[&str] = &["mp4"];
 const WEBM: &[&str] = &["webm"];
 const JSON: &[&str] = &["json"];
@@ -29,12 +30,14 @@ pub fn project_save_filter(format: Option<&str>, language: Option<&str>) -> Dial
         (Some("png"), true) => ("PNG image", PNG),
         (Some("jpeg"), true) => ("JPEG image", JPEG),
         (Some("webp"), true) => ("WebP image", WEBP),
+        (Some("psd"), true) => ("Photoshop project", PSD),
         (Some("ase"), true) => ("Aseprite project (.ase)", ASE),
         (Some("aseprite"), true) => ("Aseprite project (.aseprite)", ASEPRITE),
         (_, true) => ("MoonSprite project", MOONSPRITE),
         (Some("png"), false) => ("PNG 图片", PNG),
         (Some("jpeg"), false) => ("JPEG 图片", JPEG),
         (Some("webp"), false) => ("WebP 图片", WEBP),
+        (Some("psd"), false) => ("Photoshop 工程", PSD),
         (Some("ase"), false) => ("Aseprite 工程 (.ase)", ASE),
         (Some("aseprite"), false) => ("Aseprite 工程 (.aseprite)", ASEPRITE),
         _ => ("MoonSprite 工程", MOONSPRITE),
@@ -76,12 +79,14 @@ pub fn image_export_filter(format: &str, language: Option<&str>) -> DialogFilter
         ("jpeg", true) => ("JPEG image", JPEG),
         ("webp", true) => ("WebP image", WEBP),
         ("svg", true) => ("SVG image", SVG),
+        ("psd", true) => ("Photoshop project", PSD),
         ("gif", true) => ("GIF animation", GIF),
         ("aseprite", true) => ("Aseprite project", ASE_EXPORT),
         (_, true) => ("PNG image", PNG),
         ("jpeg", false) => ("JPEG 图片", JPEG),
         ("webp", false) => ("WebP 图片", WEBP),
         ("svg", false) => ("SVG 图片", SVG),
+        ("psd", false) => ("Photoshop 工程", PSD),
         ("aseprite", false) => ("Aseprite 工程", ASE_EXPORT),
         _ => ("PNG 图片", PNG),
     }
@@ -373,12 +378,20 @@ mod tests {
             project_save_filter(Some("aseprite"), None),
             ("Aseprite 工程 (.aseprite)", &["aseprite"][..])
         );
+        assert_eq!(
+            project_save_filter(Some("psd"), None),
+            ("Photoshop 工程", &["psd"][..])
+        );
     }
 
     #[test]
-    fn image_export_filter_supports_svg_and_both_aseprite_suffixes() {
+    fn image_export_filter_supports_project_and_image_exports() {
         assert_eq!(image_export_filter("svg", None), ("SVG 图片", &["svg"][..]));
         assert_eq!(image_export_filter("gif", None), ("GIF 动画", &["gif"][..]));
+        assert_eq!(
+            image_export_filter("psd", None),
+            ("Photoshop 工程", &["psd"][..])
+        );
         assert_eq!(
             image_export_filter("aseprite", None),
             ("Aseprite 工程", &["ase", "aseprite"][..])
@@ -396,8 +409,16 @@ mod tests {
             ("Aseprite project (.aseprite)", &["aseprite"][..])
         );
         assert_eq!(
+            project_save_filter(Some("psd"), Some("en-US")),
+            ("Photoshop project", &["psd"][..])
+        );
+        assert_eq!(
             image_export_filter("svg", Some("en-US")),
             ("SVG image", &["svg"][..])
+        );
+        assert_eq!(
+            image_export_filter("psd", Some("en-US")),
+            ("Photoshop project", &["psd"][..])
         );
     }
 }

@@ -82,7 +82,7 @@ export function App() {
     <a className="skip-link" href="#main">Skip to content</a>
     <header className="site-header">
       <div className="header-inner">
-        <a className="brand" href="#top" onClick={closeMenu} aria-label="MoonSprite"><img src="/assets/moonsprite-logo.svg" width="28" height="28" alt="" /><span>MoonSprite</span><small>DEV.5</small></a>
+        <a className="brand" href="#top" onClick={closeMenu} aria-label="MoonSprite"><img src="/assets/moonsprite-logo.svg" width="28" height="28" alt="" /><span>MoonSprite</span><small>DEV.6</small></a>
         <nav className={menuOpen ? 'site-nav open' : 'site-nav'} aria-label="Primary navigation">
           <a href="#work" onClick={closeMenu}>{t.nav.work}</a>
           <a href="#features" onClick={closeMenu}>{t.nav.features}</a>
