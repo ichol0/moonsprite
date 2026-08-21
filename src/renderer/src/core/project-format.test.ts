@@ -68,7 +68,10 @@ interface TestProjectManifest {
     layers: Array<TestRasterManifestEntry & { kind?: 'text' | 'tilemap' | 'free-tile'; tilemapTilesetId?: string; freeTileTilesetId?: string; freeTileSources?: Array<{ id: string; tilesetId: string }> }>
     groups?: Array<{ layerStyles?: unknown }>
     tilesets?: Array<{ id: string; dataFile: string; tileSlots?: Array<string | null> }>
-    animation: { cels: Array<TestRasterManifestEntry & { tilemap?: { cells: Array<{ index: number; tilesetId: string; tileId: string }> }; freeTiles?: { instances: Array<{ id: string; sourceId?: string; tileId?: string; x: number; y: number; rotation?: number; flipHorizontal?: boolean; flipVertical?: boolean }> } }> }
+    animation: {
+      cels: Array<TestRasterManifestEntry & { tilemap?: { cells: Array<{ index: number; tilesetId: string; tileId: string }> }; freeTiles?: { instances: Array<{ id: string; sourceId?: string; tileId?: string; x: number; y: number; rotation?: number; flipHorizontal?: boolean; flipVertical?: boolean }> } }>
+      loopSections?: Array<{ id: string; name: string; startFrameId: string; endFrameId: string; direction: 'forward' | 'reverse'; repeatCount: number | null }>
+    }
   }
 }
 
@@ -100,9 +103,28 @@ describe('project manifest migration boundary', () => {
     ])
   })
 
+  it('round-trips named animation loop sections in the v16 manifest', () => {
+    const document = createDocument('loop section project', 2, 2, 'rgba')
+    const secondFrameId = addBlankAnimationFrame(document)
+    const timeline = ensureAnimationDocument(document)
+    timeline.loopSections = [{
+      id: 'loop-run',
+      name: 'Run',
+      startFrameId: timeline.frames[0].id,
+      endFrameId: secondFrameId,
+      direction: 'reverse',
+      repeatCount: 3
+    }]
+
+    const files = unzipSync(encodeProject(document))
+    expect(readTestManifest(files).document.animation.loopSections).toEqual(timeline.loopSections)
+    expect(decodeProject(zipSync(files)).animation?.loopSections).toEqual(timeline.loopSections)
+  })
+
   it('round-trips non-destructive layer styles introduced by v11', () => {
     const document = createDocument('styled layer project', 8, 8, 'rgba')
     const styles = createDefaultLayerStyles()
+    styles.enabled = false
     styles.stroke = { ...styles.stroke, enabled: true, color: { r: 10, g: 20, b: 30, a: 255 }, size: 4, position: 'both', kernel: 'horizontal', directions: { nw: false, n: false, ne: false, w: true, e: true, sw: false, s: false, se: false }, smartHue: true, smartHueDarkness: 68 }
     styles.shadow = { ...styles.shadow, enabled: true, color: { r: 0, g: 0, b: 0, a: 128 }, offsetX: -3, offsetY: 5, blur: 2, smartShadow: true, smartShadowDarkness: 62 }
     styles.gradientOverlay = { ...styles.gradientOverlay, enabled: true, dither: 'bayer-4' }
@@ -112,7 +134,7 @@ describe('project manifest migration boundary', () => {
 
     const files = unzipSync(encodeProject(document))
     const manifest = readTestManifest(files)
-    expect(manifest.document.layers[0].layerStyles).toMatchObject({ stroke: { enabled: true, size: 4, position: 'both', kernel: 'horizontal', directions: { w: true, e: true, n: false, s: false }, smartHue: true, smartHueDarkness: 68 }, shadow: { offsetX: -3, offsetY: 5, blur: 2, smartShadow: true, smartShadowDarkness: 62 }, gradientOverlay: { enabled: true, dither: 'bayer-4' } })
+    expect(manifest.document.layers[0].layerStyles).toMatchObject({ enabled: false, stroke: { enabled: true, size: 4, position: 'both', kernel: 'horizontal', directions: { w: true, e: true, n: false, s: false }, smartHue: true, smartHueDarkness: 68 }, shadow: { offsetX: -3, offsetY: 5, blur: 2, smartShadow: true, smartShadowDarkness: 62 }, gradientOverlay: { enabled: true, dither: 'bayer-4' } })
     expect(manifest.document.groups?.[0].layerStyles).toMatchObject({ stroke: { enabled: true, position: 'both', kernel: 'horizontal' } })
     const reopened = decodeProject(zipSync(files))
     expect(reopened.layers[0].layerStyles).toEqual(styles)
@@ -438,6 +460,7 @@ describe('project manifest migration boundary', () => {
   it('keeps v11 layer styles without accepting future background metadata', () => {
     const styles = createDefaultLayerStyles()
     styles.stroke.enabled = true
+    delete (styles as { enabled?: boolean }).enabled
     const migrated = migrateProjectManifest({
       app: 'MoonSprite',
       schemaVersion: 11,
@@ -451,7 +474,7 @@ describe('project manifest migration boundary', () => {
       }
     })
 
-    expect(migrated.document.layers[0].layerStyles).toEqual(styles)
+    expect(migrated.document.layers[0].layerStyles).toMatchObject({ enabled: true, stroke: { enabled: true } })
     expect(migrated.document.layers[0].background).toBeUndefined()
   })
 
@@ -527,6 +550,28 @@ describe('project manifest migration boundary', () => {
     expect(migrated).toMatchObject({ schemaVersion: PROJECT_SCHEMA_VERSION, sourceSchemaVersion: 10, document: { schemaVersion: PROJECT_SCHEMA_VERSION, colorMode: 'grayscale' } })
     expect(migrated.document.layers[0].layerStyles).toBeUndefined()
     expect(migrated.document.groups[0].layerStyles).toBeUndefined()
+  })
+
+  it('migrates v15 projects without inventing or trusting loop sections', () => {
+    const migrated = migrateProjectManifest({
+      app: 'MoonSprite',
+      schemaVersion: 15,
+      document: {
+        schemaVersion: 15,
+        width: 2,
+        height: 2,
+        layers: [],
+        animation: {
+          frames: [{ id: 'frame-1', duration: 100 }, { id: 'frame-2', duration: 100 }],
+          cels: [],
+          activeFrameId: 'frame-1',
+          loop: true,
+          loopSections: [{ id: 'future-field', name: 'Ignore', startFrameId: 'frame-1', endFrameId: 'frame-2', direction: 'reverse', repeatCount: 2 }]
+        }
+      }
+    })
+
+    expect(migrated.document.animation.loopSections).toEqual([])
   })
 
   it('migrates v4 raster resources as raw data', () => {

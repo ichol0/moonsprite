@@ -92,20 +92,35 @@ export function ImageResizeDialog({ open, currentWidth, currentHeight, onClose, 
   }
 
   return <div className="modal-backdrop" role="presentation">
-    <ModalShell as="form" storageKey="image-resize-v3" placement="right" defaultWidth={450} defaultHeight={500} minWidth={400} minHeight={430} maxWidth={600} maxHeight={720} className="image-resize-modal" onSubmit={submit} aria-label={t('imageResize.title')}>
+    <ModalShell as="form" storageKey="image-resize-v4" placement="right" defaultWidth={380} defaultHeight={480} minWidth={360} minHeight={420} maxWidth={480} maxHeight={680} className="image-resize-modal" onSubmit={submit} aria-label={t('imageResize.title')}>
       <DialogHeader eyebrow={t('imageResize.eyebrow')} title={t('imageResize.title')} closeLabel={t('common.close')} onClose={onClose} />
       <div className="modal-body image-resize-body">
         <div className="image-resize-current"><span>{t('imageResize.current')}</span><strong>{currentWidth} x {currentHeight} px</strong></div>
         <section className="image-resize-section">
-          <div className="image-resize-section-heading"><h3>{t('imageResize.pixelSize')}</h3><small>{t(locked ? 'imageResize.locked' : 'imageResize.free')}</small></div>
+          <div className="image-resize-section-heading">
+            <h3>{t('imageResize.pixelSize')}</h3>
+            <button
+              type="button"
+              className="icon-button"
+              aria-label={t(locked ? 'imageResize.unlockRatio' : 'imageResize.lockRatio')}
+              aria-pressed={locked}
+              title={t(locked ? 'imageResize.unlockRatio' : 'imageResize.lockRatio')}
+              onClick={() => setLocked((value) => !value)}
+            >
+              {locked ? <PixelUtilityIcon kind="lock" /> : <PixelUtilityIcon kind="unlock" />}
+            </button>
+          </div>
           <div className="image-resize-fields">
             <FormField label={t('common.width')}><NumberInput autoFocus onFocus={(event) => event.currentTarget.select()} aria-label={t('newDocument.widthAria')} min={1} max={16384} suffix="px" value={width} onValueChange={updateWidth} /></FormField>
-            <button type="button" className="image-resize-lock" aria-label={t(locked ? 'imageResize.unlockRatio' : 'imageResize.lockRatio')} title={t(locked ? 'imageResize.unlockRatio' : 'imageResize.lockRatio')} onClick={() => setLocked((value) => !value)}>{locked ? <PixelUtilityIcon kind="lock" /> : <PixelUtilityIcon kind="unlock" />}</button>
             <FormField label={t('common.height')}><NumberInput aria-label={t('newDocument.heightAria')} min={1} max={16384} suffix="px" value={height} onValueChange={updateHeight} /></FormField>
           </div>
         </section>
         <section className="image-resize-section">
           <div className="image-resize-section-heading"><h3>{t('imageResize.scale')}</h3><small>{t('imageResize.relative')}</small></div>
+          <div className="image-resize-percent-fields">
+            <FormField label={t('common.width')}><NumberInput aria-label={t('imageResize.widthPercentAria')} min={1} max={6400} suffix="%" value={widthPercent} onValueChange={updateWidthPercent} /></FormField>
+            <FormField label={t('common.height')}><NumberInput aria-label={t('imageResize.heightPercentAria')} min={1} max={6400} suffix="%" value={heightPercent} onValueChange={updateHeightPercent} /></FormField>
+          </div>
           <div className="image-resize-detection">
             <button type="button" className="quiet-button image-resize-detect-button" disabled={detection.state === 'detecting'} title={t('imageResize.detectScaleHint')} onClick={() => void detectScale()}><PixelUtilityIcon kind="extractColors" />{t(detection.state === 'detecting' ? 'imageResize.detectingScale' : 'imageResize.detectScale')}</button>
             <span className="image-resize-detection-status" data-state={detection.state} role="status" aria-live="polite">
@@ -115,10 +130,6 @@ export function ImageResizeDialog({ open, currentWidth, currentHeight, onClose, 
               {detection.state === 'error' && t('imageResize.scaleDetectionError')}
               {detection.state === 'found' && t('imageResize.detectedScale', { scale: detection.scale, width: detection.width, height: detection.height })}
             </span>
-          </div>
-          <div className="image-resize-percent-fields">
-            <FormField label={t('common.width')}><NumberInput aria-label={t('imageResize.widthPercentAria')} min={1} max={6400} suffix="%" value={widthPercent} onValueChange={updateWidthPercent} /></FormField>
-            <FormField label={t('common.height')}><NumberInput aria-label={t('imageResize.heightPercentAria')} min={1} max={6400} suffix="%" value={heightPercent} onValueChange={updateHeightPercent} /></FormField>
           </div>
         </section>
         <FormField className="image-resize-interpolation" label={t('imageResize.interpolation')}><ThemedSelect value={interpolation} groups={[{ label: t('imageResize.interpolation'), options: [{ value: 'nearest', label: t('imageResize.nearest') }, { value: 'smooth', label: t('imageResize.smooth') }] }]} label={t('imageResize.interpolation')} onChange={setInterpolation} /></FormField>

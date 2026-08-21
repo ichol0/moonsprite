@@ -3,7 +3,7 @@ import { blendWithMode, packColor, writeRgbaPixel } from './raster'
 import { createDefaultLayerStyles } from './layer-styles'
 import { activateAnimationFrame, duplicateAnimationFrame, ensureAnimationDocument } from './animation'
 import { cachedLayerContentBounds, captureDocumentImageResizeSnapshot, compositePixelWithLayerColor, compositeRegion, createCompositePointReplacementSampler, createCompositePointSampler, createCompositeSampler, createDocument, createLayer, createLayerMask, createNormalCompositePointReplacementSampler, createNormalCompositePointSampler, DocumentCompositeCache, getPaletteEntry, layerContentBounds, markLayerContentChanged, normalCompositeLayers, paletteColorIdForCanvas, readLayerColor, readLayerColorAt, readLayerMaskDisplayColorAt, renderLayerMaskRegion, resizeDocumentAt, resizeDocumentImage, resolveLayerCanvasColor, restoreDocumentImageResizeSnapshot, writeLayerColor, writeLayerPackedRun } from './document'
-import { installRuntimeRaster, surfacePixelsMaterialized } from './runtime-raster'
+import { assignRasterStorage, installRuntimeRaster, surfacePixelsMaterialized } from './runtime-raster'
 
 const red = { r: 255, g: 0, b: 0, a: 255 }
 const blue = { r: 0, g: 0, b: 255, a: 128 }
@@ -82,6 +82,27 @@ describe('document compositing', () => {
     styled.offsetX += 2
     styled.offsetY -= 1
     expect(Array.from(compositeRegion(document, 0, 0, 12, 10, cache, 1))).toEqual(Array.from(compositeRegion(document, 0, 0, 12, 10)))
+  })
+
+  it('refreshes cached layer styles when raster storage is replaced at the same content revision', () => {
+    const document = createDocument('styled storage replacement', 8, 6, 'rgba')
+    const layer = document.layers[0]
+    writeLayerColor(document, layer, layer.width + 1, red)
+    const styles = createDefaultLayerStyles()
+    styles.stroke.enabled = true
+    styles.stroke.size = 1
+    layer.layerStyles = styles
+    const cache = new DocumentCompositeCache()
+    const before = compositeRegion(document, 0, 0, document.width, document.height, cache, 1)
+
+    const replacement = createLayer('replacement', layer.width, layer.height, 'rgba')
+    writeLayerColor(document, replacement, 4 * replacement.width + 6, blue)
+    assignRasterStorage(layer, replacement)
+
+    const cached = compositeRegion(document, 0, 0, document.width, document.height, cache, 2)
+    const direct = compositeRegion(document, 0, 0, document.width, document.height)
+    expect(Array.from(cached)).toEqual(Array.from(direct))
+    expect(Array.from(cached)).not.toEqual(Array.from(before))
   })
 
   it('keeps cached binary shadow geometry exact across blur previews and content changes', () => {

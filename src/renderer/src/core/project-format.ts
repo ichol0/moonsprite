@@ -1,5 +1,5 @@
 import { inflateSync, strFromU8, strToU8, unzipSync, zipSync, type Zippable } from 'fflate'
-import { BLEND_MODES, type AnimationCelSurface, type AnimationFrame, type BackgroundLayerSettings, type BlendMode, type ColorMode, type FreeTileCelData, type FreeTileInstance, type FreeTileSourceLayer, type LayerGroup, type LayerMask, type LayerStyles, type PaletteEntry, type ProjectBrush, type RasterFormat, type RasterLayer, type RgbaColor, type RuntimeRasterTiles, type SpriteDocument, type TextCelData, type TilemapCelData, type TilemapCell, type Tileset, type TimelapseSettings } from '@shared/types'
+import { BLEND_MODES, type AnimationCelSurface, type AnimationFrame, type AnimationLoopSection, type BackgroundLayerSettings, type BlendMode, type ColorMode, type FreeTileCelData, type FreeTileInstance, type FreeTileSourceLayer, type LayerGroup, type LayerMask, type LayerStyles, type PaletteEntry, type ProjectBrush, type RasterFormat, type RasterLayer, type RgbaColor, type RuntimeRasterTiles, type SpriteDocument, type TextCelData, type TilemapCelData, type TilemapCell, type Tileset, type TimelapseSettings } from '@shared/types'
 import { compositeDocument, createCompositePointSampler, createId, createNormalCompositePointSampler, getLayerStorageOrigin, getRasterContentRevision, paletteColorIdForCanvas, remapIndexedDocumentToVisiblePalette, setLayerStorageOrigin } from './document'
 import { createDefaultAnimationTimeline, ensureAnimationDocument, normalizeAnimationTimeline, refreshActiveAnimationFrame, syncActiveAnimationLayers } from './animation'
 import { normalizeOutlineSettings } from './outline-settings'
@@ -121,6 +121,7 @@ interface ManifestAnimation {
   frames: AnimationFrame[]
   cels: ManifestCel[]
   groupMasks: ManifestGroupMask[]
+  loopSections: AnimationLoopSection[]
   activeFrameId: string
   loop: boolean
 }
@@ -140,7 +141,8 @@ interface ManifestTimelapse extends Omit<TimelapseSettings, 'snapshots'> {
 
 type RasterDataEncoding = 'raw' | 'sparse-tiles-v1'
 
-export const PROJECT_SCHEMA_VERSION = 15
+export const PROJECT_SCHEMA_VERSION = 16
+const LOOP_SECTIONS_PROJECT_SCHEMA_VERSION = 16
 const FREE_TILE_SOURCE_PROJECT_SCHEMA_VERSION = 15
 const FREE_TILE_PROJECT_SCHEMA_VERSION = 14
 const TILEMAP_PROJECT_SCHEMA_VERSION = 13
@@ -543,6 +545,7 @@ const normalizeManifestAnimation = (value: unknown): ManifestAnimation => {
     frames: normalized.frames,
     activeFrameId: normalized.activeFrameId,
     loop: normalized.loop,
+    loopSections: (normalized.loopSections ?? []).map((section) => ({ ...section })),
     cels: normalized.cels.map((cel) => {
       const raw = rawCels.find((candidate) => candidate && typeof candidate === 'object' && (candidate as { id?: unknown }).id === cel.id) as Partial<ManifestCel> | undefined
       const { mask: _runtimeMask, surface: _runtimeSurface, tilemap: _runtimeTilemap, freeTiles: _runtimeFreeTiles, ...normalizedCel } = cel
@@ -733,6 +736,7 @@ const createProjectArchiveFiles = (
     frames: timeline.frames.map((frame) => ({ ...frame })),
     activeFrameId: timeline.activeFrameId,
     loop: timeline.loop,
+    loopSections: (timeline.loopSections ?? []).map((section) => ({ ...section })),
     groupMasks: (timeline.groupMasks ?? []).map((entry) => ({ groupId: entry.groupId, frameId: entry.frameId, mask: encodeMask(`group-mask:${entry.groupId}:${entry.frameId}`, entry.mask) })),
     cels: timeline.cels.flatMap((cel) => {
       if (!cel.surface) return []
@@ -1084,7 +1088,7 @@ export function migrateProjectManifest(input: unknown): ProjectManifest {
   const candidate = input as { app?: unknown; schemaVersion?: unknown; document?: Record<string, unknown> }
   if (candidate.app !== 'MoonSprite' || !candidate.document) throw new Error(tr('core.project.unsupportedVersion'))
   const version = Number(candidate.schemaVersion)
-  if (![1, 2, 3, LEGACY_PROJECT_SCHEMA_VERSION, SPARSE_RASTER_PROJECT_SCHEMA_VERSION, SLICES_PROJECT_SCHEMA_VERSION, EDITABLE_TEXT_PROJECT_SCHEMA_VERSION, STYLED_TEXT_PROJECT_SCHEMA_VERSION, TEXT_BOX_PROJECT_SCHEMA_VERSION, DOCUMENT_COLOR_MODE_PROJECT_SCHEMA_VERSION, LAYER_STYLES_PROJECT_SCHEMA_VERSION, BACKGROUND_LAYER_PROJECT_SCHEMA_VERSION, TILEMAP_PROJECT_SCHEMA_VERSION, FREE_TILE_PROJECT_SCHEMA_VERSION, PROJECT_SCHEMA_VERSION].includes(version) || candidate.document.schemaVersion !== candidate.schemaVersion) throw new Error(tr('core.project.unsupportedVersion'))
+  if (![1, 2, 3, LEGACY_PROJECT_SCHEMA_VERSION, SPARSE_RASTER_PROJECT_SCHEMA_VERSION, SLICES_PROJECT_SCHEMA_VERSION, EDITABLE_TEXT_PROJECT_SCHEMA_VERSION, STYLED_TEXT_PROJECT_SCHEMA_VERSION, TEXT_BOX_PROJECT_SCHEMA_VERSION, DOCUMENT_COLOR_MODE_PROJECT_SCHEMA_VERSION, LAYER_STYLES_PROJECT_SCHEMA_VERSION, BACKGROUND_LAYER_PROJECT_SCHEMA_VERSION, TILEMAP_PROJECT_SCHEMA_VERSION, FREE_TILE_PROJECT_SCHEMA_VERSION, FREE_TILE_SOURCE_PROJECT_SCHEMA_VERSION, PROJECT_SCHEMA_VERSION].includes(version) || candidate.document.schemaVersion !== candidate.schemaVersion) throw new Error(tr('core.project.unsupportedVersion'))
   if (version >= SPARSE_RASTER_PROJECT_SCHEMA_VERSION) {
     const layers = Array.isArray(candidate.document.layers) ? candidate.document.layers : []
     const animation = candidate.document.animation && typeof candidate.document.animation === 'object' ? candidate.document.animation as { cels?: unknown } : null
@@ -1097,6 +1101,7 @@ export function migrateProjectManifest(input: unknown): ProjectManifest {
     if (hasUnknownEncoding) throw new Error(tr('core.project.unsupportedVersion'))
   }
   const animation = normalizeManifestAnimation(version === 1 ? createDefaultAnimationTimeline() : candidate.document.animation)
+  if (version < LOOP_SECTIONS_PROJECT_SCHEMA_VERSION) animation.loopSections = []
   const legacy = version <= LEGACY_PROJECT_SCHEMA_VERSION
   const layers = Array.isArray(candidate.document.layers)
     ? candidate.document.layers.map((layer) => {

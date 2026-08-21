@@ -1,4 +1,4 @@
-import type { AnimationCelSurface, BrushPaintMode, BrushShape, BrushTexture, GradientDither, ImageBrush, ImageBrushSettings, OutlineDirections, OutlineKernel, OutlinePosition, RasterLayer, RgbaColor, SelectionMask, SelectionRect, ShapeKind, SpriteDocument, TileRepeatMode } from '@shared/types'
+import type { AnimationCelSurface, BrushDitherSettings, BrushPaintMode, BrushShape, BrushTexture, GradientDither, ImageBrush, ImageBrushSettings, OutlineDirections, OutlineKernel, OutlinePosition, RasterLayer, RgbaColor, SelectionMask, SelectionRect, ShapeKind, SpriteDocument, TileRepeatMode } from '@shared/types'
 import { compositeRegion, ensureLayerCoversCanvas, expandLayerToRect, getActiveLayer, getLayer, getLayerStorageOrigin, getPaletteEntry, isLayerEffectivelyLocked, layerContentBounds, layerIndexAt, layerIndexAtStoragePoint, markLayerContentChanged, normalizeLayerPackedValue, paletteColorIdForCanvas, readLayerColor, readLayerColorAt, readLayerPacked, readLayerPackedAt, writeLayerPacked, writeLayerPackedRun } from './document'
 import { beginPixelEdit, preparePixelEdit, recordPixel, recordPixelKnownCurrent, type PixelEdit } from './history'
 import { blendOver, isInBounds, packColor, pixelIndex, unpackColor } from './raster'
@@ -6,7 +6,7 @@ import { flipSelectionMask, lassoSelection, packedColorMatchesTolerance, rasterL
 import { proceduralBrushCoverageAt } from './brushes'
 import { balancedStairLinePoints } from './pixel-line'
 import { hasSymmetry, symmetryPoints, type SymmetryAxes, type SymmetryCenter } from './symmetry'
-import { gradientColorForAmount, interpolateRgbaColor } from './gradient-color'
+import { brushDitherContains, gradientColorForAmount, interpolateRgbaColor } from './gradient-color'
 import { readSurfacePackedRegion } from './runtime-raster'
 import { allOutlineDirections, outlineDirectionForOffset, outlineKernelContainsOffset } from './outline-settings'
 import { tileRepeatRectSegments, wrapDocumentPointForTileRepeat } from './tilemap'
@@ -255,7 +255,8 @@ export function paintBrush(
   coverageKey?: string,
   overrideImageBrushColor = false,
   gradient?: BrushGradientSample,
-  tileRepeatMode: TileRepeatMode = 'off'
+  tileRepeatMode: TileRepeatMode = 'off',
+  brushDither?: BrushDitherSettings
 ): void {
   const normalizedOpacityScale = Math.max(0, Math.min(1, Number.isFinite(opacityScale) ? opacityScale : 1))
   if (normalizedOpacityScale <= 0) return
@@ -266,8 +267,8 @@ export function paintBrush(
   const stampY = y - beforeY
   const footprint = symmetricRect(document, { x: stampX, y: stampY, width: stamp.width, height: stamp.height }, symmetryAxes, symmetryCenter, tileRepeatMode)
   if (!ensureLayerCoversEditRect(document, layer, edit, footprint)) return
-  const offsets = brushMaskOffsets(size, shape, texture, textureScale, stampX, stampY, imageBrush, imageBrushSettings, proceduralAntialiasStrength, brushPaintMode, patternOrigin?.x ?? stampX, patternOrigin?.y ?? stampY)
-  const solidStampKey = tileRepeatMode === 'off' && !selection && !imageBrush && texture === 'solid' && normalizedOpacityScale === 1 && !colorReplacement && !gradient && !coverageKey && !hasSymmetry(symmetryAxes) && (color.a === 0 || color.a === 255)
+  const offsets = brushMaskOffsets(size, shape, texture, textureScale, stampX, stampY, imageBrush, imageBrushSettings, proceduralAntialiasStrength, brushPaintMode, patternOrigin?.x ?? stampX, patternOrigin?.y ?? stampY, brushDither)
+  const solidStampKey = tileRepeatMode === 'off' && !selection && !imageBrush && texture === 'solid' && !brushDither?.enabled && normalizedOpacityScale === 1 && !colorReplacement && !gradient && !coverageKey && !hasSymmetry(symmetryAxes) && (color.a === 0 || color.a === 255)
     ? `${shape}:${stamp.width}x${stamp.height}:${color.a === 0 ? 'erase' : packColor(color)}`
     : null
   const solidPackedValue = solidStampKey
@@ -638,7 +639,7 @@ const integerEllipseRowSpans = (size: number): Array<{ left: number; right: numb
   return spans
 }
 
-export function brushMaskOffsets(size: number, shape: BrushShape, texture: BrushTexture = 'solid', textureScale = 1, originX = 0, originY = 0, imageBrush: ImageBrush | null = null, imageBrushSettings?: ImageBrushSettings, proceduralAntialiasStrength = 0, brushPaintMode: BrushPaintMode = 'paint', patternOriginX = originX, patternOriginY = originY): BrushMaskPoint[] {
+export function brushMaskOffsets(size: number, shape: BrushShape, texture: BrushTexture = 'solid', textureScale = 1, originX = 0, originY = 0, imageBrush: ImageBrush | null = null, imageBrushSettings?: ImageBrushSettings, proceduralAntialiasStrength = 0, brushPaintMode: BrushPaintMode = 'paint', patternOriginX = originX, patternOriginY = originY, brushDither?: BrushDitherSettings): BrushMaskPoint[] {
   const normalizedSize = Math.max(1, Math.round(size))
   const points: BrushMaskPoint[] = []
   if (imageBrush) {
@@ -688,13 +689,16 @@ export function brushMaskOffsets(size: number, shape: BrushShape, texture: Brush
     cache.set(cacheKey, points)
     return points
   }
+  const applyDither = (mask: BrushMaskPoint[]): BrushMaskPoint[] => brushDither?.enabled
+    ? mask.filter((point) => brushDitherContains(brushDither, originX + point.x, originY + point.y))
+    : mask
   const solidCacheKey = texture === 'solid' ? `${shape}:${normalizedSize}` : null
   const cachedSolid = solidCacheKey ? solidBrushMaskCache.get(solidCacheKey) : null
-  if (cachedSolid) return cachedSolid
+  if (cachedSolid) return applyDither(cachedSolid)
   if (shape === 'line') {
     const row = Math.floor(normalizedSize / 2)
     for (let x = 0; x < normalizedSize; x += 1) if (brushTextureContains(texture, originX + x, originY + row, textureScale)) points.push({ x, y: row, coverage: 255 })
-    return points
+    return applyDither(points)
   }
   if (shape === 'square' || normalizedSize <= 1) {
     for (let y = 0; y < normalizedSize; y += 1) for (let x = 0; x < normalizedSize; x += 1) if (brushTextureContains(texture, originX + x, originY + y, textureScale)) points.push({ x, y, coverage: 255 })
@@ -702,7 +706,7 @@ export function brushMaskOffsets(size: number, shape: BrushShape, texture: Brush
       if (solidBrushMaskCache.size >= 4) solidBrushMaskCache.delete(solidBrushMaskCache.keys().next().value!)
       solidBrushMaskCache.set(solidCacheKey, points)
     }
-    return points
+    return applyDither(points)
   }
   for (const [y, span] of integerEllipseRowSpans(normalizedSize).entries()) {
     for (let x = span.left; x <= span.right; x += 1) {
@@ -713,7 +717,7 @@ export function brushMaskOffsets(size: number, shape: BrushShape, texture: Brush
     if (solidBrushMaskCache.size >= 4) solidBrushMaskCache.delete(solidBrushMaskCache.keys().next().value!)
     solidBrushMaskCache.set(solidCacheKey, points)
   }
-  return points
+  return applyDither(points)
 }
 
 export function paintLine(
@@ -740,7 +744,8 @@ export function paintLine(
   symmetryCenter?: SymmetryCenter,
   colorReplacement?: { source: RgbaColor; target: RgbaColor },
   dynamics?: BrushLineDynamics,
-  tileRepeatMode: TileRepeatMode = 'off'
+  tileRepeatMode: TileRepeatMode = 'off',
+  brushDither?: BrushDitherSettings
 ): void {
   const dynamicValue = (from: number | undefined, to: number | undefined, fallback: number, progress: number): number => {
     const start = Number.isFinite(from) ? from! : fallback
@@ -761,7 +766,7 @@ export function paintLine(
           dither: dynamics.gradient.dither
         }
       : undefined
-    paintBrush(document, layer, edit, pointX, pointY, pointSize, pointColor, shape, selection, texture, textureScale, imageBrush, imageBrushSettings, proceduralAntialiasStrength, brushPaintMode, patternOrigin, symmetryAxes, symmetryCenter, colorReplacement, opacityScale, dynamics?.coverageKey, dynamics?.overrideImageBrushColor, gradient, tileRepeatMode)
+    paintBrush(document, layer, edit, pointX, pointY, pointSize, pointColor, shape, selection, texture, textureScale, imageBrush, imageBrushSettings, proceduralAntialiasStrength, brushPaintMode, patternOrigin, symmetryAxes, symmetryCenter, colorReplacement, opacityScale, dynamics?.coverageKey, dynamics?.overrideImageBrushColor, gradient, tileRepeatMode, brushDither)
   }
   const points = lineAlgorithm === 'balanced'
     ? balancedStairLinePoints({ x: fromX, y: fromY }, { x: toX, y: toY })
@@ -812,7 +817,8 @@ export function paintBrushPath(
   patternOrigin?: { x: number; y: number },
   symmetryAxes?: SymmetryAxes,
   symmetryCenter?: SymmetryCenter,
-  tileRepeatMode: TileRepeatMode = 'off'
+  tileRepeatMode: TileRepeatMode = 'off',
+  brushDither?: BrushDitherSettings
 ): void {
   const centers = brushPathStampPoints(points, size, imageBrush)
   if (centers.length === 0) return
@@ -825,7 +831,7 @@ export function paintBrushPath(
   const footprint = symmetricRect(document, { x: left, y: top, width: right - left, height: bottom - top }, symmetryAxes, symmetryCenter, tileRepeatMode)
   if (!ensureLayerCoversEditRect(document, layer, edit, footprint)) return
   for (const center of centers) {
-    paintBrush(document, layer, edit, center.x, center.y, size, color, shape, selection, texture, textureScale, imageBrush, imageBrushSettings, proceduralAntialiasStrength, brushPaintMode, patternOrigin, symmetryAxes, symmetryCenter, undefined, 1, undefined, false, undefined, tileRepeatMode)
+    paintBrush(document, layer, edit, center.x, center.y, size, color, shape, selection, texture, textureScale, imageBrush, imageBrushSettings, proceduralAntialiasStrength, brushPaintMode, patternOrigin, symmetryAxes, symmetryCenter, undefined, 1, undefined, false, undefined, tileRepeatMode, brushDither)
   }
 }
 

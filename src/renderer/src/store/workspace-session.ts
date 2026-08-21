@@ -72,6 +72,7 @@ export const selectedTransformLayersAreEditable = (
 export const brushProfileFromSession = (session: DocumentSession): BrushProfile => ({
   brushSize: session.brushSize,
   brushShape: session.brushShape,
+  brushDither: { ...(session.brushDither ?? defaultToolSettings.brushDither) },
   brushTexture: session.brushTexture,
   brushTextureScale: session.brushTextureScale,
   brushPaintMode: session.brushPaintMode,
@@ -89,6 +90,7 @@ export const brushProfileFromSession = (session: DocumentSession): BrushProfile 
 export const applyBrushProfile = (session: DocumentSession, profile: BrushProfile): void => {
   session.brushSize = profile.brushSize
   session.brushShape = profile.brushShape
+  session.brushDither = { ...profile.brushDither }
   session.brushTexture = profile.brushTexture
   session.brushTextureScale = profile.brushTextureScale
   session.brushPaintMode = profile.brushPaintMode
@@ -128,6 +130,7 @@ function persistedBrushProfileFromSession(profile: BrushProfile): PersistedBrush
   return {
     brushSize: profile.brushSize,
     brushShape: profile.brushShape,
+    brushDither: { ...profile.brushDither },
     brushTexture: profile.brushTexture,
     brushTextureScale: profile.brushTextureScale,
     brushPaintMode: profile.brushPaintMode,
@@ -144,6 +147,7 @@ function persistedBrushProfileFromSession(profile: BrushProfile): PersistedBrush
 function brushProfileFromPersisted(profile: PersistedBrushProfile): BrushProfile {
   return {
     ...profile,
+    brushDither: { ...profile.brushDither },
     brushImage: null,
     brushImageTemporary: false,
     brushImageSettings: { ...profile.brushImageSettings },
@@ -207,7 +211,7 @@ export const sessionFromDocument = (document: SpriteDocument): DocumentSession =
     const fallbackLayerId = document.layers.at(-1)?.id
     if (fallbackLayerId) document.activeLayerId = fallbackLayerId
   }
-  ensureAnimationDocument(document)
+  const timeline = ensureAnimationDocument(document)
   refreshActiveAnimationFrame(document)
   ensureTilemapTilesetOwnership(document)
   ensureFreeTileTilesetOwnership(document)
@@ -247,6 +251,7 @@ export const sessionFromDocument = (document: SpriteDocument): DocumentSession =
     secondaryColor: defaultSecondary,
     brushSize: settings.brushSize,
     brushShape: settings.brushShape,
+    brushDither: { ...settings.brushDither },
     brushTexture: settings.brushTexture,
     brushTextureScale: settings.brushTextureScale,
     brushPaintMode: settings.brushPaintMode,
@@ -334,7 +339,11 @@ export const sessionFromDocument = (document: SpriteDocument): DocumentSession =
     collapsedGroupIds: [],
     animationPlaying: false,
     animationPlaybackRate: 1,
+    animationPlaybackMode: timeline.loop ? 'all' : 'once',
     animationPlaybackStartFrameId: null,
+    animationPlaybackLoopSectionId: null,
+    animationPlaybackLoopIteration: 0,
+    animationPlaybackLoopSectionRepeatIndefinitely: false,
     animationReturnToStart: false,
     selectedAnimationFrameIds: [],
     animationFrameSelectionAnchorId: null,

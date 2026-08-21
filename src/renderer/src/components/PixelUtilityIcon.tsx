@@ -84,7 +84,8 @@ const utilityIconPaths = {
   tilemap: 'M2 2h7v1H2zM2 5h7v1H2zM2 8h7v1H2zM2 2h1v7H2zM5 2h1v7H5zM8 2h1v7H8z',
   freeTile: 'M2 2h7v1H2zM2 3h1v1H2zM5 3h1v1H5zM8 3h1v1H8zM2 4h1v1H2zM4 4h5v1H4zM2 5h3v1H2zM8 5h1v1H8zM2 6h1v1H2zM4 6h1v1H4zM8 6h1v1H8zM2 7h1v1H2zM4 7h1v1H4zM8 7h1v1H8zM2 8h7v1H2z',
   timelapse: 'M3 2h5v1H3zM1 4h3v1H1zM7 4h1v1H7zM9 4h1v1H9zM1 5h3v1H1zM5 5h1v1H5zM7 5h3v1H7zM1 6h3v1H1zM7 6h3v1H7zM1 7h9v1H1zM2 8h7v1H2z',
-  grid: 'M1 1h9v1H1zM1 4h9v1H1zM1 7h9v1H1zM1 9h9v1H1zM1 1h1v9H1zM4 1h1v9H4zM7 1h1v9H7zM9 1h1v9H9z'
+  grid: 'M1 1h9v1H1zM1 4h9v1H1zM1 7h9v1H1zM1 9h9v1H1zM1 1h1v9H1zM4 1h1v9H4zM7 1h1v9H7zM9 1h1v9H9z',
+  dither: 'M2 2h7v1H2zM2 3h1v5H2zM8 3h1v5H8zM4 3h1v1H4zM6 3h1v1H6zM3 4h1v1H3zM5 4h1v1H5zM7 4h1v1H7zM4 5h1v1H4zM6 5h1v1H6zM3 6h1v1H3zM5 6h1v1H5zM7 6h1v1H7zM4 7h1v1H4zM6 7h1v1H6zM2 8h7v1H2z'
 } as const
 
 const utilityIconTranslucentPaths: Partial<Record<PixelUtilityIconKind, string>> = {

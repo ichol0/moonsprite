@@ -1,7 +1,11 @@
-import type { GradientDither, RgbaColor } from '@shared/types'
+import type { BrushDitherSettings, BrushDitherTemplate, GradientDither, RgbaColor } from '@shared/types'
 
 export const GRADIENT_DITHER_PRESETS: readonly GradientDither[] = [
   'none', 'bayer-2', 'bayer-4', 'bayer-8', 'checker', 'diagonal', 'diagonal-reverse', 'horizontal', 'vertical'
+]
+
+export const BRUSH_DITHER_TEMPLATES: readonly BrushDitherTemplate[] = [
+  'checker', 'diagonal', 'diagonal-reverse', 'horizontal', 'vertical', 'bayer-2', 'bayer-4', 'bayer-8'
 ]
 
 const BAYER_2 = [
@@ -23,6 +27,12 @@ const expandBayer = (previous: number[][]): number[][] => {
 const BAYER_4 = expandBayer(BAYER_2)
 const BAYER_8 = expandBayer(BAYER_4)
 
+export const DEFAULT_BRUSH_DITHER_SETTINGS: BrushDitherSettings = {
+  enabled: false,
+  template: 'bayer-4',
+  stage: 8
+}
+
 const clamp01 = (value: number): number => Math.max(0, Math.min(1, value))
 
 export const interpolateRgbaColor = (start: RgbaColor, end: RgbaColor, amount: number): RgbaColor => ({
@@ -32,20 +42,62 @@ export const interpolateRgbaColor = (start: RgbaColor, end: RgbaColor, amount: n
   a: Math.round(start.a + (end.a - start.a) * clamp01(amount))
 })
 
-const bayerThreshold = (matrix: number[][], x: number, y: number): number => {
+const bayerStage = (matrix: number[][], x: number, y: number): number => {
   const size = matrix.length
-  return (matrix[((y % size) + size) % size][((x % size) + size) % size] + 0.5) / (size * size)
+  return matrix[((y % size) + size) % size][((x % size) + size) % size]
 }
 
-const ditherThreshold = (mode: GradientDither, x: number, y: number): number => {
-  if (mode === 'checker') return ((x + y) & 1) === 0 ? 0.25 : 0.75
-  if (mode === 'diagonal') return ((((x + y) % 4) + 4) % 4 + 0.5) / 4
-  if (mode === 'diagonal-reverse') return ((((x - y) % 4) + 4) % 4 + 0.5) / 4
-  if (mode === 'horizontal') return ((((y % 4) + 4) % 4) + 0.5) / 4
-  if (mode === 'vertical') return ((((x % 4) + 4) % 4) + 0.5) / 4
-  if (mode === 'bayer-2') return bayerThreshold(BAYER_2, x, y)
-  if (mode === 'bayer-4') return bayerThreshold(BAYER_4, x, y)
-  return bayerThreshold(BAYER_8, x, y)
+export const ditherStageCount = (mode: GradientDither | BrushDitherTemplate): number => {
+  if (mode === 'checker') return 2
+  if (mode === 'diagonal' || mode === 'diagonal-reverse' || mode === 'horizontal' || mode === 'vertical') return 6
+  if (mode === 'bayer-2') return 4
+  if (mode === 'bayer-4') return 16
+  if (mode === 'bayer-8') return 64
+  return 1
+}
+
+export const ditherStageAt = (mode: BrushDitherTemplate, x: number, y: number): number => {
+  if (mode === 'checker') return ((x + y) & 1) === 0 ? 0 : 1
+  if (mode === 'diagonal') return ((x + y) % 6 + 6) % 6
+  if (mode === 'diagonal-reverse') return ((x - y) % 6 + 6) % 6
+  if (mode === 'horizontal') return (y % 6 + 6) % 6
+  if (mode === 'vertical') return (x % 6 + 6) % 6
+  if (mode === 'bayer-2') return bayerStage(BAYER_2, x, y)
+  if (mode === 'bayer-4') return bayerStage(BAYER_4, x, y)
+  return bayerStage(BAYER_8, x, y)
+}
+
+const ditherThreshold = (mode: Exclude<GradientDither, 'none'>, x: number, y: number): number => {
+  const count = ditherStageCount(mode)
+  return (ditherStageAt(mode, x, y) + 0.5) / count
+}
+
+export const normalizeBrushDitherSettings = (
+  value: Partial<BrushDitherSettings> | null | undefined,
+  fallback: BrushDitherSettings = DEFAULT_BRUSH_DITHER_SETTINGS
+): BrushDitherSettings => {
+  const template = BRUSH_DITHER_TEMPLATES.includes(value?.template as BrushDitherTemplate)
+    ? value!.template as BrushDitherTemplate
+    : fallback.template
+  const maximumStage = ditherStageCount(template)
+  const fallbackStage = Math.max(1, Math.min(maximumStage, Math.round(fallback.stage)))
+  return {
+    enabled: typeof value?.enabled === 'boolean' ? value.enabled : fallback.enabled,
+    template,
+    stage: Number.isFinite(value?.stage) ? Math.max(1, Math.min(maximumStage, Math.round(value!.stage!))) : fallbackStage
+  }
+}
+
+export const brushDitherContains = (settings: BrushDitherSettings | null | undefined, x: number, y: number): boolean => {
+  if (!settings?.enabled) return true
+  return ditherStageAt(settings.template, x, y) < Math.max(1, Math.min(ditherStageCount(settings.template), Math.round(settings.stage)))
+}
+
+export const brushDitherSettingsForTemplate = (settings: BrushDitherSettings, template: BrushDitherTemplate): BrushDitherSettings => {
+  const previousCount = ditherStageCount(settings.template)
+  const nextCount = ditherStageCount(template)
+  const nextStage = Math.max(1, Math.min(nextCount, Math.round((settings.stage / previousCount) * nextCount)))
+  return { enabled: true, template, stage: nextStage }
 }
 
 export const gradientAmountAt = (x: number, y: number, start: { x: number; y: number }, end: { x: number; y: number }): number => {

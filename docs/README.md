@@ -10,7 +10,7 @@
 - [状态与历史](architecture/state-history.md)：会话、dirty、撤销和视图状态。
 - [坐标与渲染](architecture/coordinates-rendering.md)：屏幕、视图、画布和图层坐标。
 - [多语言架构](architecture/localization.md)：语言资源、回退、持久化和新增语言门禁。
-- [文件格式](file-format.md)：`.moonsprite` v15 容器。
+- [文件格式](file-format.md)：`.moonsprite` v16 容器。
 
 ## 交互契约
 

@@ -6,11 +6,12 @@ import { PixelUtilityIcon } from '@/components/PixelUtilityIcon'
 import { CanvasCompositeCache } from '@/components/canvas-composite-cache'
 import type { DockDragProps } from '@/components/workspace-panel-types'
 import { cloneDocumentForAnimationFrame, ensureAnimationDocument, nextAnimationFrameId } from '@/core/animation'
+import { advanceAnimationLoopSectionPlayback, animationLoopSectionAtFrame, animationLoopSectionStartFrameId } from '@/core/animation-loop-sections'
 import { anchoredPreviewPan, followPreviewPosition, previewCheckerCellSize } from '@/core/preview-geometry'
 import { normalizeCanvasWheelDelta, steppedCanvasZoom } from '@/core/canvas-input'
 import { loadEditorPreferences, type CheckerboardPreferences } from '@/core/file-preferences'
 import { registerViewPreviewListener } from '@/core/view-preview-lifecycle'
-import { useWorkspace, type DocumentSession } from '@/store/workspace'
+import { useWorkspace, type AnimationPlaybackMode, type DocumentSession } from '@/store/workspace'
 import { useI18n } from '@/components/I18nProvider'
 import { resolveTheme } from '@/core/theme'
 import { initialDocumentCompositePending, subscribeInitialDocumentComposite } from '@/core/initial-document-composite'
@@ -63,7 +64,9 @@ export function PreviewPanel({ session, onClose, docked = false, onDockDragStart
   const [previewStartFrameId, setPreviewStartFrameId] = useState<string | null>(null)
   const [previewPlaying, setPreviewPlaying] = useState(false)
   const [previewRate, setPreviewRate] = useState(1)
-  const [previewLoop, setPreviewLoop] = useState(timeline.loop)
+  const [previewPlaybackMode, setPreviewPlaybackMode] = useState<AnimationPlaybackMode>(timeline.loop ? 'all' : 'once')
+  const [previewLoopSectionId, setPreviewLoopSectionId] = useState<string | null>(null)
+  const [previewLoopIteration, setPreviewLoopIteration] = useState(0)
   const [previewReturnToStart, setPreviewReturnToStart] = useState(false)
   const panDrag = useRef<{ x: number; y: number; panX: number; panY: number } | null>(null)
   const compositeCacheRef = useRef(new CanvasCompositeCache())
@@ -125,40 +128,73 @@ export function PreviewPanel({ session, onClose, docked = false, onDockDragStart
     if (!previewPlaying) return
     const frame = timeline.frames.find((candidate) => candidate.id === previewFrameId)
     if (!frame) return
-    const nextFrameId = nextAnimationFrameId({ ...timeline, loop: previewLoop }, previewFrameId)
+    const loopSection = previewLoopSectionId ? (timeline.loopSections ?? []).find((section) => section.id === previewLoopSectionId) ?? null : null
+    if (previewLoopSectionId && !loopSection) {
+      setPreviewPlaying(false)
+      setPreviewLoopSectionId(null)
+      setPreviewLoopIteration(0)
+      return
+    }
+    const loopStep = loopSection
+      ? advanceAnimationLoopSectionPlayback(timeline, { ...loopSection, repeatCount: null }, previewFrameId, previewLoopIteration)
+      : null
+    const loopAllFrames = previewPlaybackMode !== 'once'
+    const nextFrameId = loopStep?.frameId ?? nextAnimationFrameId({ ...timeline, loop: loopAllFrames }, previewFrameId)
     const timer = window.setTimeout(() => {
-      if (nextFrameId === previewFrameId) {
+      if (!loopSection && !loopAllFrames && nextFrameId === previewFrameId) {
         const returnFrameId = previewReturnToStart ? previewStartFrameId : previewFrameId
         setPreviewPlaying(false)
         setPreviewStartFrameId(null)
         if (returnFrameId) setPreviewFrameId(returnFrameId)
         return
       }
+      if (loopStep) setPreviewLoopIteration(loopStep.completedIterations)
       setPreviewFrameId(nextFrameId)
     }, frame.duration / Math.max(0.01, previewRate))
     return () => window.clearTimeout(timer)
-  }, [previewFrameId, previewPlaying, previewRate, previewLoop, previewReturnToStart, previewStartFrameId, timeline])
+  }, [previewFrameId, previewPlaying, previewRate, previewPlaybackMode, previewLoopIteration, previewLoopSectionId, previewReturnToStart, previewStartFrameId, timeline])
 
   const setPreviewPlayingState = (playing: boolean): void => {
     if (playing) {
       const startFrameId = previewFrameId
       setPreviewStartFrameId(startFrameId)
-      if (!previewLoop && startFrameId !== timeline.frames[0]?.id) setPreviewFrameId(timeline.frames[0]?.id ?? startFrameId)
+      setPreviewLoopSectionId(null)
+      setPreviewLoopIteration(0)
+      const loopSection = previewPlaybackMode === 'tag' ? animationLoopSectionAtFrame(timeline, startFrameId) : null
+      const targetFrameId = loopSection
+        ? animationLoopSectionStartFrameId(timeline, loopSection)
+        : previewPlaybackMode === 'once' ? timeline.frames[0]?.id ?? startFrameId : startFrameId
+      if (loopSection) setPreviewLoopSectionId(loopSection.id)
+      if (targetFrameId && targetFrameId !== startFrameId) setPreviewFrameId(targetFrameId)
     } else {
       if (previewReturnToStart && previewStartFrameId) setPreviewFrameId(previewStartFrameId)
       setPreviewStartFrameId(null)
+      setPreviewLoopSectionId(null)
+      setPreviewLoopIteration(0)
     }
     setPreviewPlaying(playing)
+  }
+
+  const setPreviewPlaybackModeState = (mode: AnimationPlaybackMode): void => {
+    setPreviewPlaybackMode(mode)
+    setPreviewLoopSectionId(null)
+    setPreviewLoopIteration(0)
+    if (!previewPlaying || mode !== 'tag') return
+    const loopSection = animationLoopSectionAtFrame(timeline, previewFrameId)
+    const firstFrameId = loopSection ? animationLoopSectionStartFrameId(timeline, loopSection) : null
+    if (!loopSection || !firstFrameId) return
+    setPreviewLoopSectionId(loopSection.id)
+    if (firstFrameId !== previewFrameId) setPreviewFrameId(firstFrameId)
   }
 
   const previewPlayback = {
     playing: previewPlaying,
     rate: previewRate,
-    loop: previewLoop,
+    mode: previewPlaybackMode,
     returnToStart: previewReturnToStart,
     setPlaying: setPreviewPlayingState,
     setRate: setPreviewRate,
-    setLoop: setPreviewLoop,
+    setMode: setPreviewPlaybackModeState,
     setReturnToStart: setPreviewReturnToStart
   }
 

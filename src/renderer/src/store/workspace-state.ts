@@ -1,7 +1,9 @@
 import type {
+  AnimationLoopDirection,
   AnimationCelSurface,
   BackgroundPatternId,
   BlendMode,
+  BrushDitherSettings,
   BrushPaintMode,
   BrushShape,
   BrushTexture,
@@ -58,7 +60,7 @@ import type { TimelapseExportOptions } from '@/core/timelapse'
 import type { ExportOptions, SaveAsOptions } from './document-file-service'
 import type { LayerMoveDuplicateResult, LayerMoveState } from './workspace-layer-move'
 import type { LayerPropertyField, LayerPropertyTarget, LayerPropertyValues } from './workspace-layer-properties'
-import type { AdjustmentSnapshot, AppDialog, CanvasResizePreview, DocumentSession, OutlinePreview, SelectionPivot } from './workspace-types'
+import type { AdjustmentSnapshot, AnimationPlaybackMode, AppDialog, CanvasResizePreview, DocumentSession, OutlinePreview, SelectionPivot } from './workspace-types'
 
 export type ColorReplacementTarget = 'layer' | 'document' | 'selection' | 'layers' | 'frames' | 'cells' | 'palette'
 
@@ -140,6 +142,7 @@ export interface WorkspaceToolCommands {
   setAirbrushDensity(density: number): void
   setAirbrushIntervalMs(intervalMs: number): void
   setBrushShape(shape: BrushShape): void
+  setBrushDither(settings: BrushDitherSettings): void
   setBrushTexture(texture: BrushTexture): void
   setBrushTextureScale(scale: number): void
   setBrushPaintMode(mode: BrushPaintMode): void
@@ -334,6 +337,14 @@ export type FreeTileInstancePropertyChanges = Partial<{
 }>
 export type FreeTileSourcePropertyChanges = Partial<Pick<FreeTileSourceLayer, 'name' | 'description' | 'visible' | 'locked' | 'offsetX' | 'offsetY'>> & { displayColor?: RgbaColor | null }
 
+export interface AnimationLoopSectionOptions {
+  name: string
+  startFrameId: string
+  endFrameId: string
+  direction: AnimationLoopDirection
+  repeatCount: number | null
+}
+
 export interface WorkspaceAnimationCommands {
   setActiveAnimationFrame(frameId: string): void
   stepAnimationFrame(delta: number): void
@@ -359,9 +370,15 @@ export interface WorkspaceAnimationCommands {
   moveSelectedAnimationFrames(targetFrameId: string, insertAfter: boolean): void
   deleteSelectedAnimationItems(): void
   setAnimationPlaying(playing: boolean, completed?: boolean): void
+  pauseAnimationAtCurrentFrame(): void
   setAnimationPlaybackRate(rate: number): void
+  setAnimationPlaybackMode(mode: AnimationPlaybackMode): void
   setAnimationReturnToStart(enabled: boolean): void
   advanceAnimationFrame(): void
+  createAnimationLoopSection(options: AnimationLoopSectionOptions): string | null
+  updateAnimationLoopSection(id: string, options: AnimationLoopSectionOptions): void
+  deleteAnimationLoopSection(id: string): void
+  playAnimationLoopSection(id: string): void
   addAnimationFrame(): void
   addLinkedAnimationFrame(): void
   duplicateAnimationFrame(): void
@@ -452,6 +469,7 @@ export interface WorkspaceLayerCommands {
   setLayerStyles(ownerKind: 'layer' | 'group', ownerId: string, styles?: LayerStyles): void
   previewLayerStyleEntries(entries: readonly { target: LayerPropertyTarget; styles?: LayerStyles }[]): void
   setLayerStylesForTargets(targets: readonly LayerPropertyTarget[], styles?: LayerStyles, action?: 'edit' | 'paste' | 'clear'): boolean
+  setLayerStylesEnabled(targets: readonly LayerPropertyTarget[], enabled: boolean): boolean
   copyLayerStyles(ownerKind: 'layer' | 'group', ownerId: string): boolean
   pasteLayerStyles(targets: readonly LayerPropertyTarget[]): boolean
   clearLayerStyles(targets: readonly LayerPropertyTarget[]): boolean

@@ -111,6 +111,14 @@ export interface ShapeRatio { width: number; height: number }
 export type FillMode = 'contiguous' | 'global'
 export type FillKind = 'bucket' | 'gradient'
 export type GradientDither = 'none' | 'checker' | 'diagonal' | 'diagonal-reverse' | 'horizontal' | 'vertical' | 'bayer-2' | 'bayer-4' | 'bayer-8'
+export type BrushDitherTemplate = Exclude<GradientDither, 'none'>
+
+export interface BrushDitherSettings {
+  enabled: boolean
+  template: BrushDitherTemplate
+  stage: number
+}
+
 export type BlendMode =
   | 'normal'
   | 'darken'
@@ -337,6 +345,8 @@ export interface LayerStyleGradientOverlay {
 }
 
 export interface LayerStyles {
+  /** Global visibility switch that preserves every configured effect. */
+  enabled: boolean
   stroke: LayerStyleStroke
   shadow: LayerStyleShadow
   innerGlow: LayerStyleInnerGlow
@@ -509,11 +519,25 @@ export interface AnimationCel {
   mask?: LayerMask
 }
 
+export type AnimationLoopDirection = 'forward' | 'reverse'
+
+export interface AnimationLoopSection {
+  id: string
+  name: string
+  startFrameId: string
+  endFrameId: string
+  direction: AnimationLoopDirection
+  /** Total playback passes. Null means repeat indefinitely. */
+  repeatCount: number | null
+}
+
 export interface AnimationTimeline {
   frames: AnimationFrame[]
   cels: AnimationCel[]
   /** Frame-specific masks attached to layer groups. */
   groupMasks?: AnimationGroupMask[]
+  /** Named frame ranges that can be played independently. */
+  loopSections?: AnimationLoopSection[]
   activeFrameId: string
   loop: boolean
 }
@@ -569,7 +593,7 @@ export interface DocumentSlice {
 }
 
 export interface SpriteDocument {
-  schemaVersion: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15
+  schemaVersion: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16
   id: string
   name: string
   width: number

@@ -17,7 +17,7 @@ import { RangeField } from './RangeField'
 import { OutlineStrokeControls } from './OutlineStrokeControls'
 import { useI18n } from './I18nProvider'
 
-type LayerStyleEffect = keyof LayerStyles
+type LayerStyleEffect = Exclude<keyof LayerStyles, 'enabled'>
 
 const effectKeys: LayerStyleEffect[] = ['stroke', 'shadow', 'innerGlow', 'colorOverlay', 'gradientOverlay']
 const effectLabelKeys = {
@@ -124,7 +124,7 @@ export function LayerStyleDialog({ ownerKind, owner, targets, onClose }: { owner
       </div>
       <footer>
         <LivePreviewToggle checked={previewEnabled} onChange={togglePreview} />
-        <button type="button" className="quiet-button" onClick={() => previewDraft(createDefaultLayerStyles())}><PixelUtilityIcon kind="restore" />{t('common.reset')}</button>
+        <button type="button" className="quiet-button" onClick={() => previewDraft({ ...createDefaultLayerStyles(), enabled: draft.enabled })}><PixelUtilityIcon kind="restore" />{t('common.reset')}</button>
         <span className="modal-footer-spacer" />
         <button type="button" className="quiet-button" onClick={cancel}>{t('common.cancel')}</button>
         <button type="submit" className="primary-button">{t('common.apply')}</button>

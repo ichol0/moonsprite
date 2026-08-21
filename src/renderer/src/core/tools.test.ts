@@ -1614,6 +1614,45 @@ describe('pixel tools', () => {
     expect(edit.before.size).toBe(centeredCracks.length)
   })
 
+  it('uses the same absolute dither mask for brush preview data and committed pixels', () => {
+    const document = createDocument('dither brush', 4, 4, 'rgba')
+    const layer = getActiveLayer(document)
+    const edit = beginPixelEdit(layer.id)
+    const dither = { enabled: true, template: 'bayer-2' as const, stage: 2 }
+    const previewMask = brushMaskOffsets(4, 'square', 'solid', 1, 0, 0, null, undefined, 0, 'paint', 0, 0, dither)
+
+    paintBrush(document, layer, edit, 2, 2, 4, blue, 'square', null, 'solid', 1, null, undefined, 0, 'paint', undefined, undefined, undefined, undefined, 1, undefined, false, undefined, 'off', dither)
+
+    const previewPixels = previewMask.map((point) => `${point.x}:${point.y}`).sort()
+    const paintedPixels: string[] = []
+    for (let y = 0; y < document.height; y += 1) for (let x = 0; x < document.width; x += 1) {
+      if (readLayerColorAt(document, layer, x, y).a > 0) paintedPixels.push(`${x}:${y}`)
+    }
+    expect(previewPixels).toHaveLength(8)
+    expect(paintedPixels.sort()).toEqual(previewPixels)
+  })
+
+  it('uses six density stages for directional brush dithering', () => {
+    for (const template of ['diagonal', 'diagonal-reverse', 'horizontal', 'vertical'] as const) {
+      const stageSizes = Array.from({ length: 6 }, (_, index) => brushMaskOffsets(
+        6,
+        'square',
+        'solid',
+        1,
+        0,
+        0,
+        null,
+        undefined,
+        0,
+        'paint',
+        0,
+        0,
+        { enabled: true, template, stage: index + 1 }
+      ).length)
+      expect(stageSizes).toEqual([6, 12, 18, 24, 30, 36])
+    }
+  })
+
   it('keeps legacy coverage-mask brushes as one-color dithered stamps', () => {
     const document = createDocument('gray brush', 4, 4, 'rgba')
     const layer = getActiveLayer(document)

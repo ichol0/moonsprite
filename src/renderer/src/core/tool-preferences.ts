@@ -1,5 +1,6 @@
-import type { BrushPaintMode, BrushShape, BrushTexture, FillKind, FillMode, GradientDither, ImageBrushSettings, LineKind, ProceduralBrushId, ProceduralBrushSettings, SelectionKind, SelectionMode, ShapeKind, ShapeRatio, ToolId } from '@shared/types'
+import type { BrushDitherSettings, BrushPaintMode, BrushShape, BrushTexture, FillKind, FillMode, GradientDither, ImageBrushSettings, LineKind, ProceduralBrushId, ProceduralBrushSettings, SelectionKind, SelectionMode, ShapeKind, ShapeRatio, ToolId } from '@shared/types'
 import { normalizeProceduralBrushSettings, PROCEDURAL_BRUSH_IDS } from './brushes'
+import { DEFAULT_BRUSH_DITHER_SETTINGS, normalizeBrushDitherSettings } from './gradient-color'
 import { readStoredJson, writeStoredJson } from './storage'
 import { DEFAULT_SYMMETRY_AXES, type SymmetryAxes } from './symmetry'
 import { DEFAULT_GAP_CLOSING_THRESHOLD, normalizeGapClosingThreshold } from './contiguous-region'
@@ -24,6 +25,7 @@ export type BrushTool = typeof BRUSH_TOOLS[number]
 export interface PersistedBrushProfile {
   brushSize: number
   brushShape: BrushShape
+  brushDither: BrushDitherSettings
   brushTexture: BrushTexture
   brushTextureScale: number
   brushPaintMode: BrushPaintMode
@@ -75,6 +77,7 @@ const createDefaultProceduralBrushSettings = (): Record<ProceduralBrushId, Proce
 export const defaultToolSettings: PersistedToolSettings = {
   brushSize: 1,
   brushShape: 'round',
+  brushDither: { ...DEFAULT_BRUSH_DITHER_SETTINGS },
   brushTexture: 'solid',
   brushTextureScale: 1,
   brushPaintMode: 'paint',
@@ -143,6 +146,7 @@ export function normalizePersistedBrushProfile(stored: Partial<PersistedBrushPro
   return {
     brushSize: Number.isFinite(stored?.brushSize) ? Math.max(1, Math.min(128, Math.round(stored!.brushSize!))) : fallback.brushSize,
     brushShape: stored?.brushShape === 'square' || stored?.brushShape === 'round' || stored?.brushShape === 'line' ? stored.brushShape : fallback.brushShape,
+    brushDither: normalizeBrushDitherSettings(stored?.brushDither, fallback.brushDither),
     brushTexture: stored?.brushTexture === 'cracks' || stored?.brushTexture === 'wood' || stored?.brushTexture === 'grain' || stored?.brushTexture === 'solid' ? stored.brushTexture : fallback.brushTexture,
     brushTextureScale: Number.isFinite(stored?.brushTextureScale) ? Math.max(1, Math.min(16, Math.round(stored!.brushTextureScale!))) : fallback.brushTextureScale,
     brushPaintMode: stored?.brushPaintMode === 'paint' || stored?.brushPaintMode === 'pattern-source' || stored?.brushPaintMode === 'pattern-target' ? stored.brushPaintMode : fallback.brushPaintMode,
@@ -167,6 +171,7 @@ export function loadToolSettings(storage?: Storage): PersistedToolSettings {
     const stored = readStoredJson<Partial<PersistedToolSettings> | null>(TOOL_SETTINGS_KEY, null, storage)
     if (!stored) return {
       ...defaultToolSettings,
+      brushDither: { ...DEFAULT_BRUSH_DITHER_SETTINGS },
       proceduralBrushSettings: createDefaultProceduralBrushSettings(),
       brushDynamics: cloneBrushDynamicsSettings(DEFAULT_BRUSH_DYNAMICS_SETTINGS),
       brushPressure: { ...DEFAULT_BRUSH_PRESSURE_SETTINGS }
@@ -221,6 +226,7 @@ export function loadToolSettings(storage?: Storage): PersistedToolSettings {
   } catch {
     return {
       ...defaultToolSettings,
+      brushDither: { ...DEFAULT_BRUSH_DITHER_SETTINGS },
       proceduralBrushSettings: createDefaultProceduralBrushSettings(),
       brushDynamics: cloneBrushDynamicsSettings(DEFAULT_BRUSH_DYNAMICS_SETTINGS),
       brushPressure: { ...DEFAULT_BRUSH_PRESSURE_SETTINGS }

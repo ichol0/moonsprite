@@ -23,6 +23,7 @@ const session = () => ({
   collapsedGroupIds: [] as string[],
   animationPlaying: false,
   animationPlaybackRate: 1,
+  animationPlaybackMode: 'all',
   animationReturnToStart: false,
   activeLayerMaskId: null as string | null,
   layerMaskIsolatedView: false,

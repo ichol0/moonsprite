@@ -187,7 +187,7 @@ export function createDocument(name: string, width: number, height: number, colo
     ? { format: 'rgba' as const, width, height, offsetX: 0, offsetY: 0, pixels: layer.pixels }
     : { format: 'indexed' as const, width, height, offsetX: 0, offsetY: 0, pixels: layer.pixels }
   return {
-    schemaVersion: 15,
+    schemaVersion: 16,
     id: createId('doc'),
     name,
     width,
@@ -203,7 +203,7 @@ export function createDocument(name: string, width: number, height: number, colo
     nextColorId: 3,
     customBrushes: [],
     tilesets: [],
-    animation: { frames: [{ id: frameId, duration: 100 }], cels: [{ id: createId('cel'), layerId: layer.id, frameId, opacity: layer.opacity, surface: initialSurface }], groupMasks: [], activeFrameId: frameId, loop: true },
+    animation: { frames: [{ id: frameId, duration: 100 }], cels: [{ id: createId('cel'), layerId: layer.id, frameId, opacity: layer.opacity, surface: initialSurface }], groupMasks: [], loopSections: [], activeFrameId: frameId, loop: true },
     displaySettings: { ...DEFAULT_PROJECT_DISPLAY_SETTINGS, grid: { ...DEFAULT_PROJECT_DISPLAY_SETTINGS.grid } },
     statistics: { ...DEFAULT_PROJECT_STATISTICS },
     timelapse: { ...DEFAULT_TIMELAPSE_SETTINGS, enabled: timelapseEnabled, snapshots: [] },
@@ -1439,6 +1439,7 @@ export class DocumentCompositeCache {
   private styledLayerPlans = new WeakMap<SpriteDocument, { revision: number; frameId: string; layers: RasterLayer[] | null }>()
   private opacityGroupPlans = new WeakMap<SpriteDocument, { revision: number; frameId: string; items: CompositeStackItem[] | null }>()
   private styledLayers = new WeakMap<RasterLayer, {
+    storage: object
     colorMode: SpriteDocument['colorMode']
     contentRevision: number
     paletteKey: string
@@ -1539,9 +1540,11 @@ export class DocumentCompositeCache {
     const paletteKey = sourceLayer.format === 'indexed'
       ? document.palette.map((entry) => `${entry.id}:${entry.color.r}:${entry.color.g}:${entry.color.b}:${entry.color.a}`).join(',')
       : ''
+    const storage = rasterStorageIdentity(sourceLayer)
     const contentRevision = getLayerContentRevision(sourceLayer)
     const cached = this.styledLayers.get(sourceLayer)
     if (cached
+      && cached.storage === storage
       && cached.contentRevision === contentRevision
       && cached.colorMode === document.colorMode
       && cached.paletteKey === paletteKey
@@ -1606,7 +1609,7 @@ export class DocumentCompositeCache {
       pixels,
       layerStyles: undefined
     })
-    this.styledLayers.set(sourceLayer, { colorMode: document.colorMode, contentRevision, paletteKey, styles: cloneLayerStyles(styles)!, localX, localY, layer })
+    this.styledLayers.set(sourceLayer, { storage, colorMode: document.colorMode, contentRevision, paletteKey, styles: cloneLayerStyles(styles)!, localX, localY, layer })
     return layer
   }
 

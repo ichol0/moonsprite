@@ -127,6 +127,10 @@ describe('PreviewPanel animation controls', () => {
     fireEvent.click(screen.getByRole('menuitemradio', { name: '播放速度 2x' }))
     expect(session.animationPlaybackRate).toBe(1)
 
+    fireEvent.contextMenu(play)
+    fireEvent.click(screen.getByRole('menuitemradio', { name: '播放标签并重复' }))
+    expect(session.animationPlaybackMode).not.toBe('tag')
+
     fireEvent.click(play)
     expect(session.animationPlaying).toBe(false)
     expect(screen.getByRole('button', { name: '暂停动画' })).toBeInTheDocument()

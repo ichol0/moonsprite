@@ -2,7 +2,7 @@ import { useEffect } from 'react'
 import { createPortal } from 'react-dom'
 import { Pause, Play, RotateCcw } from 'lucide-react'
 import { ensureAnimationDocument } from '@/core/animation'
-import { useWorkspace, type DocumentSession } from '@/store/workspace'
+import { useWorkspace, type AnimationPlaybackMode, type DocumentSession } from '@/store/workspace'
 import { useI18n } from './I18nProvider'
 import { PixelUtilityIcon } from './PixelUtilityIcon'
 
@@ -11,11 +11,11 @@ const playbackRates = [0.25, 0.5, 1, 1.5, 2, 3]
 export interface AnimationPlaybackState {
   playing: boolean
   rate: number
-  loop: boolean
+  mode: AnimationPlaybackMode
   returnToStart: boolean
   setPlaying: (playing: boolean) => void
   setRate: (rate: number) => void
-  setLoop: (loop: boolean) => void
+  setMode: (mode: AnimationPlaybackMode) => void
   setReturnToStart: (enabled: boolean) => void
 }
 
@@ -26,11 +26,11 @@ export function AnimationPlaybackMenu({ session, x, y, onClose, playback: contro
   const playback: AnimationPlaybackState = controlledPlayback ?? {
     playing: session.animationPlaying,
     rate: session.animationPlaybackRate ?? 1,
-    loop: timeline.loop,
+    mode: session.animationPlaybackMode ?? (timeline.loop ? 'all' : 'once'),
     returnToStart: session.animationReturnToStart ?? false,
     setPlaying: (playing) => store.setAnimationPlaying(playing),
     setRate: (rate) => store.setAnimationPlaybackRate(rate),
-    setLoop: (loop) => store.setAnimationLoop(loop),
+    setMode: (mode) => store.setAnimationPlaybackMode(mode),
     setReturnToStart: (enabled) => store.setAnimationReturnToStart(enabled)
   }
 
@@ -53,13 +53,14 @@ export function AnimationPlaybackMenu({ session, x, y, onClose, playback: contro
     }
   }, [onClose])
 
-  return createPortal(<div className="context-menu animation-context-menu" role="menu" aria-label={t('timeline.playbackSettings')} style={{ left: Math.min(x, Math.max(8, window.innerWidth - 244)), top: Math.max(8, Math.min(y, window.innerHeight - 390)) }} onPointerDown={(event) => event.stopPropagation()} onContextMenu={(event) => event.preventDefault()}>
+  return createPortal(<div className="context-menu animation-context-menu" role="menu" aria-label={t('timeline.playbackSettings')} style={{ left: Math.min(x, Math.max(8, window.innerWidth - 244)), top: Math.max(8, Math.min(y, window.innerHeight - 420)) }} onPointerDown={(event) => event.stopPropagation()} onContextMenu={(event) => event.preventDefault()}>
     <button className="context-menu-item" type="button" role="menuitem" onClick={() => { playback.setPlaying(!playback.playing); onClose() }}>{playback.playing ? <Pause size={15} /> : <Play size={15} />}<span>{t(playback.playing ? 'timeline.pause' : 'timeline.play')}</span></button>
     <span className="context-menu-divider" />
     {playbackRates.map((rate) => <button key={rate} className="context-menu-item" type="button" role="menuitemradio" aria-checked={playback.rate === rate} onClick={() => { playback.setRate(rate); onClose() }}>{playback.rate === rate ? <PixelUtilityIcon kind="check" /> : <span />}<span>{t('timeline.playbackSpeedValue', { rate })}</span></button>)}
     <span className="context-menu-divider" />
-    <button className="context-menu-item" type="button" role="menuitemradio" aria-checked={!playback.loop} onClick={() => { playback.setLoop(false); onClose() }}>{!playback.loop ? <PixelUtilityIcon kind="check" /> : <span />}<span>{t('timeline.playOnce')}</span></button>
-    <button className="context-menu-item" type="button" role="menuitemradio" aria-checked={playback.loop} onClick={() => { playback.setLoop(true); onClose() }}>{playback.loop ? <PixelUtilityIcon kind="check" /> : <span />}<span>{t('timeline.loopAll')}</span></button>
+    <button className="context-menu-item" type="button" role="menuitemradio" aria-checked={playback.mode === 'once'} onClick={() => { playback.setMode('once'); onClose() }}>{playback.mode === 'once' ? <PixelUtilityIcon kind="check" /> : <span />}<span>{t('timeline.playOnce')}</span></button>
+    <button className="context-menu-item" type="button" role="menuitemradio" aria-checked={playback.mode === 'all'} onClick={() => { playback.setMode('all'); onClose() }}>{playback.mode === 'all' ? <PixelUtilityIcon kind="check" /> : <span />}<span>{t('timeline.loopAll')}</span></button>
+    <button className="context-menu-item" type="button" role="menuitemradio" aria-checked={playback.mode === 'tag'} onClick={() => { playback.setMode('tag'); onClose() }}>{playback.mode === 'tag' ? <PixelUtilityIcon kind="check" /> : <span />}<span>{t('timeline.loopCurrentTag')}</span></button>
     <span className="context-menu-divider" />
     <button className="context-menu-item" type="button" role="menuitemcheckbox" aria-checked={playback.returnToStart} onClick={() => { playback.setReturnToStart(!playback.returnToStart); onClose() }}>{playback.returnToStart ? <PixelUtilityIcon kind="check" /> : <RotateCcw size={15} />}<span>{t('timeline.returnToStart')}</span></button>
   </div>, document.body)

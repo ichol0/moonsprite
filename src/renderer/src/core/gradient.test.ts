@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { commitPixelEdit, revertPixelEdit } from './history'
 import { createDocument, getActiveLayer, readLayerColorAt, writeLayerColor } from './document'
 import { applyGradient, constrainGradientEndpoint, createGradientColorSampler, gradientAmountAt, gradientColorAt, gradientColorForAmount, gradientRegionSelection, GRADIENT_DITHER_PRESETS, interpolateRgbaColor } from './gradient'
+import { ditherStageCount } from './gradient-color'
 
 const red = { r: 255, g: 0, b: 0, a: 255 }
 const blue = { r: 0, g: 0, b: 255, a: 255 }
@@ -74,6 +75,20 @@ describe('gradient tool core', () => {
     const right = gradientColorAt(red, blue, 2, 1, { x: 0, y: 0 }, { x: 4, y: 0 }, 'diagonal-reverse')
     expect(left).toEqual(red)
     expect(right).toEqual(blue)
+  })
+
+  it('uses six stages for directional gradient dithering', () => {
+    const samples = [
+      { mode: 'diagonal' as const, low: { x: 2, y: 0 }, high: { x: 4, y: 0 } },
+      { mode: 'diagonal-reverse' as const, low: { x: 2, y: 0 }, high: { x: 4, y: 0 } },
+      { mode: 'horizontal' as const, low: { x: 0, y: 2 }, high: { x: 0, y: 4 } },
+      { mode: 'vertical' as const, low: { x: 2, y: 0 }, high: { x: 4, y: 0 } }
+    ]
+    for (const sample of samples) {
+      expect(ditherStageCount(sample.mode)).toBe(6)
+      expect(gradientColorForAmount(red, blue, 0.5, sample.low.x, sample.low.y, sample.mode)).toEqual(blue)
+      expect(gradientColorForAmount(red, blue, 0.5, sample.high.x, sample.high.y, sample.mode)).toEqual(red)
+    }
   })
 
   it('clips to the active selection and remains one undo step', () => {

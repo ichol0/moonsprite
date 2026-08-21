@@ -106,6 +106,18 @@ describe('PSD export', () => {
     expect(outer?.children?.[1].children?.map((layer) => layer.name)).toEqual(['Nested bottom', 'Nested top'])
   })
 
+  it('omits configured effects while layer styles are globally disabled', () => {
+    const document = createDocument('Disabled PSD styles', 2, 2, 'rgba')
+    const layer = getActiveLayer(document)
+    const styles = createDefaultLayerStyles()
+    styles.enabled = false
+    styles.stroke.enabled = true
+    layer.layerStyles = styles
+
+    const parsed = readPsd(encodePsd(document), { skipLayerImageData: true, skipCompositeImageData: true, skipThumbnail: true })
+    expect(parsed.children?.[0].effects).toBeUndefined()
+  })
+
   it('stores a nearest-neighbor scaled composite and layer pixels', () => {
     const document = createDocument('Scaled PSD', 1, 1, 'rgba')
     writeLayerColor(document, getActiveLayer(document), 0, { r: 8, g: 24, b: 40, a: 255 })

@@ -2,7 +2,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { PreferencesDialog } from './PreferencesDialog'
 import { useWorkspace } from '@/store/workspace'
-import { QUICK_COMMAND_BAR_ENABLED_PREFERENCE_KEY, QUICK_COMMAND_BAR_TRANSLUCENT_PREFERENCE_KEY, QUICK_COMMAND_PREFERENCES_KEY, THEME_PREFERENCE_KEY } from '@/core/file-preferences'
+import { QUICK_COMMAND_BAR_ENABLED_PREFERENCE_KEY, QUICK_COMMAND_BAR_TRANSLUCENT_PREFERENCE_KEY, QUICK_COMMAND_PREFERENCES_KEY, SELECTION_PREVIEW_COLOR_MODE_PREFERENCE_KEY, SELECTION_SIZE_VISIBLE_PREFERENCE_KEY, THEME_PREFERENCE_KEY } from '@/core/file-preferences'
 import type { MoonSpriteApi } from '@shared/types'
 
 afterEach(() => {
@@ -63,6 +63,24 @@ describe('PreferencesDialog', () => {
     fireEvent.click(screen.getByRole('option', { name: '完整预览并显示边缘' }))
     expect(screen.getByText('绘制时显示笔刷边缘')).toBeInTheDocument()
     expect(screen.getByText('框选时显示十字指针')).toBeInTheDocument()
+  })
+
+  it('configures selection preview color and dimension visibility', () => {
+    render(<PreferencesDialog initialSection="tools" onClose={vi.fn()} onPresetChange={vi.fn()} />)
+
+    expect(screen.getByRole('button', { name: '框选预览颜色' })).toHaveTextContent('默认（自动对比）')
+    expect(screen.queryByRole('button', { name: /自定义框选颜色/ })).not.toBeInTheDocument()
+    const dimensionsToggle = screen.getByText('显示框选尺寸').closest('label')?.querySelector('input')
+    expect(dimensionsToggle).toBeChecked()
+
+    fireEvent.click(screen.getByRole('button', { name: '框选预览颜色' }))
+    fireEvent.click(screen.getByRole('option', { name: '自定义' }))
+    expect(screen.getByRole('button', { name: /自定义框选颜色/ })).toBeInTheDocument()
+    fireEvent.click(dimensionsToggle!)
+    fireEvent.click(screen.getByRole('button', { name: '应用' }))
+
+    expect(localStorage.getItem(SELECTION_PREVIEW_COLOR_MODE_PREFERENCE_KEY)).toBe('custom')
+    expect(localStorage.getItem(SELECTION_SIZE_VISIBLE_PREFERENCE_KEY)).toBe('false')
   })
 
   it('allows layer display color presets to be added and restored', () => {

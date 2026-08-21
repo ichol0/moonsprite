@@ -11,6 +11,7 @@ import type { BlendMode, LayerGroup, LayerStyles, RasterLayer, RgbaColor, Sprite
 import { cloneDocumentForAnimationFrame } from './animation'
 import { animationMaskAt, compositeDocument, getPaletteEntry, layerContentBounds, readLayerPacked } from './document'
 import { buildLayerPanelTree } from './layer-panel-layout'
+import { hasEnabledLayerStyles } from './layer-styles'
 import { translateCurrent as tr } from './localization'
 import { unpackColor } from './raster'
 
@@ -29,7 +30,7 @@ function shadowAngle(offsetX: number, offsetY: number): number {
 }
 
 function psdLayerEffects(styles: LayerStyles | undefined, scale: number): LayerEffectsInfo | undefined {
-  if (!styles) return undefined
+  if (!styles || !hasEnabledLayerStyles(styles)) return undefined
   const effects: LayerEffectsInfo = { scale: 1 }
   let enabled = false
 

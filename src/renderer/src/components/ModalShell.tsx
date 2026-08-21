@@ -24,8 +24,10 @@ interface ModalShellProps extends Omit<HTMLAttributes<HTMLElement>, 'onSubmit'> 
 
 function initialModalPosition(width: number, height: number, placement: ModalPlacement, fitContent: boolean) {
   const margin = 12
+  const viewportTop = document.querySelector<HTMLElement>('.app-window-titlebar')?.getBoundingClientRect().bottom ?? 0
   const safeWidth = Math.min(width, window.innerWidth - margin * 2)
-  const safeHeight = Math.min(height, window.innerHeight - margin * 2)
+  const availableHeight = Math.max(1, window.innerHeight - viewportTop)
+  const safeHeight = Math.min(height, Math.max(1, availableHeight - margin * 2))
   const stage = placement === 'right' ? document.querySelector<HTMLElement>('.stage-wrap')?.getBoundingClientRect() : null
   const targetCenterX = stage && stage.width > 0 ? stage.left + stage.width * 0.75 : window.innerWidth * 0.75
   const x = placement === 'right'
@@ -33,7 +35,7 @@ function initialModalPosition(width: number, height: number, placement: ModalPla
     : Math.max(margin, Math.round((window.innerWidth - safeWidth) / 2))
   return {
     x,
-    y: Math.max(margin, Math.round((window.innerHeight - safeHeight) / 2)),
+    y: viewportTop + Math.max(margin, Math.round((availableHeight - safeHeight) / 2)),
     width: safeWidth,
     height: fitContent ? undefined : safeHeight
   }
@@ -69,6 +71,11 @@ export function ModalShell({
     : classNames.has('component-library') ? Math.max(minHeight, 500)
       : classNames.has('outline-modal') ? Math.max(minHeight, 400)
         : minHeight
+  const viewportTop = document.querySelector<HTMLElement>('.app-window-titlebar')?.getBoundingClientRect().bottom ?? 0
+  const viewportMaxWidth = Math.min(maxWidth, Math.max(1, window.innerWidth - 24))
+  const viewportMaxHeight = Math.min(maxHeight, Math.max(1, window.innerHeight - viewportTop - 24))
+  const viewportMinWidth = Math.min(layoutMinWidth, Math.max(1, window.innerWidth - 12))
+  const viewportMinHeight = Math.min(layoutMinHeight, viewportMaxHeight)
   const initialPosition = useMemo(
     () => initialModalPosition(defaultWidth, defaultHeight, placement, effectiveFitContent),
     [defaultHeight, defaultWidth, effectiveFitContent, placement]
@@ -91,7 +98,15 @@ export function ModalShell({
     ...props,
     ref: floating.ref,
     className: `modal resizable-modal ${placement === 'right' ? 'right-modal' : ''} ${className}`.trim(),
-    style: { ...floating.style, minWidth: layoutMinWidth, minHeight: layoutMinHeight, maxWidth: `min(${maxWidth}px, calc(100vw - 12px))`, maxHeight: `min(${maxHeight}px, calc(100vh - 12px))`, overflow: 'hidden' },
+    style: {
+      ...floating.style,
+      top: typeof floating.style?.top === 'number' ? Math.max(viewportTop + 6, floating.style.top) : floating.style?.top,
+      minWidth: viewportMinWidth,
+      minHeight: viewportMinHeight,
+      maxWidth: viewportMaxWidth,
+      maxHeight: viewportMaxHeight,
+      overflow: 'hidden'
+    },
     onPointerDown: (event: React.PointerEvent<HTMLElement>) => {
       if (!event.currentTarget.contains(event.target as Node)) return
       floating.bringToFront()

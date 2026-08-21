@@ -108,6 +108,34 @@ describe('layer style workspace history', () => {
     expect(group.layerStyles?.stroke.size).toBe(3)
   })
 
+  it('toggles configured styles for multiple owners without losing effect settings', () => {
+    const document = createDocument('toggle layer styles', 3, 1, 'rgba')
+    const source = getActiveLayer(document)
+    const target = createLayer('Target', 3, 1, 'rgba')
+    const sourceStyles = createDefaultLayerStyles()
+    sourceStyles.stroke.enabled = true
+    sourceStyles.stroke.size = 3
+    const targetStyles = createDefaultLayerStyles()
+    targetStyles.shadow.enabled = true
+    targetStyles.shadow.offsetX = 4
+    source.layerStyles = sourceStyles
+    target.layerStyles = targetStyles
+    document.layers.push(target)
+    useWorkspace.getState().addSession(document)
+    const targets = [{ kind: 'layer' as const, id: source.id }, { kind: 'layer' as const, id: target.id }]
+
+    expect(useWorkspace.getState().setLayerStylesEnabled(targets, false)).toBe(true)
+    expect(source.layerStyles).toMatchObject({ enabled: false, stroke: { enabled: true, size: 3 } })
+    expect(target.layerStyles).toMatchObject({ enabled: false, shadow: { enabled: true, offsetX: 4 } })
+
+    useWorkspace.getState().undo()
+    expect(source.layerStyles).toMatchObject({ enabled: true, stroke: { enabled: true, size: 3 } })
+    expect(target.layerStyles).toMatchObject({ enabled: true, shadow: { enabled: true, offsetX: 4 } })
+    useWorkspace.getState().redo()
+    expect(source.layerStyles?.enabled).toBe(false)
+    expect(target.layerStyles?.enabled).toBe(false)
+  })
+
   it('rasterizes enabled styles across the layer surface and keeps the visible result undoable', () => {
     const document = createDocument('rasterize styles', 5, 5, 'rgba')
     const layer = getActiveLayer(document)

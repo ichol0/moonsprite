@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { drawSelectionOutline } from './canvas-selection-renderer'
+import { drawSelectionOutline, drawSelectionSizeLabel } from './canvas-selection-renderer'
 
 class MockPath2D {
   moveTo = vi.fn()
@@ -147,5 +147,69 @@ describe('drawSelectionOutline', () => {
       ))).toBe(true)
       expect(new Set(strokes.slice(1).map((stroke) => stroke.lineDashOffset)).size).toBeGreaterThan(1)
     }
+  })
+})
+
+describe('drawSelectionSizeLabel', () => {
+  it('places start, end, and dimensions in two rows to the left of the selection', () => {
+    const context = {
+      save: vi.fn(), restore: vi.fn(), measureText: vi.fn((text: string) => ({ width: text.startsWith('起点') ? 126 : 70 })),
+      fillRect: vi.fn(), strokeRect: vi.fn(), fillText: vi.fn(),
+      font: '', fillStyle: '', strokeStyle: '', lineWidth: 1, textAlign: 'start', textBaseline: 'alphabetic'
+    }
+
+    const layout = drawSelectionSizeLabel({
+      context: context as never,
+      points: [{ x: 170, y: 90 }, { x: 250, y: 90 }, { x: 250, y: 140 }, { x: 170, y: 140 }],
+      selectionX: 2,
+      selectionY: 3,
+      selectionWidth: 32,
+      selectionHeight: 24,
+      viewportWidth: 400,
+      viewportHeight: 200,
+      startLabel: '起点',
+      endLabel: '终点',
+      sizeLabel: '尺寸',
+      background: 'rgb(64 64 64 / 0.78)',
+      foreground: '#ffffff'
+    })
+
+    expect(layout).toEqual({
+      lines: ['起点 2, 3    终点 33, 26', '尺寸 32 × 24'],
+      left: 170,
+      top: 48,
+      width: 140,
+      height: 36
+    })
+    expect(context.fillRect).toHaveBeenCalledWith(170, 48, 140, 36)
+    expect(context.fillText).toHaveBeenNthCalledWith(1, '起点 2, 3    终点 33, 26', 177, 59.5)
+    expect(context.fillText).toHaveBeenNthCalledWith(2, '尺寸 32 × 24', 177, 73.5)
+    expect(context.strokeRect).not.toHaveBeenCalled()
+  })
+
+  it('keeps the information on the left and clamps it inside the viewport', () => {
+    const context = {
+      save: vi.fn(), restore: vi.fn(), measureText: vi.fn((text: string) => ({ width: text.startsWith('Start') ? 100 : 60 })),
+      fillRect: vi.fn(), strokeRect: vi.fn(), fillText: vi.fn(),
+      font: '', fillStyle: '', strokeStyle: '', lineWidth: 1, textAlign: 'start', textBaseline: 'alphabetic'
+    }
+
+    const layout = drawSelectionSizeLabel({
+      context: context as never,
+      points: [{ x: 170, y: 6 }, { x: 210, y: 6 }, { x: 210, y: 28 }, { x: 170, y: 28 }],
+      selectionX: 0,
+      selectionY: 0,
+      selectionWidth: 8,
+      selectionHeight: 4,
+      viewportWidth: 180,
+      viewportHeight: 100,
+      startLabel: 'Start',
+      endLabel: 'End',
+      sizeLabel: 'Size',
+      background: 'rgb(64 64 64 / 0.78)',
+      foreground: '#ffffff'
+    })
+
+    expect(layout).toMatchObject({ left: 62, top: 4, width: 114, height: 36 })
   })
 })

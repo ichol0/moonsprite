@@ -6,6 +6,7 @@ import { cloneLayerStyles } from './layer-styles'
 import { tileBackgroundSurfaceToCanvas } from './background-patterns'
 import { cloneTilemapCelData, cloneTileset, normalizeTilemapCelData, renderTilemapSurface, resizeTilemapCelDataToCanvas } from './tilemap'
 import { cloneFreeTileCelData, createFreeTileCelData, freeTileSourceRefs, freeTileSourceForInstance, normalizeFreeTileCelData, renderFreeTileSurface } from './free-tile'
+import { normalizeAnimationLoopSections, reconcileAnimationLoopSectionsAfterFrameDeletion, reconcileAnimationLoopSectionsAfterFrameInsertion } from './animation-loop-sections'
 
 export const DEFAULT_FRAME_DURATION = 100
 export const MAX_ANIMATION_FRAME_DURATION = 60_000
@@ -14,6 +15,7 @@ export const createDefaultAnimationTimeline = (): AnimationTimeline => ({
   frames: [{ id: 'frame-1', duration: DEFAULT_FRAME_DURATION }],
   cels: [],
   groupMasks: [],
+  loopSections: [],
   activeFrameId: 'frame-1',
   loop: true
 })
@@ -195,6 +197,7 @@ export const normalizeAnimationTimeline = (value: unknown): AnimationTimeline =>
     frames,
     cels: normalizeCels(candidate.cels, frameIds),
     groupMasks: normalizeGroupMasks(candidate.groupMasks, frameIds),
+    loopSections: normalizeAnimationLoopSections(candidate.loopSections, frames),
     activeFrameId: typeof candidate.activeFrameId === 'string' && frameIds.has(candidate.activeFrameId) ? candidate.activeFrameId : frames[0].id,
     loop: candidate.loop !== false
   }
@@ -712,6 +715,7 @@ const normalizeAnimationMaskLinks = (timeline: AnimationTimeline): void => {
 export const ensureAnimationDocument = (document: SpriteDocument): AnimationTimeline => {
   const timeline = document.animation ?? createDefaultAnimationTimeline()
   document.animation = timeline
+  timeline.loopSections ??= []
   const frameIds = new Set(timeline.frames.map((frame) => frame.id))
   const layers = new Map(document.layers.map((layer) => [layer.id, layer]))
   const groups = new Set(document.groups.map((group) => group.id))
@@ -972,9 +976,12 @@ export const activateAnimationFrame = (document: SpriteDocument, frameId: string
 export const addBlankAnimationFrame = (document: SpriteDocument): string => {
   const timeline = ensureAnimationDocument(document)
   syncFrameSurfaces(document, timeline)
-  const activeIndex = Math.max(0, timeline.frames.findIndex((frame) => frame.id === timeline.activeFrameId))
+  const sourceFrameId = timeline.activeFrameId
+  const previousFrames = [...timeline.frames]
+  const activeIndex = Math.max(0, timeline.frames.findIndex((frame) => frame.id === sourceFrameId))
   const id = uniqueAnimationId(timeline, 'frame')
   timeline.frames.splice(activeIndex + 1, 0, { id, duration: DEFAULT_FRAME_DURATION })
+  timeline.loopSections = reconcileAnimationLoopSectionsAfterFrameInsertion(timeline.loopSections, previousFrames, sourceFrameId, id)
   const nextCelId = createAnimationIdAllocator(timeline, 'cel')
   const lookup = createAnimationCelLookup(timeline)
   for (const layer of document.layers) {
@@ -1005,9 +1012,11 @@ export const duplicateAnimationFrame = (document: SpriteDocument): string => {
   const timeline = ensureAnimationDocument(document)
   syncFrameSurfaces(document, timeline)
   const sourceId = timeline.activeFrameId
+  const previousFrames = [...timeline.frames]
   const sourceIndex = Math.max(0, timeline.frames.findIndex((frame) => frame.id === sourceId))
   const id = uniqueAnimationId(timeline, 'frame')
   timeline.frames.splice(sourceIndex + 1, 0, { id, duration: timeline.frames[sourceIndex]?.duration ?? DEFAULT_FRAME_DURATION })
+  timeline.loopSections = reconcileAnimationLoopSectionsAfterFrameInsertion(timeline.loopSections, previousFrames, sourceId, id)
   const sourceCels = celsByLayerForFrame(timeline, sourceId)
   const nextCelId = createAnimationIdAllocator(timeline, 'cel')
   for (const layer of document.layers) {
@@ -1032,9 +1041,11 @@ export const deleteAnimationFrame = (document: SpriteDocument, frameId = documen
   const index = timeline.frames.findIndex((frame) => frame.id === frameId)
   if (index < 0) return false
   syncFrameSurfaces(document, timeline)
+  const previousFrames = [...timeline.frames]
   timeline.frames.splice(index, 1)
   timeline.cels = timeline.cels.filter((cel) => cel.frameId !== frameId)
   timeline.groupMasks = (timeline.groupMasks ?? []).filter((entry) => entry.frameId !== frameId)
+  timeline.loopSections = reconcileAnimationLoopSectionsAfterFrameDeletion(timeline.loopSections, previousFrames, timeline.frames, frameId)
   if (timeline.activeFrameId === frameId) {
     timeline.activeFrameId = timeline.frames[Math.min(index, timeline.frames.length - 1)].id
     applyFrameSurfaces(document, timeline)

@@ -1,4 +1,6 @@
-# MoonSprite 文件格式 v15
+# MoonSprite 文件格式 v16
+
+v16 在动画时间轴中新增 `loopSections`。每个循环节保存稳定 `id`、名称、`startFrameId`、`endFrameId`、`direction`（`forward` 或 `reverse`）以及 `repeatCount`；正整数表示总播放次数，`null` 表示无限重复。端点必须引用现有帧，读取时按当前帧顺序规范化起止范围，重复 ID 只保留首项，无效端点或非法条目忽略，并限制名称和重复次数。v1-v15 工程迁移为空循环节列表，不采纳旧版本中偶然出现的同名未知字段。v16 同时允许 `layerStyles` 保存顶层 `enabled` 开关；缺少该字段的 v11-v15 样式按启用迁移。
 
 v15 将自由瓦片源从单一多瓦片 Tileset 改为图层级 `freeTileSources`。每个源保存稳定 `id`、名称、可选描述与显示颜色、显隐、锁定、不透明度、混合模式、整数像素偏移和独占的 `tilesetId`；对应 Tileset 必须只含一个瓦片，其宽高就是该源的动态尺寸。自由瓦片源仍不得与其他自由瓦片源或 Tilemap 共享 Tileset，但多个 Tilemap 图层可以共同引用同一个 `tilemapTilesetId`。每个非链接源 cel 的 `freeTiles.instances` 按从后到前保存稳定实例 ID、有效 `sourceId`、cel surface 本地整数像素锚点，以及可选 `visible`、`locked`、`flipHorizontal`、`flipVertical` 布尔值、`rotation` 整 `90°` 四分之一转数、实例不透明度和混合模式，不再保存 v14 `tileId` 引用。省略变换字段表示不旋转、不镜像；读取时拒绝非 `0..3` 的旋转值、非布尔镜像值，并继续验证源 ID、实例 ID、自由瓦片所有权与坐标，再按源属性、源像素和实例列表重新生成 cel surface。v14 工程的 `freeTileTilesetId` 会按原 Tileset 的稳定瓦片顺序拆成多个独立源，为每个源创建单瓦片 Tileset，再把旧实例 `tileId` 映射到新 `sourceId`。
 
@@ -8,7 +10,7 @@ v13 新增项目级 `tilesets` 与可编辑 Tilemap cel。Tileset 使用稳定 I
 
 v12 为普通栅格图层新增可选 `background` 元数据。`mode: "preset"` 同时保存纯色或内置图案 ID，`mode: "canvas"` 表示由普通图层转换；实际可编辑像素仍保存在图层与各帧 cel 的原栅格资源中。背景图层扩大画布时以扩大前可见画布为单位一次性平铺全部帧，普通图层吸色时排除背景图层，选择背景图层后恢复完整合成吸色。v1-v11 工程迁移时不创建背景标记，旧版本中同名未知字段不采纳。
 
-v11 为普通图层和图层组新增可选 `layerStyles`，保存描边、阴影、内发光、颜色叠加和渐变叠加的启用状态与参数。图层样式跨帧共享，图层组样式作用于每帧组内合成结果，两者都不写入 cel 像素；v1-v10 工程迁移时保持无图层样式，v10 及更早版本中即使存在同名未知字段也不采纳。
+v11 为普通图层和图层组新增可选 `layerStyles`，保存描边、阴影、内发光、颜色叠加和渐变叠加各自的启用状态与参数。图层样式跨帧共享，图层组样式作用于每帧组内合成结果，两者都不写入 cel 像素；v1-v10 工程迁移时保持无图层样式，v10 及更早版本中即使存在同名未知字段也不采纳。当前整体开关的兼容规则见 v16。
 
 v10 将文档 `colorMode` 扩展为 `rgba`、`indexed`、`grayscale`。灰度文档的图层和 cel 继续使用 `.rgba` 或 `.rgba.tiles` 保存四通道像素，RGB 三通道必须保持相等，透明度独立保存；v1-v9 文件继续只包含 RGBA 或索引模式并按原语义迁移。索引文档的栅格像素只能引用 `paletteOrder` 中当前可见的颜色 ID，打开旧工程或替换、移除色板颜色时，隐藏 ID 自动映射到当前可见色板中最接近的 RGBA 颜色。
 
@@ -32,19 +34,19 @@ v6 新增项目级 `slices` 数组；每个切片保存稳定 ID、名称和画�
 - `timelapse/<id>.png`：开启缩时录制后，在已提交编辑边界生成的压缩合成快照。
 - `preview.png`：可见图层合成后的预览图；恢复快照等低延迟写入可以省略，首页会在后台生成有界缩略图并单独缓存，不改写原工程。
 
-v5 动画元数据至少包含一帧、当前帧、帧持续时间、循环状态、cel 与图层/帧的稳定关联，以及可选的逐帧图层组蒙版。`layers/` 保留活动帧兼容位图和图层属性，动画 cel 像素独立写入 `cels/`；解码后活动帧图层表面引用对应 cel，画布工具不直接解析时间轴。早期 v2 文件没有 `cels/` 时，使用 `layers/` 位图补成活动帧 cel。
+v5 动画元数据至少包含一帧、当前帧、帧持续时间、循环状态、cel 与图层/帧的稳定关联，以及可选的逐帧图层组蒙版；v16 额外保存上述命名循环节。`layers/` 保留活动帧兼容位图和图层属性，动画 cel 像素独立写入 `cels/`；解码后活动帧图层表面引用对应 cel，画布工具不直接解析时间轴。早期 v2 文件没有 `cels/` 时，使用 `layers/` 位图补成活动帧 cel。
 
 图层和 cel 清单项通过可选 `dataEncoding` 声明资源编码。缺失或为 `raw` 时按原始连续像素读取；`sparse-tiles-v1` 时按稀疏分块读取。写入器逐资源比较原始字节数与分块容器字节数，仅在分块更小时使用 `.tiles`，因此小型或密集表面仍保持原始表示。v5 稀疏资源打开后恢复为覆盖已存分块包围范围的连续 `Uint8ClampedArray` 或 `Uint32Array`，并通过图层偏移和稳定存储原点保持画布坐标；画笔、合成、撤销和 Store 不直接感知文件分块。若非空块在图层内相距很远，连续包围范围仍可能较大，这不是运行时永久分块模型。
 
 `sparse-tiles-v1` 使用 24 字节小端序头：magic `0x3154534d`、块尺寸 `u16`（固定 64）、格式 `u8`（RGBA 为 1，索引色为 2）、保留字节、宽 `u32`、高 `u32`、块数 `u32`、payload 字节数 `u32`。随后每块使用 16 字节目录项：`x u32`、`y u32`、宽 `u16`、高 `u16`、数据偏移 `u32`；payload 按目录顺序保存每块连续原始像素。未列出的块按全零恢复。读取器拒绝 magic、格式、尺寸、块边界、目录顺序、重复槽位、偏移或 payload 长度不一致的资源。
 
-图层和图层组元数据可选保存 `displayColor`、`description`、`clippingMask: true` 与完整 `layerStyles`：`stroke` 保存 `enabled`、RGBA `color`、`size`、`position`（`inside`、`outside` 或 `both`）、`kernel`（`round`、`square`、`horizontal` 或 `vertical`）、八方向布尔值 `directions`、`smartHue` 和 `smartHueDarkness`；`shadow` 保存 `enabled`、RGBA `color`、`offsetX`、`offsetY`、`blur`、`smartShadow` 和 `smartShadowDarkness`；`innerGlow` 保存 `enabled`、RGBA `color` 和 `size`；`colorOverlay` 保存 `enabled` 和 RGBA `color`；`gradientOverlay` 保存 `enabled`、RGBA `from`、RGBA `to`、`angle` 和 `dither`。描边尺寸限制为 `1-64 px`，智能色相与智能阴影的深色系数限制为 `0-100%`，内发光尺寸限制为 `1-32 px`，阴影偏移限制为 `-64-64 px`，阴影模糊限制为 `0-32 px`，角度规范化为 `0-359`；渐变抖动值与渐变工具共用 `none`、Bayer 和方向抖动枚举。非法或缺失参数使用默认值，旧数据缺少智能色相或智能阴影字段时保持关闭并使用 `45%` 深色系数，缺少渐变抖动时使用 `none`，缺少描边位置时使用 `outside`，缺少形状或方向时使用圆形四方向描边。`displayColor` 是 RGBA 列表标记，不参与像素合成；`description` 是悬停说明；`clippingMask` 表示显示内容受同级紧邻下方对象的最终透明度限制。每个动画 cel 可选保存独立 `mask`，图层组则在动画元数据中按 `groupId + frameId` 保存独立蒙版；两者都包含蒙版 ID、本地尺寸、偏移和 `.rgba` 数据文件，并可通过 `linkedMaskId` 独立引用另一蒙版。透明像素表示未绘制且不改变显示，非透明像素必须为灰度且完全不透明，`255` 完全显示、`0` 完全隐藏，中间值按比例缩放所有者的最终透明度。蒙版引用缺失、自引用或形成循环时工程无效。图层组还可选保存 `cumulativeBlend: true`，表示先将组内内容与外部背景合成，再应用一次组混合模式。
+图层和图层组元数据可选保存 `displayColor`、`description`、`clippingMask: true` 与完整 `layerStyles`：顶层 `enabled` 控制整组样式是否参与合成，缺失时默认为 `true`；`stroke` 保存 `enabled`、RGBA `color`、`size`、`position`（`inside`、`outside` 或 `both`）、`kernel`（`round`、`square`、`horizontal` 或 `vertical`）、八方向布尔值 `directions`、`smartHue` 和 `smartHueDarkness`；`shadow` 保存 `enabled`、RGBA `color`、`offsetX`、`offsetY`、`blur`、`smartShadow` 和 `smartShadowDarkness`；`innerGlow` 保存 `enabled`、RGBA `color` 和 `size`；`colorOverlay` 保存 `enabled` 和 RGBA `color`；`gradientOverlay` 保存 `enabled`、RGBA `from`、RGBA `to`、`angle` 和 `dither`。描边尺寸限制为 `1-64 px`，智能色相与智能阴影的深色系数限制为 `0-100%`，内发光尺寸限制为 `1-32 px`，阴影偏移限制为 `-64-64 px`，阴影模糊限制为 `0-32 px`，角度规范化为 `0-359`；渐变抖动值与渐变工具共用 `none`、Bayer 和方向抖动枚举。非法或缺失参数使用默认值，旧数据缺少智能色相或智能阴影字段时保持关闭并使用 `45%` 深色系数，缺少渐变抖动时使用 `none`，缺少描边位置时使用 `outside`，缺少形状或方向时使用圆形四方向描边。`displayColor` 是 RGBA 列表标记，不参与像素合成；`description` 是悬停说明；`clippingMask` 表示显示内容受同级紧邻下方对象的最终透明度限制。每个动画 cel 可选保存独立 `mask`，图层组则在动画元数据中按 `groupId + frameId` 保存独立蒙版；两者都包含蒙版 ID、本地尺寸、偏移和 `.rgba` 数据文件，并可通过 `linkedMaskId` 独立引用另一蒙版。透明像素表示未绘制且不改变显示，非透明像素必须为灰度且完全不透明，`255` 完全显示、`0` 完全隐藏，中间值按比例缩放所有者的最终透明度。蒙版引用缺失、自引用或形成循环时工程无效。图层组还可选保存 `cumulativeBlend: true`，表示先将组内内容与外部背景合成，再应用一次组混合模式。
 
 项目显示设置只保存像素网格、自定义网格开关及自定义网格原点和尺寸；缩放、平移、旋转、镜像等临时视图导航不写入工程。工程可选保存图层栏上下文，包括活动图层、图层与组选择、选择锚点和组展开状态；缺少字段或引用已删除对象时自动回退到有效活动图层。项目统计保存笔画数、已提交编辑数和有效绘画时长。缩时设置保存开关、画质、导出帧率、缩时倍速和快照清单，快照像素独立存放在 `timelapse/`，旧工程缺少这些字段时使用关闭录制、空统计和默认网格。
 
 `timelapse/` PNG 已经自行压缩，当前写入使用 ZIP Store。打开工程时只扫描一次 ZIP 中央目录，再按清单路径直接读取 Layer、Cel、蒙版和其他必需资源；Store 快照以只读归档视图接入文档，不再逐张二次解压或复制，旧工程中的 Deflate 条目仍按原方式兼容解压。任何编辑产生的新快照使用独立字节数组，保存时两类快照保持相同文件语义。
 
-v1 工程打开时先补成单帧时间轴；v2 工程保留原图层、组和动画数据并按“无蒙版”迁移；v3 工程保留原有 cel 蒙版并按“无图层组蒙版”迁移；v4 资源显式按 `raw` 读取。v1-v4 都迁移到内存 v5，首次保存时按当前稀疏度重写。v1-v12 缺少 Tilemap 数据时迁移为空 Tileset 集合，v1-v13 缺少自由瓦片数据时保持普通图层语义，v14 自由瓦片按上述规则拆分为 v15 独立源。cel、图层组、蒙版、Tileset、Tilemap 或自由瓦片引用无效，像素文件缺失、编码未知、格式与字节长度不匹配时必须拒绝打开；Tilemap 格子引用不存在的 Tileset 或瓦片 ID、自由瓦片源引用不存在或重复的 Tileset、实例引用无效 `sourceId`、重复实例 ID、混入旧 `tileId` 或所有权冲突时同样视为工程损坏。`app` 不是 `MoonSprite`、尺寸非法、图层数据缺失或字节长度异常时必须拒绝，未知未来版本不得静默降级读取。
+v1 工程打开时先补成单帧时间轴；v2 工程保留原图层、组和动画数据并按“无蒙版”迁移；v3 工程保留原有 cel 蒙版并按“无图层组蒙版”迁移；v4 资源显式按 `raw` 读取。v1-v4 都迁移到内存 v5，首次保存时按当前稀疏度重写。v1-v12 缺少 Tilemap 数据时迁移为空 Tileset 集合，v1-v13 缺少自由瓦片数据时保持普通图层语义，v14 自由瓦片按上述规则拆分为 v15 独立源，v1-v15 动画时间轴补为空循环节列表。cel、图层组、蒙版、Tileset、Tilemap 或自由瓦片引用无效，像素文件缺失、编码未知、格式与字节长度不匹配时必须拒绝打开；Tilemap 格子引用不存在的 Tileset 或瓦片 ID、自由瓦片源引用不存在或重复的 Tileset、实例引用无效 `sourceId`、重复实例 ID、混入旧 `tileId` 或所有权冲突时同样视为工程损坏。`app` 不是 `MoonSprite`、尺寸非法、图层数据缺失或字节长度异常时必须拒绝，未知未来版本不得静默降级读取。
 
 索引颜色文档保留颜色 ID `0` 表示透明；其他颜色 ID 在调色板重排后保持稳定。绘制、粘贴、文本栅格化和 RGBA 转换都不得自动扩张调色板，而是精确匹配或映射到 `paletteOrder` 中最接近的可见颜色。导出 PNG 时，只有合成结果不超过 256 个唯一颜色才保留索引输出，否则导出等效 RGBA 图像。
 

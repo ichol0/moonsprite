@@ -25,6 +25,8 @@ interface PanelSessionState {
   layersPanelRevision?: number
   animationPlaying?: boolean
   animationPlaybackRate?: number
+  animationPlaybackMode?: string
+  animationPlaybackLoopSectionId?: string | null
   animationReturnToStart?: boolean
   selectedAnimationFrameIds?: string[]
   selectedAnimationCellKeys?: string[]
@@ -67,10 +69,13 @@ export const layersPanelRenderKey = (session: PanelSessionState): string => [
   session.document.id,
   session.animationPlaying ? 'playing' : session.document.animation?.activeFrameId ?? '',
   session.document.animation?.frames.map((frame) => `${frame.id}:${frame.duration}`).join(',') ?? '',
+  session.document.animation?.loopSections?.map((section) => `${section.id}:${section.name}:${section.startFrameId}:${section.endFrameId}:${section.direction}:${section.repeatCount ?? 'infinite'}`).join(',') ?? '',
   session.document.animation?.cels.filter((cel) => cel.mask).map((cel) => `${cel.layerId}:${cel.frameId}:${cel.mask!.id}:${cel.mask!.visible ? 1 : 0}`).join(',') ?? '',
   session.document.animation?.groupMasks?.map((entry) => `${entry.groupId}:${entry.frameId}:${entry.mask.id}:${entry.mask.visible ? 1 : 0}`).join(',') ?? '',
   session.animationPlaying ? 1 : 0,
   session.animationPlaybackRate ?? 1,
+  session.animationPlaybackMode ?? '',
+  session.animationPlaybackLoopSectionId ?? '',
   session.animationReturnToStart ? 1 : 0,
   session.selectedAnimationFrameIds?.join(',') ?? '',
   session.selectedAnimationCellKeys?.join(',') ?? '',

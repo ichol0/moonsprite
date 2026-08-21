@@ -1289,7 +1289,8 @@ export default function App() {
       if (!keyboardSurfaceBlocked && frameStep && !runtimePreferences.timelineHidden && session?.document.animation && session.document.animation.frames.length > 1) {
         event.preventDefault()
         event.stopPropagation()
-        workspace.stepAnimationFrame(frameStep)
+        if (session.animationPlaying) workspace.pauseAnimationAtCurrentFrame()
+        else workspace.stepAnimationFrame(frameStep)
         return
       }
       const runCommand = (action: string, command: () => void, allowRepeat = false): boolean => {

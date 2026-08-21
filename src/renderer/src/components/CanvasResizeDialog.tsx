@@ -21,6 +21,7 @@ type Edge = 'left' | 'right' | 'top' | 'bottom'
 export function CanvasResizeDialog({ open, currentWidth, currentHeight, onClose, onResize, onPreview, preview }: { open: boolean; currentWidth: number; currentHeight: number; onClose: () => void; onResize: (width: number, height: number, anchor: CanvasAnchor, offsetX?: number, offsetY?: number, trimOutside?: boolean) => Promise<void>; onPreview: (preview: CanvasResizePreview | null) => void; preview: CanvasResizePreview | null }) {
   const { t } = useI18n()
   const [anchor, setAnchor] = useState<CanvasAnchor>('center')
+  const [syncEdges, setSyncEdges] = useState(false)
   const [trimOutside, setTrimOutside] = useState(true)
   const [value, setValue] = useState<CanvasResizePreview>({ width: currentWidth, height: currentHeight, offsetX: 0, offsetY: 0 })
   const onPreviewRef = useRef(onPreview)
@@ -80,6 +81,7 @@ export function CanvasResizeDialog({ open, currentWidth, currentHeight, onClose,
   useEffect(() => {
     if (open) {
       setAnchor('center')
+      setSyncEdges(false)
       setTrimOutside(true)
       const initial = { width: currentWidth, height: currentHeight, offsetX: 0, offsetY: 0 }
       setValue(initial)
@@ -126,6 +128,12 @@ export function CanvasResizeDialog({ open, currentWidth, currentHeight, onClose,
   }
   const setEdge = (edge: Edge, raw: number): void => {
     const next = Math.trunc(raw) || 0
+    if (syncEdges) {
+      const minimum = Math.max(Math.ceil((1 - currentWidth) / 2), Math.ceil((1 - currentHeight) / 2))
+      const synced = Math.max(minimum, next)
+      updateValue({ width: currentWidth + synced * 2, height: currentHeight + synced * 2, offsetX: synced, offsetY: synced }, 'edge-synced')
+      return
+    }
     const left = value.offsetX; const top = value.offsetY
     const right = value.width - currentWidth - left; const bottom = value.height - currentHeight - top
     if (edge === 'left') updateValue({ width: Math.max(1, currentWidth + next + right), height: value.height, offsetX: next, offsetY: top }, `edge-${edge}`)
@@ -142,12 +150,12 @@ export function CanvasResizeDialog({ open, currentWidth, currentHeight, onClose,
   const right = value.width - currentWidth - left; const bottom = value.height - currentHeight - top
 
   return <div className="modal-backdrop" role="presentation">
-    <ModalShell as="form" storageKey="canvas-resize-v3" placement="right" defaultWidth={430} defaultHeight={500} minWidth={390} minHeight={430} maxWidth={580} maxHeight={720} className="canvas-resize-modal" onSubmit={submit} onKeyDown={(event) => { if (!(event.ctrlKey || event.metaKey) || event.altKey) return; if (event.key.toLowerCase() === 'z') { event.preventDefault(); restorePreview(event.shiftKey ? 'redo' : 'undo') } else if (event.key.toLowerCase() === 'y') { event.preventDefault(); restorePreview('redo') } }} aria-label={t('canvasResize.aria')}>
+    <ModalShell as="form" storageKey="canvas-resize-v5" placement="right" defaultWidth={340} defaultHeight={500} minWidth={320} minHeight={430} maxWidth={400} maxHeight={720} className="canvas-resize-modal" onSubmit={submit} onKeyDown={(event) => { if (!(event.ctrlKey || event.metaKey) || event.altKey) return; if (event.key.toLowerCase() === 'z') { event.preventDefault(); restorePreview(event.shiftKey ? 'redo' : 'undo') } else if (event.key.toLowerCase() === 'y') { event.preventDefault(); restorePreview('redo') } }} aria-label={t('canvasResize.aria')}>
       <DialogHeader eyebrow={t('canvasResize.eyebrow')} title={t('canvasResize.title')} closeLabel={t('common.close')} onClose={onClose} />
       <div className="modal-body canvas-resize-body">
         <section><h3>{t('canvasResize.size')}</h3><div className="canvas-size-grid"><div className="resize-fields"><FormField className="canvas-resize-number-row" layout="inline" label={t('common.width')}><NumberInput live autoFocus onFocus={(event) => { finishHistoryGroup(); event.currentTarget.select() }} onBlur={finishHistoryGroup} aria-label={t('newDocument.widthAria')} min={1} suffix="px" value={value.width} onValueChange={(next) => setDimension('width', next)} /></FormField><FormField className="canvas-resize-number-row" layout="inline" label={t('common.height')}><NumberInput live onFocus={finishHistoryGroup} onBlur={finishHistoryGroup} aria-label={t('newDocument.heightAria')} min={1} suffix="px" value={value.height} onValueChange={(next) => setDimension('height', next)} /></FormField></div><div className="anchor-grid" aria-label={t('canvasResize.anchorAria')}>{anchors.map((item) => { const label = t(item.labelKey); return <button type="button" key={item.id} aria-label={label} title={label} className={`icon-button ${anchor === item.id ? 'selected' : ''}`} onClick={() => { finishHistoryGroup(); setAnchor(item.id); applyAnchor(value.width, value.height, item.id); finishHistoryGroup() }}><PixelUtilityIcon kind={item.icon} /></button> })}</div></div></section>
         <section><h3>{t('canvasResize.boundary')}</h3><div className="canvas-edge-grid"><FormField className="canvas-resize-number-row" layout="inline" label={t('common.left')}><NumberInput live onFocus={finishHistoryGroup} onBlur={finishHistoryGroup} aria-label={t('canvasResize.leftMargin')} suffix="px" value={left} onValueChange={(next) => setEdge('left', next)} /></FormField><FormField className="canvas-resize-number-row" layout="inline" label={t('common.top')}><NumberInput live onFocus={finishHistoryGroup} onBlur={finishHistoryGroup} aria-label={t('canvasResize.topMargin')} suffix="px" value={top} onValueChange={(next) => setEdge('top', next)} /></FormField><FormField className="canvas-resize-number-row" layout="inline" label={t('common.right')}><NumberInput live onFocus={finishHistoryGroup} onBlur={finishHistoryGroup} aria-label={t('canvasResize.rightMargin')} suffix="px" value={right} onValueChange={(next) => setEdge('right', next)} /></FormField><FormField className="canvas-resize-number-row" layout="inline" label={t('common.bottom')}><NumberInput live onFocus={finishHistoryGroup} onBlur={finishHistoryGroup} aria-label={t('canvasResize.bottomMargin')} suffix="px" value={bottom} onValueChange={(next) => setEdge('bottom', next)} /></FormField></div></section>
-        <CheckboxField className="tool-checkbox trim-canvas-checkbox" checked={trimOutside} label={<>{t('canvasResize.trim')}<span className="setting-help" title={t('canvasResize.trimHint')}><PixelUtilityIcon kind="info" /></span></>} onChange={setTrimOutside} />
+        <div className="canvas-resize-options-row"><CheckboxField className="tool-checkbox trim-canvas-checkbox" checked={trimOutside} label={<>{t('canvasResize.trim')}<span className="setting-help" title={t('canvasResize.trimHint')}><PixelUtilityIcon kind="info" /></span></>} onChange={setTrimOutside} /><CheckboxField className="canvas-edge-sync" checked={syncEdges} label={t('canvasResize.syncEdges')} onChange={(checked) => { finishHistoryGroup(); setSyncEdges(checked) }} /></div>
       </div>
       <footer><button type="button" className="quiet-button" onClick={onClose}>{t('common.cancel')}</button><button className="primary-button" type="submit">{t('common.done')}</button></footer>
     </ModalShell>

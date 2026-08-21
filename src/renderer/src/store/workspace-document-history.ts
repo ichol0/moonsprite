@@ -1,5 +1,6 @@
-import type { AnimationCel, AnimationFrame, AnimationGroupMask, ColorMode, FreeTileSourceLayer, LayerGroup, PaletteEntry, RasterLayer, SpriteDocument, Tileset } from '@shared/types'
+import type { AnimationCel, AnimationFrame, AnimationGroupMask, AnimationLoopSection, ColorMode, FreeTileSourceLayer, LayerGroup, PaletteEntry, RasterLayer, SpriteDocument, Tileset } from '@shared/types'
 import { cloneAnimationCel, ensureAnimationDocument, refreshActiveAnimationFrame, restoreAnimationCels, syncActiveAnimationFrame } from '@/core/animation'
+import { cloneAnimationLoopSections } from '@/core/animation-loop-sections'
 import { captureDocumentImageResizeSnapshot, documentImageResizeSnapshotBytes, restoreDocumentImageResizeSnapshot, type DocumentImageResizeSnapshot } from '@/core/document'
 import { cloneLayerStyles } from '@/core/layer-styles'
 import { rasterStorageIdentity, runtimeRasterForSurface } from '@/core/runtime-raster'
@@ -10,6 +11,7 @@ interface AnimationStructureSnapshot {
   frames: AnimationFrame[]
   cels: AnimationCel[]
   groupMasks: AnimationGroupMask[]
+  loopSections: AnimationLoopSection[]
   activeFrameId: string
   loop: boolean
 }
@@ -50,6 +52,7 @@ export const captureDocumentStructureSnapshot = (document: SpriteDocument): Docu
       frames: [...timeline.frames],
       cels: [...timeline.cels],
       groupMasks: [...(timeline.groupMasks ?? [])],
+      loopSections: cloneAnimationLoopSections(timeline.loopSections),
       activeFrameId: timeline.activeFrameId,
       loop: timeline.loop
     }
@@ -76,6 +79,7 @@ export const restoreDocumentStructureSnapshot = (document: SpriteDocument, snaps
   timeline.frames = [...snapshot.animation.frames]
   timeline.cels = [...snapshot.animation.cels]
   timeline.groupMasks = [...snapshot.animation.groupMasks]
+  timeline.loopSections = cloneAnimationLoopSections(snapshot.animation.loopSections)
   timeline.activeFrameId = snapshot.animation.activeFrameId
   timeline.loop = snapshot.animation.loop
   refreshActiveAnimationFrame(document)
@@ -87,7 +91,8 @@ const snapshotObjects = (snapshot: DocumentStructureSnapshot): Set<object> => ne
   ...snapshot.tilesets,
   ...snapshot.animation.frames,
   ...snapshot.animation.cels,
-  ...snapshot.animation.groupMasks
+  ...snapshot.animation.groupMasks,
+  ...snapshot.animation.loopSections
 ])
 
 const retainedBytesForObjects = (snapshot: DocumentStructureSnapshot, retained: ReadonlySet<object>): number => {

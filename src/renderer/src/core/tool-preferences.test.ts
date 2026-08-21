@@ -19,6 +19,7 @@ describe('tool preferences persistence boundary', () => {
     const storage = createStorage()
     expect(loadToolSettings(storage).brushSize).toBe(1)
     expect(loadToolSettings(storage).brushPaintMode).toBe('paint')
+    expect(loadToolSettings(storage).brushDither).toEqual({ enabled: false, template: 'bayer-4', stage: 8 })
     storage.setItem(TOOL_SETTINGS_KEY, '{bad')
     expect(loadToolSettings(storage).brushPaintMode).toBe(defaultToolSettings.brushPaintMode)
   })
@@ -54,6 +55,7 @@ describe('tool preferences persistence boundary', () => {
     }))
     const settings = loadToolSettings(storage)
     expect(settings.brushSize).toBe(128)
+    expect(settings.brushDither).toEqual({ enabled: false, template: 'bayer-4', stage: 8 })
     expect(settings.brushTextureScale).toBe(1)
     expect(settings.brushPaintMode).toBe('paint')
     expect(settings.proceduralAntialiasStrength).toBe(100)
@@ -164,11 +166,32 @@ describe('tool preferences persistence boundary', () => {
     expect(restored.brushProfiles?.line).toMatchObject({ brushSize: 7, brushShape: 'square' })
   })
 
+  it('normalizes and persists dither settings independently for each brush profile', () => {
+    const storage = createStorage()
+    const profile = normalizePersistedBrushProfile(defaultToolSettings, defaultToolSettings)
+    saveToolSettings({
+      ...defaultToolSettings,
+      brushProfiles: {
+        pencil: { ...profile, brushDither: { enabled: true, template: 'bayer-8', stage: 32 } },
+        eraser: { ...profile, brushDither: { enabled: true, template: 'diagonal', stage: 6 } },
+        fill: profile,
+        line: profile
+      }
+    }, storage)
+
+    const restored = loadToolSettings(storage)
+    expect(restored.brushProfiles?.pencil?.brushDither).toEqual({ enabled: true, template: 'bayer-8', stage: 32 })
+    expect(restored.brushProfiles?.eraser?.brushDither).toEqual({ enabled: true, template: 'diagonal', stage: 6 })
+
+    storage.setItem(TOOL_SETTINGS_KEY, JSON.stringify({ brushDither: { enabled: true, template: 'unknown', stage: 999 } }))
+    expect(loadToolSettings(storage).brushDither).toEqual({ enabled: true, template: 'bayer-4', stage: 16 })
+  })
+
   it('writes a complete snapshot through the storage boundary', () => {
     const storage = createStorage()
     saveToolSettings(defaultToolSettings, storage)
     expect(storage.getItem(TOOL_SETTINGS_KEY)).toContain('moveAutoSelect')
-    expect(loadToolSettings(storage)).toMatchObject({ brushSize: 1, moveAutoSelect: true, selectionMode: 'replace', fillKind: 'bucket', gradientTolerance: 0, gradientContiguous: true, gradientDither: 'none' })
+    expect(loadToolSettings(storage)).toMatchObject({ brushSize: 1, brushDither: { enabled: false, template: 'bayer-4', stage: 8 }, moveAutoSelect: true, selectionMode: 'replace', fillKind: 'bucket', gradientTolerance: 0, gradientContiguous: true, gradientDither: 'none' })
   })
 
   it('persists independent paint-bucket, magic-wand, and gradient range settings', () => {

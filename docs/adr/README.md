@@ -27,5 +27,6 @@ ADR 用于记录会长期影响实现的决定，避免后续只看到代码而�
 - [0015：Tilemap 源数据与平铺视图分离](0015-tilemap-source-and-tiled-view.md)
 - [0016：自由瓦片源库与任意位置实例分离](0016-free-tile-source-and-instances.md)
 - [0017：Tilemap 图层共享项目瓦片集](0017-shared-tilemap-tilesets.md)
+- [0018：动画循环节使用稳定帧端点](0018-animation-loop-sections.md)
 
 新增 ADR 时按编号递增；废弃旧决定时保留原文件并指向替代 ADR。

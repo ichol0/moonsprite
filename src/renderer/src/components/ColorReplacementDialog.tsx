@@ -204,7 +204,7 @@ export function ColorReplacementDialog({ onClose }: { onClose: () => void }) {
         </section>
         <section className="color-replacement-section">
           <h3>{t('colorReplacement.range')}</h3>
-          <FormField className="color-replacement-target" label={t('colorReplacement.target')}><ThemedSelect value={target} groups={targetGroups} label={t('colorReplacement.target')} onChange={setTarget} popoverWidth={300} preserveAnimationSelection /></FormField>
+          <FormField className="color-replacement-target" layout="inline" label={t('colorReplacement.target')}><ThemedSelect value={target} groups={targetGroups} label={t('colorReplacement.target')} onChange={setTarget} popoverWidth={300} preserveAnimationSelection /></FormField>
           <small className={targetAvailable ? '' : 'is-unavailable'}>{targetAvailable ? t('colorReplacement.targetCount', { count: targetCount }) : t('colorReplacement.targetUnavailable')}</small>
         </section>
         <LivePreviewToggle className="color-replacement-preview" checked={previewEnabled} onChange={setPreviewEnabled} label={t('colorReplacement.preview')} />

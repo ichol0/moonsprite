@@ -78,7 +78,7 @@ describe('animation timeline boundary', () => {
     expect(document.layers[0].opacity).toBeCloseTo(0.8)
   })
   it('creates a one-frame timeline for new or legacy projects', () => {
-    expect(createDefaultAnimationTimeline()).toEqual({ frames: [{ id: 'frame-1', duration: 100 }], cels: [], groupMasks: [], activeFrameId: 'frame-1', loop: true })
+    expect(createDefaultAnimationTimeline()).toEqual({ frames: [{ id: 'frame-1', duration: 100 }], cels: [], groupMasks: [], loopSections: [], activeFrameId: 'frame-1', loop: true })
     expect(normalizeAnimationTimeline(undefined)).toEqual(createDefaultAnimationTimeline())
   })
 

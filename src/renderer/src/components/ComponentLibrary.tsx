@@ -20,6 +20,7 @@ import { CheckboxField } from './CheckboxField'
 import { PreferenceToggle } from './PreferenceToggle'
 import { RangeField } from './RangeField'
 import { SegmentedControl } from './SegmentedControl'
+import { SettingsSection } from './SettingsSection'
 import { SettingsSectionHeader } from './SettingsSectionHeader'
 import { SettingsNavigation } from './SettingsNavigation'
 import { LivePreviewToggle } from './LivePreviewToggle'
@@ -136,6 +137,7 @@ export const COMPONENT_LIBRARY_ENTRIES: ComponentLibraryEntry[] = [
   { id: 'gradient-dither-select', name: '渐变抖动选择', category: 'forms', description: '渐变工具和图层样式共用的平滑、Bayer 与方向抖动选择器。', source: 'GradientDitherSelect', tags: ['下拉', '模式', '颜色'] },
   { id: 'form-field', name: '表单字段', category: 'forms', description: '统一标签、控件、说明和悬浮描述的字段布局。', source: 'FormField', tags: ['设置', '输入', '描述'] },
   { id: 'settings-navigation', name: '设置导航', category: 'forms', description: '首选项、快捷键等设置窗口共用的分区导航。', source: 'SettingsNavigation', tags: ['设置', '布局', '选中'] },
+  { id: 'settings-section', name: '设置分组', category: 'forms', description: '统一设置分组的表面、边框、标题、正文间距和右侧信息。', source: 'SettingsSection / .settings-section', tags: ['设置', '分组', '布局'] },
   { id: 'settings-section-header', name: '设置分组标题', category: 'forms', description: '统一设置分组标题和右侧操作按钮的对齐与间距。', source: 'SettingsSectionHeader', tags: ['设置', '操作', '布局'] },
   { id: 'range', name: '滑块', category: 'forms', description: '适用于尺寸、不透明度、强度等连续数值。', source: 'RangeField', tags: ['数值', '实时'] },
   { id: 'outline-stroke-controls', name: '描边设置', category: 'forms', description: '描边宽度、位置、快捷形状与八方向像素开关的统一设置组件。', source: 'OutlineStrokeControls', tags: ['设置', '数值', '模式'] },
@@ -245,6 +247,16 @@ function FormFieldPreview({ locale }: { locale: AppLocale }) {
 
 function SettingsSectionHeaderPreview({ locale }: { locale: AppLocale }) {
   return <SettingsSectionHeader title={locale === 'zh-CN' ? '颜色设置' : 'Color settings'} actions={<><button type="button" className="quiet-button"><PixelUtilityIcon kind="restore" />{locale === 'zh-CN' ? '恢复' : 'Restore'}</button><button type="button" className="quiet-button"><PixelUtilityIcon kind="plus" />{componentText(locale, 'componentLibrary.preview.new')}</button></>} />
+}
+
+function SettingsSectionPreview({ locale }: { locale: AppLocale }) {
+  const [enabled, setEnabled] = useState(true)
+  return <SettingsSection className="component-settings-section-preview" title={locale === 'zh-CN' ? '显示设置' : 'Display settings'} actions={<span className="settings-section-meta">{locale === 'zh-CN' ? '共享表面' : 'Shared surface'}</span>}>
+    <div className="settings-section-body">
+      <PreferenceToggle label={locale === 'zh-CN' ? '显示网格' : 'Show grid'} checked={enabled} onChange={setEnabled} />
+      <CheckboxField checked={enabled} label={componentText(locale, 'componentLibrary.preview.perfectPixels')} onChange={setEnabled} />
+    </div>
+  </SettingsSection>
 }
 
 function RangePreview({ locale }: { locale: AppLocale }) {
@@ -516,6 +528,7 @@ const previewRenderers: Record<string, (props: { locale: AppLocale }) => ReactEl
   'gradient-dither-select': GradientDitherSelectPreview,
   'form-field': FormFieldPreview,
   'settings-navigation': SettingsNavigationPreview,
+  'settings-section': SettingsSectionPreview,
   'settings-section-header': SettingsSectionHeaderPreview,
   range: RangePreview,
   'outline-stroke-controls': OutlineStrokeControlsPreview,

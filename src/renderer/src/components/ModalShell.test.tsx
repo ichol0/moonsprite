@@ -4,7 +4,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ModalShell } from './ModalShell'
 
 beforeEach(() => localStorage.clear())
-afterEach(cleanup)
+afterEach(() => {
+  cleanup()
+  vi.restoreAllMocks()
+})
 
 describe('ModalShell', () => {
   it('restores the saved bounds and exposes eight resize directions', async () => {
@@ -44,6 +47,27 @@ describe('ModalShell', () => {
     render(<ModalShell storageKey="layer-settings-test" className="layer-settings-modal" defaultWidth={400} minWidth={360} role="dialog"><header>图层设置</header></ModalShell>)
 
     expect(screen.getByRole('dialog')).toHaveStyle({ width: '400px', minWidth: '360px' })
+  })
+
+  it('lets a large settings dialog shrink inside a zoom-reduced viewport', () => {
+    vi.spyOn(window, 'innerWidth', 'get').mockReturnValue(683)
+    vi.spyOn(window, 'innerHeight', 'get').mockReturnValue(427)
+    const titlebar = document.createElement('div')
+    titlebar.className = 'app-window-titlebar'
+    vi.spyOn(titlebar, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 0, 683, 32))
+    document.body.appendChild(titlebar)
+
+    render(<ModalShell storageKey="responsive-settings" className="settings-modal" defaultWidth={760} defaultHeight={470} role="dialog"><header>首选项</header></ModalShell>)
+
+    expect(screen.getByRole('dialog')).toHaveStyle({
+      width: '659px',
+      height: '421px',
+      top: '44px',
+      minWidth: '620px',
+      minHeight: '371px',
+      maxHeight: '371px'
+    })
+    titlebar.remove()
   })
 
   it('clears an explicit saved height when content changes in fit-content mode', () => {

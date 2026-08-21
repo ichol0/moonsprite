@@ -472,6 +472,13 @@ export const deferredSelectionPreviewOwner = (
 export const canvasGestureForPreview = (drag: CanvasDragState | null | undefined): CanvasDragState | null =>
   drag?.kind === 'pan' && drag.resumeDrag?.kind === 'polygon-lasso' ? drag.resumeDrag : drag ?? null
 
+export const marqueePreviewTargetForDrag = (drag: CanvasDragState | null | undefined): SelectionRect | null => {
+  const previewDrag = canvasGestureForPreview(drag)
+  return previewDrag?.kind === 'marquee' && (previewDrag.moved || previewDrag.quickSelectCell)
+    ? previewDrag.previewTarget ?? previewDrag.marqueeBounds ?? null
+    : null
+}
+
 export const selectionOverlayMaskForDrag = (
   currentSelection: SelectionMask | null,
   drag: CanvasDragState | null | undefined

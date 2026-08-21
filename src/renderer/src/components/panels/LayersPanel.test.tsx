@@ -403,6 +403,137 @@ describe('LayersPanel animation', () => {
     expect(session.selectedAnimationCellKeys).toEqual([])
   })
 
+  it('creates a named loop section from selected frames and exposes play, edit, and delete actions', () => {
+    const document = createDocument('timeline loop section', 2, 2, 'rgba')
+    useWorkspace.getState().addSession(document)
+    useWorkspace.getState().duplicateAnimationFrame()
+    useWorkspace.getState().duplicateAnimationFrame()
+    const timeline = ensureAnimationDocument(document)
+    useWorkspace.getState().selectAnimationFrame(timeline.frames[0].id)
+    useWorkspace.getState().selectAnimationFrame(timeline.frames[2].id, 'range')
+    const { container } = render(<ConnectedLayersPanel />)
+
+    const headers = container.querySelectorAll<HTMLElement>('.layer-animation-frame-header')
+    fireEvent.contextMenu(headers[2], { clientX: 40, clientY: 30 })
+    fireEvent.click(screen.getByRole('menuitem', { name: '创建循环节' }))
+    let dialog = globalThis.document.querySelector<HTMLElement>('.animation-loop-section-modal')!
+    expect(within(dialog).getByRole('spinbutton', { name: '开始帧' })).toHaveValue('1')
+    expect(within(dialog).getByRole('spinbutton', { name: '结束帧' })).toHaveValue('3')
+    fireEvent.pointerDown(within(dialog).getByRole('textbox', { name: '名称' }))
+    expect(useWorkspace.getState().sessions[0].selectedAnimationFrameIds).toEqual(timeline.frames.slice(0, 3).map((frame) => frame.id))
+    const repeatToggle = within(dialog).getByRole('checkbox', { name: '重复' })
+    expect(repeatToggle).not.toBeChecked()
+    expect(within(dialog).getByRole('textbox', { name: '重复' })).toHaveValue('无限')
+    fireEvent.click(repeatToggle)
+    expect(within(dialog).getByRole('spinbutton', { name: '重复' })).toHaveValue('1')
+    fireEvent.click(repeatToggle)
+    expect(within(dialog).getByRole('textbox', { name: '重复' })).toHaveValue('无限')
+    fireEvent.change(within(dialog).getByRole('textbox', { name: '名称' }), { target: { value: '行走' } })
+    fireEvent.click(within(dialog).getByRole('button', { name: '保存' }))
+
+    let loopBar = container.querySelector<HTMLButtonElement>('[data-animation-loop-section-id]')!
+    const loopId = loopBar.dataset.animationLoopSectionId!
+    expect(loopBar).toHaveTextContent('行走')
+    expect(loopBar.style.gridColumn).toBe('1 / span 3')
+    const loopTrack = loopBar.closest<HTMLElement>('.animation-loop-section-track')!
+    expect(loopTrack).toBeInTheDocument()
+    expect(loopBar.closest('header')).toBe(container.querySelector('.layers-panel > header'))
+    expect(loopBar.closest('.layer-animation-grid')).toBeNull()
+    const animationList = container.querySelector<HTMLElement>('.layer-animation-list')!
+    animationList.scrollLeft = 37
+    fireEvent.scroll(animationList)
+    expect(loopTrack.style.transform).toBe('translate3d(-37px, 0, 0)')
+
+    fireEvent.contextMenu(loopBar, { clientX: 50, clientY: 40 })
+    fireEvent.click(screen.getByRole('menuitem', { name: '播放循环节' }))
+    expect(useWorkspace.getState().sessions[0]).toMatchObject({ animationPlaying: true, animationPlaybackLoopSectionId: loopId })
+
+    loopBar = container.querySelector<HTMLButtonElement>(`[data-animation-loop-section-id="${loopId}"]`)!
+    fireEvent.doubleClick(loopBar)
+    dialog = globalThis.document.querySelector<HTMLElement>('.animation-loop-section-modal')!
+    fireEvent.change(within(dialog).getByRole('textbox', { name: '名称' }), { target: { value: '反向行走' } })
+    fireEvent.click(within(dialog).getByRole('button', { name: '播放方向' }))
+    fireEvent.click(screen.getByRole('option', { name: '反向' }))
+    fireEvent.click(within(dialog).getByRole('button', { name: '保存' }))
+    expect(container.querySelector(`[data-animation-loop-section-id="${loopId}"]`)).toHaveTextContent('反向行走')
+
+    loopBar = container.querySelector<HTMLButtonElement>(`[data-animation-loop-section-id="${loopId}"]`)!
+    fireEvent.contextMenu(loopBar, { clientX: 50, clientY: 40 })
+    fireEvent.click(screen.getByRole('menuitem', { name: '删除循环节' }))
+    expect(container.querySelector(`[data-animation-loop-section-id="${loopId}"]`)).not.toBeInTheDocument()
+  })
+
+  it('renders a contained loop section inside its parent bracket', () => {
+    const document = createDocument('nested timeline loop sections', 2, 2, 'rgba')
+    useWorkspace.getState().addSession(document)
+    for (let index = 0; index < 5; index += 1) useWorkspace.getState().duplicateAnimationFrame()
+    const timeline = ensureAnimationDocument(document)
+    const parentId = useWorkspace.getState().createAnimationLoopSection({
+      name: '父循环节',
+      startFrameId: timeline.frames[0].id,
+      endFrameId: timeline.frames[4].id,
+      direction: 'forward',
+      repeatCount: null
+    })!
+    const childId = useWorkspace.getState().createAnimationLoopSection({
+      name: '子循环节',
+      startFrameId: timeline.frames[1].id,
+      endFrameId: timeline.frames[3].id,
+      direction: 'forward',
+      repeatCount: null
+    })!
+    const independentId = useWorkspace.getState().createAnimationLoopSection({
+      name: '独立循环节',
+      startFrameId: timeline.frames[5].id,
+      endFrameId: timeline.frames[5].id,
+      direction: 'forward',
+      repeatCount: null
+    })!
+    const { container } = render(<ConnectedLayersPanel />)
+
+    const parent = container.querySelector<HTMLElement>(`[data-animation-loop-section-id="${parentId}"]`)!
+    const child = container.querySelector<HTMLElement>(`[data-animation-loop-section-id="${childId}"]`)!
+    const independent = container.querySelector<HTMLElement>(`[data-animation-loop-section-id="${independentId}"]`)!
+    expect(parent.style.gridRow).toBe('1 / span 2')
+    expect(child.style.gridRow).toBe('2 / span 1')
+    expect(independent.style.gridRow).toBe('1 / span 2')
+    expect(Number(child.style.zIndex)).toBeGreaterThan(Number(parent.style.zIndex))
+  })
+
+  it('keeps tag playback running when a clicked frame switches loop sections', () => {
+    const document = createDocument('timeline playback loop switch', 2, 2, 'rgba')
+    useWorkspace.getState().addSession(document)
+    for (let index = 0; index < 3; index += 1) useWorkspace.getState().duplicateAnimationFrame()
+    const timeline = ensureAnimationDocument(document)
+    useWorkspace.getState().createAnimationLoopSection({
+      name: 'First',
+      startFrameId: timeline.frames[0].id,
+      endFrameId: timeline.frames[1].id,
+      direction: 'forward',
+      repeatCount: null
+    })
+    const secondLoopId = useWorkspace.getState().createAnimationLoopSection({
+      name: 'Second',
+      startFrameId: timeline.frames[2].id,
+      endFrameId: timeline.frames[3].id,
+      direction: 'forward',
+      repeatCount: null
+    })!
+    useWorkspace.getState().setActiveAnimationFrame(timeline.frames[0].id)
+    useWorkspace.getState().setAnimationPlaybackMode('tag')
+    useWorkspace.getState().setAnimationPlaying(true)
+    const { container } = render(<ConnectedLayersPanel />)
+
+    fireEvent.click(container.querySelector(`[data-animation-frame-id="${timeline.frames[3].id}"]`)!)
+
+    expect(timeline.activeFrameId).toBe(timeline.frames[3].id)
+    expect(useWorkspace.getState().sessions[0]).toMatchObject({
+      animationPlaying: true,
+      animationPlaybackLoopSectionId: secondLoopId,
+      animationPlaybackLoopSectionRepeatIndefinitely: true
+    })
+  })
+
   it('uses a shorter frame header without duration text at compact density', () => {
     localStorage.setItem('moonsprite.layers.display-density', 'compact')
     const document = createDocument('compact timeline header', 2, 2, 'rgba')
@@ -549,6 +680,9 @@ describe('LayersPanel animation', () => {
     fireEvent.contextMenu(screen.getByRole('button', { name: '播放动画' }))
     fireEvent.click(screen.getByRole('menuitemradio', { name: '播放一次' }))
     expect(document.animation?.loop).toBe(false)
+    fireEvent.contextMenu(screen.getByRole('button', { name: '播放动画' }))
+    fireEvent.click(screen.getByRole('menuitemradio', { name: '播放标签并重复' }))
+    expect(session.animationPlaybackMode).toBe('tag')
 
     const panel = container.querySelector('.layers-panel') as HTMLElement
     fireEvent.wheel(panel, { ctrlKey: true, deltaY: -100 })
@@ -1462,6 +1596,8 @@ describe('LayersPanel properties', () => {
     fireEvent.contextMenu(container.querySelector(`[data-layer-id="${layer.id}"]`)!, { clientX: 20, clientY: 20 })
     const contextMenu = container.querySelector<HTMLElement>('.layer-context-menu')!
     expect(within(contextMenu).getByRole('button', { name: '转换为' })).toBeInTheDocument()
+    expect(within(contextMenu).queryByRole('menuitem', { name: '停用图层样式' })).not.toBeInTheDocument()
+    expect(within(contextMenu).queryByRole('menuitem', { name: '启用图层样式' })).not.toBeInTheDocument()
     const convertMenu = within(contextMenu).getByRole('menu', { name: '转换为', hidden: true })
     expect(within(convertMenu).getByRole('menuitem', { name: '转换为背景图层', hidden: true })).toBeEnabled()
     expect(within(convertMenu).getByRole('menuitem', { name: '转换为普通图层', hidden: true })).toBeDisabled()
@@ -1591,6 +1727,30 @@ describe('LayersPanel properties', () => {
     fireEvent.click(screen.getByRole('menuitem', { name: '清除图层样式' }))
     expect(source.layerStyles).toBeUndefined()
     expect(target.layerStyles).toBeUndefined()
+  })
+
+  it('toggles layer styles from the context menu without hiding the status icon', () => {
+    const document = createDocument('layer style visibility menu', 2, 2, 'rgba')
+    const layer = getActiveLayer(document)
+    const styles = createDefaultLayerStyles()
+    styles.stroke.enabled = true
+    styles.stroke.size = 4
+    layer.layerStyles = styles
+    useWorkspace.getState().addSession(document)
+    const session = useWorkspace.getState().sessions[0]
+    const { container, rerender } = render(<LayersPanel session={session} docked />)
+    const row = container.querySelector(`[data-layer-id="${layer.id}"]`)!
+
+    expect(row.querySelector('.layer-style-indicator')).toBeInTheDocument()
+    fireEvent.contextMenu(row, { clientX: 20, clientY: 20 })
+    fireEvent.click(screen.getByRole('menuitem', { name: '停用图层样式' }))
+    expect(layer.layerStyles).toMatchObject({ enabled: false, stroke: { enabled: true, size: 4 } })
+
+    rerender(<LayersPanel session={session} docked />)
+    expect(container.querySelector(`[data-layer-id="${layer.id}"] .layer-style-indicator`)).toBeInTheDocument()
+    fireEvent.contextMenu(container.querySelector(`[data-layer-id="${layer.id}"]`)!, { clientX: 20, clientY: 20 })
+    fireEvent.click(screen.getByRole('menuitem', { name: '启用图层样式' }))
+    expect(layer.layerStyles).toMatchObject({ enabled: true, stroke: { enabled: true, size: 4 } })
   })
 
   it('Alt-drags the layer style indicator to copy styles onto another layer', () => {

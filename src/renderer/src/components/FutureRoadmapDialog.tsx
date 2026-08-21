@@ -25,7 +25,7 @@ const roadmapItems: Array<{ id: string; label: TranslationKey; category: Transla
   { id: 'timelapse-animation', label: 'roadmap.item.timelapseAnimation', category: 'roadmap.category.animation', completed: true },
   { id: 'custom-brush', label: 'roadmap.item.customBrush', category: 'roadmap.category.input', completed: true },
   { id: 'sprite-sheet', label: 'roadmap.item.spriteSheet', category: 'roadmap.category.export', completed: true },
-  { id: 'animation-tags', label: 'roadmap.item.animationTags', category: 'roadmap.category.animation', completed: false }
+  { id: 'animation-loop-sections', label: 'roadmap.item.animationLoopSections', category: 'roadmap.category.animation', completed: true }
 ]
 
 export function FutureRoadmapDialog({ onClose }: { onClose: () => void }) {

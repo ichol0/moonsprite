@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { BRUSH_SPEED_STOP_MS, CanvasInputState, SELECTION_CORNER_RESIZE_HIT_RADIUS, SELECTION_RESIZE_HIT_RADIUS, appendCanvasPathStep, appendPolygonLassoVertex, beginBrushSpeedTracking, beginTemporaryCenteredMarqueeResize, brushLineConnectionOverridesTemporaryMove, cachedSelectionTransformSource, canvasGestureForPreview, centerMarqueeBoundsAtCreationPoint, centeredShapeBounds, clampCanvasZoom, coalescedPointerClientPoints, constrainedTranslation, consumePendingCanvasGestureHistory, createCanvasPanDrag, createMarqueeResizeStart, deferredSelectionCommitInvalidationRects, deferredSelectionPreviewOwner, finalizeMarqueeSelection, floatingSelectionCopyMode, isPendingCanvasPathGesture, isQuickSelectionSecondPress, marqueeSelectionCommit, normalizeCanvasWheelDelta, paletteSamplingShortcutStartsPrimarySample, polygonLassoClosedPathPoints, polygonLassoPreviewPoints, quickSelectCellDragBounds, quickSelectCellSelection, redoCanvasPathStep, registerPendingCanvasGestureHistory, resizeRotatedMarqueeBounds, resizeSelectionBounds, resizeTransformedSelectionBounds, resolveMarqueeModifierMode, restoreCanvasDragAfterPan, restoreTemporaryCenteredMarqueeResize, revertCancelledCanvasDragPixelChanges, rotationHandles, sampledForegroundColorToAdd, selectionGestureMoved, selectionInteractionHit, selectionInteractionOverridesTemporaryMove, selectionMarqueeUsesConstraint, selectionMovePointerDelta, selectionOverlayFrameForDrag, selectionOverlayMaskForDrag, selectionPivotAfterResize, selectionPivotAtDragPoint, selectionPivotHit, selectionResizeHit, selectionRotationAngle, selectionRotationHit, selectionShearHit, selectionTransformedInteractionHit, selectionTransformDeferredPreviewEnabled, selectionTransformModifiers, selectionTransformPreviewChanged, shapeBounds, shouldClosePolygonLasso, shouldRestartFloatingSelectionForCopy, shouldStartCanvasPan, shouldUseTemporaryMoveForCanvasInteraction, shouldUseTemporaryMoveTool, snapSelectionRotation, steppedCanvasZoom, temporaryMoveSuppressesToolPreview, temporaryTransformOffset, translatedSelectionRect, undoActiveCanvasPathGesture, undoCanvasPathStep, updateBrushSpeedTracking, wheelCanvasZoom, zoomDragModeForModifiers, zoomDragTarget, type CanvasDragState } from './canvas-input'
+import { BRUSH_SPEED_STOP_MS, CanvasInputState, SELECTION_CORNER_RESIZE_HIT_RADIUS, SELECTION_RESIZE_HIT_RADIUS, appendCanvasPathStep, appendPolygonLassoVertex, beginBrushSpeedTracking, beginTemporaryCenteredMarqueeResize, brushLineConnectionOverridesTemporaryMove, cachedSelectionTransformSource, canvasGestureForPreview, centerMarqueeBoundsAtCreationPoint, centeredShapeBounds, clampCanvasZoom, coalescedPointerClientPoints, constrainedTranslation, consumePendingCanvasGestureHistory, createCanvasPanDrag, createMarqueeResizeStart, deferredSelectionCommitInvalidationRects, deferredSelectionPreviewOwner, finalizeMarqueeSelection, floatingSelectionCopyMode, isPendingCanvasPathGesture, isQuickSelectionSecondPress, marqueePreviewTargetForDrag, marqueeSelectionCommit, normalizeCanvasWheelDelta, paletteSamplingShortcutStartsPrimarySample, polygonLassoClosedPathPoints, polygonLassoPreviewPoints, quickSelectCellDragBounds, quickSelectCellSelection, redoCanvasPathStep, registerPendingCanvasGestureHistory, resizeRotatedMarqueeBounds, resizeSelectionBounds, resizeTransformedSelectionBounds, resolveMarqueeModifierMode, restoreCanvasDragAfterPan, restoreTemporaryCenteredMarqueeResize, revertCancelledCanvasDragPixelChanges, rotationHandles, sampledForegroundColorToAdd, selectionGestureMoved, selectionInteractionHit, selectionInteractionOverridesTemporaryMove, selectionMarqueeUsesConstraint, selectionMovePointerDelta, selectionOverlayFrameForDrag, selectionOverlayMaskForDrag, selectionPivotAfterResize, selectionPivotAtDragPoint, selectionPivotHit, selectionResizeHit, selectionRotationAngle, selectionRotationHit, selectionShearHit, selectionTransformedInteractionHit, selectionTransformDeferredPreviewEnabled, selectionTransformModifiers, selectionTransformPreviewChanged, shapeBounds, shouldClosePolygonLasso, shouldRestartFloatingSelectionForCopy, shouldStartCanvasPan, shouldUseTemporaryMoveForCanvasInteraction, shouldUseTemporaryMoveTool, snapSelectionRotation, steppedCanvasZoom, temporaryMoveSuppressesToolPreview, temporaryTransformOffset, translatedSelectionRect, undoActiveCanvasPathGesture, undoCanvasPathStep, updateBrushSpeedTracking, wheelCanvasZoom, zoomDragModeForModifiers, zoomDragTarget, type CanvasDragState } from './canvas-input'
 import { balancedStairLinePoints } from './pixel-line'
 import { createDocument, getActiveLayer, readLayerColor } from './document'
 import { beginPixelEdit } from './history'
@@ -291,6 +291,25 @@ describe('canvas input helpers', () => {
     })
     expect(canvasGestureForPreview(pan)).toBe(polygon)
     expect(selectionOverlayMaskForDrag(null, pan)).toEqual(polygon.selectionStart)
+  })
+
+  it('uses the live marquee target for selection dimension displays', () => {
+    const previewTarget = { x: 3, y: 4, width: 18, height: 11 }
+    expect(marqueePreviewTargetForDrag({
+      kind: 'marquee',
+      start: { x: 3, y: 4 },
+      last: { x: 20, y: 14 },
+      moved: true,
+      marqueeBounds: { x: 3, y: 4, width: 12, height: 8 },
+      previewTarget
+    })).toEqual(previewTarget)
+    expect(marqueePreviewTargetForDrag({
+      kind: 'marquee',
+      start: { x: 3, y: 4 },
+      last: { x: 3, y: 4 },
+      moved: false,
+      marqueeBounds: { x: 3, y: 4, width: 1, height: 1 }
+    })).toBeNull()
   })
 
   it('keeps polygon vertices unique and closes when the first vertex is clicked', () => {

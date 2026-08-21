@@ -1,0 +1,168 @@
+import type { AnimationFrame, AnimationLoopDirection, AnimationLoopSection, AnimationTimeline } from '@shared/types'
+
+export const MAX_ANIMATION_LOOP_REPEAT_COUNT = 9_999
+export const MAX_ANIMATION_LOOP_SECTION_NAME_LENGTH = 64
+
+export interface AnimationLoopSectionRange {
+  startIndex: number
+  endIndex: number
+  startFrameId: string
+  endFrameId: string
+}
+
+export interface AnimationLoopPlaybackStep {
+  frameId: string
+  completedIterations: number
+  completed: boolean
+}
+
+const normalizedRepeatCount = (value: unknown): number | null => {
+  if (value === null || value === undefined) return null
+  const numeric = Number(value)
+  if (!Number.isFinite(numeric)) return null
+  return Math.max(1, Math.min(MAX_ANIMATION_LOOP_REPEAT_COUNT, Math.trunc(numeric)))
+}
+
+export const cloneAnimationLoopSections = (sections: readonly AnimationLoopSection[] | undefined): AnimationLoopSection[] =>
+  (sections ?? []).map((section) => ({ ...section }))
+
+export const normalizeAnimationLoopSections = (value: unknown, frames: readonly AnimationFrame[]): AnimationLoopSection[] => {
+  if (!Array.isArray(value) || frames.length === 0) return []
+  const frameIndexes = new Map(frames.map((frame, index) => [frame.id, index]))
+  const usedIds = new Set<string>()
+  const result: AnimationLoopSection[] = []
+  for (const item of value) {
+    if (!item || typeof item !== 'object') continue
+    const candidate = item as Partial<AnimationLoopSection>
+    if (typeof candidate.id !== 'string' || !candidate.id || usedIds.has(candidate.id)) continue
+    const rawStartIndex = typeof candidate.startFrameId === 'string' ? frameIndexes.get(candidate.startFrameId) : undefined
+    const rawEndIndex = typeof candidate.endFrameId === 'string' ? frameIndexes.get(candidate.endFrameId) : undefined
+    if (rawStartIndex === undefined || rawEndIndex === undefined) continue
+    const startIndex = Math.min(rawStartIndex, rawEndIndex)
+    const endIndex = Math.max(rawStartIndex, rawEndIndex)
+    const name = typeof candidate.name === 'string'
+      ? candidate.name.trim().slice(0, MAX_ANIMATION_LOOP_SECTION_NAME_LENGTH)
+      : ''
+    usedIds.add(candidate.id)
+    result.push({
+      id: candidate.id,
+      name: name || `Loop ${result.length + 1}`,
+      startFrameId: frames[startIndex].id,
+      endFrameId: frames[endIndex].id,
+      direction: candidate.direction === 'reverse' ? 'reverse' : 'forward',
+      repeatCount: normalizedRepeatCount(candidate.repeatCount)
+    })
+  }
+  return result
+}
+
+export const resolveAnimationLoopSectionRange = (
+  timeline: Pick<AnimationTimeline, 'frames'>,
+  section: AnimationLoopSection
+): AnimationLoopSectionRange | null => {
+  const rawStartIndex = timeline.frames.findIndex((frame) => frame.id === section.startFrameId)
+  const rawEndIndex = timeline.frames.findIndex((frame) => frame.id === section.endFrameId)
+  if (rawStartIndex < 0 || rawEndIndex < 0) return null
+  const startIndex = Math.min(rawStartIndex, rawEndIndex)
+  const endIndex = Math.max(rawStartIndex, rawEndIndex)
+  return {
+    startIndex,
+    endIndex,
+    startFrameId: timeline.frames[startIndex].id,
+    endFrameId: timeline.frames[endIndex].id
+  }
+}
+
+export const animationLoopSectionAtFrame = (
+  timeline: Pick<AnimationTimeline, 'frames' | 'loopSections'>,
+  frameId: string
+): AnimationLoopSection | null => {
+  const frameIndex = timeline.frames.findIndex((frame) => frame.id === frameId)
+  if (frameIndex < 0) return null
+  let match: { section: AnimationLoopSection; span: number } | null = null
+  for (const section of timeline.loopSections ?? []) {
+    const range = resolveAnimationLoopSectionRange(timeline, section)
+    if (!range || frameIndex < range.startIndex || frameIndex > range.endIndex) continue
+    const span = range.endIndex - range.startIndex + 1
+    if (!match || span < match.span) match = { section, span }
+  }
+  return match?.section ?? null
+}
+
+export const animationLoopSectionStartFrameId = (
+  timeline: Pick<AnimationTimeline, 'frames'>,
+  section: AnimationLoopSection
+): string | null => {
+  const range = resolveAnimationLoopSectionRange(timeline, section)
+  if (!range) return null
+  return section.direction === 'reverse' ? range.endFrameId : range.startFrameId
+}
+
+export const advanceAnimationLoopSectionPlayback = (
+  timeline: Pick<AnimationTimeline, 'frames'>,
+  section: AnimationLoopSection,
+  frameId: string,
+  completedIterations: number
+): AnimationLoopPlaybackStep | null => {
+  const range = resolveAnimationLoopSectionRange(timeline, section)
+  if (!range) return null
+  const direction: AnimationLoopDirection = section.direction === 'reverse' ? 'reverse' : 'forward'
+  const firstIndex = direction === 'reverse' ? range.endIndex : range.startIndex
+  const terminalIndex = direction === 'reverse' ? range.startIndex : range.endIndex
+  const currentIndex = timeline.frames.findIndex((frame) => frame.id === frameId)
+  if (currentIndex < range.startIndex || currentIndex > range.endIndex) {
+    return { frameId: timeline.frames[firstIndex].id, completedIterations, completed: false }
+  }
+  if (currentIndex !== terminalIndex) {
+    const nextIndex = currentIndex + (direction === 'reverse' ? -1 : 1)
+    return { frameId: timeline.frames[nextIndex].id, completedIterations, completed: false }
+  }
+  const nextCompletedIterations = completedIterations + 1
+  if (section.repeatCount !== null && nextCompletedIterations >= section.repeatCount) {
+    return { frameId: timeline.frames[terminalIndex].id, completedIterations: nextCompletedIterations, completed: true }
+  }
+  return { frameId: timeline.frames[firstIndex].id, completedIterations: nextCompletedIterations, completed: false }
+}
+
+export const reconcileAnimationLoopSectionsAfterFrameInsertion = (
+  sections: readonly AnimationLoopSection[] | undefined,
+  previousFrames: readonly AnimationFrame[],
+  sourceFrameId: string,
+  insertedFrameId: string
+): AnimationLoopSection[] => (sections ?? []).map((section) => {
+  const range = resolveAnimationLoopSectionRange({ frames: [...previousFrames] }, section)
+  if (!range || previousFrames[range.endIndex]?.id !== sourceFrameId) return { ...section }
+  if (section.endFrameId === sourceFrameId) return { ...section, endFrameId: insertedFrameId }
+  if (section.startFrameId === sourceFrameId) return { ...section, startFrameId: insertedFrameId }
+  return { ...section }
+})
+
+export const reconcileAnimationLoopSectionsAfterFrameDeletion = (
+  sections: readonly AnimationLoopSection[] | undefined,
+  previousFrames: readonly AnimationFrame[],
+  remainingFrames: readonly AnimationFrame[],
+  deletedFrameId: string
+): AnimationLoopSection[] => {
+  if (!sections?.length || remainingFrames.length === 0) return []
+  const remainingIds = new Set(remainingFrames.map((frame) => frame.id))
+  const previousIndexes = new Map(previousFrames.map((frame, index) => [frame.id, index]))
+  const adjusted = sections.flatMap((section) => {
+    const rawStartIndex = previousIndexes.get(section.startFrameId)
+    const rawEndIndex = previousIndexes.get(section.endFrameId)
+    if (rawStartIndex === undefined || rawEndIndex === undefined) return []
+    const startIndex = Math.min(rawStartIndex, rawEndIndex)
+    const endIndex = Math.max(rawStartIndex, rawEndIndex)
+    if (deletedFrameId !== section.startFrameId && deletedFrameId !== section.endFrameId) return [{ ...section }]
+    if (startIndex === endIndex) return []
+    let leftFrameId = previousFrames[startIndex].id
+    let rightFrameId = previousFrames[endIndex].id
+    if (!remainingIds.has(leftFrameId)) {
+      leftFrameId = previousFrames.slice(startIndex + 1, endIndex + 1).find((frame) => remainingIds.has(frame.id))?.id ?? ''
+    }
+    if (!remainingIds.has(rightFrameId)) {
+      rightFrameId = previousFrames.slice(startIndex, endIndex).reverse().find((frame) => remainingIds.has(frame.id))?.id ?? ''
+    }
+    return leftFrameId && rightFrameId ? [{ ...section, startFrameId: leftFrameId, endFrameId: rightFrameId }] : []
+  })
+  return normalizeAnimationLoopSections(adjusted, remainingFrames)
+}

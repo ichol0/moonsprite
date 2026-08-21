@@ -56,4 +56,29 @@ describe('useAnimationPlaybackClock', () => {
     act(() => useWorkspace.getState().setAnimationPlaying(false))
     expect(document.animation?.activeFrameId).toBe(secondFrame.id)
   })
+
+  it('stops a finite loop section after its last frame has displayed for its duration', () => {
+    const document = createDocument('loop section clock', 1, 1, 'rgba')
+    useWorkspace.getState().addSession(document)
+    useWorkspace.getState().duplicateAnimationFrame()
+    useWorkspace.getState().duplicateAnimationFrame()
+    const [, secondFrame, thirdFrame] = document.animation!.frames
+    const loopId = useWorkspace.getState().createAnimationLoopSection({
+      name: 'Impact',
+      startFrameId: secondFrame.id,
+      endFrameId: thirdFrame.id,
+      direction: 'forward',
+      repeatCount: 1
+    })!
+    useWorkspace.getState().playAnimationLoopSection(loopId)
+    render(<PlaybackClock documentId={document.id} />)
+
+    expect(document.animation?.activeFrameId).toBe(secondFrame.id)
+    act(() => vi.advanceTimersByTime(100))
+    expect(document.animation?.activeFrameId).toBe(thirdFrame.id)
+    expect(useWorkspace.getState().sessions[0].animationPlaying).toBe(true)
+    act(() => vi.advanceTimersByTime(100))
+    expect(document.animation?.activeFrameId).toBe(thirdFrame.id)
+    expect(useWorkspace.getState().sessions[0]).toMatchObject({ animationPlaying: false, animationPlaybackLoopSectionId: null })
+  })
 })

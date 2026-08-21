@@ -44,6 +44,9 @@ export const MOVE_LAYER_CONTENT_PREVIEW_ENABLED_PREFERENCE_KEY = 'moonsprite.pre
 export const MOVE_LAYER_CLICK_FLASH_ENABLED_PREFERENCE_KEY = 'moonsprite.preference.move-layer-click-flash-enabled'
 export const MOVE_LAYER_CLICK_FLASH_DURATION_PREFERENCE_KEY = 'moonsprite.preference.move-layer-click-flash-duration'
 export const SELECTION_CROSSHAIR_PREFERENCE_KEY = 'moonsprite.preference.selection-crosshair'
+export const SELECTION_PREVIEW_COLOR_MODE_PREFERENCE_KEY = 'moonsprite.preference.selection-preview-color-mode'
+export const SELECTION_PREVIEW_COLOR_PREFERENCE_KEY = 'moonsprite.preference.selection-preview-color'
+export const SELECTION_SIZE_VISIBLE_PREFERENCE_KEY = 'moonsprite.preference.selection-size-visible'
 export const BALANCED_SHIFT_LINE_ENABLED_PREFERENCE_KEY = 'moonsprite.preference.balanced-shift-line-enabled'
 export const LINE_DIRECTION_STEP_PREFERENCE_KEY = 'moonsprite.preference.line-direction-step'
 export const LAYER_DISPLAY_COLOR_PRESETS_KEY = 'moonsprite.preference.layer-display-color-presets'
@@ -70,6 +73,7 @@ export const UI_SCALE_VALUES = [0.75, 1, 1.5, 2] as const
 export type UiScale = typeof UI_SCALE_VALUES[number]
 export type ToolIconScale = 1 | 2
 export type BrushPreviewMode = 'none' | 'edge' | 'full' | 'full-edge'
+export type SelectionPreviewColorMode = 'auto' | 'custom'
 export type EyedropperMagnifierStyle = 'pixel' | 'line'
 export type CheckerSize = number
 
@@ -164,6 +168,7 @@ export const DEFAULT_GRID_COLOR: RgbaColor = { r: 0, g: 0, b: 255, a: 255 }
 export const DEFAULT_SLICE_COLOR: RgbaColor = { r: 0, g: 0, b: 255, a: 255 }
 export const DEFAULT_TEXT_BOX_COLOR: RgbaColor = { r: 0, g: 0, b: 255, a: 255 }
 export const DEFAULT_CANVAS_RESIZE_COLOR: RgbaColor = { r: 0, g: 0, b: 255, a: 255 }
+export const DEFAULT_SELECTION_PREVIEW_COLOR: RgbaColor = { r: 0, g: 0, b: 255, a: 255 }
 
 export function parseRotationIndicatorPosition(value: string | null): RotationIndicatorPosition {
   return value === 'canvas' ? 'canvas' : 'view'
@@ -205,6 +210,10 @@ export function parseToolIconScale(value: string | null): ToolIconScale {
 
 export function parseBrushPreviewMode(value: string | null): BrushPreviewMode {
   return value === 'none' || value === 'edge' || value === 'full' || value === 'full-edge' ? value : 'full'
+}
+
+export function parseSelectionPreviewColorMode(value: string | null): SelectionPreviewColorMode {
+  return value === 'custom' ? 'custom' : 'auto'
 }
 
 export function parseEyedropperMagnifierStyle(value: string | null): EyedropperMagnifierStyle {
@@ -357,6 +366,9 @@ export interface EditorPreferences {
   moveLayerClickFlashEnabled: boolean
   moveLayerClickFlashDuration: MoveLayerClickFlashDuration
   selectionCrosshair: boolean
+  selectionPreviewColorMode: SelectionPreviewColorMode
+  selectionPreviewColor: RgbaColor
+  selectionSizeVisible: boolean
   balancedShiftLineEnabled: boolean
   lineDirectionStep: number
   layerDisplayColorPresets: RgbaColor[]
@@ -411,6 +423,9 @@ export const DEFAULT_EDITOR_PREFERENCES: EditorPreferences = {
   moveLayerClickFlashEnabled: true,
   moveLayerClickFlashDuration: 120,
   selectionCrosshair: false,
+  selectionPreviewColorMode: 'auto',
+  selectionPreviewColor: DEFAULT_SELECTION_PREVIEW_COLOR,
+  selectionSizeVisible: true,
   balancedShiftLineEnabled: true,
   lineDirectionStep: 1,
   layerDisplayColorPresets: DEFAULT_LAYER_DISPLAY_COLOR_PRESETS,
@@ -715,6 +730,9 @@ export function loadEditorPreferences(storage?: Storage): EditorPreferences {
     moveLayerClickFlashEnabled: get(MOVE_LAYER_CLICK_FLASH_ENABLED_PREFERENCE_KEY) !== 'false',
     moveLayerClickFlashDuration: parseMoveLayerClickFlashDuration(get(MOVE_LAYER_CLICK_FLASH_DURATION_PREFERENCE_KEY)),
     selectionCrosshair: get(SELECTION_CROSSHAIR_PREFERENCE_KEY) === 'true',
+    selectionPreviewColorMode: parseSelectionPreviewColorMode(get(SELECTION_PREVIEW_COLOR_MODE_PREFERENCE_KEY)),
+    selectionPreviewColor: parseHexColor(get(SELECTION_PREVIEW_COLOR_PREFERENCE_KEY), DEFAULT_SELECTION_PREVIEW_COLOR),
+    selectionSizeVisible: get(SELECTION_SIZE_VISIBLE_PREFERENCE_KEY) !== 'false',
     balancedShiftLineEnabled: get(BALANCED_SHIFT_LINE_ENABLED_PREFERENCE_KEY) !== 'false',
     lineDirectionStep: parseLineDirectionStep(get(LINE_DIRECTION_STEP_PREFERENCE_KEY)),
     layerDisplayColorPresets: parseLayerDisplayColorPresets(get(LAYER_DISPLAY_COLOR_PRESETS_KEY)),
@@ -774,6 +792,9 @@ export function saveEditorPreferences(preferences: EditorPreferences, storage?: 
     [MOVE_LAYER_CLICK_FLASH_ENABLED_PREFERENCE_KEY]: String(preferences.moveLayerClickFlashEnabled),
     [MOVE_LAYER_CLICK_FLASH_DURATION_PREFERENCE_KEY]: String(parseMoveLayerClickFlashDuration(String(preferences.moveLayerClickFlashDuration))),
     [SELECTION_CROSSHAIR_PREFERENCE_KEY]: String(preferences.selectionCrosshair),
+    [SELECTION_PREVIEW_COLOR_MODE_PREFERENCE_KEY]: parseSelectionPreviewColorMode(preferences.selectionPreviewColorMode),
+    [SELECTION_PREVIEW_COLOR_PREFERENCE_KEY]: colorHex(preferences.selectionPreviewColor),
+    [SELECTION_SIZE_VISIBLE_PREFERENCE_KEY]: String(preferences.selectionSizeVisible),
     [BALANCED_SHIFT_LINE_ENABLED_PREFERENCE_KEY]: String(preferences.balancedShiftLineEnabled),
     [LINE_DIRECTION_STEP_PREFERENCE_KEY]: String(parseLineDirectionStep(String(preferences.lineDirectionStep))),
     [LAYER_DISPLAY_COLOR_PRESETS_KEY]: JSON.stringify(parseLayerDisplayColorPresets(JSON.stringify(preferences.layerDisplayColorPresets))),

@@ -1,5 +1,65 @@
 import { describe, expect, it } from 'vitest'
-import { BRUSH_SHIFT_LINE_ENABLED_KEY, CANVAS_RESIZE_COLOR_PREFERENCE_KEY, DEFAULT_COLOR_EDITOR_MODES, DEFAULT_GRID_COLOR, DEFAULT_PIXEL_GRID_COLOR, DEFAULT_QUICK_COMMAND_PREFERENCES, EXPORT_DIRECTORY_PREFERENCE_KEY, EXPORT_FORMAT_PREFERENCE_KEY, GRID_COLOR_PREFERENCE_KEY, LANGUAGE_PREFERENCE_KEY, LAYER_DISPLAY_COLOR_PRESETS_KEY, MOVE_LAYER_CLICK_FLASH_DURATION_PREFERENCE_KEY, MOVE_LAYER_CONTENT_PREVIEW_ENABLED_PREFERENCE_KEY, NEW_DOCUMENT_SIZE_PRESETS_KEY, PIXEL_GRID_COLOR_PREFERENCE_KEY, QUICK_COMMAND_BAR_ENABLED_PREFERENCE_KEY, QUICK_COMMAND_BAR_TRANSLUCENT_PREFERENCE_KEY, QUICK_COMMAND_PREFERENCES_KEY, RECOVERY_MINUTES_PREFERENCE_KEY, RECOVERY_RETENTION_DAYS_PREFERENCE_KEY, SAVE_DIRECTORY_PREFERENCE_KEY, SAVE_FORMAT_PREFERENCE_KEY, SYMMETRY_AXIS_PREFERENCE_KEY, THEME_PREFERENCE_KEY, TIMELAPSE_RECORDING_ENABLED_PREFERENCE_KEY, TIMELINE_HIDDEN_PREFERENCE_KEY, TOOL_ICON_SCALE_PREFERENCE_KEY, UI_SCALE_PREFERENCE_KEY, WHEEL_ZOOM_MODE_PREFERENCE_KEY, ZOOM_TOOL_DRAG_MODE_PREFERENCE_KEY, imageExportKindForPreference, loadEditorPreferences, parseBrushPreviewMode, parseBrushShiftLineEnabled, parseCheckerSize, parseColorEditorModes, parseCursorScale, parseDocumentSizePresets, parseDrawingBrushPreviewEnabled, parseExportScalePresets, parseEyedropperMagnifierStyle, parseLayerDisplayColorPresets, parseLineDirectionStep, parseMoveLayerClickFlashDuration, parseQuickCommandPreferences, parseRecoveryRetentionDays, parseRelativeLuminanceScope, parseSymmetryAxisPreferences, parseToolIconScale, parseUiScale, parseWheelZoomMode, parseZoomToolDragMode, saveEditorPreferences, saveImageKindForPreference } from './file-preferences'
+import {
+  BRUSH_SHIFT_LINE_ENABLED_KEY,
+  CANVAS_RESIZE_COLOR_PREFERENCE_KEY,
+  DEFAULT_COLOR_EDITOR_MODES,
+  DEFAULT_GRID_COLOR,
+  DEFAULT_PIXEL_GRID_COLOR,
+  DEFAULT_QUICK_COMMAND_PREFERENCES,
+  DEFAULT_SELECTION_PREVIEW_COLOR,
+  EXPORT_DIRECTORY_PREFERENCE_KEY,
+  EXPORT_FORMAT_PREFERENCE_KEY,
+  GRID_COLOR_PREFERENCE_KEY,
+  LANGUAGE_PREFERENCE_KEY,
+  LAYER_DISPLAY_COLOR_PRESETS_KEY,
+  MOVE_LAYER_CLICK_FLASH_DURATION_PREFERENCE_KEY,
+  MOVE_LAYER_CONTENT_PREVIEW_ENABLED_PREFERENCE_KEY,
+  NEW_DOCUMENT_SIZE_PRESETS_KEY,
+  PIXEL_GRID_COLOR_PREFERENCE_KEY,
+  QUICK_COMMAND_BAR_ENABLED_PREFERENCE_KEY,
+  QUICK_COMMAND_BAR_TRANSLUCENT_PREFERENCE_KEY,
+  QUICK_COMMAND_PREFERENCES_KEY,
+  RECOVERY_MINUTES_PREFERENCE_KEY,
+  RECOVERY_RETENTION_DAYS_PREFERENCE_KEY,
+  SAVE_DIRECTORY_PREFERENCE_KEY,
+  SAVE_FORMAT_PREFERENCE_KEY,
+  SELECTION_PREVIEW_COLOR_MODE_PREFERENCE_KEY,
+  SELECTION_PREVIEW_COLOR_PREFERENCE_KEY,
+  SELECTION_SIZE_VISIBLE_PREFERENCE_KEY,
+  SYMMETRY_AXIS_PREFERENCE_KEY,
+  THEME_PREFERENCE_KEY,
+  TIMELAPSE_RECORDING_ENABLED_PREFERENCE_KEY,
+  TIMELINE_HIDDEN_PREFERENCE_KEY,
+  TOOL_ICON_SCALE_PREFERENCE_KEY,
+  UI_SCALE_PREFERENCE_KEY,
+  WHEEL_ZOOM_MODE_PREFERENCE_KEY,
+  ZOOM_TOOL_DRAG_MODE_PREFERENCE_KEY,
+  imageExportKindForPreference,
+  loadEditorPreferences,
+  parseBrushPreviewMode,
+  parseBrushShiftLineEnabled,
+  parseCheckerSize,
+  parseColorEditorModes,
+  parseCursorScale,
+  parseDocumentSizePresets,
+  parseDrawingBrushPreviewEnabled,
+  parseExportScalePresets,
+  parseEyedropperMagnifierStyle,
+  parseLayerDisplayColorPresets,
+  parseLineDirectionStep,
+  parseMoveLayerClickFlashDuration,
+  parseQuickCommandPreferences,
+  parseRecoveryRetentionDays,
+  parseRelativeLuminanceScope,
+  parseSelectionPreviewColorMode,
+  parseSymmetryAxisPreferences,
+  parseToolIconScale,
+  parseUiScale,
+  parseWheelZoomMode,
+  parseZoomToolDragMode,
+  saveEditorPreferences,
+  saveImageKindForPreference
+} from './file-preferences'
 import { resolveTheme } from './theme'
 
 describe('file format preferences', () => {
@@ -175,6 +235,9 @@ describe('editor preferences persistence boundary', () => {
     expect(defaults.moveLayerClickFlashEnabled).toBe(true)
     expect(defaults.moveLayerClickFlashDuration).toBe(120)
     expect(defaults.selectionCrosshair).toBe(false)
+    expect(defaults.selectionPreviewColorMode).toBe('auto')
+    expect(defaults.selectionPreviewColor).toEqual(DEFAULT_SELECTION_PREVIEW_COLOR)
+    expect(defaults.selectionSizeVisible).toBe(true)
     expect(defaults.balancedShiftLineEnabled).toBe(true)
     expect(defaults.lineDirectionStep).toBe(1)
     expect(defaults.layerDisplayColorPresets.length).toBeGreaterThan(0)
@@ -220,6 +283,8 @@ describe('editor preferences persistence boundary', () => {
     expect(parseToolIconScale('1')).toBe(1)
     expect(parseToolIconScale('2')).toBe(2)
     expect(parseToolIconScale('3')).toBe(1)
+    expect(parseSelectionPreviewColorMode('custom')).toBe('custom')
+    expect(parseSelectionPreviewColorMode('unsupported')).toBe('auto')
     expect(parseUiScale('0.5')).toBe(1)
     expect(parseUiScale('2')).toBe(2)
     expect(parseUiScale('1.25')).toBe(1)
@@ -260,7 +325,7 @@ describe('editor preferences persistence boundary', () => {
     expect(loadEditorPreferences(adapter).quickCommandPreferences).toEqual(reorderedQuickCommands)
     saveEditorPreferences({ ...loadEditorPreferences(adapter), eyedropperMagnifierStyle: 'line' }, adapter)
     expect(loadEditorPreferences(adapter).eyedropperMagnifierStyle).toBe('line')
-    saveEditorPreferences({ ...loadEditorPreferences(adapter), useLocalCursors: false, cursorScale: 1.5, brushPreviewMode: 'edge', checkerboard: { size: 12, lightColor: { r: 1, g: 2, b: 3, a: 255 }, darkColor: { r: 4, g: 5, b: 6, a: 255 } }, pixelGridColor: { r: 10, g: 20, b: 30, a: 40 }, gridColor: { r: 50, g: 60, b: 70, a: 80 }, sliceColor: { r: 90, g: 100, b: 110, a: 120 }, textBoxColor: { r: 130, g: 140, b: 150, a: 160 }, canvasResizeColor: { r: 170, g: 180, b: 190, a: 200 }, wheelZoomEnabled: false, shiftLinePreviewEnabled: false, lassoPreviewClosed: true, eyedropperSwitchToPencil: true, balancedShiftLineEnabled: false, lineDirectionStep: 2, layerDisplayColorPresets: [{ r: 12, g: 34, b: 56, a: 99 }], symmetryAxis: { locked: true, color: { r: 22, g: 44, b: 66, a: 7 }, thickness: 6 } }, adapter)
+    saveEditorPreferences({ ...loadEditorPreferences(adapter), useLocalCursors: false, cursorScale: 1.5, brushPreviewMode: 'edge', checkerboard: { size: 12, lightColor: { r: 1, g: 2, b: 3, a: 255 }, darkColor: { r: 4, g: 5, b: 6, a: 255 } }, pixelGridColor: { r: 10, g: 20, b: 30, a: 40 }, gridColor: { r: 50, g: 60, b: 70, a: 80 }, sliceColor: { r: 90, g: 100, b: 110, a: 120 }, textBoxColor: { r: 130, g: 140, b: 150, a: 160 }, canvasResizeColor: { r: 170, g: 180, b: 190, a: 200 }, selectionPreviewColorMode: 'custom', selectionPreviewColor: { r: 18, g: 52, b: 86, a: 120 }, selectionSizeVisible: false, wheelZoomEnabled: false, shiftLinePreviewEnabled: false, lassoPreviewClosed: true, eyedropperSwitchToPencil: true, balancedShiftLineEnabled: false, lineDirectionStep: 2, layerDisplayColorPresets: [{ r: 12, g: 34, b: 56, a: 99 }], symmetryAxis: { locked: true, color: { r: 22, g: 44, b: 66, a: 7 }, thickness: 6 } }, adapter)
     const customized = loadEditorPreferences(adapter)
     expect(customized.useLocalCursors).toBe(false)
     expect(customized.cursorScale).toBe(1.5)
@@ -272,6 +337,12 @@ describe('editor preferences persistence boundary', () => {
     expect(customized.textBoxColor).toEqual({ r: 130, g: 140, b: 150, a: 160 })
     expect(customized.canvasResizeColor).toEqual({ r: 170, g: 180, b: 190, a: 200 })
     expect(storage.get(CANVAS_RESIZE_COLOR_PREFERENCE_KEY)).toBe('#aab4bec8')
+    expect(customized.selectionPreviewColorMode).toBe('custom')
+    expect(customized.selectionPreviewColor).toEqual({ r: 18, g: 52, b: 86, a: 120 })
+    expect(customized.selectionSizeVisible).toBe(false)
+    expect(storage.get(SELECTION_PREVIEW_COLOR_MODE_PREFERENCE_KEY)).toBe('custom')
+    expect(storage.get(SELECTION_PREVIEW_COLOR_PREFERENCE_KEY)).toBe('#12345678')
+    expect(storage.get(SELECTION_SIZE_VISIBLE_PREFERENCE_KEY)).toBe('false')
     expect(customized.wheelZoomEnabled).toBe(false)
     expect(customized.shiftLinePreviewEnabled).toBe(false)
     expect(customized.lassoPreviewClosed).toBe(true)

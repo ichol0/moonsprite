@@ -2,6 +2,7 @@ import type {
   AnimationCel,
   AnimationCelSurface,
   AnimationGroupMask,
+  BrushDitherSettings,
   BrushPaintMode,
   BrushShape,
   BrushTexture,
@@ -124,6 +125,7 @@ export interface TextBoxTransformState {
 export interface BrushProfile {
   brushSize: number
   brushShape: BrushShape
+  brushDither: BrushDitherSettings
   brushTexture: BrushTexture
   brushTextureScale: number
   brushPaintMode: BrushPaintMode
@@ -142,6 +144,8 @@ export type DocumentContentInvalidation = ContentInvalidationHint & {
   fromRevision: number
   revision: number
 }
+
+export type AnimationPlaybackMode = 'once' | 'all' | 'tag'
 
 export interface DocumentSession {
   document: SpriteDocument
@@ -167,6 +171,7 @@ export interface DocumentSession {
   secondaryColor: RgbaColor
   brushSize: number
   brushShape: BrushShape
+  brushDither: BrushDitherSettings
   brushTexture: BrushTexture
   brushTextureScale: number
   brushPaintMode: BrushPaintMode
@@ -231,7 +236,11 @@ export interface DocumentSession {
   collapsedGroupIds: string[]
   animationPlaying: boolean
   animationPlaybackRate: number
+  animationPlaybackMode: AnimationPlaybackMode
   animationPlaybackStartFrameId: string | null
+  animationPlaybackLoopSectionId: string | null
+  animationPlaybackLoopIteration: number
+  animationPlaybackLoopSectionRepeatIndefinitely: boolean
   animationReturnToStart: boolean
   selectedAnimationFrameIds: string[]
   animationFrameSelectionAnchorId: string | null

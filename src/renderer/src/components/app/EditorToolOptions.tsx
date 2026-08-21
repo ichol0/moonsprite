@@ -1,7 +1,7 @@
-import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { createPortal } from 'react-dom'
 import { ArrowLeftRight } from 'lucide-react'
-import type { BrushPaintMode, BrushShape, BrushTexture, GradientDither, ProceduralBrushId, ProceduralBrushSettings, RgbaColor, SelectionMode, SelectionRect } from '@shared/types'
+import type { BrushDitherTemplate, BrushPaintMode, BrushShape, BrushTexture, GradientDither, ProceduralBrushId, ProceduralBrushSettings, RgbaColor, SelectionMode, SelectionRect } from '@shared/types'
 import { BrushThumbnail } from '@/components/BrushThumbnail'
 import { NumberInput } from '@/components/NumberInput'
 import { ColorValueControl } from '@/components/ColorValueControl'
@@ -29,6 +29,7 @@ import { publishSlicePreview } from '@/core/slice-preview'
 import { BRUSH_SPEED_INPUT_LIMIT, DEFAULT_PRESSURE_INPUT_RANGE, DEFAULT_SPEED_INPUT_RANGE, type BrushDynamicsCurve, type BrushDynamicsDirection, type BrushDynamicsEffect, type BrushDynamicsMapping, type BrushDynamicsSensor, type BrushDynamicsSettings } from '@/core/pressure'
 import { getBrushDynamicsTelemetry, subscribeBrushDynamicsTelemetry, type BrushDynamicsTelemetrySnapshot } from '@/core/brush-dynamics-telemetry'
 import { MAX_GAP_CLOSING_THRESHOLD, MIN_GAP_CLOSING_THRESHOLD } from '@/core/contiguous-region'
+import { BRUSH_DITHER_TEMPLATES, DEFAULT_BRUSH_DITHER_SETTINGS, brushDitherContains, brushDitherSettingsForTemplate, ditherStageCount } from '@/core/gradient-color'
 import { useWorkspace } from '@/store/workspace'
 import { PixelDownIcon as ChevronDown, PixelUtilityIcon } from '@/components/PixelUtilityIcon'
 import { PixelAssetIcon, PixelShapeIcon, selectionModes, temporarySelectionModeForModifiers } from './editor-tools'
@@ -53,6 +54,15 @@ function BrushTextureThumbnail({ texture }: { texture: BrushTexture }) {
     context.putImageData(image, 0, 0)
   }, [texture])
   return <canvas ref={canvasRef} className="fill-texture-coverage-thumbnail" width={16} height={16} aria-hidden="true" />
+}
+
+function BrushDitherPreview({ template, stage }: { template: BrushDitherTemplate; stage: number }) {
+  const settings = { enabled: true, template, stage }
+  return <span className="brush-dither-preview" aria-hidden="true">{Array.from({ length: 64 }, (_, index) => {
+    const x = index % 8
+    const y = Math.floor(index / 8)
+    return <i key={index} className={brushDitherContains(settings, x, y) ? 'filled' : ''} />
+  })}</span>
 }
 
 type ProceduralControl = { key: keyof ProceduralBrushSettings; label: TranslationKey; min: number; max: number; suffix?: string }
@@ -389,6 +399,10 @@ export const EditorToolOptions = memo(function EditorToolOptions({ onOpenColorRe
     state.sessions.find((item) => item.document.id === state.activeId) ?? null
   ))
   const [brushSizeFlyoutOpen, setBrushSizeFlyoutOpen] = useState(false)
+  const [basicBrushFlyoutOpen, setBasicBrushFlyoutOpen] = useState(false)
+  const [brushDitherFlyoutOpen, setBrushDitherFlyoutOpen] = useState(false)
+  const [brushDitherResident, setBrushDitherResident] = useState(false)
+  const [brushDitherPopoverPosition, setBrushDitherPopoverPosition] = useState({ left: 8, top: 8, maxHeight: 320 })
   const [fillTextureOpen, setFillTextureOpen] = useState(false)
   const [toleranceFlyoutOpen, setToleranceFlyoutOpen] = useState<'wand' | 'wand-gap' | 'fill' | 'fill-gap' | 'gradient' | null>(null)
   const [temporarySelectionMode, setTemporarySelectionMode] = useState<SelectionMode | null>(null)
@@ -398,7 +412,19 @@ export const EditorToolOptions = memo(function EditorToolOptions({ onOpenColorRe
   const [autoSlicePreviewEnabled, setAutoSlicePreviewEnabled] = useState(true)
   const [pressurePopoverPosition, setPressurePopoverPosition] = useState<{ left: number; top: number; width: number; maxHeight: number } | null>(null)
   const pressureControlRef = useRef<HTMLDivElement>(null)
+  const brushDitherTriggerRef = useRef<HTMLButtonElement>(null)
+  const brushDitherPopoverRef = useRef<HTMLDivElement>(null)
+  const brushDitherDragRef = useRef<{ pointerX: number; pointerY: number; left: number; top: number } | null>(null)
+  const brushDitherResidentRef = useRef(false)
+  const brushDitherPositionedRef = useRef(false)
   const [lineDirectionStep, setLineDirectionStep] = useState(() => loadEditorPreferences().lineDirectionStep)
+  const closeBrushDitherFlyout = useCallback((): void => {
+    brushDitherDragRef.current = null
+    brushDitherResidentRef.current = false
+    brushDitherPositionedRef.current = false
+    setBrushDitherResident(false)
+    setBrushDitherFlyoutOpen(false)
+  }, [])
   const state = useWorkspace.getState()
   const session = state.sessions.find((item) => item.document.id === state.activeId) ?? null
   const proceduralBrushes = useMemo(() => session ? createProceduralBrushes(session.proceduralBrushSettings) : [], [renderKey, session?.document.id])
@@ -431,6 +457,8 @@ export const EditorToolOptions = memo(function EditorToolOptions({ onOpenColorRe
     const closeOutside = (event: PointerEvent): void => {
       if (!(event.target instanceof Element)) return
       if (!event.target.closest('.brush-size-control')) setBrushSizeFlyoutOpen(false)
+      if (!event.target.closest('.brush-shape-selector')) setBasicBrushFlyoutOpen(false)
+      if (!brushDitherResidentRef.current && !event.target.closest('.brush-dither-control, .brush-dither-popover')) closeBrushDitherFlyout()
       if (!event.target.closest('.fill-texture-control')) setFillTextureOpen(false)
       if (!event.target.closest('.tolerance-control')) setToleranceFlyoutOpen(null)
       if (!keepsBrushDynamicsOpen(event.target)) setPressureFlyoutOpen(false)
@@ -439,12 +467,14 @@ export const EditorToolOptions = memo(function EditorToolOptions({ onOpenColorRe
       if (!(event.target instanceof Element)) return
       if (!keepsBrushDynamicsOpen(event.target)) setPressureFlyoutOpen(false)
     }
-    const closeOnBlur = (): void => { setFillTextureOpen(false); setToleranceFlyoutOpen(null); setPressureFlyoutOpen(false) }
-    const closeOnEscape = (event: KeyboardEvent): void => { if (event.key === 'Escape') setPressureFlyoutOpen(false) }
+    const closeOnBlur = (): void => { setBasicBrushFlyoutOpen(false); if (!brushDitherResidentRef.current) closeBrushDitherFlyout(); setFillTextureOpen(false); setToleranceFlyoutOpen(null); setPressureFlyoutOpen(false) }
+    const closeOnEscape = (event: KeyboardEvent): void => { if (event.key === 'Escape') { setBasicBrushFlyoutOpen(false); closeBrushDitherFlyout(); setPressureFlyoutOpen(false) } }
     const closeAll = (event: Event): void => {
       const target = (event as CustomEvent<{ target?: string }>).detail?.target
       if (target && target !== 'popover') return
       setBrushSizeFlyoutOpen(false)
+      setBasicBrushFlyoutOpen(false)
+      closeBrushDitherFlyout()
       setFillTextureOpen(false)
       setToleranceFlyoutOpen(null)
       setPressureFlyoutOpen(false)
@@ -461,7 +491,80 @@ export const EditorToolOptions = memo(function EditorToolOptions({ onOpenColorRe
       window.removeEventListener('keydown', closeOnEscape, true)
       window.removeEventListener('moonsprite:close-dialog', closeAll)
     }
-  }, [])
+  }, [closeBrushDitherFlyout])
+
+  useLayoutEffect(() => {
+    if (!brushDitherFlyoutOpen) return
+    const placePopover = (): void => {
+      const popover = brushDitherPopoverRef.current
+      if (!popover) return
+      const bounds = popover.getBoundingClientRect()
+      const safeTop = (document.querySelector<HTMLElement>('.app-window-titlebar')?.getBoundingClientRect().bottom ?? 0) + 8
+      const safeBottom = window.innerHeight - 8
+      if (brushDitherResidentRef.current && brushDitherPositionedRef.current) {
+        setBrushDitherPopoverPosition((current) => {
+          const top = Math.max(safeTop, Math.min(safeBottom - Math.min(bounds.height, current.maxHeight), current.top))
+          return {
+            left: Math.max(8, Math.min(window.innerWidth - bounds.width - 8, current.left)),
+            top,
+            maxHeight: Math.max(1, safeBottom - top)
+          }
+        })
+        return
+      }
+      const trigger = brushDitherTriggerRef.current?.getBoundingClientRect()
+      if (!trigger) return
+      const left = Math.max(8, Math.min(window.innerWidth - bounds.width - 8, trigger.left))
+      const belowTop = trigger.bottom + 5
+      const aboveBottom = trigger.top - 5
+      const availableBelow = Math.max(1, safeBottom - belowTop)
+      const availableAbove = Math.max(1, aboveBottom - safeTop)
+      const opensBelow = availableBelow >= bounds.height || availableBelow >= availableAbove
+      const maxHeight = opensBelow ? availableBelow : availableAbove
+      const top = opensBelow ? belowTop : Math.max(safeTop, aboveBottom - Math.min(bounds.height, maxHeight))
+      brushDitherPositionedRef.current = true
+      setBrushDitherPopoverPosition({ left, top, maxHeight })
+    }
+    placePopover()
+    window.addEventListener('resize', placePopover)
+    window.addEventListener('scroll', placePopover, true)
+    return () => {
+      window.removeEventListener('resize', placePopover)
+      window.removeEventListener('scroll', placePopover, true)
+    }
+  }, [brushDitherFlyoutOpen])
+
+  useEffect(() => {
+    if (!brushDitherFlyoutOpen) return
+    const move = (event: PointerEvent): void => {
+      const drag = brushDitherDragRef.current
+      const popover = brushDitherPopoverRef.current
+      if (!drag || !popover) return
+      const bounds = popover.getBoundingClientRect()
+      if (!brushDitherResidentRef.current && Math.hypot(event.clientX - drag.pointerX, event.clientY - drag.pointerY) >= 3) {
+        brushDitherResidentRef.current = true
+        setBrushDitherResident(true)
+      }
+      const safeTop = (document.querySelector<HTMLElement>('.app-window-titlebar')?.getBoundingClientRect().bottom ?? 0) + 8
+      const safeBottom = window.innerHeight - 8
+      const availableHeight = Math.max(1, safeBottom - safeTop)
+      const top = Math.max(safeTop, Math.min(safeBottom - Math.min(bounds.height, availableHeight), drag.top + event.clientY - drag.pointerY))
+      setBrushDitherPopoverPosition({
+        left: Math.max(8, Math.min(window.innerWidth - bounds.width - 8, drag.left + event.clientX - drag.pointerX)),
+        top,
+        maxHeight: Math.max(1, safeBottom - top)
+      })
+    }
+    const end = (): void => { brushDitherDragRef.current = null }
+    window.addEventListener('pointermove', move)
+    window.addEventListener('pointerup', end)
+    window.addEventListener('pointercancel', end)
+    return () => {
+      window.removeEventListener('pointermove', move)
+      window.removeEventListener('pointerup', end)
+      window.removeEventListener('pointercancel', end)
+    }
+  }, [brushDitherFlyoutOpen])
 
   useLayoutEffect(() => {
     if (!pressureFlyoutOpen) return
@@ -487,9 +590,14 @@ export const EditorToolOptions = memo(function EditorToolOptions({ onOpenColorRe
   useEffect(() => {
     const supportsBrushLibrary = session?.tool === 'pencil' || session?.tool === 'eraser' || session?.tool === 'line' || (session?.tool === 'fill' && (session.fillKind ?? 'bucket') === 'bucket')
     if (!supportsBrushLibrary && session?.tool !== 'airbrush') setBrushSizeFlyoutOpen(false)
+    if (session?.tool !== 'pencil' && session?.tool !== 'eraser' && session?.tool !== 'line') {
+      setBasicBrushFlyoutOpen(false)
+      closeBrushDitherFlyout()
+    }
+    if (session?.brushImage && !isProceduralBrushId(session.brushImage.id)) closeBrushDitherFlyout()
     if (session?.tool !== 'fill' || (session.fillKind ?? 'bucket') !== 'bucket') setFillTextureOpen(false)
     if (session?.tool !== 'pencil' && session?.tool !== 'eraser') setPressureFlyoutOpen(false)
-  }, [renderKey, session?.tool, session?.fillKind])
+  }, [closeBrushDitherFlyout, renderKey, session?.tool, session?.fillKind])
 
   useEffect(() => {
     const supportsTolerance = (session?.tool === 'selection' && session.selectionKind === 'magic')
@@ -555,6 +663,8 @@ export const EditorToolOptions = memo(function EditorToolOptions({ onOpenColorRe
   const isBrushTool = isStrokeBrushTool || isBucketBrushTool
   const activeProceduralBrush = session.brushImage && isProceduralBrushId(session.brushImage.id) ? session.brushImage : null
   const activeLibraryBrush = session.brushImage && !activeProceduralBrush ? session.brushImage : null
+  const brushDither = session.brushDither ?? DEFAULT_BRUSH_DITHER_SETTINGS
+  const brushDitherMaximumStage = ditherStageCount(brushDither.template)
   const supportsSymmetry = session.tool === 'pencil' || session.tool === 'airbrush' || session.tool === 'eraser' || session.tool === 'selection' || session.tool === 'shape' || session.tool === 'line' || (session.tool === 'fill' && fillKind === 'bucket')
   const selectionModeItems = selectionModes(locale)
   const brushPaintModeGroups = [{
@@ -602,6 +712,7 @@ export const EditorToolOptions = memo(function EditorToolOptions({ onOpenColorRe
     workspace.setBrushImage(null)
     workspace.setBrushTexture('solid')
     workspace.setBrushShape(shape)
+    setBasicBrushFlyoutOpen(false)
   }
   const chooseStaticTexture = (texture: BrushTexture): void => {
     workspace.setBrushImage(null)
@@ -633,9 +744,59 @@ export const EditorToolOptions = memo(function EditorToolOptions({ onOpenColorRe
       <FormField className="airbrush-number-field" layout="inline" label={t('toolOptions.airbrushInterval')} tooltip={t('toolOptions.airbrushIntervalHint')}><NumberInput aria-label={t('toolOptions.airbrushInterval')} density="compact" min={16} max={1000} suffix="ms" value={session.airbrushIntervalMs} onValueChange={workspace.setAirbrushIntervalMs} /></FormField>
     </div>}
     {isBrushTool && <>
-      {isStrokeBrushTool && <div className="brush-shape-control" aria-label={t('toolOptions.basicBrushes')}>
-        {(['round', 'square', 'line'] as BrushShape[]).map((shape) => <button key={shape} type="button" className={`icon-button brush-preset ${!activeLibraryBrush && session.brushShape === shape ? 'selected' : ''}`} title={t(shape === 'round' ? 'toolOptions.roundBrush' : shape === 'square' ? 'toolOptions.squareBrush' : 'toolOptions.lineBrush')} aria-label={t(shape === 'round' ? 'toolOptions.roundBrush' : shape === 'square' ? 'toolOptions.squareBrush' : 'toolOptions.lineBrush')} aria-pressed={!activeLibraryBrush && session.brushShape === shape} onClick={() => chooseBasicBrush(shape)}><PixelShapeIcon kind={shape} /></button>)}
+      {isStrokeBrushTool && <div className="brush-shape-selector">
+        <button type="button" className={`icon-button brush-preset brush-shape-trigger ${!activeLibraryBrush ? 'selected' : ''}`} title={t('toolOptions.basicBrushes')} aria-label={t('toolOptions.basicBrushes')} aria-haspopup="menu" aria-expanded={basicBrushFlyoutOpen} onClick={() => setBasicBrushFlyoutOpen((open) => !open)}><PixelShapeIcon kind={session.brushShape} /><ChevronDown className="brush-shape-trigger-arrow" /></button>
+        {basicBrushFlyoutOpen && <div className="brush-shape-popover" role="menu" aria-label={t('toolOptions.basicBrushes')}>
+          {(['round', 'square', 'line'] as BrushShape[]).map((shape) => <button key={shape} type="button" role="menuitemradio" className={`icon-button brush-preset ${!activeLibraryBrush && session.brushShape === shape ? 'selected' : ''}`} title={t(shape === 'round' ? 'toolOptions.roundBrush' : shape === 'square' ? 'toolOptions.squareBrush' : 'toolOptions.lineBrush')} aria-label={t(shape === 'round' ? 'toolOptions.roundBrush' : shape === 'square' ? 'toolOptions.squareBrush' : 'toolOptions.lineBrush')} aria-checked={!activeLibraryBrush && session.brushShape === shape} onClick={() => chooseBasicBrush(shape)}><PixelShapeIcon kind={shape} /></button>)}
+        </div>}
       </div>}
+      {isStrokeBrushTool && <>
+        <div className="brush-dither-control">
+          <button ref={brushDitherTriggerRef} type="button" className={`icon-button brush-dither-trigger ${brushDither.enabled && !activeLibraryBrush ? 'selected' : ''}`} title={t('toolOptions.brushDither')} aria-label={t('toolOptions.brushDither')} aria-haspopup="dialog" aria-expanded={brushDitherFlyoutOpen} aria-pressed={brushDither.enabled && !activeLibraryBrush} disabled={Boolean(activeLibraryBrush)} onClick={() => {
+            if (brushDitherFlyoutOpen) closeBrushDitherFlyout()
+            else {
+              brushDitherResidentRef.current = false
+              brushDitherPositionedRef.current = false
+              setBrushDitherResident(false)
+              setBrushDitherFlyoutOpen(true)
+            }
+          }}><PixelUtilityIcon kind="dither" /></button>
+        </div>
+        {brushDitherFlyoutOpen && createPortal(<div ref={brushDitherPopoverRef} className={`brush-dither-popover ${brushDitherResident ? 'resident' : 'transient'}`} role="dialog" aria-label={t('toolOptions.brushDither')} style={brushDitherPopoverPosition}>
+          <header className="brush-dither-titlebar" onPointerDown={(event) => {
+            if (event.button !== 0 || (event.target as HTMLElement).closest('button') || !brushDitherPopoverRef.current) return
+            const bounds = brushDitherPopoverRef.current.getBoundingClientRect()
+            brushDitherDragRef.current = { pointerX: event.clientX, pointerY: event.clientY, left: bounds.left, top: bounds.top }
+            event.preventDefault()
+          }}><strong>{t('toolOptions.brushDither')}</strong><button type="button" className="icon-button" aria-label={`${t('common.close')} ${t('toolOptions.brushDither')}`} onClick={closeBrushDitherFlyout}><PixelUtilityIcon kind="close" /></button></header>
+          <div className="brush-dither-template-grid" role="group" aria-label={t('toolOptions.brushDitherTemplate')}>
+            {BRUSH_DITHER_TEMPLATES.map((template) => {
+              const previewSettings = brushDitherSettingsForTemplate(brushDither, template)
+              const label = t(template === 'bayer-2'
+                ? 'toolOptions.gradientDither.bayer2'
+                : template === 'bayer-4'
+                  ? 'toolOptions.gradientDither.bayer4'
+                  : template === 'bayer-8'
+                    ? 'toolOptions.gradientDither.bayer8'
+                    : template === 'diagonal'
+                      ? 'toolOptions.gradientDither.diagonalLeft'
+                      : template === 'diagonal-reverse'
+                        ? 'toolOptions.gradientDither.diagonalRight'
+                        : `toolOptions.gradientDither.${template}` as TranslationKey)
+              const selected = brushDither.enabled && brushDither.template === template
+              return <button key={template} type="button" className={selected ? 'selected' : ''} aria-pressed={selected} title={label} onClick={() => workspace.setBrushDither(selected ? { ...brushDither, enabled: false } : previewSettings)}><BrushDitherPreview template={template} stage={previewSettings.stage} /><span>{label}</span></button>
+            })}
+          </div>
+          <div className="brush-dither-stage">
+            <span>{t('toolOptions.brushDitherStage')}</span>
+            <span className="brush-dither-stage-stepper" role="group" aria-label={t('toolOptions.brushDitherStage')}>
+              <button type="button" aria-label={t('toolOptions.brushDitherPreviousStage')} disabled={!brushDither.enabled} onClick={() => workspace.setBrushDither({ ...brushDither, stage: Math.max(1, brushDither.stage - 1) })}><PixelUtilityIcon kind="left" /></button>
+              <output aria-live="polite">{brushDither.stage}/{brushDitherMaximumStage}</output>
+              <button type="button" aria-label={t('toolOptions.brushDitherNextStage')} disabled={!brushDither.enabled} onClick={() => workspace.setBrushDither({ ...brushDither, stage: Math.min(brushDitherMaximumStage, brushDither.stage + 1) })}><PixelUtilityIcon kind="right" /></button>
+            </span>
+          </div>
+        </div>, document.body)}
+      </>}
       {isBucketBrushTool && <div className="fill-texture-control">
         <button type="button" className={`fill-texture-trigger ${fillTextureOpen ? 'selected' : ''}`} title={t('toolOptions.fillTexture')} aria-label={t('toolOptions.fillTexture')} aria-expanded={fillTextureOpen} onClick={() => setFillTextureOpen((open) => !open)}>{activeProceduralBrush ? <BrushThumbnail brush={activeProceduralBrush} className="fill-texture-coverage-thumbnail" /> : <BrushTextureThumbnail texture={activeLibraryBrush ? 'solid' : session.brushTexture} />}</button>
         {fillTextureOpen && <div className="fill-texture-popover" role="dialog" aria-label={t('toolOptions.fillTexture')}>

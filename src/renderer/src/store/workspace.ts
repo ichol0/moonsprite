@@ -1,9 +1,10 @@
 import { create } from 'zustand'
-import type { AnimationCel, AnimationCelSurface, BackgroundPatternId, BlendMode, BrushPaintMode, BrushShape, BrushTexture, CanvasAnchor, ColorMode, DocumentSlice, FillKind, FillMode, FreeTileCelData, FreeTileInstance, FreeTileSourceLayer, GradientDither, ImageBrush, ImageBrushSettings, ImageResizeInterpolation, LayerGroup, LayerMask, LayerStyles, LineKind, MoveKind, OutlineDirections, OutlineKernel, OutlinePosition, PaletteEntry, PaletteSlotLayout, ProceduralBrushId, ProceduralBrushSettings, RasterLayer, RecoveryRecord, RgbaColor, SelectionKind, SelectionMask, SelectionMode, SelectionRect, ShapeKind, ShapeRatio, SpriteDocument, TextCelData, TilemapCell, TileRepeatMode, Tileset, TimelapseSettings, TimelapseVideoFormat, ToolId, ViewState } from '@shared/types'
+import type { AnimationCel, AnimationCelSurface, AnimationLoopSection, BackgroundPatternId, BlendMode, BrushDitherSettings, BrushPaintMode, BrushShape, BrushTexture, CanvasAnchor, ColorMode, DocumentSlice, FillKind, FillMode, FreeTileCelData, FreeTileInstance, FreeTileSourceLayer, GradientDither, ImageBrush, ImageBrushSettings, ImageResizeInterpolation, LayerGroup, LayerMask, LayerStyles, LineKind, MoveKind, OutlineDirections, OutlineKernel, OutlinePosition, PaletteEntry, PaletteSlotLayout, ProceduralBrushId, ProceduralBrushSettings, RasterLayer, RecoveryRecord, RgbaColor, SelectionKind, SelectionMask, SelectionMode, SelectionRect, ShapeKind, ShapeRatio, SpriteDocument, TextCelData, TilemapCell, TileRepeatMode, Tileset, TimelapseSettings, TimelapseVideoFormat, ToolId, ViewState } from '@shared/types'
 import { checkResourceLimit } from '@/core/resource-policy'
 import { beginPixelEdit, commitPixelEdit, HistoryStack, recordPixel, revertPixelEdit, type ContentInvalidationHint, type HistoryEntry, type PixelEdit } from '@/core/history'
 import { animationMaskAt, animationMaskSlotAt, cachedLayerContentBounds, captureDocumentImageResizeSnapshot, compositeRegion, convertDocumentColorMode, createDocument, createId, createLayer, createSparseLayer, createLayerMask as createAttachedLayerMask, documentImageResizeSnapshotBytes, documentVisibleContentBounds, duplicateLayer, expandLayerStyleInvalidationRect, findLayerMask, findOrAddPaletteColor, getDescendantGroupIds, getGroup, getGroupLockingAncestor, getLayerIdsInGroup, getLayer, getActiveLayer, getLayerLockingGroup, isGroupEffectivelyLocked, isLayerEffectivelyLocked, isLayerEffectivelyVisible, isLayerMask, layerContentBounds, markRasterStorageContentChanged, normalCompositeLayers, paletteColorIdForCanvas, readLayerColor, readLayerColorAt, resolveAnimationMask, resizeDocumentAt, resizeDocumentImage, restoreDocumentImageResizeSnapshot, writeLayerColor } from '@/core/document'
 import { activateAnimationFrame, addBlankAnimationFrame, animationCelContentSelection, animationCelHasContent, animationCelKey, animationGroupMaskAt, animationLayerAtFrame, cloneAnimationCel, cloneAnimationCelSurface, cloneAnimationCelsForLayer, cloneAnimationGroupMask, cloneDocumentForAnimationFrame, connectAnimationCels, deleteAnimationFrame, disconnectAnimationCels, duplicateAnimationFrame, ensureAnimationDocument, linkAnimationFrameCels, mapAnimationCelBlock, nextAnimationFrameId, parseAnimationCelKey, refreshActiveAnimationFrame, removeAnimationCelsForLayers, resolveAnimationCel, resizeAnimationCelsAt, restoreAnimationCels, setAnimationFrameDuration, setAnimationLoop, syncActiveAnimationFrame, syncActiveAnimationLayer } from '@/core/animation'
+import { advanceAnimationLoopSectionPlayback, animationLoopSectionAtFrame, animationLoopSectionStartFrameId, cloneAnimationLoopSections, normalizeAnimationLoopSections } from '@/core/animation-loop-sections'
 import { flushViewPreview } from '@/core/view-preview-lifecycle'
 import { consumePendingCanvasGestureHistory } from '@/core/canvas-input'
 import { directSourceImageSaveTarget, fileNameFromPath } from '@/core/document-files'
@@ -31,12 +32,13 @@ import { translate, type TranslationKey, type TranslationParams } from '@/core/l
 import { resolveClipboardPlacement } from '@/core/clipboard-placement'
 import { cloneProceduralSettings, defaultToolSettings, loadToolSettings, normalizePersistedBrushProfile, saveToolSettings, type BrushTool, type PersistedBrushProfile, type PersistedToolSettings } from '@/core/tool-preferences'
 import { normalizeGapClosingThreshold } from '@/core/contiguous-region'
+import { normalizeBrushDitherSettings } from '@/core/gradient-color'
 import { readStoredString } from '@/core/storage'
 import { persistProjectLayerPanelState } from '@/core/layer-panel-state'
 import { defaultSymmetryCenter, type SymmetryAxes, type SymmetryCenter } from '@/core/symmetry'
 import { brushPressureFromDynamics, migrateBrushPressureSettings, normalizeBrushPressureSettings, patchBrushDynamicsGradientDither, patchBrushDynamicsMapping, type BrushDynamicsEffect, type BrushDynamicsMapping, type BrushPressureSettings } from '@/core/pressure'
 import { cloneTextCelData, convertTextSurface, normalizeTextCelData, rasterizeText, translateTextCelData } from '@/core/text-raster'
-import { cloneLayerStyles, hasEnabledLayerStyles, layerStyleOutputBounds, layerStylesEqual, layerStylesHistoryBytes } from '@/core/layer-styles'
+import { cloneLayerStyles, hasConfiguredLayerStyles, hasEnabledLayerStyles, layerStyleOutputBounds, layerStylesEqual, layerStylesHistoryBytes } from '@/core/layer-styles'
 import { renderBackgroundPatternIndexed, renderBackgroundPatternRgba, renderBackgroundTileIndexed, renderBackgroundTileRgba, type BackgroundPatternTile } from '@/core/background-patterns'
 import { activeTilemapCelTarget, applyTilemapDocumentEdit, applyTilemapSelectionCellMove, applyTilemapTilesetDocumentEdit, applyTilesetTileReferences, captureTilesetTileReferences, convertTilemapPixelEdit, rerenderTilesetReferences, rerenderTilesetTileReferences } from '@/core/tilemap-document'
 import { appendBlankTilesetTile, cloneTilemapCelData, cloneTileset, compactTilesetTileSlots, createBlankTileset, createTilemapCelData, deleteTilesetTiles as deleteTilesetTilesData, MAX_TILE_SIZE, renderTilemapSurface, reorderTilesetTiles as reorderTilesetTilesData, setTilesetTileSlots as setTilesetTileSlotsData, sliceRasterSurfaceToTilemap, tileRepeatFitZoom, tilemapCellBounds, tilemapCellIndexAtPoint, tilemapCellTranslationForSelection, tilemapEditBytes, tilemapTilesetEditBytes, tilemapTilesetEditHasChanges, wrapSelectionMaskForTileRepeat, writeTilesetTilePixels, type TilemapDrawingMode, type TilemapEdit, type TilemapTilesetEdit } from '@/core/tilemap'
@@ -56,10 +58,10 @@ import { beginLayerPropertiesTransaction as beginLayerPropertiesTransactionComma
 import { beginLayerMoveDuplicatePreview as beginLayerMoveDuplicatePreviewCommand, cancelLayerMovePreview as cancelLayerMovePreviewCommand, createLayerMoveHistoryEntry, previewLayerMove as previewLayerMoveCommand, type LayerMoveDuplicateResult, type LayerMoveState } from './workspace-layer-move'
 import type { ColorReplacementPreview, ColorReplacementTarget, FreeTileInstancePropertyChanges, TextCelPreview, TextLayerDraftTarget, WorkspaceState } from './workspace-state'
 import type { PaletteSortDirection, PaletteSortMode } from '@/core/palette'
-import type { AdjustmentSnapshot, AnimationFrameClipboardItem, AnimationMaskClipboardItem, AppDialog, CanvasResizePreview, DocumentSession, FloatingPaste, OutlinePreview, SelectionPivot } from './workspace-types'
+import type { AdjustmentSnapshot, AnimationFrameClipboardItem, AnimationMaskClipboardItem, AnimationPlaybackMode, AppDialog, CanvasResizePreview, DocumentSession, FloatingPaste, OutlinePreview, SelectionPivot } from './workspace-types'
 
 export type { ExportOptions, SaveAsOptions } from './document-file-service'
-export type { AdjustmentSnapshot, AppDialog, CanvasResizePreview, DialogChoice, DocumentSession, FloatingPaste, OutlinePreview, SelectionPivot } from './workspace-types'
+export type { AdjustmentSnapshot, AnimationPlaybackMode, AppDialog, CanvasResizePreview, DialogChoice, DocumentSession, FloatingPaste, OutlinePreview, SelectionPivot } from './workspace-types'
 export type { LayerPropertyField, LayerPropertyTarget, LayerPropertyValues } from './workspace-layer-properties'
 export type { LayerMoveDuplicateResult, LayerMoveState } from './workspace-layer-move'
 export type { ColorReplacementPreview, ColorReplacementTarget, FreeTileInstancePropertyChanges, FreeTileLayerOptions, TextCelPreview, TextLayerDraftTarget, TilemapLayerOptions, WorkspaceState } from './workspace-state'
@@ -683,6 +685,21 @@ const clearAnimationItemSelection = (session: DocumentSession): void => {
   session.animationCellSelectionExplicit = false
   session.selectedAnimationMaskCellKeys = []
   session.animationMaskCellSelectionAnchorKey = null
+}
+
+const clearAnimationLoopPlayback = (session: DocumentSession): void => {
+  session.animationPlaybackLoopSectionId = null
+  session.animationPlaybackLoopIteration = 0
+  session.animationPlaybackLoopSectionRepeatIndefinitely = false
+}
+
+const setAnimationLoopSections = (session: DocumentSession, sections: readonly AnimationLoopSection[]): void => {
+  ensureAnimationDocument(session.document).loopSections = cloneAnimationLoopSections(sections)
+  if (session.animationPlaybackLoopSectionId && !sections.some((section) => section.id === session.animationPlaybackLoopSectionId)) {
+    session.animationPlaying = false
+    session.animationPlaybackStartFrameId = null
+    clearAnimationLoopPlayback(session)
+  }
 }
 
 const layerHistoryBytes = (layer: RasterLayer): number => layer.pixels.byteLength + layerStylesHistoryBytes(layer.layerStyles)
@@ -1912,6 +1929,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
   setAirbrushDensity(density) { get().mutateActive((session) => { session.airbrushDensity = Math.max(1, Math.min(128, Math.round(density))); persistToolSettings(session) }, false) },
   setAirbrushIntervalMs(intervalMs) { get().mutateActive((session) => { session.airbrushIntervalMs = Math.max(16, Math.min(1000, Math.round(intervalMs))); persistToolSettings(session) }, false) },
   setBrushShape(shape) { get().mutateActive((session) => { session.brushShape = shape; rememberBrushProfile(session); persistToolSettings(session) }, false) },
+  setBrushDither(settings: BrushDitherSettings) { get().mutateActive((session) => { session.brushDither = normalizeBrushDitherSettings(settings, session.brushDither ?? defaultToolSettings.brushDither); rememberBrushProfile(session); persistToolSettings(session) }, false) },
   setBrushTexture(texture) { get().mutateActive((session) => { session.brushTexture = texture; rememberBrushProfile(session); persistToolSettings(session) }, false) },
   setBrushTextureScale(scale) { get().mutateActive((session) => { session.brushTextureScale = Math.max(1, Math.min(16, Math.round(scale))); rememberBrushProfile(session); persistToolSettings(session) }, false) },
   setBrushPaintMode(mode) { get().mutateActive((session) => { session.brushPaintMode = mode; rememberBrushProfile(session); persistToolSettings(session) }, false) },
@@ -3702,6 +3720,14 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     get().mutateActive((session) => {
       const timeline = ensureAnimationDocument(session.document)
       if (!timeline.frames.some((frame) => frame.id === frameId)) return
+      if (session.animationPlaying && session.animationPlaybackMode === 'tag') {
+        const loopSection = animationLoopSectionAtFrame(timeline, frameId)
+        clearAnimationLoopPlayback(session)
+        if (loopSection) {
+          session.animationPlaybackLoopSectionId = loopSection.id
+          session.animationPlaybackLoopSectionRepeatIndefinitely = true
+        }
+      }
       session.selectedAnimationCellKeys = []
       session.animationCellSelectionAnchorKey = null
       session.animationCellSelectionExplicit = false
@@ -4462,12 +4488,24 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     get().mutateActive((session) => {
       if (session.animationPlaying === playing) return
       const timeline = ensureAnimationDocument(session.document)
+      const playbackMode = session.animationPlaybackMode ?? (timeline.loop ? 'all' : 'once')
       if (playing) {
+        clearAnimationLoopPlayback(session)
         session.animationPlaybackStartFrameId = timeline.activeFrameId
-        if (!timeline.loop && timeline.frames[0] && timeline.activeFrameId !== timeline.frames[0].id) {
-          activateAnimationFrame(session.document, timeline.frames[0].id)
+        const loopSection = playbackMode === 'tag' ? animationLoopSectionAtFrame(timeline, timeline.activeFrameId) : null
+        const targetFrameId = loopSection
+          ? animationLoopSectionStartFrameId(timeline, loopSection)
+          : playbackMode === 'once' ? timeline.frames[0]?.id ?? null : null
+        if (loopSection) {
+          session.animationPlaybackLoopSectionId = loopSection.id
+          session.animationPlaybackLoopSectionRepeatIndefinitely = true
+        }
+        if (targetFrameId && targetFrameId !== timeline.activeFrameId) {
+          activateAnimationFrame(session.document, targetFrameId)
           session.selection = null
           session.selectionPivot = null
+          session.activeLayerMaskId = null
+          session.layerMaskIsolatedView = false
           session.lastPencilPoint = null
           session.lastEraserPoint = null
           session.revision += 1
@@ -4476,11 +4514,13 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
         return
       }
       session.animationPlaying = false
+      const loopSectionId = session.animationPlaybackLoopSectionId
       const startFrameId = session.animationPlaybackStartFrameId
       session.animationPlaybackStartFrameId = null
+      clearAnimationLoopPlayback(session)
       const returnFrameId = session.animationReturnToStart
         ? startFrameId
-        : completed && !timeline.loop ? timeline.frames[0]?.id : null
+        : completed && !loopSectionId && playbackMode === 'once' ? timeline.frames[0]?.id : null
       if (returnFrameId && returnFrameId !== timeline.activeFrameId && activateAnimationFrame(session.document, returnFrameId)) {
         session.selection = null
         session.selectionPivot = null
@@ -4491,9 +4531,51 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     }, false)
   },
 
+  pauseAnimationAtCurrentFrame() {
+    get().mutateActive((session) => {
+      if (!session.animationPlaying) return
+      const activeFrameId = ensureAnimationDocument(session.document).activeFrameId
+      session.animationPlaying = false
+      session.animationPlaybackStartFrameId = null
+      clearAnimationLoopPlayback(session)
+      clearAnimationItemSelection(session)
+      session.selectedAnimationFrameIds = [activeFrameId]
+      session.animationFrameSelectionAnchorId = activeFrameId
+    }, false)
+  },
+
   setAnimationPlaybackRate(rate) {
     const normalized = [0.25, 0.5, 1, 1.5, 2, 3].includes(rate) ? rate : 1
     get().mutateActive((session) => { session.animationPlaybackRate = normalized }, false)
+  },
+
+  setAnimationPlaybackMode(mode) {
+    const normalized: AnimationPlaybackMode = mode === 'tag' ? 'tag' : mode === 'all' ? 'all' : 'once'
+    if (normalized !== 'tag') {
+      get().setAnimationLoop(normalized === 'all')
+      return
+    }
+    get().mutateActive((session) => {
+      if (session.animationPlaybackMode === 'tag' && (!session.animationPlaying || session.animationPlaybackLoopSectionRepeatIndefinitely)) return
+      session.animationPlaybackMode = 'tag'
+      if (!session.animationPlaying) return
+      const timeline = ensureAnimationDocument(session.document)
+      clearAnimationLoopPlayback(session)
+      const section = animationLoopSectionAtFrame(timeline, timeline.activeFrameId)
+      const firstFrameId = section ? animationLoopSectionStartFrameId(timeline, section) : null
+      if (!section || !firstFrameId) return
+      session.animationPlaybackLoopSectionId = section.id
+      session.animationPlaybackLoopSectionRepeatIndefinitely = true
+      if (firstFrameId !== timeline.activeFrameId && activateAnimationFrame(session.document, firstFrameId)) {
+        session.selection = null
+        session.selectionPivot = null
+        session.activeLayerMaskId = null
+        session.layerMaskIsolatedView = false
+        session.lastPencilPoint = null
+        session.lastEraserPoint = null
+        session.revision += 1
+      }
+    }, false)
   },
 
   setAnimationReturnToStart(enabled) {
@@ -4504,14 +4586,146 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     const session = activeSession(get())
     if (!session) return
     const timeline = ensureAnimationDocument(session.document)
-    get().setActiveAnimationFrame(nextAnimationFrameId(timeline, timeline.activeFrameId))
+    const loopSection = session.animationPlaybackLoopSectionId
+      ? (timeline.loopSections ?? []).find((section) => section.id === session.animationPlaybackLoopSectionId)
+      : null
+    if (session.animationPlaybackLoopSectionId && !loopSection) {
+      get().setAnimationPlaying(false)
+      return
+    }
+    if (loopSection) {
+      const playbackSection = session.animationPlaybackLoopSectionRepeatIndefinitely ? { ...loopSection, repeatCount: null } : loopSection
+      const step = advanceAnimationLoopSectionPlayback(timeline, playbackSection, timeline.activeFrameId, session.animationPlaybackLoopIteration)
+      if (!step || step.completed) {
+        get().setAnimationPlaying(false, Boolean(step?.completed))
+        return
+      }
+      get().mutateActive((current) => {
+        current.animationPlaybackLoopIteration = step.completedIterations
+        if (!activateAnimationFrame(current.document, step.frameId)) return
+        current.activeLayerMaskId = null
+        current.layerMaskIsolatedView = false
+        current.lastPencilPoint = null
+        current.lastEraserPoint = null
+        current.revision += 1
+      }, false)
+      return
+    }
+    const playbackMode = session.animationPlaybackMode ?? (timeline.loop ? 'all' : 'once')
+    const loopAllFrames = playbackMode !== 'once'
+    const playbackTimeline = loopAllFrames === timeline.loop ? timeline : { ...timeline, loop: loopAllFrames }
+    const nextFrameId = nextAnimationFrameId(playbackTimeline, timeline.activeFrameId)
+    if (!loopAllFrames && nextFrameId === timeline.activeFrameId) get().setAnimationPlaying(false, true)
+    else get().setActiveAnimationFrame(nextFrameId)
+  },
+
+  createAnimationLoopSection(options) {
+    const current = activeSession(get())
+    if (!current) return null
+    const timeline = ensureAnimationDocument(current.document)
+    const id = createId('loop-section')
+    const section = normalizeAnimationLoopSections([{ id, ...options }], timeline.frames)[0]
+    if (!section) return null
+    get().mutateActive((session) => {
+      const activeTimeline = ensureAnimationDocument(session.document)
+      const before = cloneAnimationLoopSections(activeTimeline.loopSections)
+      const after = [...before, section]
+      setAnimationLoopSections(session, after)
+      session.history.push({
+        label: tr('workspace.history.createAnimationLoopSection'),
+        bytes: 128,
+        undo: () => setAnimationLoopSections(session, before),
+        redo: () => setAnimationLoopSections(session, after),
+        contentChanged: false,
+        requiresAnimationSync: false
+      })
+    }, 'metadata')
+    return id
+  },
+
+  updateAnimationLoopSection(id, options) {
+    const current = activeSession(get())
+    const currentTimeline = current ? ensureAnimationDocument(current.document) : null
+    const existing = currentTimeline?.loopSections?.find((section) => section.id === id)
+    const normalized = currentTimeline ? normalizeAnimationLoopSections([{ id, ...options }], currentTimeline.frames)[0] : null
+    if (!current || !currentTimeline || !existing || !normalized) return
+    if (existing.name === normalized.name && existing.startFrameId === normalized.startFrameId && existing.endFrameId === normalized.endFrameId && existing.direction === normalized.direction && existing.repeatCount === normalized.repeatCount) return
+    get().mutateActive((session) => {
+      const timeline = ensureAnimationDocument(session.document)
+      const before = cloneAnimationLoopSections(timeline.loopSections)
+      const after = before.map((section) => section.id === id ? normalized : section)
+      if (session.animationPlaybackLoopSectionId === id) {
+        session.animationPlaying = false
+        session.animationPlaybackStartFrameId = null
+        clearAnimationLoopPlayback(session)
+      }
+      setAnimationLoopSections(session, after)
+      session.history.push({
+        label: tr('workspace.history.updateAnimationLoopSection'),
+        bytes: 256,
+        undo: () => setAnimationLoopSections(session, before),
+        redo: () => setAnimationLoopSections(session, after),
+        contentChanged: false,
+        requiresAnimationSync: false
+      })
+    }, 'metadata')
+  },
+
+  deleteAnimationLoopSection(id) {
+    const current = activeSession(get())
+    if (!current?.document.animation?.loopSections?.some((section) => section.id === id)) return
+    get().mutateActive((session) => {
+      const timeline = ensureAnimationDocument(session.document)
+      const before = cloneAnimationLoopSections(timeline.loopSections)
+      const after = before.filter((section) => section.id !== id)
+      if (session.animationPlaybackLoopSectionId === id) {
+        session.animationPlaying = false
+        session.animationPlaybackStartFrameId = null
+        clearAnimationLoopPlayback(session)
+      }
+      setAnimationLoopSections(session, after)
+      session.history.push({
+        label: tr('workspace.history.deleteAnimationLoopSection'),
+        bytes: 128,
+        undo: () => setAnimationLoopSections(session, before),
+        redo: () => setAnimationLoopSections(session, after),
+        contentChanged: false,
+        requiresAnimationSync: false
+      })
+    }, 'metadata')
+  },
+
+  playAnimationLoopSection(id) {
+    get().commitFloatingPaste()
+    get().mutateActive((session) => {
+      const timeline = ensureAnimationDocument(session.document)
+      const section = (timeline.loopSections ?? []).find((candidate) => candidate.id === id)
+      const firstFrameId = section ? animationLoopSectionStartFrameId(timeline, section) : null
+      if (!section || !firstFrameId) return
+      session.animationPlaybackStartFrameId = timeline.activeFrameId
+      session.animationPlaybackLoopSectionId = id
+      session.animationPlaybackLoopIteration = 0
+      session.animationPlaybackLoopSectionRepeatIndefinitely = false
+      session.animationPlaying = true
+      if (firstFrameId !== timeline.activeFrameId && activateAnimationFrame(session.document, firstFrameId)) {
+        session.selection = null
+        session.selectionPivot = null
+        session.activeLayerMaskId = null
+        session.layerMaskIsolatedView = false
+        session.lastPencilPoint = null
+        session.lastEraserPoint = null
+        session.revision += 1
+      }
+    }, false)
   },
 
   addAnimationFrame() {
     get().mutateActive((session) => {
       const timeline = ensureAnimationDocument(session.document)
       const previousFrameId = timeline.activeFrameId
+      const loopSectionsBefore = cloneAnimationLoopSections(timeline.loopSections)
       const frameId = addBlankAnimationFrame(session.document)
+      const loopSectionsAfter = cloneAnimationLoopSections(timeline.loopSections)
       const frameIndex = timeline.frames.findIndex((frame) => frame.id === frameId)
       const frame = { ...timeline.frames[frameIndex] }
       const cels = cloneAnimationCelsForLayerIds(session.document, session.document.layers.map((layer) => layer.id), frameId)
@@ -4519,10 +4733,11 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
         const current = ensureAnimationDocument(session.document)
         if (!current.frames.some((candidate) => candidate.id === frameId)) current.frames.splice(Math.min(frameIndex, current.frames.length), 0, { ...frame })
         restoreAnimationCels(session.document, cels)
+        current.loopSections = cloneAnimationLoopSections(loopSectionsAfter)
         activateAnimationFrame(session.document, frameId)
         clearAnimationItemSelection(session)
       }
-      session.history.push({ label: tr('workspace.history.addAnimationFrame'), bytes: cels.reduce((sum, cel) => sum + (cel.surface?.pixels.byteLength ?? 0), 0) + 64, undo: () => { deleteAnimationFrame(session.document, frameId); activateAnimationFrame(session.document, previousFrameId); session.activeLayerMaskId = null }, redo: () => { restore(); session.activeLayerMaskId = null } })
+      session.history.push({ label: tr('workspace.history.addAnimationFrame'), bytes: cels.reduce((sum, cel) => sum + (cel.surface?.pixels.byteLength ?? 0), 0) + (loopSectionsBefore.length + loopSectionsAfter.length) * 128 + 64, undo: () => { deleteAnimationFrame(session.document, frameId); ensureAnimationDocument(session.document).loopSections = cloneAnimationLoopSections(loopSectionsBefore); activateAnimationFrame(session.document, previousFrameId); session.activeLayerMaskId = null }, redo: () => { restore(); session.activeLayerMaskId = null } })
       session.animationPlaying = false
       session.activeLayerMaskId = null
       session.selection = null
@@ -4535,6 +4750,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     get().mutateActive((session) => {
       const timeline = ensureAnimationDocument(session.document)
       const previousFrameId = timeline.activeFrameId
+      const loopSectionsBefore = cloneAnimationLoopSections(timeline.loopSections)
       const selectedCellKey = session.animationCellSelectionAnchorKey && session.selectedAnimationCellKeys.includes(session.animationCellSelectionAnchorKey)
         ? session.animationCellSelectionAnchorKey
         : session.selectedAnimationCellKeys.at(-1)
@@ -4552,6 +4768,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       const layerIds = selectedCell ? [selectedCell.layerId] : session.document.layers.map((layer) => layer.id)
       if (sourceFrameId !== timeline.activeFrameId) activateAnimationFrame(session.document, sourceFrameId)
       const frameId = addBlankAnimationFrame(session.document)
+      const loopSectionsAfter = cloneAnimationLoopSections(timeline.loopSections)
       const frameIndex = timeline.frames.findIndex((frame) => frame.id === frameId)
       const frame = { ...timeline.frames[frameIndex] }
       const groupMasks = selectedCell ? [] : (timeline.groupMasks ?? [])
@@ -4567,13 +4784,14 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
         restoreAnimationCels(session.document, cels)
         current.groupMasks ??= []
         current.groupMasks.push(...groupMasks.filter((entry) => !current.groupMasks!.some((candidate) => candidate.mask.id === entry.mask.id)).map((entry) => cloneAnimationGroupMask(entry)))
+        current.loopSections = cloneAnimationLoopSections(loopSectionsAfter)
         activateAnimationFrame(session.document, frameId)
         clearAnimationItemSelection(session)
       }
       session.history.push({
         label: tr('workspace.history.addLinkedAnimationFrame'),
-        bytes: cels.reduce((sum, cel) => sum + (cel.surface?.pixels.byteLength ?? 0), 0) + groupMasks.reduce((sum, entry) => sum + entry.mask.pixels.byteLength, 0) + 64,
-        undo: () => { deleteAnimationFrame(session.document, frameId); activateAnimationFrame(session.document, previousFrameId); session.activeLayerMaskId = null },
+        bytes: cels.reduce((sum, cel) => sum + (cel.surface?.pixels.byteLength ?? 0), 0) + groupMasks.reduce((sum, entry) => sum + entry.mask.pixels.byteLength, 0) + (loopSectionsBefore.length + loopSectionsAfter.length) * 128 + 64,
+        undo: () => { deleteAnimationFrame(session.document, frameId); ensureAnimationDocument(session.document).loopSections = cloneAnimationLoopSections(loopSectionsBefore); activateAnimationFrame(session.document, previousFrameId); session.activeLayerMaskId = null },
         redo: () => { restore(); session.activeLayerMaskId = null }
       })
       session.animationPlaying = false
@@ -4588,7 +4806,9 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     get().mutateActive((session) => {
       const timeline = ensureAnimationDocument(session.document)
       const previousFrameId = timeline.activeFrameId
+      const loopSectionsBefore = cloneAnimationLoopSections(timeline.loopSections)
       const frameId = duplicateAnimationFrame(session.document)
+      const loopSectionsAfter = cloneAnimationLoopSections(timeline.loopSections)
       const frameIndex = timeline.frames.findIndex((frame) => frame.id === frameId)
       const frame = { ...timeline.frames[frameIndex] }
       const cels = cloneAnimationCelsForLayerIds(session.document, session.document.layers.map((layer) => layer.id), frameId)
@@ -4599,10 +4819,11 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
         restoreAnimationCels(session.document, cels)
         current.groupMasks ??= []
         current.groupMasks.push(...groupMasks.filter((entry) => !current.groupMasks!.some((candidate) => candidate.mask.id === entry.mask.id)).map((entry) => cloneAnimationGroupMask(entry)))
+        current.loopSections = cloneAnimationLoopSections(loopSectionsAfter)
         activateAnimationFrame(session.document, frameId)
         clearAnimationItemSelection(session)
       }
-      session.history.push({ label: tr('workspace.history.duplicateAnimationFrame'), bytes: cels.reduce((sum, cel) => sum + (cel.surface?.pixels.byteLength ?? 0), 0) + groupMasks.reduce((sum, entry) => sum + entry.mask.pixels.byteLength, 0) + 64, undo: () => { deleteAnimationFrame(session.document, frameId); activateAnimationFrame(session.document, previousFrameId); session.activeLayerMaskId = null }, redo: () => { restore(); session.activeLayerMaskId = null } })
+      session.history.push({ label: tr('workspace.history.duplicateAnimationFrame'), bytes: cels.reduce((sum, cel) => sum + (cel.surface?.pixels.byteLength ?? 0), 0) + groupMasks.reduce((sum, entry) => sum + entry.mask.pixels.byteLength, 0) + (loopSectionsBefore.length + loopSectionsAfter.length) * 128 + 64, undo: () => { deleteAnimationFrame(session.document, frameId); ensureAnimationDocument(session.document).loopSections = cloneAnimationLoopSections(loopSectionsBefore); activateAnimationFrame(session.document, previousFrameId); session.activeLayerMaskId = null }, redo: () => { restore(); session.activeLayerMaskId = null } })
       session.animationPlaying = false
       session.activeLayerMaskId = null
       session.selection = null
@@ -4619,18 +4840,24 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       const frame = { ...timeline.frames[frameIndex] }
       const cels = cloneAnimationCelsForLayerIds(session.document, session.document.layers.map((layer) => layer.id), frameId)
       const groupMasks = (timeline.groupMasks ?? []).filter((entry) => entry.frameId === frameId).map((entry) => cloneAnimationGroupMask(entry))
+      const loopSectionsBefore = cloneAnimationLoopSections(timeline.loopSections)
       if (!deleteAnimationFrame(session.document, frameId)) { set({ message: tr('workspace.animation.minimumFrame') }); return }
-      const nextFrameId = ensureAnimationDocument(session.document).activeFrameId
+      const nextTimeline = ensureAnimationDocument(session.document)
+      const nextFrameId = nextTimeline.activeFrameId
+      const loopSectionsAfter = cloneAnimationLoopSections(nextTimeline.loopSections)
       const restore = (): void => {
         const current = ensureAnimationDocument(session.document)
         if (!current.frames.some((candidate) => candidate.id === frameId)) current.frames.splice(Math.min(frameIndex, current.frames.length), 0, { ...frame })
         restoreAnimationCels(session.document, cels)
         current.groupMasks ??= []
         current.groupMasks.push(...groupMasks.filter((entry) => !current.groupMasks!.some((candidate) => candidate.mask.id === entry.mask.id)).map((entry) => cloneAnimationGroupMask(entry)))
+        current.loopSections = cloneAnimationLoopSections(loopSectionsBefore)
         activateAnimationFrame(session.document, frameId)
       }
-      session.history.push({ label: tr('workspace.history.deleteAnimationFrame'), bytes: cels.reduce((sum, cel) => sum + (cel.surface?.pixels.byteLength ?? 0), 0) + groupMasks.reduce((sum, entry) => sum + entry.mask.pixels.byteLength, 0) + 64, undo: () => { restore(); session.activeLayerMaskId = null }, redo: () => { deleteAnimationFrame(session.document, frameId); activateAnimationFrame(session.document, nextFrameId); session.activeLayerMaskId = null } })
+      session.history.push({ label: tr('workspace.history.deleteAnimationFrame'), bytes: cels.reduce((sum, cel) => sum + (cel.surface?.pixels.byteLength ?? 0), 0) + groupMasks.reduce((sum, entry) => sum + entry.mask.pixels.byteLength, 0) + (loopSectionsBefore.length + loopSectionsAfter.length) * 128 + 64, undo: () => { restore(); session.activeLayerMaskId = null }, redo: () => { deleteAnimationFrame(session.document, frameId); ensureAnimationDocument(session.document).loopSections = cloneAnimationLoopSections(loopSectionsAfter); activateAnimationFrame(session.document, nextFrameId); session.activeLayerMaskId = null } })
       session.animationPlaying = false
+      session.animationPlaybackStartFrameId = null
+      clearAnimationLoopPlayback(session)
       session.activeLayerMaskId = null
       session.selection = null
       session.selectionPivot = null
@@ -4659,12 +4886,26 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
   },
 
   setAnimationLoop(loop) {
+    const playbackMode: AnimationPlaybackMode = loop ? 'all' : 'once'
+    const current = activeSession(get())
+    if (!current) return
+    if (current.animationPlaybackMode !== playbackMode || current.animationPlaybackLoopSectionId) {
+      get().mutateActive((session) => {
+        session.animationPlaybackMode = playbackMode
+        clearAnimationLoopPlayback(session)
+      }, false)
+    }
+    if (ensureAnimationDocument(current.document).loop === loop) return
     get().mutateActive((session) => {
       const timeline = ensureAnimationDocument(session.document)
       const before = timeline.loop
-      if (before === loop) return
       setAnimationLoop(session.document, loop)
-      session.history.push({ label: tr('workspace.history.animationLoop'), bytes: 16, undo: () => { ensureAnimationDocument(session.document).loop = before }, redo: () => { ensureAnimationDocument(session.document).loop = loop } })
+      session.history.push({
+        label: tr('workspace.history.animationLoop'),
+        bytes: 16,
+        undo: () => { ensureAnimationDocument(session.document).loop = before; session.animationPlaybackMode = before ? 'all' : 'once'; clearAnimationLoopPlayback(session) },
+        redo: () => { ensureAnimationDocument(session.document).loop = loop; session.animationPlaybackMode = playbackMode; clearAnimationLoopPlayback(session) }
+      })
     })
   },
 
@@ -4910,7 +5151,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     const current = activeSession(get())
     if (!current) return
     const sourceLayer = current.document.layers.find((candidate) => candidate.id === layerId)
-    if (!sourceLayer || sourceLayer.kind || hasEnabledLayerStyles(sourceLayer.layerStyles)) return
+    if (!sourceLayer || sourceLayer.kind || hasConfiguredLayerStyles(sourceLayer.layerStyles)) return
     const documentId = current.document.id
     try {
       const tileWidth = Math.max(1, Math.trunc(options.tileWidth))
@@ -4922,7 +5163,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
         if (session.document.id !== documentId) return
         const document = session.document
         const layer = document.layers.find((candidate) => candidate.id === layerId)
-        if (!layer || layer.kind || hasEnabledLayerStyles(layer.layerStyles)) return
+        if (!layer || layer.kind || hasConfiguredLayerStyles(layer.layerStyles)) return
         syncActiveAnimationFrame(document)
         const before = captureLayerContentSnapshot(document, layerId)
         const beforeTileSelection = { tilesetId: session.selectedTilesetId, tileId: session.selectedTileId, secondaryTileId: session.secondaryTileId, mode: session.tilemapMode }
@@ -5354,7 +5595,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     get().mutateActive((session) => {
       const document = session.document
       const layer = document.layers.find((candidate) => candidate.id === layerId)
-      if (!layer || (!layer.background && !layer.kind && !hasEnabledLayerStyles(layer.layerStyles))) return
+      if (!layer || (!layer.background && !layer.kind && !hasConfiguredLayerStyles(layer.layerStyles))) return
       const wasFreeTileLayer = layer.kind === 'free-tile'
       syncActiveAnimationFrame(document)
       const before = captureLayerContentSnapshot(document, layerId)
@@ -6707,6 +6948,40 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
           : tr('workspace.history.layerStyles')
       session.history.push({
         label,
+        bytes: changes.reduce((bytes, change) => bytes + layerStylesHistoryBytes(change.before) + layerStylesHistoryBytes(change.after), 0),
+        undo: () => { for (const change of changes) assignLayerStyles(change.owner, change.before) },
+        redo: () => { for (const change of changes) assignLayerStyles(change.owner, change.after) },
+        contentChanged: true,
+        requiresAnimationSync: false,
+        invalidation: { kind: 'full' }
+      })
+      committed = true
+    }, 'content')
+    return committed
+  },
+
+  setLayerStylesEnabled(targets, enabled) {
+    const current = activeSession(get())
+    if (!current) return false
+    const uniqueTargets = uniqueLayerStyleTargets(current.document, targets)
+    const hasChanges = uniqueTargets.some((target) => {
+      const owner = layerStyleOwnerForTarget(current.document, target)
+      const styles = cloneLayerStyles(owner?.layerStyles)
+      return Boolean(styles && hasConfiguredLayerStyles(styles) && styles.enabled !== enabled)
+    })
+    if (!hasChanges) return false
+    let committed = false
+    get().mutateActive((session) => {
+      const changes = uniqueTargets.flatMap((target) => {
+        const owner = layerStyleOwnerForTarget(session.document, target)
+        const before = cloneLayerStyles(owner?.layerStyles)
+        if (!owner || !before || !hasConfiguredLayerStyles(before) || before.enabled === enabled) return []
+        return [{ owner, before, after: { ...before, enabled } }]
+      })
+      if (changes.length === 0) return
+      for (const change of changes) assignLayerStyles(change.owner, change.after)
+      session.history.push({
+        label: tr('workspace.history.layerStyles'),
         bytes: changes.reduce((bytes, change) => bytes + layerStylesHistoryBytes(change.before) + layerStylesHistoryBytes(change.after), 0),
         undo: () => { for (const change of changes) assignLayerStyles(change.owner, change.before) },
         redo: () => { for (const change of changes) assignLayerStyles(change.owner, change.after) },
