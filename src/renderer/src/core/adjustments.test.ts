@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { applyColorAdjustment, adjustColor, buildCurveHistogram, buildCurveLut, buildCurvePath } from './adjustments'
+import { applyColorAdjustment, applyColorAdjustmentDirect, adjustColor, buildCurveHistogram, buildCurveLut, buildCurvePath, type ColorAdjustment } from './adjustments'
 import { createDocument, getActiveLayer, readLayerColor, writeLayerColor } from './document'
 
 describe('color adjustments', () => {
@@ -39,6 +39,107 @@ describe('color adjustments', () => {
     expect(edit.before.size).toBe(1)
     expect(readLayerColor(document, layer, 0).r).toBe(10)
     expect(readLayerColor(document, layer, 1).r).toBeGreaterThan(40)
+  })
+
+  it.each<ColorAdjustment>([
+    { kind: 'brightness-contrast', brightness: 20, contrast: 10 },
+    { kind: 'hue-saturation', hue: 25, saturation: 20, lightness: 10 },
+    { kind: 'color-balance', midtonesCyanRed: 20, midtonesMagentaGreen: -15, highlightsYellowBlue: 10, preserveLuminosity: true },
+    { kind: 'curves', curvePoints: [{ x: 0, y: 0 }, { x: 128, y: 170 }, { x: 255, y: 255 }] }
+  ])('matches the history-producing RGBA path for $kind previews', (adjustment) => {
+    const expectedDocument = createDocument('expected adjustment', 3, 2, 'rgba')
+    const actualDocument = createDocument('direct adjustment', 3, 2, 'rgba')
+    const expectedLayer = getActiveLayer(expectedDocument)
+    const actualLayer = getActiveLayer(actualDocument)
+    const pixels = new Uint8ClampedArray([
+      10, 20, 30, 255, 50, 60, 70, 180, 90, 100, 110, 0,
+      120, 130, 140, 255, 160, 170, 180, 220, 200, 210, 220, 255
+    ])
+    expectedLayer.pixels.set(pixels)
+    actualLayer.pixels.set(pixels)
+
+    applyColorAdjustment(expectedDocument, expectedLayer, adjustment)
+    applyColorAdjustmentDirect(actualDocument, actualLayer, adjustment)
+
+    expect(actualLayer.pixels).toEqual(expectedLayer.pixels)
+  })
+
+  it('restores pixels outside a masked selection from the supplied preview baseline', () => {
+    const document = createDocument('direct selected adjustment', 3, 1, 'rgba')
+    const layer = getActiveLayer(document)
+    const baseline = new Uint8ClampedArray([
+      10, 20, 30, 255,
+      40, 50, 60, 255,
+      70, 80, 90, 255
+    ])
+    layer.pixels.fill(255)
+
+    applyColorAdjustmentDirect(document, layer, { kind: 'brightness-contrast', brightness: 20 }, { x: 0, y: 0, width: 3, height: 1, mask: new Uint8Array([0, 1, 0]) }, baseline)
+
+    expect(readLayerColor(document, layer, 0)).toEqual({ r: 10, g: 20, b: 30, a: 255 })
+    expect(readLayerColor(document, layer, 1).r).toBeGreaterThan(40)
+    expect(readLayerColor(document, layer, 2)).toEqual({ r: 70, g: 80, b: 90, a: 255 })
+  })
+
+  it('matches indexed adjustment quantization while reusing transformed palette ids', () => {
+    const expectedDocument = createDocument('expected indexed adjustment', 3, 1, 'indexed')
+    const actualDocument = createDocument('direct indexed adjustment', 3, 1, 'indexed')
+    expectedDocument.palette = [
+      { id: 0, name: 'Transparent', color: { r: 0, g: 0, b: 0, a: 0 } },
+      { id: 1, name: 'Dark', color: { r: 20, g: 30, b: 40, a: 255 } },
+      { id: 2, name: 'Light', color: { r: 180, g: 190, b: 200, a: 255 } }
+    ]
+    actualDocument.palette = expectedDocument.palette.map((entry) => ({ ...entry, color: { ...entry.color } }))
+    expectedDocument.paletteOrder = [1, 2]
+    actualDocument.paletteOrder = [1, 2]
+    expectedDocument.nextColorId = 3
+    actualDocument.nextColorId = 3
+    const expectedLayer = getActiveLayer(expectedDocument)
+    const actualLayer = getActiveLayer(actualDocument)
+    expectedLayer.pixels.set([1, 1, 2])
+    actualLayer.pixels.set([1, 1, 2])
+
+    applyColorAdjustment(expectedDocument, expectedLayer, { kind: 'brightness-contrast', brightness: 20 })
+    applyColorAdjustmentDirect(actualDocument, actualLayer, { kind: 'brightness-contrast', brightness: 20 })
+
+    expect(actualLayer.pixels).toEqual(expectedLayer.pixels)
+  })
+
+  it('matches grayscale normalization in the direct preview path', () => {
+    const expectedDocument = createDocument('expected grayscale adjustment', 2, 1, 'grayscale')
+    const actualDocument = createDocument('direct grayscale adjustment', 2, 1, 'grayscale')
+    const expectedLayer = getActiveLayer(expectedDocument)
+    const actualLayer = getActiveLayer(actualDocument)
+    expectedLayer.pixels.set([20, 20, 20, 255, 180, 180, 180, 255])
+    actualLayer.pixels.set(expectedLayer.pixels)
+
+    applyColorAdjustment(expectedDocument, expectedLayer, { kind: 'color-balance', midtonesCyanRed: 35, preserveLuminosity: false })
+    applyColorAdjustmentDirect(actualDocument, actualLayer, { kind: 'color-balance', midtonesCyanRed: 35, preserveLuminosity: false })
+
+    expect(actualLayer.pixels).toEqual(expectedLayer.pixels)
+  })
+
+  it('matches transparent grayscale and indexed normalization', () => {
+    const expectedGray = createDocument('expected transparent grayscale', 1, 1, 'grayscale')
+    const actualGray = createDocument('direct transparent grayscale', 1, 1, 'grayscale')
+    getActiveLayer(expectedGray).pixels.set([20, 80, 140, 0])
+    getActiveLayer(actualGray).pixels.set([20, 80, 140, 0])
+    applyColorAdjustment(expectedGray, getActiveLayer(expectedGray), { kind: 'brightness-contrast', brightness: 20 })
+    applyColorAdjustmentDirect(actualGray, getActiveLayer(actualGray), { kind: 'brightness-contrast', brightness: 20 })
+    expect(getActiveLayer(actualGray).pixels).toEqual(getActiveLayer(expectedGray).pixels)
+
+    const expectedIndexed = createDocument('expected transparent indexed', 1, 1, 'indexed')
+    const actualIndexed = createDocument('direct transparent indexed', 1, 1, 'indexed')
+    const hidden = { id: 4, name: 'Hidden', color: { r: 20, g: 80, b: 140, a: 0 } }
+    expectedIndexed.palette.push(hidden)
+    actualIndexed.palette.push({ ...hidden, color: { ...hidden.color } })
+    expectedIndexed.paletteOrder.push(hidden.id)
+    actualIndexed.paletteOrder.push(hidden.id)
+    getActiveLayer(expectedIndexed).pixels[0] = hidden.id
+    getActiveLayer(actualIndexed).pixels[0] = hidden.id
+    applyColorAdjustment(expectedIndexed, getActiveLayer(expectedIndexed), { kind: 'brightness-contrast', brightness: 20 })
+    applyColorAdjustmentDirect(actualIndexed, getActiveLayer(actualIndexed), { kind: 'brightness-contrast', brightness: 20 })
+    expect(getActiveLayer(actualIndexed).pixels).toEqual(getActiveLayer(expectedIndexed).pixels)
   })
 
   it('balances independent cyan-red, magenta-green and yellow-blue channels', () => {

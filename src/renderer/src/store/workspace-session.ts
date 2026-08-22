@@ -17,9 +17,12 @@ import type { BrushProfile, DocumentSession } from './workspace-types'
 import { defaultSymmetryCenter } from '@/core/symmetry'
 import { ensureAnimationDocument, refreshActiveAnimationFrame } from '@/core/animation'
 import { normalizeProjectDisplaySettings, normalizeProjectStatistics, normalizeTimelapseSettings } from '@/core/project-metadata'
-import { findLayerMask, getActiveLayer } from '@/core/document'
+import { findLayerMask, getActiveLayer, getLayerIdsInGroup, isLayerEffectivelyLocked, isLayerEffectivelyVisible } from '@/core/document'
 import { cloneBrushDynamicsSettings, normalizeBrushDynamicsSettings } from '@/core/pressure'
 import { applyProjectLayerPanelState, loadLocalLayerPanelState, normalizeProjectLayerPanelState } from '@/core/layer-panel-state'
+import { ensureTilemapTilesetOwnership } from '@/core/tilemap-document'
+import { ensureFreeTileTilesetOwnership } from '@/core/free-tile-document'
+import { loadEditorPreferences } from '@/core/file-preferences'
 
 const defaultColor: RgbaColor = { r: 41, g: 121, b: 255, a: 255 }
 const defaultSecondary: RgbaColor = { r: 241, g: 244, b: 248, a: 255 }
@@ -27,11 +30,21 @@ const defaultSecondary: RgbaColor = { r: 241, g: 244, b: 248, a: 255 }
 export const isBrushTool = (tool: ToolId): tool is BrushTool => BRUSH_TOOLS.includes(tool as BrushTool)
 
 const TEXT_LAYER_ALLOWED_TOOLS = new Set<ToolId>(['text', 'move', 'eyedropper', 'hand', 'zoom', 'rotate'])
+const TILEMAP_LAYER_ALLOWED_TOOLS = new Set<ToolId>(['pencil', 'eraser', 'selection', 'move', 'eyedropper', 'hand', 'zoom', 'rotate'])
+const FREE_TILE_PAINT_ALLOWED_TOOLS = new Set<ToolId>(['pencil', 'eraser', 'selection', 'move', 'eyedropper', 'hand', 'zoom', 'rotate'])
+const FREE_TILE_EDIT_ALLOWED_TOOLS = new Set<ToolId>(['pencil', 'airbrush', 'eraser', 'fill', 'selection', 'shape', 'line', 'move', 'eyedropper', 'hand', 'zoom', 'rotate'])
 
 export const isToolAvailableForSession = (session: DocumentSession, tool: ToolId): boolean => {
-  if (session.activeLayerMaskId || session.selectedGroupIds.length > 0) return true
+  const groupSelected = session.selectedGroupIds.length > 0 || Boolean(session.selectedGroupId)
+  if (groupSelected && tool === 'fill') return false
+  if (session.activeLayerMaskId || groupSelected) return true
   const textLayerSelected = session.selectedLayerIds.some((id) => session.document.layers.some((layer) => layer.id === id && layer.kind === 'text'))
-  return !textLayerSelected || TEXT_LAYER_ALLOWED_TOOLS.has(tool)
+  if (textLayerSelected) return TEXT_LAYER_ALLOWED_TOOLS.has(tool)
+  const tilemapLayerSelected = session.selectedLayerIds.some((id) => session.document.layers.some((layer) => layer.id === id && layer.kind === 'tilemap'))
+  if (tilemapLayerSelected && session.tilemapMode === 'paint') return TILEMAP_LAYER_ALLOWED_TOOLS.has(tool)
+  const freeTileLayerSelected = session.selectedLayerIds.some((id) => session.document.layers.some((layer) => layer.id === id && layer.kind === 'free-tile'))
+  if (!freeTileLayerSelected) return true
+  return (session.freeTileMode === 'edit' ? FREE_TILE_EDIT_ALLOWED_TOOLS : FREE_TILE_PAINT_ALLOWED_TOOLS).has(tool)
 }
 
 export const activeLayerMask = (session: DocumentSession): LayerMask | null => session.activeLayerMaskId
@@ -40,9 +53,27 @@ export const activeLayerMask = (session: DocumentSession): LayerMask | null => s
 
 export const activePaintLayer = (session: DocumentSession): RasterLayer => activeLayerMask(session) ?? getActiveLayer(session.document)
 
+export const selectedTransformLayersForSession = (session: DocumentSession): RasterLayer[] => {
+  const mask = activeLayerMask(session)
+  if (mask) return [mask]
+  const selectedIds = new Set(session.selectedLayerIds)
+  const selectedGroupIds = new Set(session.selectedGroupIds)
+  if (session.selectedGroupId) selectedGroupIds.add(session.selectedGroupId)
+  for (const groupId of selectedGroupIds) for (const layerId of getLayerIdsInGroup(session.document, groupId)) selectedIds.add(layerId)
+  return session.document.layers.filter((layer) => selectedIds.has(layer.id))
+}
+
+export const selectedTransformLayersAreEditable = (
+  session: DocumentSession,
+  layers = selectedTransformLayersForSession(session)
+): boolean => layers.length > 0
+  && (layers.length === 1 || layers.every((layer) => !layer.kind))
+  && layers.every((layer) => isLayerEffectivelyVisible(session.document, layer) && !isLayerEffectivelyLocked(session.document, layer))
+
 export const brushProfileFromSession = (session: DocumentSession): BrushProfile => ({
   brushSize: session.brushSize,
   brushShape: session.brushShape,
+  brushDither: { ...(session.brushDither ?? defaultToolSettings.brushDither) },
   brushTexture: session.brushTexture,
   brushTextureScale: session.brushTextureScale,
   brushPaintMode: session.brushPaintMode,
@@ -60,6 +91,7 @@ export const brushProfileFromSession = (session: DocumentSession): BrushProfile 
 export const applyBrushProfile = (session: DocumentSession, profile: BrushProfile): void => {
   session.brushSize = profile.brushSize
   session.brushShape = profile.brushShape
+  session.brushDither = { ...profile.brushDither }
   session.brushTexture = profile.brushTexture
   session.brushTextureScale = profile.brushTextureScale
   session.brushPaintMode = profile.brushPaintMode
@@ -75,7 +107,7 @@ export const applyBrushProfile = (session: DocumentSession, profile: BrushProfil
 }
 
 export const remapSelectionBrushColors = (brush: ImageBrush, primary: RgbaColor, secondary: RgbaColor): ImageBrush => {
-  if (!brush.intrinsicSize || !brush.colors || brush.colors.length !== brush.width * brush.height) return brush
+  if (!brush.intrinsicSize || brush.sourceX === undefined || brush.sourceY === undefined || !brush.colors || brush.colors.length !== brush.width * brush.height) return brush
   const paintColors = new Uint32Array(brush.colors.length)
   for (let index = 0; index < brush.colors.length; index += 1) {
     const source = unpackColor(brush.colors[index] ?? 0)
@@ -99,6 +131,7 @@ function persistedBrushProfileFromSession(profile: BrushProfile): PersistedBrush
   return {
     brushSize: profile.brushSize,
     brushShape: profile.brushShape,
+    brushDither: { ...profile.brushDither },
     brushTexture: profile.brushTexture,
     brushTextureScale: profile.brushTextureScale,
     brushPaintMode: profile.brushPaintMode,
@@ -115,6 +148,7 @@ function persistedBrushProfileFromSession(profile: BrushProfile): PersistedBrush
 function brushProfileFromPersisted(profile: PersistedBrushProfile): BrushProfile {
   return {
     ...profile,
+    brushDither: { ...profile.brushDither },
     brushImage: null,
     brushImageTemporary: false,
     brushImageSettings: { ...profile.brushImageSettings },
@@ -144,6 +178,8 @@ export function persistToolSettings(session: DocumentSession): void {
     fillMode: session.fillMode,
     fillKind: session.fillKind ?? 'bucket',
     fillTolerance: session.fillTolerance,
+    fillGapClosing: session.fillGapClosing,
+    fillGapThreshold: session.fillGapThreshold,
     gradientTolerance: session.gradientTolerance,
     gradientContiguous: session.gradientContiguous,
     gradientDither: session.gradientDither ?? 'none',
@@ -152,6 +188,8 @@ export function persistToolSettings(session: DocumentSession): void {
     selectionMode: session.selectionMode,
     wandTolerance: session.wandTolerance,
     wandContiguous: session.wandContiguous,
+    wandGapClosing: session.wandGapClosing,
+    wandGapThreshold: session.wandGapThreshold,
     perfectPixels: session.perfectPixels,
     airbrushParticleRadius: session.airbrushParticleRadius,
     airbrushParticleShape: session.airbrushParticleShape,
@@ -174,19 +212,27 @@ export const sessionFromDocument = (document: SpriteDocument): DocumentSession =
     const fallbackLayerId = document.layers.at(-1)?.id
     if (fallbackLayerId) document.activeLayerId = fallbackLayerId
   }
-  ensureAnimationDocument(document)
+  const timeline = ensureAnimationDocument(document)
   refreshActiveAnimationFrame(document)
+  ensureTilemapTilesetOwnership(document)
+  ensureFreeTileTilesetOwnership(document)
   document.displaySettings = normalizeProjectDisplaySettings(document.displaySettings)
   document.statistics = normalizeProjectStatistics(document.statistics)
   document.timelapse = normalizeTimelapseSettings(document.timelapse, document.timelapse?.snapshots ?? [])
   const layerPanelState = loadLocalLayerPanelState(document) ?? normalizeProjectLayerPanelState(document, document.layerPanelState)
   const settings = loadToolSettings()
+  const editorPreferences = loadEditorPreferences()
   const fallbackProfile = normalizePersistedBrushProfile(settings, defaultToolSettings)
   const persistedProfiles = settings.brushProfiles ?? Object.fromEntries(BRUSH_TOOLS.map((tool) => [tool, fallbackProfile])) as Record<BrushTool, PersistedBrushProfile>
   const brushProfiles = Object.fromEntries(BRUSH_TOOLS.map((tool) => [
     tool,
     brushProfileFromPersisted(persistedProfiles[tool] ?? fallbackProfile)
   ])) as Record<BrushTool, BrushProfile>
+  const activeLayer = document.layers.find((layer) => layer.id === document.activeLayerId)
+  const initialTilesetId = activeLayer?.kind === 'free-tile'
+    ? activeLayer.freeTileSources?.[0]?.tilesetId
+    : activeLayer?.tilemapTilesetId
+  const initialTileset = document.tilesets?.find((tileset) => tileset.id === initialTilesetId) ?? document.tilesets?.[0]
   const session = {
     document,
     history: new HistoryStack(),
@@ -194,10 +240,20 @@ export const sessionFromDocument = (document: SpriteDocument): DocumentSession =
     moveKind: 'move',
     selectedSliceId: null,
     selectedSliceIds: [],
+    selectedTilesetId: initialTileset?.id ?? null,
+    selectedTileId: initialTileset?.tileIds[0] ?? null,
+    secondaryTileId: initialTileset?.tileIds[0] ?? null,
+    selectedFreeTileInstanceId: null,
+    selectedFreeTileInstanceIds: [],
+    freeTileInstanceSelectionAnchorId: null,
+    freeTileInstanceLayerId: null,
+    tilemapMode: 'hybrid',
+    freeTileMode: 'paint',
     primaryColor: document.palette.find((entry) => entry.id !== 0)?.color ?? defaultColor,
     secondaryColor: defaultSecondary,
     brushSize: settings.brushSize,
     brushShape: settings.brushShape,
+    brushDither: { ...settings.brushDither },
     brushTexture: settings.brushTexture,
     brushTextureScale: settings.brushTextureScale,
     brushPaintMode: settings.brushPaintMode,
@@ -218,6 +274,8 @@ export const sessionFromDocument = (document: SpriteDocument): DocumentSession =
     fillMode: settings.fillMode,
     fillKind: settings.fillKind,
     fillTolerance: settings.fillTolerance,
+    fillGapClosing: settings.fillGapClosing,
+    fillGapThreshold: settings.fillGapThreshold,
     gradientTolerance: settings.gradientTolerance,
     gradientContiguous: settings.gradientContiguous,
     gradientDither: settings.gradientDither,
@@ -228,6 +286,8 @@ export const sessionFromDocument = (document: SpriteDocument): DocumentSession =
     selectionMode: settings.selectionMode,
     wandTolerance: settings.wandTolerance,
     wandContiguous: settings.wandContiguous,
+    wandGapClosing: settings.wandGapClosing,
+    wandGapThreshold: settings.wandGapThreshold,
     perfectPixels: settings.perfectPixels,
     airbrushParticleRadius: settings.airbrushParticleRadius,
     airbrushParticleShape: settings.airbrushParticleShape,
@@ -235,6 +295,13 @@ export const sessionFromDocument = (document: SpriteDocument): DocumentSession =
     airbrushDensity: settings.airbrushDensity,
     airbrushIntervalMs: settings.airbrushIntervalMs,
     symmetryAxes: { ...settings.symmetryAxes },
+    symmetryAxesInitialized: {
+      horizontal: settings.symmetryAxes.horizontal,
+      vertical: settings.symmetryAxes.vertical,
+      diagonalUp: settings.symmetryAxes.diagonalUp,
+      diagonalDown: settings.symmetryAxes.diagonalDown,
+      rotational: Boolean(settings.symmetryAxes.rotational)
+    },
     symmetryCenter: defaultSymmetryCenter(document.width, document.height),
     lastPencilPoint: null,
     lastEraserPoint: null,
@@ -254,8 +321,9 @@ export const sessionFromDocument = (document: SpriteDocument): DocumentSession =
       relativeLuminance: false,
       showSelectionOutline: true,
       showSelectionPivot: false,
+      tileRepeatMode: 'off',
       quickCommandBarPositionX: 0.5,
-      quickCommandBarExpanded: false,
+      quickCommandBarExpanded: editorPreferences.quickCommandBarExpanded,
       grid: { ...document.displaySettings.grid }
     },
     viewportSize: { width: 0, height: 0 },
@@ -273,12 +341,17 @@ export const sessionFromDocument = (document: SpriteDocument): DocumentSession =
     collapsedGroupIds: [],
     animationPlaying: false,
     animationPlaybackRate: 1,
+    animationPlaybackMode: timeline.loop ? 'all' : 'once',
     animationPlaybackStartFrameId: null,
+    animationPlaybackLoopSectionId: null,
+    animationPlaybackLoopIteration: 0,
+    animationPlaybackLoopSectionRepeatIndefinitely: false,
     animationReturnToStart: false,
     selectedAnimationFrameIds: [],
     animationFrameSelectionAnchorId: null,
     selectedAnimationCellKeys: [],
     animationCellSelectionAnchorKey: null,
+    animationCellSelectionExplicit: false,
     selectedAnimationMaskCellKeys: [],
     animationMaskCellSelectionAnchorKey: null,
     animationCellClipboard: [],

@@ -11,6 +11,7 @@ import { installTauriApi } from './platform/tauri-api'
 import { applyCursorPreferences } from './platform/cursor-theme'
 import { applyToolIconScale, applyUiScale } from './platform/ui-scale'
 import { loadTextFontCatalog } from './platform/font-service'
+import { showAppWindow } from './platform/app-window'
 
 const rootElement = document.getElementById('root')
 
@@ -47,4 +48,5 @@ void installTauriApi()
     console.error('MoonSprite failed to initialize.', error)
     rootElement.style.cssText = 'min-height:100vh;display:grid;place-items:center;padding:var(--ui-space-5);color:var(--theme-text-primary);background:var(--theme-workspace-background);font:var(--ui-font-regular)/var(--ui-line-regular) sans-serif;text-align:center'
     rootElement.textContent = translate(loadEditorPreferences().language, 'startup.failed')
+    void showAppWindow().catch(() => undefined)
   })

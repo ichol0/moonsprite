@@ -1,5 +1,7 @@
 # ADR 0001：文档历史与视图状态分离
 
+中文 | [English](0001-separate-document-and-view-history.en.md)
+
 - 状态：接受
 - 日期：2026-07-31
 

@@ -12,6 +12,8 @@ import { paletteSamplingShortcutActive } from '@/core/palette-sampling-shortcut'
 import { loadShortcuts } from '@/core/shortcuts'
 import { publishCanvasColorSample, publishCanvasColorSamplingCompleted } from '@/components/color-sampling-events'
 import { usePanelColorSampling } from '@/components/usePanelColorSampling'
+import { activeTilemapCelTarget } from '@/core/tilemap-document'
+import { TilesetTileThumbnail } from '@/components/TilesetTileThumbnail'
 
 export function ColorPanel({ session, docked = false, onDockDragStart, onPanelContextMenu, onFloatingDock, onRestoreSquare }: { session: DocumentSession } & DockDragProps) {
   const { t } = useI18n()
@@ -51,6 +53,27 @@ export function ColorPanel({ session, docked = false, onDockDragStart, onPanelCo
   ]
   const currentSchemeName = schemeOptions.find((option) => option.value === pickerConfig.scheme)?.label ?? t('panel.color')
   const paletteColors = visiblePaletteColors(session.document.palette, session.document.paletteOrder)
+  const tilemapTarget = activeTilemapCelTarget(session.document)
+  const selectedTileset = session.tilemapMode === 'paint' && tilemapTarget
+    ? session.document.tilesets?.find((tileset) => tileset.id === session.selectedTilesetId
+      && tileset.tileWidth === tilemapTarget.tilemap.tileWidth
+      && tileset.tileHeight === tilemapTarget.tilemap.tileHeight) ?? null
+    : null
+  const primaryTileId = selectedTileset?.tileIds.includes(session.selectedTileId ?? '') ? session.selectedTileId : selectedTileset?.tileIds[0] ?? null
+  const secondaryTileId = selectedTileset?.tileIds.includes(session.secondaryTileId ?? '') ? session.secondaryTileId : selectedTileset?.tileIds[0] ?? null
+  const tileRoleControls = selectedTileset && primaryTileId && secondaryTileId ? <>
+    {([
+      { role: 'primary' as const, tileId: primaryTileId, label: t('tileset.foregroundTile') },
+      { role: 'secondary' as const, tileId: secondaryTileId, label: t('tileset.backgroundTile') }
+    ]).map(({ role, tileId, label }) => {
+      const index = selectedTileset.tileIds.indexOf(tileId)
+      return <button key={role} type="button" className={`tile-role-value-control ${role}`} title={t('tileset.tileRoleHint')} onClick={() => useWorkspace.getState().setSelectedTile(selectedTileset.id, tileId, role)}>
+        <span className="tile-role-thumbnail"><TilesetTileThumbnail tileset={selectedTileset} tileId={tileId} /></span>
+        <strong>{label}</strong>
+        <small>#{index}</small>
+      </button>
+    })}
+  </> : undefined
 
   useLayoutEffect(() => {
     if (!schemeMenuOpen) return
@@ -127,9 +150,16 @@ export function ColorPanel({ session, docked = false, onDockDragStart, onPanelCo
 
   return <><section ref={floating.ref} className={`panel color-panel ${panelColorSampling.active ? 'panel-color-sampling' : ''} ${floating.style ? 'floating-panel' : ''}`} style={floating.style} onPointerDown={floating.bringToFront} onPointerUp={completeColorSampling} onContextMenu={onPanelContextMenu}>
     <header aria-label={t('panel.color')} onPointerDown={(event) => floating.style ? floating.startDrag(event) : onDockDragStart?.(event, floating.startDetachedDrag)}><small>{currentSchemeName}</small><span className="panel-actions color-scheme-control" onPointerDown={(event) => event.stopPropagation()}><button type="button" title={t('color.restoreSquare')} aria-label={t('color.restoreSquare')} onClick={restoreSquare}><PixelUtilityIcon kind="paletteCenter" /></button><button ref={schemeButtonRef} type="button" className={schemeMenuOpen ? 'active' : ''} title={t('color.changeScheme')} aria-label={t('color.changeScheme')} aria-expanded={schemeMenuOpen} onClick={() => setSchemeMenuOpen((open) => !open)}><PixelUtilityIcon kind="moreLines" /></button></span></header>
-    <ColorPicker color={session.primaryColor} secondaryColor={session.secondaryColor} onChange={setPrimary} onSecondaryChange={setSecondary} paletteColors={paletteColors} onAddPaletteColor={addPaletteColor} addToPaletteShortcut={shortcuts.addForegroundToPalette} config={pickerConfig} />
+    <ColorPicker color={session.primaryColor} secondaryColor={session.secondaryColor} onChange={setPrimary} onSecondaryChange={setSecondary} paletteColors={paletteColors} onAddPaletteColor={addPaletteColor} addToPaletteShortcut={shortcuts.addForegroundToPalette} roleControls={tileRoleControls} config={pickerConfig} />
     {floating.style && <PanelResizeHandles onResize={floating.startResize} />}
   </section><FloatingDockPreview style={floating.dockPreview} />
-  {schemeMenuOpen && createPortal(<span ref={schemeMenuRef} className="color-scheme-popover" role="menu" aria-label={t('color.schemeAria')} style={schemeMenuPosition}><span className="color-scheme-options">{schemeOptions.map((option) => <button key={option.value} type="button" role="menuitemradio" aria-checked={pickerConfig.scheme === option.value} className={pickerConfig.scheme === option.value ? 'selected' : ''} onClick={() => updatePickerConfig({ scheme: option.value })}><i className={`color-scheme-preview preview-${option.value}`} aria-hidden="true" /><span>{option.label}</span>{pickerConfig.scheme === option.value && <PixelUtilityIcon kind="check" />}</button>)}</span>{pickerConfig.scheme === 'moon-ring' && <span className="color-scheme-settings"><span className="color-preset-group"><span className="color-preset-label">{t('color.moonCenter')}</span><span className="color-preset-options"><button type="button" className={pickerConfig.moonField !== 'hsl-triangle' ? 'selected' : ''} onClick={() => updatePickerConfig({ moonField: 'hsv-square' })}>{t('color.hsvSquare')}</button><button type="button" className={pickerConfig.moonField === 'hsl-triangle' ? 'selected' : ''} onClick={() => updatePickerConfig({ moonField: 'hsl-triangle' })}>{t('color.hslTriangle')}</button></span></span></span>}<span className="color-scheme-settings"><span className="color-preset-group"><span className="color-preset-label color-setting-tooltip" data-tip={t('color.hueSnapHint')}>{t('color.hueSnap')}</span><span className="color-preset-options">{hueStepPresets.map((preset) => <button key={preset.value} type="button" className={pickerConfig.hueSteps === preset.value ? 'selected' : ''} aria-pressed={pickerConfig.hueSteps === preset.value} onClick={() => updatePickerConfig({ hueSteps: preset.value })}>{preset.label}</button>)}</span></span><span className="color-preset-group"><span className="color-preset-label color-setting-tooltip" data-tip={t('color.colorLevelsHint')}>{t('color.colorLevels')}</span><span className="color-preset-options">{colorStepPresets.map((preset) => <button key={preset.value} type="button" className={pickerConfig.colorSteps === preset.value ? 'selected' : ''} aria-pressed={pickerConfig.colorSteps === preset.value} onClick={() => updatePickerConfig({ colorSteps: preset.value })}>{preset.label}</button>)}</span></span></span></span>, document.body)}
+  {schemeMenuOpen && createPortal(<span ref={schemeMenuRef} className="color-scheme-popover" role="menu" aria-label={t('color.schemeAria')} style={schemeMenuPosition}>
+    <span className="color-scheme-options">{schemeOptions.map((option) => <button key={option.value} type="button" role="menuitemradio" aria-checked={pickerConfig.scheme === option.value} className={pickerConfig.scheme === option.value ? 'selected' : ''} onClick={() => updatePickerConfig({ scheme: option.value })}><i className={`color-scheme-preview preview-${option.value}`} aria-hidden="true" /><span>{option.label}</span>{pickerConfig.scheme === option.value && <PixelUtilityIcon kind="check" />}</button>)}</span>
+    {pickerConfig.scheme === 'moon-ring' && <span className="color-scheme-settings"><span className="color-preset-group"><span className="color-preset-label">{t('color.moonCenter')}</span><span className="color-preset-options"><button type="button" className={pickerConfig.moonField !== 'hsl-triangle' ? 'selected' : ''} onClick={() => updatePickerConfig({ moonField: 'hsv-square' })}>{t('color.hsvSquare')}</button><button type="button" className={pickerConfig.moonField === 'hsl-triangle' ? 'selected' : ''} onClick={() => updatePickerConfig({ moonField: 'hsl-triangle' })}>{t('color.hslTriangle')}</button></span></span></span>}
+    <span className="color-scheme-settings">
+      <span className="color-preset-group"><span className="color-preset-label color-setting-tooltip" data-tip={t('color.hueSnapHint')}>{t('color.hueSnap')}</span><span className="color-preset-options">{hueStepPresets.map((preset) => <button key={preset.value} type="button" className={pickerConfig.hueSteps === preset.value ? 'selected' : ''} aria-pressed={pickerConfig.hueSteps === preset.value} onClick={() => updatePickerConfig({ hueSteps: preset.value })}>{preset.label}</button>)}</span></span>
+      <span className="color-preset-group"><span className="color-preset-label color-setting-tooltip" data-tip={t('color.colorLevelsHint')}>{t('color.colorLevels')}</span><span className="color-preset-options">{colorStepPresets.map((preset) => <button key={preset.value} type="button" className={pickerConfig.colorSteps === preset.value ? 'selected' : ''} aria-pressed={pickerConfig.colorSteps === preset.value} onClick={() => updatePickerConfig({ colorSteps: preset.value })}>{preset.label}</button>)}</span></span>
+    </span>
+  </span>, document.body)}
   </>
 }

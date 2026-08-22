@@ -1,5 +1,7 @@
 # 多语言架构
 
+中文 | [English](localization.en.md)
+
 MoonSprite 的界面语言由纯 TypeScript 语言目录和 React 语言上下文共同管理。当前发布简体中文 `zh-CN` 和英语 `en-US`；其他语言在资源完整、布局验收和桌面回归通过前不得加入可用语言列表，避免出现混杂文案或无法切换的入口。
 
 ## 模块边界

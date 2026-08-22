@@ -2,7 +2,7 @@ import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState, type C
 import { PixelUtilityIcon } from '@/components/PixelUtilityIcon'
 import { Tooltip } from '@/components/Tooltip'
 import { useI18n } from '@/components/I18nProvider'
-import { loadEditorPreferences, type QuickCommandId, type QuickCommandPreference } from '@/core/file-preferences'
+import { loadEditorPreferences, saveEditorPreferences, type QuickCommandId, type QuickCommandPreference } from '@/core/file-preferences'
 import { useWorkspace } from '@/store/workspace'
 import { QUICK_COMMAND_METADATA, type QuickCommandMetadata, type QuickCommandSettingsTarget } from './quick-command-registry'
 
@@ -68,7 +68,7 @@ export const QuickCommandBar = memo(function QuickCommandBar({ documentId, short
   const renderKey = useWorkspace((state) => {
     const session = state.sessions.find((item) => item.document.id === documentId)
     return session
-      ? `${session.document.id}:${session.selection ? 1 : 0}:${session.view.mirrored ? 1 : 0}:${session.view.mirroredVertical ? 1 : 0}:${session.view.showPixelGrid ? 1 : 0}:${session.view.showGrid ? 1 : 0}:${session.view.showSelectionOutline === false ? 0 : 1}:${session.view.relativeLuminance ? 1 : 0}:${session.history.canUndo ? 1 : 0}:${session.history.canRedo ? 1 : 0}`
+      ? `${session.document.id}:${session.selection ? 1 : 0}:${session.view.mirrored ? 1 : 0}:${session.view.mirroredVertical ? 1 : 0}:${session.view.showPixelGrid ? 1 : 0}:${session.view.showGrid ? 1 : 0}:${session.view.showSelectionOutline === false ? 0 : 1}:${session.view.relativeLuminance ? 1 : 0}:${session.view.tileRepeatMode ?? 'off'}:${session.history.canUndo ? 1 : 0}:${session.history.canRedo ? 1 : 0}`
       : ''
   })
   const updatePositionX = useCallback((value: number): void => {
@@ -138,7 +138,13 @@ export const QuickCommandBar = memo(function QuickCommandBar({ documentId, short
     const state = useWorkspace.getState()
     const wasActive = activeId === documentId
     if (!wasActive) state.setActive(documentId)
-    state.setViewForDocument(documentId, { quickCommandBarExpanded: wasActive ? !expanded : true })
+    const nextExpanded = wasActive ? !expanded : true
+    state.setViewForDocument(documentId, { quickCommandBarExpanded: nextExpanded })
+    const currentPreferences = loadEditorPreferences()
+    if (currentPreferences.quickCommandBarExpanded !== nextExpanded) {
+      saveEditorPreferences({ ...currentPreferences, quickCommandBarExpanded: nextExpanded })
+      window.dispatchEvent(new Event('moonsprite:preferences-changed'))
+    }
   }
   const startMoving = (event: ReactPointerEvent<HTMLButtonElement>): void => {
     if (event.button !== 0) return
@@ -195,6 +201,10 @@ export const QuickCommandBar = memo(function QuickCommandBar({ documentId, short
     finishMoving()
     if (event.currentTarget.hasPointerCapture?.(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId)
   }
+  const toggleTileRepeatMode = (mode: 'x' | 'y' | 'both'): void => runForDocument((state) => {
+    const active = state.sessions.find((item) => item.document.id === documentId)
+    state.setTileRepeatMode((active?.view.tileRepeatMode ?? 'off') === mode ? 'off' : mode)
+  })
 
   const runtimeFor = (id: QuickCommandId): QuickCommandRuntime => {
     const selectionUnavailable = !session.selection
@@ -205,6 +215,9 @@ export const QuickCommandBar = memo(function QuickCommandBar({ documentId, short
       case 'canvasMirrorVertical': return { pressed: session.view.mirroredVertical, run: () => runForDocument(() => onToggleMirror('vertical')) }
       case 'invertSelection': return { disabled: selectionUnavailable, run: () => runForDocument((state) => state.invertSelection()) }
       case 'customGrid': return { pressed: session.view.showGrid, run: () => runForDocument((state) => state.toggleGrid()) }
+      case 'tileRepeatX': return { pressed: session.view.tileRepeatMode === 'x', run: () => toggleTileRepeatMode('x') }
+      case 'tileRepeatY': return { pressed: session.view.tileRepeatMode === 'y', run: () => toggleTileRepeatMode('y') }
+      case 'tileRepeatBoth': return { pressed: session.view.tileRepeatMode === 'both', run: () => toggleTileRepeatMode('both') }
       case 'undo': return { disabled: !session.history.canUndo, run: () => runForDocument((state) => state.undo()) }
       case 'redo': return { disabled: !session.history.canRedo, run: () => runForDocument((state) => state.redo()) }
       case 'selectAll': return { run: () => runForDocument((state) => {

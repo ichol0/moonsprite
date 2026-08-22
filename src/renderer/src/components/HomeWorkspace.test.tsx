@@ -43,13 +43,58 @@ describe('HomeWorkspace', () => {
 
     render(<HomeWorkspace onNew={vi.fn()} onOpen={vi.fn()} onOpenProject={vi.fn(async () => true)} onRestoreRecovery={vi.fn(async () => true)} />)
 
-    expect(screen.getByText('DEV.5')).toBeInTheDocument()
+    expect(screen.getByText('DEV.6')).toBeInTheDocument()
     expect(document.querySelector('.start-screen-version')).not.toBeInTheDocument()
-    expect(document.querySelectorAll('.start-screen-links > button')).toHaveLength(4)
+    expect(document.querySelectorAll('.start-screen-links .start-screen-link')).toHaveLength(4)
     expect(document.querySelectorAll('.start-screen-links svg.start-screen-link-icon')).toHaveLength(4)
     expect(document.querySelector('.start-screen-attribution')).not.toBeInTheDocument()
     expect(screen.getByText('仅供内部使用')).toBeInTheDocument()
     expect(screen.getByText('未经允许请勿分发')).toBeInTheDocument()
+  })
+
+  it('shows the latest packaged release news and opens its full update', () => {
+    const onOpenLatestRelease = vi.fn()
+    installApi({})
+
+    render(<HomeWorkspace onNew={vi.fn()} onOpen={vi.fn()} onOpenProject={vi.fn(async () => true)} onRestoreRecovery={vi.fn(async () => true)} onOpenLatestRelease={onOpenLatestRelease} />)
+
+    expect(screen.getByRole('region', { name: '新闻' })).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: '新闻' })).not.toBeInTheDocument()
+    expect(screen.getByText('DEV.6 已发布')).toBeInTheDocument()
+    expect(screen.getByText('2026/08/23')).toBeInTheDocument()
+    expect(screen.getByText('本次更新新增自由瓦片、动画循环节、Lua 脚本、扩展和关联图层，并完善多帧编辑与文件兼容。')).toBeInTheDocument()
+    expect(screen.queryByText(/支持：MoonSprite/)).not.toBeInTheDocument()
+    expect(screen.queryByText('最新发布')).not.toBeInTheDocument()
+    expect(screen.queryByText('查看完整更新')).not.toBeInTheDocument()
+    const newsButton = screen.getByRole('button', { name: '查看 DEV.6 更新内容' })
+    expect(newsButton.querySelector('.start-screen-news-title time')).toBeInTheDocument()
+    expect(newsButton.querySelector('svg')).not.toBeInTheDocument()
+    fireEvent.click(newsButton)
+    expect(onOpenLatestRelease).toHaveBeenCalledOnce()
+  })
+
+  it('shows descriptions for the homepage shortcut buttons', async () => {
+    installApi({})
+
+    render(<HomeWorkspace onNew={vi.fn()} onOpen={vi.fn()} onOpenProject={vi.fn(async () => true)} onRestoreRecovery={vi.fn(async () => true)} />)
+
+    const shortcuts = [
+      ['QQ 群', '加入月球像素社区（MoonPX）QQ 群，交流像素画与软件使用。'],
+      ['Steam', '打开 MoonSprite 的 Steam 页面。'],
+      ['GitHub', '打开 MoonSprite 的 GitHub 项目仓库。'],
+      ['语言', '打开界面语言选择弹窗。']
+    ] as const
+
+    for (const [name, description] of shortcuts) {
+      const button = screen.getByRole('button', { name })
+      const anchor = button.closest('.moon-tooltip-anchor')
+      expect(anchor).not.toBeNull()
+      expect(button).not.toHaveAttribute('title')
+      fireEvent.pointerEnter(anchor!)
+      expect(await screen.findByRole('tooltip')).toHaveTextContent(description)
+      fireEvent.pointerLeave(anchor!)
+      await waitFor(() => expect(screen.queryByRole('tooltip')).not.toBeInTheDocument())
+    }
   })
 
   it('opens homepage community links and changes language through a dialog', () => {

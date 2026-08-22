@@ -40,4 +40,11 @@ describe('document drop paths', () => {
       'D:\\Art\\animated.aseprite'
     ])
   })
+
+  it('accepts MoonSprite extension packages for the install drop path', () => {
+    expect(normalizeDroppedDocumentPaths([
+      'D:\\Downloads\\sample.msext',
+      'D:\\Downloads\\sample.MSEXT'
+    ])).toEqual(['D:\\Downloads\\sample.msext'])
+  })
 })

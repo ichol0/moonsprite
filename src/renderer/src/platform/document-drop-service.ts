@@ -7,10 +7,12 @@ import { translate } from '@/core/localization'
 import { subscribeToNativeDocumentDrops, type NativeDocumentDropSource } from './document-drop-events'
 
 type RustDropSubscriber = (onDrop: (paths: string[]) => void) => Promise<UnlistenFn>
+export interface DocumentDropPosition { x: number; y: number }
 
 export interface DocumentDropServiceOptions {
   openPath(path: string): boolean | Promise<boolean>
   pathForFile(file: File): string
+  claimPaths?(paths: string[], position?: DocumentDropPosition): boolean | Promise<boolean>
   onOpened?(): void
   eventTarget?: Window
   desktop?: boolean
@@ -18,6 +20,7 @@ export interface DocumentDropServiceOptions {
   rustSubscriber?: RustDropSubscriber
   dedupeMs?: number
   now?: () => number
+  devicePixelRatio?: number
   warn?: (message: string, error: unknown) => void
 }
 
@@ -31,25 +34,39 @@ export function startDocumentDropService(options: DocumentDropServiceOptions): (
   const rustSubscriber = options.rustSubscriber ?? (desktop ? defaultRustSubscriber : undefined)
   const dedupeMs = options.dedupeMs ?? 1_000
   const now = options.now ?? Date.now
+  const devicePixelRatio = Math.max(1, options.devicePixelRatio ?? window.devicePixelRatio ?? 1)
   const warn = options.warn ?? ((message: string, error: unknown) => console.warn(message, error))
   const recentlyOpened = new Map<string, number>()
   const cleanups = new Map<string, () => void>()
   const pending = new Set<string>()
   let active = true
 
-  const openDroppedPaths = (paths: string[]): void => {
+  const handleDroppedPaths = (paths: string[], position?: DocumentDropPosition): void => {
     const timestamp = now()
     for (const [key, openedAt] of recentlyOpened) {
       if (timestamp - openedAt >= dedupeMs) recentlyOpened.delete(key)
     }
+    const freshPaths: string[] = []
     for (const path of normalizeDroppedDocumentPaths(paths)) {
       const key = path.toLowerCase()
       if (recentlyOpened.has(key)) continue
       recentlyOpened.set(key, timestamp)
-      void Promise.resolve(options.openPath(path)).then((opened) => {
-        if (active && opened) options.onOpened?.()
-      }).catch((error) => warn(translate(loadEditorPreferences().language, 'platform.drop.openError', { path }), error))
+      freshPaths.push(path)
     }
+    if (freshPaths.length === 0) return
+    void Promise.resolve(options.claimPaths?.(freshPaths, position) ?? false).then((claimed) => {
+      if (claimed) return
+      for (const path of freshPaths) {
+        void Promise.resolve(options.openPath(path)).then((opened) => {
+          if (active && opened) options.onOpened?.()
+        }).catch((error) => warn(translate(loadEditorPreferences().language, 'platform.drop.openError', { path }), error))
+      }
+    }).catch((error) => {
+      warn(translate(loadEditorPreferences().language, 'platform.drop.claimError'), error)
+      for (const path of freshPaths) void Promise.resolve(options.openPath(path)).then((opened) => {
+        if (active && opened) options.onOpened?.()
+      }).catch((openError) => warn(translate(loadEditorPreferences().language, 'platform.drop.openError', { path }), openError))
+    })
   }
 
   const subscribe = (key: string, create: () => Promise<() => void>): void => {
@@ -67,15 +84,15 @@ export function startDocumentDropService(options: DocumentDropServiceOptions): (
 
   const ensureDesktopSubscriptions = (): void => {
     if (!desktop) return
-    nativeSources.forEach((source, index) => subscribe(`native-${index}`, () => subscribeToNativeDocumentDrops(source, openDroppedPaths)))
-    if (rustSubscriber) subscribe('rust-window-event', () => rustSubscriber(openDroppedPaths))
+    nativeSources.forEach((source, index) => subscribe(`native-${index}`, () => subscribeToNativeDocumentDrops(source, ({ paths, position }) => handleDroppedPaths(paths, { x: position.x / devicePixelRatio, y: position.y / devicePixelRatio }))))
+    if (rustSubscriber) subscribe('rust-window-event', () => rustSubscriber((paths) => handleDroppedPaths(paths)))
   }
 
   const dragOver = (event: DragEvent): void => event.preventDefault()
   const drop = (event: DragEvent): void => {
     event.preventDefault()
     const paths = Array.from(event.dataTransfer?.files ?? []).map(options.pathForFile).filter(Boolean)
-    openDroppedPaths(paths)
+    handleDroppedPaths(paths, { x: event.clientX, y: event.clientY })
   }
   const focus = (): void => ensureDesktopSubscriptions()
 

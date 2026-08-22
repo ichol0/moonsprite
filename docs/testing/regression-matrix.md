@@ -1,5 +1,7 @@
 # 高风险回归矩阵
 
+中文 | [English](regression-matrix.en.md)
+
 本文件只保存长期值得维护的高风险契约，不记录每次 Debug 的具体现象。精简前的 363 条场景保存在 [DEV.3 Debug 回归明细归档](../archive/regression-matrix-dev3-debug-detail.md)，普通开发不得加载该归档。
 
 ## 收录标准
@@ -26,9 +28,17 @@
 | 恢复写入与放弃 | 恢复保存串行执行；用户放弃后等待在途写入结束并删除，晚到写入不得重新创建草稿 | `recovery-service.test.ts`、`workspace.test.ts`、Rust 恢复测试 |
 | 恢复能力降级 | 恢复目录或会话标记不可写时只记录警告，不阻止主窗口和编辑器启动 | Rust `platform_recovery` 测试 |
 | 文件拖放去重 | Windows 路径与 `file://` 路径统一规范化；HTML、Webview、Window 与 Rust 重复事件只打开一次并可重新订阅 | `document-drop.test.ts`、`document-drop-events.test.ts`、`document-drop-service.test.ts` |
+| 笔刷库文件边界 | 拖到笔刷库的图片不得作为文档打开；RGBA 和半透明像素往返保存保持，宽高超过 `256px` 在写盘前拒绝；`Ctrl+B` 只写全局库且不污染工程 dirty | `brushes.test.ts`、`workspace-session.test.ts`、`document-drop-service.test.ts`、`workspace.test.ts` |
 | 最近文件清理边界 | 路径确实不存在时移除最近记录；文件仍存在但解析失败时保留，不能把读取错误当成用户删除 | `HomeWorkspace.test.tsx`、Rust `platform_files` 测试 |
 | 剪贴板快照隔离 | 系统剪贴板不可读时回退内部快照；粘贴、变换和跨文档操作不得改写复制来源像素 | `clipboard-service.test.ts`、`workspace.test.ts` |
+| Tileset 槽位兼容 | 空槽布局保存重开后保持；旧 v13 紧凑布局可读取；重复、缺失或越界槽位明确拒绝，槽位移动不改变瓦片像素和稳定引用 | `project-format.test.ts`、`tilemap.test.ts`、`workspace-tilemap.test.ts` |
+| Tilemap 共享 Tileset | 新建 Tilemap 图层默认新建 Tileset，也可复用已有 Tilemap Tileset；尺寸跟随、删除引用不误删资源、保存重开后共享 ID 保持 | `project-format.test.ts`、`workspace-tilemap.test.ts` |
+| 图层转换为 Tilemap | 普通或背景图层按画布网格裁切全部帧，相同瓦片去重、边缘补透明；转换、重命名、背景身份、Tileset 与会话选择通过同一个 Undo/Redo 完整恢复 | `tilemap.test.ts`、`workspace-tilemap.test.ts`、`LayersPanel.test.tsx` |
+| 栅格选区粘贴到自由瓦片 | 未选实例时普通画布选区按原坐标裁切并创建源、Tileset 与实例；已选实例时只编辑其共享源并同步全部同源实例；Undo/Redo 不遗留资源，普通动画 cel 仍拒绝粘贴到自由瓦片或实例时间轴 | `free-tile.test.ts`、`workspace-tilemap.test.ts`、`command-context.test.ts` |
+| 自由瓦片实例选区变换 | 新建选区只落在当前实例；普通及旋转/镜像实例按显示朝向移动、缩放、旋转和倾斜，移动预览不落后一帧，结果逆向写回共享源并实时刷新同源实例；其他实例不出现选区覆盖层，源像素、选区和轴心通过一次 Undo/Redo 同步恢复 | `free-tile.test.ts`、`workspace-tilemap.test.ts` |
+| 自由瓦片实例属性与行手势 | 非正方形实例旋转、镜像后的边界、命中、合成和源同步正确；属性变换保持显示左上角，保存重开与 Undo/Redo 保留状态；实例眼睛/锁支持图层一致的 `Alt` 全部操作和按住跨行操作；多选实例的属性与删除各自只产生一个可完整撤销的历史步骤 | `free-tile.test.ts`、`workspace-tilemap.test.ts`、`project-format.test.ts`、`LayersPanel.test.tsx` |
 | 偏好与语言回退 | 损坏、未知或旧版偏好安全回退；切换语言不翻译工程名、图层名和用户输入 | `file-preferences.test.ts`、`localization.test.ts` |
+| 原生标题栏拖动安全 | 单击标题栏只激活窗口；只有主键仍处于物理按下状态且指针超过拖动阈值时才进入系统拖动，异步请求到达时若已松键必须拒绝，双击最大化和标题按钮保持可用；最大化或还原完成后先重置一次原生指针，并在下一次无按键的标题栏客户端移动时再次清除 Windows 顶部边框遗留的上下缩放指针 | `AppWindowTitleBar.test.tsx`、`app-window.test.ts`、Rust `cargo check` |
 
 ## 历史与会话
 
@@ -38,6 +48,7 @@
 | 单动作单历史 | 图层批处理、选区变换、调整、画布尺寸和动画编辑每个用户动作只产生一个可完整恢复的历史条目 | `workspace.test.ts`、`layer-operations.test.ts`、`CanvasResizeDialog.test.tsx` |
 | 视图状态隔离 | 平移、缩放、旋转、镜像、栏目布局、播放位置和工具切换不进入文档历史，不改变 dirty | `view-preview-lifecycle.test.ts`、`workspace.test.ts`、`animation.test.ts` |
 | 临时预览隔离 | 画布尺寸、视图和颜色调整预览可取消或内部撤销，确认前不污染文档历史 | `CanvasResizeDialog.test.tsx`、`AdjustmentDialog.test.tsx`、`adjustment-preview-lifecycle.test.ts` |
+| 进行中路径历史 | 自由形状、多边形形状与两种套索在完成前逐点 Undo/Redo；撤销最后一点后退出手势并继续文档历史，完成后仍只提交一次 | `canvas-input.test.ts`、`workspace.test.ts` |
 | 历史失败恢复 | 撤销或重做执行失败时原条目和内存计数保持，可在修复条件后重试 | `history.test.ts` |
 | 跨帧历史定位 | 在其他帧执行 Undo/Redo 时仍修改原操作所属 frame/cel，不误写当前帧 | `animation.test.ts`、`workspace.test.ts` |
 | 跨文档图层剪贴板 | 复制图层和组保留层级、顺序、偏移和属性；目标粘贴独立像素并作为一次历史 | `workspace.test.ts`、`layer-operations.test.ts` |
@@ -54,10 +65,13 @@
 | 套索与组合边界 | 套索闭合不丢右边或下边像素；新建、加选、减选、交集和比例修饰键使用统一规则 | `tools.test.ts`、`selection.test.ts`、`canvas-input.test.ts` |
 | 画布外选区内容 | 浮动内容移出画布再移回时像素完整保留，确认时才按文档边界写入 | `tools.test.ts`、`workspace.test.ts` |
 | 浮动选区镜像缓存 | 粘贴或移动后反复水平/垂直镜像再移动，像素、掩码与快速路径缓存同步，不恢复旧方向、生成重复像素或留下无法撤销的画布内容 | `tools.test.ts`、`workspace.test.ts` |
+| 平铺选区移动 | 任一可见平铺副本都能命中原选区；拖动跨越副本接缝或最外侧副本时按连续文档坐标逐像素移动，内部坐标跨过画布周期后实时预览仍不反向跳变、停住或裁掉接缝内容；确认后越界像素与选区按启用轴折回原画布，Undo/Redo 保持一致 | `canvas-input.test.ts`、`tilemap.test.ts`、`canvas-composite-cache.test.ts`、`tools.test.ts`、`workspace.test.ts` |
+| 平铺工具预览 | 铅笔、橡皮擦、直线、形状、渐变、喷枪和瓦片绘制预览同步出现在全部可见平铺副本；大笔刷越界轮廓保持连续几何，采样坐标按启用轴折回，边缘不裁断、不错误重组且不复制鼠标指针 | `tilemap.test.ts` |
 | 跨轴缩放翻转 | 选区缩放越过对侧边界时切换对应镜像，预览与提交一致并只产生一次撤销 | `canvas-input.test.ts`、`tools.test.ts`、`selection.test.ts` |
 | 多帧画布尺寸 | 调整画布尺寸时所有 frame/cel 使用同一偏移；扩大、裁切、Undo/Redo 后保持相对位置 | `animation.test.ts`、`workspace.test.ts`、`document.test.ts` |
-| 调整预览基线 | 调整期间移动、变换或加减选时始终从未调整基线计算，不闪回、不重复叠加、不污染范围外像素 | `AdjustmentDialog.test.tsx`、`adjustment-preview-lifecycle.test.ts` |
+| 调整预览基线 | 调整期间移动、变换或加减选时始终从未调整基线计算，不闪回、不重复叠加、不污染范围外像素；链接 Cel 预览不提前写入共享源，确认和 Undo/Redo 保持链接语义 | `AdjustmentDialog.test.tsx`、`adjustment-preview-lifecycle.test.ts`、`adjustments.test.ts`、`workspace.test.ts` |
 | 对称变换闭包 | 多轴绘制、填充和选区计算闭包并去重，轴线像素只写一次，结果合并为一次历史 | `symmetry.test.ts`、`tools.test.ts`、`selection.test.ts` |
+| 对称轴首次定位 | 每个工程中的每种对称轴首次启用时使用当前画布中心；同轴重复开关不跳动，不同工程的首次使用状态互不串联 | `workspace.test.ts` |
 | 洋葱皮合成 | 相邻帧按完整可见图层合成，当前帧内容和多图层遮挡不改变应显示的洋葱皮结果 | `onion-skin.test.ts` |
 
 ## 动画与图层结构
@@ -70,6 +84,7 @@
 | cel 批量剪贴板 | 多选 cel 按第一格锚点和相对行列复制粘贴，必要时扩展帧，整个操作只产生一次历史 | `workspace.test.ts`、`LayersPanel.test.tsx` |
 | 动画图层复制 | 复制图层或组时包含全部 frame/cel、空帧状态和属性，不只复制当前帧 | `workspace.test.ts`、`layer-operations.test.ts` |
 | 播放时钟与状态 | 图层栏和预览栏共享单一时钟；帧时长、倍率、循环和停止回退确定，播放不改变 dirty | `useAnimationPlaybackClock.test.tsx`、`animation.test.ts` |
+| 命名循环节 | 多选帧可创建、编辑、删除和独立播放正向/反向有限或无限循环；标签播放优先重复当前帧所在的最内层循环节，范围外退化为全部循环；嵌套括号显示在父范围内部；条目范围随稳定帧 ID 排列，端点删除收缩，配置可撤销并随 v16 工程往返 | `animation-loop-sections.test.ts`、`workspace-animation-loop-sections.test.ts`、`useAnimationPlaybackClock.test.tsx`、`project-format.test.ts`、`LayersPanel.test.tsx` |
 | 嵌套图层结构 | 移动、复制、建组、解组和删除保持树顺序与父子关系，拒绝循环父级，批量操作不重复处理后代 | `layer-operations.test.ts`、`layer-panel-layout.test.ts`、`workspace.test.ts` |
 | 锁定传播 | 锁定组及其后代不得修改像素、属性或结构；解锁和历史恢复不丢显式锁定状态 | `layer-operations.test.ts`、`workspace.test.ts` |
 | 图层合并结果 | 不同颜色模式、透明度和混合模式合并后的像素确定，合并及 Undo/Redo 保持图层顺序和选择 | `layer-merge.test.ts`、`workspace.test.ts` |

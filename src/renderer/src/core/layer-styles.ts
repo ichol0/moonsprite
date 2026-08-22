@@ -28,6 +28,7 @@ const color = (value: unknown, fallback: RgbaColor): RgbaColor => {
 
 export function createDefaultLayerStyles(): LayerStyles {
   return {
+    enabled: true,
     stroke: { enabled: false, color: { r: 0, g: 0, b: 0, a: 255 }, size: 1, position: 'outside', kernel: 'round', directions: outlineDirectionsForKernel('round'), smartHue: false, smartHueDarkness: DEFAULT_LAYER_STYLE_SMART_HUE_DARKNESS },
     shadow: { enabled: false, color: { r: 0, g: 0, b: 0, a: 160 }, offsetX: 2, offsetY: 2, blur: 0, smartShadow: false, smartShadowDarkness: DEFAULT_LAYER_STYLE_SMART_SHADOW_DARKNESS },
     innerGlow: { enabled: false, color: { r: 255, g: 255, b: 255, a: 192 }, size: 2 },
@@ -47,6 +48,7 @@ export function normalizeLayerStyles(value: unknown): LayerStyles | undefined {
   const gradientOverlay = record(source.gradientOverlay)
   const strokeKernel = normalizeOutlineKernel(stroke?.kernel, defaults.stroke.kernel)
   return {
+    enabled: source.enabled !== false,
     stroke: {
       enabled: enabled(stroke?.enabled),
       color: color(stroke?.color, defaults.stroke.color),
@@ -88,6 +90,7 @@ export function normalizeLayerStyles(value: unknown): LayerStyles | undefined {
 export const cloneLayerStyles = (styles: LayerStyles | undefined): LayerStyles | undefined => {
   const normalized = normalizeLayerStyles(styles)
   return normalized ? {
+    enabled: normalized.enabled,
     stroke: { ...normalized.stroke, color: { ...normalized.stroke.color }, directions: { ...normalized.stroke.directions } },
     shadow: { ...normalized.shadow, color: { ...normalized.shadow.color } },
     innerGlow: { ...normalized.innerGlow, color: { ...normalized.innerGlow.color } },
@@ -98,7 +101,7 @@ export const cloneLayerStyles = (styles: LayerStyles | undefined): LayerStyles |
 
 export const resolveLayerStyles = (styles: LayerStyles | undefined): LayerStyles => cloneLayerStyles(styles) ?? createDefaultLayerStyles()
 
-export const hasEnabledLayerStyles = (styles: LayerStyles | undefined): boolean => Boolean(styles && (
+export const hasConfiguredLayerStyles = (styles: LayerStyles | undefined): boolean => Boolean(styles && (
   styles.stroke.enabled
   || styles.shadow.enabled
   || styles.innerGlow.enabled
@@ -106,12 +109,15 @@ export const hasEnabledLayerStyles = (styles: LayerStyles | undefined): boolean 
   || styles.gradientOverlay.enabled
 ))
 
+export const hasEnabledLayerStyles = (styles: LayerStyles | undefined): boolean => styles?.enabled !== false && hasConfiguredLayerStyles(styles)
+
 export const layerStylesEqual = (left: LayerStyles | undefined, right: LayerStyles | undefined): boolean => {
   if (left === right) return true
   const a = normalizeLayerStyles(left)
   const b = normalizeLayerStyles(right)
   if (!a || !b) return a === b
-  return a.stroke.enabled === b.stroke.enabled
+  return a.enabled === b.enabled
+    && a.stroke.enabled === b.stroke.enabled
     && a.stroke.size === b.stroke.size
     && a.stroke.position === b.stroke.position
     && a.stroke.kernel === b.stroke.kernel
@@ -139,6 +145,7 @@ export const layerStylesEqual = (left: LayerStyles | undefined, right: LayerStyl
 }
 
 export const mapLayerStyleColors = (styles: LayerStyles, mapper: (color: RgbaColor) => RgbaColor): LayerStyles => ({
+  enabled: styles.enabled,
   stroke: { ...styles.stroke, color: mapper(styles.stroke.color), directions: { ...styles.stroke.directions } },
   shadow: { ...styles.shadow, color: mapper(styles.shadow.color) },
   innerGlow: { ...styles.innerGlow, color: mapper(styles.innerGlow.color) },
@@ -317,6 +324,9 @@ const gradientColorAt = (geometry: LayerStyleGeometry, style: LayerStyles['gradi
 
 export type LayerStyleSourceReader = (x: number, y: number) => RgbaColor
 export type LayerStyleColorResolver = (color: RgbaColor) => RgbaColor
+export interface LayerStyleCoverageOverrides {
+  shadow?: number
+}
 
 export function applyLayerStylesAt(
   geometry: LayerStyleGeometry | RasterLayer,
@@ -325,11 +335,13 @@ export function applyLayerStylesAt(
   y: number,
   source: RgbaColor,
   readGeometry: LayerStyleSourceReader,
-  resolveDynamicColor: LayerStyleColorResolver = (color) => color
+  resolveDynamicColor: LayerStyleColorResolver = (color) => color,
+  coverageOverrides?: LayerStyleCoverageOverrides
 ): RgbaColor {
+  if (styles.enabled === false) return source
   let backdrop = TRANSPARENT
   if (styles.shadow.enabled) {
-    const coverage = shadowCoverage(readGeometry, x - styles.shadow.offsetX, y - styles.shadow.offsetY, styles.shadow.blur)
+    const coverage = coverageOverrides?.shadow ?? shadowCoverage(readGeometry, x - styles.shadow.offsetX, y - styles.shadow.offsetY, styles.shadow.blur)
     if (coverage > 0) backdrop = blendWithMode(backdrop, withCoverage(shadowColor(styles.shadow), coverage), 1, 'normal')
   }
   if (styles.stroke.enabled && styles.stroke.position !== 'inside' && source.a === 0) {

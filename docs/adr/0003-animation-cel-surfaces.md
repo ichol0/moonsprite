@@ -1,5 +1,7 @@
 # 0003：当前图层表面与动画 Cel 像素同步
 
+中文 | [English](0003-animation-cel-surfaces.en.md)
+
 状态：接受
 
 ## 背景

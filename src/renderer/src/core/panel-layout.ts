@@ -1,16 +1,16 @@
 import { readStoredString } from './storage'
 
-export type WorkspacePanelId = 'color' | 'palette' | 'layers' | 'preview'
+export type WorkspacePanelId = 'color' | 'palette' | 'layers' | 'preview' | 'tileset' | 'brushes'
 
 export const INSPECTOR_LAYOUT_STORAGE_KEY = 'moonsprite.inspector-layout.v2'
 export const COLOR_SQUARE_DOCK_STORAGE_KEY = 'moonsprite.color-picker-square-dock'
 export const COLOR_SQUARE_ANCHOR_STORAGE_KEY = 'moonsprite.color-picker-square-anchor'
 
-export const DEFAULT_INSPECTOR_ORDER: WorkspacePanelId[] = ['color', 'palette', 'layers', 'preview']
-export const DEFAULT_INSPECTOR_SIZES: Record<WorkspacePanelId, number> = { color: 370, palette: 90, layers: 230, preview: 180 }
-export const MINIMUM_INSPECTOR_SIZES: Record<WorkspacePanelId, number> = { color: 128, palette: 52, layers: 180, preview: 120 }
-export const DEFAULT_BOTTOM_WIDTHS: Record<WorkspacePanelId, number> = { color: 280, palette: 280, layers: 720, preview: 280 }
-export const MINIMUM_BOTTOM_WIDTHS: Record<WorkspacePanelId, number> = { color: 96, palette: 180, layers: 360, preview: 180 }
+export const DEFAULT_INSPECTOR_ORDER: WorkspacePanelId[] = ['color', 'palette', 'layers', 'brushes', 'tileset', 'preview']
+export const DEFAULT_INSPECTOR_SIZES: Record<WorkspacePanelId, number> = { color: 370, palette: 90, layers: 230, preview: 180, tileset: 280, brushes: 240 }
+export const MINIMUM_INSPECTOR_SIZES: Record<WorkspacePanelId, number> = { color: 128, palette: 52, layers: 180, preview: 120, tileset: 180, brushes: 120 }
+export const DEFAULT_BOTTOM_WIDTHS: Record<WorkspacePanelId, number> = { color: 280, palette: 280, layers: 720, preview: 280, tileset: 360, brushes: 320 }
+export const MINIMUM_BOTTOM_WIDTHS: Record<WorkspacePanelId, number> = { color: 96, palette: 180, layers: 360, preview: 180, tileset: 240, brushes: 180 }
 
 export interface InspectorLayout {
   order: WorkspacePanelId[]
@@ -59,4 +59,8 @@ export function moveInspectorPanel(order: WorkspacePanelId[], movingId: Workspac
 
 export function proportionalPanelFlex(weight: number): string {
   return `${Math.max(1, weight)} 1 0px`
+}
+
+export function bottomPanelFlex(width: number, fillRemaining: boolean): string {
+  return `${fillRemaining ? 1 : 0} 1 ${Math.max(1, width)}px`
 }

@@ -1,7 +1,8 @@
 import { Channel, invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
-import type { BinaryReadProgress, ClipboardImage, ClipboardImageSize, MoonSpriteApi, ProjectPreview, RgbaColor, SaveDialogFormat, StoredBrush, StoredPalette, StoredWorkspace } from '@shared/types'
+import type { BinaryReadProgress, ClipboardImage, ClipboardImageSize, ExtensionListing, MoonSpriteApi, ProjectPreview, RgbaColor, SaveDialogFormat, StoredBrush, StoredBrushFolder, StoredExtension, StoredPalette, StoredWorkspace } from '@shared/types'
 import { builtInPalettes } from '@/core/built-in-palettes'
+import { brushFolderContains, remapBrushFolderId } from '@/core/brush-folder-tree'
 import { loadEditorPreferences } from '@/core/file-preferences'
 import { translate, type TranslationKey, type TranslationParams } from '@/core/localization'
 import { createResourceInfoReader } from './resource-info-cache'
@@ -11,6 +12,8 @@ const dialogLanguage = (): string => loadEditorPreferences().language
 
 const browserRecoveries = new Map<string, { name: string; data: Uint8Array; updatedAt: string }>()
 const browserBrushes = new Map<string, { stored: StoredBrush; data: Uint8Array }>()
+let browserBrushOrder: string[] = []
+const browserBrushFolders = new Map<string, StoredBrushFolder>()
 const browserPalettes = new Map<string, StoredPalette>(builtInPalettes.map((palette) => [palette.id, {
   ...palette,
   filePath: '',
@@ -19,8 +22,8 @@ const browserPalettes = new Map<string, StoredPalette>(builtInPalettes.map((pale
 }]))
 const browserWorkspaces = new Map<string, StoredWorkspace>([['builtin-default', {
   id: 'builtin-default', name: tr('app.workspace.default'), filePath: '', updatedAt: '', builtIn: true,
-  layout: { panelDocks: { color: 'left', palette: 'left', layers: 'bottom', preview: 'bottom' }, panelVisibility: { color: true, palette: true, layers: true, preview: true }, inspectorWidth: 300, leftDockWidth: 280, bottomDockHeight: 220, inspectorWidthRatio: 0.20833333333333334, leftDockWidthRatio: 0.19444444444444445, bottomDockHeightRatio: 0.275, toolRailSide: 'right', previewOpen: true, inspectorLayout: '{"order":["palette","color","layers","preview"],"verticalWeights":{"color":330,"palette":620,"layers":560,"preview":220},"bottomWeights":{"color":280,"palette":280,"layers":720,"preview":280}}', colorSquareDock: 'left', colorSquareAnchor: 'end', floatingPanels: { color: null, palette: null, layers: null, preview: null }, mainWindow: null },
-  initialLayout: { panelDocks: { color: 'left', palette: 'left', layers: 'bottom', preview: 'bottom' }, panelVisibility: { color: true, palette: true, layers: true, preview: true }, inspectorWidth: 300, leftDockWidth: 280, bottomDockHeight: 220, inspectorWidthRatio: 0.20833333333333334, leftDockWidthRatio: 0.19444444444444445, bottomDockHeightRatio: 0.275, toolRailSide: 'right', previewOpen: true, inspectorLayout: '{"order":["palette","color","layers","preview"],"verticalWeights":{"color":330,"palette":620,"layers":560,"preview":220},"bottomWeights":{"color":280,"palette":280,"layers":720,"preview":280}}', colorSquareDock: 'left', colorSquareAnchor: 'end', floatingPanels: { color: null, palette: null, layers: null, preview: null }, mainWindow: null }
+  layout: { panelDocks: { color: 'left', palette: 'left', layers: 'bottom', preview: 'bottom', tileset: 'right', brushes: 'right' }, panelVisibility: { color: true, palette: true, layers: true, preview: true, tileset: false, brushes: true }, inspectorWidth: 300, leftDockWidth: 280, bottomDockHeight: 220, inspectorWidthRatio: 0.20833333333333334, leftDockWidthRatio: 0.19444444444444445, bottomDockHeightRatio: 0.275, toolRailSide: 'right', previewOpen: true, inspectorLayout: '{"order":["palette","color","layers","brushes","tileset","preview"],"verticalWeights":{"color":330,"palette":620,"layers":560,"preview":220,"tileset":280,"brushes":240},"bottomWeights":{"color":280,"palette":280,"layers":720,"preview":280,"tileset":360,"brushes":320}}', colorSquareDock: 'left', colorSquareAnchor: 'end', floatingPanels: { color: null, palette: null, layers: null, preview: null, tileset: null, brushes: null }, mainWindow: null },
+  initialLayout: { panelDocks: { color: 'left', palette: 'left', layers: 'bottom', preview: 'bottom', tileset: 'right', brushes: 'right' }, panelVisibility: { color: true, palette: true, layers: true, preview: true, tileset: false, brushes: true }, inspectorWidth: 300, leftDockWidth: 280, bottomDockHeight: 220, inspectorWidthRatio: 0.20833333333333334, leftDockWidthRatio: 0.19444444444444445, bottomDockHeightRatio: 0.275, toolRailSide: 'right', previewOpen: true, inspectorLayout: '{"order":["palette","color","layers","brushes","tileset","preview"],"verticalWeights":{"color":330,"palette":620,"layers":560,"preview":220,"tileset":280,"brushes":240},"bottomWeights":{"color":280,"palette":280,"layers":720,"preview":280,"tileset":360,"brushes":320}}', colorSquareDock: 'left', colorSquareAnchor: 'end', floatingPanels: { color: null, palette: null, layers: null, preview: null, tileset: null, brushes: null }, mainWindow: null }
 } as StoredWorkspace]])
 
 const readTauriResourceInfo = createResourceInfoReader(async () => {
@@ -44,6 +47,7 @@ const cloneStoredPalette = (palette: StoredPalette): StoredPalette => ({
 
 const createBrowserApi = (): MoonSpriteApi => ({
   openFiles: async () => ({ canceled: true, filePaths: [] }),
+  openBrushImages: async () => ({ canceled: true, filePaths: [] }),
   takeStartupFiles: async () => [],
   saveProject: async (_defaultPath?: string, _format?: SaveDialogFormat) => ({ canceled: true }),
   exportImage: async () => ({ canceled: true }),
@@ -88,14 +92,86 @@ const createBrowserApi = (): MoonSpriteApi => ({
   },
   deleteWorkspace: async (id) => { if (browserWorkspaces.get(id)?.builtIn) throw new Error(tr('app.workspace.builtInDelete')); browserWorkspaces.delete(id) },
   openWorkspaceFolder: async () => {},
-  listBrushes: async () => ({ directoryPath: 'brushes', brushes: [...browserBrushes.values()].map((item) => ({ ...item.stored })) }),
-  saveBrush: async (name, data, intrinsicSize = false, sourceX, sourceY) => {
+  listBrushes: async () => ({ directoryPath: 'brushes', folders: [...browserBrushFolders.values()].map((folder) => ({ ...folder })), brushes: browserBrushOrder.flatMap((id) => {
+    const item = browserBrushes.get(id)
+    return item ? [{ ...item.stored }] : []
+  }) }),
+  saveBrush: async (name, data, intrinsicSize = true, sourceX, sourceY, folderId) => {
+    const normalizedFolderId = folderId || null
+    if (normalizedFolderId && !browserBrushFolders.has(normalizedFolderId)) throw new Error(tr('brush.folderNotFound'))
     const id = `${name.trim() || tr('brush.defaultName')}-${Date.now()}.png`
-    const stored = { id, name: name.trim() || tr('brush.defaultName'), filePath: `brushes/${id}`, intrinsicSize, sourceX, sourceY }
+    const stored = { id, name: name.trim() || tr('brush.defaultName'), filePath: `brushes/${normalizedFolderId ? `${normalizedFolderId}/` : ''}${id}`, intrinsicSize, sourceX, sourceY, folderId: normalizedFolderId }
     browserBrushes.set(id, { stored, data: data.slice() })
+    browserBrushOrder = [...browserBrushOrder.filter((item) => item !== id), id]
     return { ...stored }
   },
-  deleteBrush: async (id) => { browserBrushes.delete(id) },
+  deleteBrush: async (id) => { browserBrushes.delete(id); browserBrushOrder = browserBrushOrder.filter((item) => item !== id) },
+  setBrushOrder: async (ids) => {
+    const requested = ids.filter((id, index) => browserBrushes.has(id) && ids.indexOf(id) === index)
+    browserBrushOrder = [...requested, ...browserBrushOrder.filter((id) => browserBrushes.has(id) && !requested.includes(id))]
+  },
+  createBrushFolder: async (name, parentFolderId) => {
+    const cleanName = name.trim()
+    if (!cleanName) throw new Error(tr('brush.folderNameRequired'))
+    const normalizedParentId = parentFolderId || null
+    if (normalizedParentId && !browserBrushFolders.has(normalizedParentId)) throw new Error(tr('brush.folderNotFound'))
+    const baseId = cleanName.toLowerCase().replace(/[^a-z0-9\u4e00-\u9fff_-]+/gu, '-').replace(/^-+|-+$/gu, '') || `folder-${Date.now()}`
+    let id = normalizedParentId ? `${normalizedParentId}/${baseId}` : baseId
+    let suffix = 2
+    while (browserBrushFolders.has(id)) id = normalizedParentId ? `${normalizedParentId}/${baseId}-${suffix++}` : `${baseId}-${suffix++}`
+    const folder = { id, name: cleanName, filePath: `brushes/${id}` }
+    browserBrushFolders.set(id, folder)
+    return { ...folder }
+  },
+  renameBrushFolder: async (id, name) => {
+    const source = browserBrushFolders.get(id)
+    if (!source) throw new Error(tr('brush.folderNotFound'))
+    const cleanName = name.trim()
+    if (!cleanName) throw new Error(tr('brush.folderNameRequired'))
+    const separator = id.lastIndexOf('/')
+    const parentId = separator >= 0 ? id.slice(0, separator) : null
+    const nextLeaf = cleanName.toLowerCase().replace(/[^a-z0-9\u4e00-\u9fff_-]+/gu, '-').replace(/^-+|-+$/gu, '') || `folder-${Date.now()}`
+    const nextId = parentId ? `${parentId}/${nextLeaf}` : nextLeaf
+    if (nextId !== id && browserBrushFolders.has(nextId)) throw new Error(tr('brush.folderExists'))
+    const replacements = [...browserBrushFolders.values()]
+      .filter((folder) => brushFolderContains(id, folder.id))
+      .map((folder) => {
+        const folderId = remapBrushFolderId(folder.id, id, nextId)
+        return { previousId: folder.id, folder: { ...folder, id: folderId, name: folder.id === id ? cleanName : folder.name, filePath: `brushes/${folderId}` } }
+      })
+    for (const replacement of replacements) browserBrushFolders.delete(replacement.previousId)
+    for (const replacement of replacements) browserBrushFolders.set(replacement.folder.id, replacement.folder)
+    for (const item of browserBrushes.values()) {
+      const folderId = item.stored.folderId
+      if (!brushFolderContains(id, folderId)) continue
+      const nextFolderId = remapBrushFolderId(folderId!, id, nextId)
+      item.stored = { ...item.stored, folderId: nextFolderId, filePath: `brushes/${nextFolderId}/${item.stored.id}` }
+    }
+    return { ...browserBrushFolders.get(nextId)! }
+  },
+  deleteBrushFolder: async (id) => {
+    if (!browserBrushFolders.has(id)) throw new Error(tr('brush.folderNotFound'))
+    for (const folderId of [...browserBrushFolders.keys()]) {
+      if (brushFolderContains(id, folderId)) browserBrushFolders.delete(folderId)
+    }
+    const deletedBrushIds: string[] = []
+    for (const [brushId, item] of browserBrushes) {
+      const folderId = item.stored.folderId
+      if (brushFolderContains(id, folderId)) {
+        deletedBrushIds.push(brushId)
+        browserBrushes.delete(brushId)
+      }
+    }
+    browserBrushOrder = browserBrushOrder.filter((brushId) => !deletedBrushIds.includes(brushId))
+  },
+  moveBrush: async (id, folderId) => {
+    const item = browserBrushes.get(id)
+    if (!item) throw new Error(tr('brush.notFound'))
+    const normalizedFolderId = folderId || null
+    if (normalizedFolderId && !browserBrushFolders.has(normalizedFolderId)) throw new Error(tr('brush.folderNotFound'))
+    item.stored = { ...item.stored, folderId: normalizedFolderId, filePath: `brushes/${normalizedFolderId ? `${normalizedFolderId}/` : ''}${id}` }
+    return { ...item.stored }
+  },
   openBrushFolder: async () => {},
   listFonts: async () => ({ directoryPath: 'Font', fonts: [] }),
   listSystemFonts: async () => [],
@@ -127,6 +203,17 @@ const createBrowserApi = (): MoonSpriteApi => ({
   ensureBuiltinExample: async () => null,
   openProjectInFolder: async () => {},
   openExternalUrl: async (url) => { window.open(url, '_blank', 'noopener,noreferrer') },
+  listLuaScripts: async () => ({ directoryPath: 'scripts', scripts: [] }),
+  openLuaScriptFolder: async () => {},
+  runLuaScript: async () => { throw new Error(tr('platform.browser.readUnsupported')) },
+  dispatchLuaScriptDialog: async () => { throw new Error(tr('platform.browser.readUnsupported')) },
+  closeLuaScriptSession: async () => {},
+  listExtensions: async (): Promise<ExtensionListing> => ({ directoryPath: 'extensions', extensions: [] }),
+  installExtension: async (): Promise<StoredExtension> => { throw new Error(tr('platform.browser.readUnsupported')) },
+  chooseAndInstallExtension: async (): Promise<StoredExtension | null> => { throw new Error(tr('platform.browser.readUnsupported')) },
+  setExtensionEnabled: async (): Promise<StoredExtension> => { throw new Error(tr('platform.browser.readUnsupported')) },
+  uninstallExtension: async () => { throw new Error(tr('platform.browser.readUnsupported')) },
+  openExtensionFolder: async () => {},
   getResourceInfo: async () => ({ totalBytes: 8 * 1024 ** 3, freeBytes: 4 * 1024 ** 3 }),
   confirmUnsaved: async () => 'cancel',
   pathForFile: () => '',
@@ -171,6 +258,7 @@ const writeProjectIncremental = (filePath: string, sourcePath: string, data: Uin
 
 export const createTauriApi = (): MoonSpriteApi => ({
   openFiles: () => invoke('open_files', { language: dialogLanguage() }),
+  openBrushImages: () => invoke('open_brush_images', { language: dialogLanguage() }),
   takeStartupFiles: () => invoke('take_startup_files'),
   saveProject: (defaultPath, format) => invoke('save_project', { defaultPath, format, language: dialogLanguage() }),
   exportImage: (defaultPath, format) => invoke('export_image', { defaultPath, format, language: dialogLanguage() }),
@@ -211,8 +299,13 @@ export const createTauriApi = (): MoonSpriteApi => ({
   deleteWorkspace: (id) => invoke('delete_workspace', { id }),
   openWorkspaceFolder: () => invoke('open_workspace_folder'),
   listBrushes: () => invoke('list_brushes'),
-  saveBrush: (name, data, intrinsicSize = false, sourceX, sourceY) => invoke('save_brush', { name, data: Array.from(data), intrinsicSize, sourceX, sourceY }),
+  saveBrush: (name, data, intrinsicSize = true, sourceX, sourceY, folderId) => invoke('save_brush', { name, data: Array.from(data), intrinsicSize, sourceX, sourceY, folderId }),
   deleteBrush: (id) => invoke('delete_brush', { id }),
+  setBrushOrder: (ids) => invoke('set_brush_order', { ids }),
+  createBrushFolder: (name, parentFolderId) => invoke('create_brush_folder', { name, parentFolderId }),
+  renameBrushFolder: (id, name) => invoke('rename_brush_folder', { id, name }),
+  deleteBrushFolder: (id) => invoke('delete_brush_folder', { id }),
+  moveBrush: (id, folderId) => invoke('move_brush', { id, folderId }),
   openBrushFolder: () => invoke('open_brush_folder'),
   listFonts: () => invoke('list_fonts'),
   listSystemFonts: () => invoke('list_system_fonts'),
@@ -233,6 +326,17 @@ export const createTauriApi = (): MoonSpriteApi => ({
   ensureBuiltinExample: () => invoke('ensure_builtin_example'),
   openProjectInFolder: (filePath) => invoke('open_project_in_folder', { filePath }),
   openExternalUrl: (url) => invoke('open_external_url', { url }),
+  listLuaScripts: () => invoke('list_lua_scripts'),
+  openLuaScriptFolder: () => invoke('open_lua_script_folder'),
+  runLuaScript: (scriptId, context) => invoke('run_lua_script', { scriptId, context }),
+  dispatchLuaScriptDialog: (sessionId, action, context) => invoke('dispatch_lua_script_dialog', { sessionId, action, context }),
+  closeLuaScriptSession: (sessionId) => invoke('close_lua_script_session', { sessionId }),
+  listExtensions: () => invoke('list_extensions'),
+  installExtension: (filePath) => invoke('install_extension', { packagePath: filePath }),
+  chooseAndInstallExtension: () => invoke('choose_and_install_extension', { language: dialogLanguage() }),
+  setExtensionEnabled: (id, enabled) => invoke('set_extension_enabled', { id, enabled }),
+  uninstallExtension: (id) => invoke('uninstall_extension', { id }),
+  openExtensionFolder: () => invoke('open_extension_folder'),
   getResourceInfo: readTauriResourceInfo,
   confirmUnsaved: (name) => invoke('confirm_unsaved', { name }),
   pathForFile: (file) => (file as File & { path?: string }).path ?? '',

@@ -251,12 +251,8 @@ const regionPatchFromDenseEdit = (layer: RasterLayer, dense: PixelEditDenseRegio
     before: dense.before,
     after: dense.after
   }
-  const before = new Uint8ClampedArray(dense.before.length * 4)
-  const after = new Uint8ClampedArray(dense.after.length * 4)
-  for (let index = 0; index < dense.before.length; index += 1) {
-    writePackedToPatch(before, layer.format, index, dense.before[index])
-    writePackedToPatch(after, layer.format, index, dense.after[index])
-  }
+  const before = new Uint8ClampedArray(dense.before.buffer as ArrayBuffer, dense.before.byteOffset, dense.before.byteLength)
+  const after = new Uint8ClampedArray(dense.after.buffer as ArrayBuffer, dense.after.byteOffset, dense.after.byteLength)
   return { format: layer.format, x: dense.x, y: dense.y, width: dense.width, height: dense.height, before, after }
 }
 
@@ -338,6 +334,12 @@ export function commitPixelEdit(document: SpriteDocument, edit: PixelEdit, label
   const pointCount = edit.points?.count ?? 0
   if (edit.before.size === 0 && pointCount === 0 && !edit.runs?.length && !edit.denseRegion?.count && !edit.layerOffset) return null
   const maskTarget = isLayerMask(getLayer(document, edit.layerId))
+  const editedLayer = maskTarget ? null : document.layers.find((layer) => layer.id === edit.layerId) ?? null
+  const linkedLayerIds = editedLayer?.linkedContentId
+    ? document.layers
+        .filter((layer) => !layer.kind && !layer.background && layer.linkedContentId === editedLayer.linkedContentId)
+        .map((layer) => layer.id)
+    : []
   const frameId = edit.frameId ?? document.animation?.activeFrameId
   const layerForFrame = (): RasterLayer => maskTarget
     ? getLayer(document, edit.layerId)
@@ -455,8 +457,10 @@ export function commitPixelEdit(document: SpriteDocument, edit: PixelEdit, label
     bytes: xs.byteLength + ys.byteLength + before.byteLength + after.byteLength + runXs.byteLength + runYs.byteLength + runLengths.byteLength + runBefore.byteLength + runAfter.byteLength + regionPatchBytes + (layerOffset ? 32 : 0),
     undo: () => { applyRuns(runBefore); applyRegionPatches('before'); apply(before); if (layerOffset) applyLayerOffset(layerOffset.beforeX, layerOffset.beforeY) },
     redo: () => { applyRuns(runAfter); applyRegionPatches('after'); apply(after); if (layerOffset) applyLayerOffset(layerOffset.afterX, layerOffset.afterY) },
-    invalidation: edit.dirtyRect ? { kind: 'region', frameId, rect: { ...edit.dirtyRect } } : undefined,
-    affectedLayerIds: [edit.layerId]
+    invalidation: linkedLayerIds.length > 1
+      ? { kind: 'full' }
+      : edit.dirtyRect ? { kind: 'region', frameId, rect: { ...edit.dirtyRect } } : undefined,
+    affectedLayerIds: linkedLayerIds.length > 0 ? linkedLayerIds : [edit.layerId]
   }
 }
 

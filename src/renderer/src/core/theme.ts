@@ -65,12 +65,12 @@ const DARK_SEEDS: ThemeSeedColors = {
   accent: '#2979ff', danger: '#ef5350', success: '#66bb6a', warning: '#ffab26'
 }
 const LIGHT_SEEDS: ThemeSeedColors = {
-  workspace: '#bec7d2', surface: '#edf1f5', raisedSurface: '#ffffff', deepSurface: '#d8dfe7', canvasSurround: '#aeb8c4',
+  workspace: '#bec7d2', surface: '#ffffff', raisedSurface: '#edf1f5', deepSurface: '#d8dfe7', canvasSurround: '#aeb8c4',
   border: '#98a5b4', borderStrong: '#5f6d7f', controlBackground: '#f8fafc', textPrimary: '#17202b', textSecondary: '#334155', textMuted: '#667386',
   accent: '#1d63d8', danger: '#b8323a', success: '#247a4d', warning: '#9a5a00'
 }
 const PINK_SEEDS: ThemeSeedColors = {
-  workspace: '#f1dce8', surface: '#fff7fb', raisedSurface: '#ffffff', deepSurface: '#f6e6ef', canvasSurround: '#e7cedb',
+  workspace: '#f1dce8', surface: '#ffffff', raisedSurface: '#fff7fb', deepSurface: '#f6e6ef', canvasSurround: '#e7cedb',
   border: '#e3bfd1', borderStrong: '#aa7aa0', controlBackground: '#fffafd', textPrimary: '#49283a', textSecondary: '#70485d', textMuted: '#956f82',
   accent: '#b73575', danger: '#b92f55', success: '#34765f', warning: '#8f5a18'
 }
@@ -115,17 +115,17 @@ const SUNSET_SEEDS: ThemeSeedColors = {
   accent: '#9a3f67', danger: '#c4494f', success: '#43836e', warning: '#b77a2a'
 }
 const CLASSIC_SEEDS: ThemeSeedColors = {
-  workspace: '#68717d', surface: '#b9b9b7', raisedSurface: '#d1d1cd', deepSurface: '#8f9499', canvasSurround: '#747d87',
+  workspace: '#68717d', surface: '#d1d1cd', raisedSurface: '#b9b9b7', deepSurface: '#8f9499', canvasSurround: '#747d87',
   border: '#777c81', borderStrong: '#4f555a', controlBackground: '#dededb', textPrimary: '#202326', textSecondary: '#354047', textMuted: '#414a51',
   accent: '#4b6f93', danger: '#a64e57', success: '#3d7049', warning: '#875b16'
 }
 const SLATE_SEEDS: ThemeSeedColors = {
-  workspace: '#5f665f', surface: '#b9bcb2', raisedSurface: '#d5d6ca', deepSurface: '#858b80', canvasSurround: '#72796f',
+  workspace: '#5f665f', surface: '#d5d6ca', raisedSurface: '#b9bcb2', deepSurface: '#858b80', canvasSurround: '#72796f',
   border: '#7b8276', borderStrong: '#4e574e', controlBackground: '#dedfd5', textPrimary: '#242824', textSecondary: '#3e483e', textMuted: '#505b50',
   accent: '#55765c', danger: '#a34c4e', success: '#3e754b', warning: '#8a641b'
 }
 const COPPER_SEEDS: ThemeSeedColors = {
-  workspace: '#6e6b68', surface: '#bcb8b0', raisedSurface: '#d4d0c6', deepSurface: '#918d87', canvasSurround: '#817b78',
+  workspace: '#6e6b68', surface: '#d4d0c6', raisedSurface: '#bcb8b0', deepSurface: '#918d87', canvasSurround: '#817b78',
   border: '#837f79', borderStrong: '#58534c', controlBackground: '#e2ded5', textPrimary: '#282725', textSecondary: '#48433d', textMuted: '#5c5750',
   accent: '#8f6650', danger: '#a44d49', success: '#4f714c', warning: '#93621a'
 }
@@ -169,9 +169,9 @@ const PIXEL_THEME_DERIVED: Record<string, PixelThemeDerivedColors> = {
   ocean: { surfaceHover: '#1c3746', surfaceActive: '#343b68', textFaint: '#728ba5', textDisabled: '#586b82', accentHover: '#268b8d', accentSelected: '#10595c', accentSoft: '#16363f' },
   forest: { surfaceHover: '#30402d', surfaceActive: '#4a422d', textFaint: '#8d886b', textDisabled: '#6d6a54', accentHover: '#a86f20', accentSelected: '#70470f', accentSoft: '#352a16' },
   sunset: { surfaceHover: '#34304b', surfaceActive: '#52384c', textFaint: '#927f98', textDisabled: '#716276', accentHover: '#b5537c', accentSelected: '#7f3154', accentSoft: '#3a2031' },
-  classic: { surfaceMuted: '#a4a4aa', surfaceDisabled: '#a7a7ad', dangerSoft: '#e7aeb5', successSoft: '#a8c7ae', warningSoft: '#d8c29b', scrollbarTrack: '#909097', scrollbarThumb: '#5d5d65', surfaceHover: '#c8c9c8', surfaceActive: '#b1bac2', textFaint: '#5d666d', textDisabled: '#707980', accentHover: '#6284aa', accentSelected: '#3b5877', accentSoft: '#c1cfdd' },
-  slate: { surfaceMuted: '#a1a7a0', surfaceDisabled: '#9aa19a', dangerSoft: '#e1afb2', successSoft: '#a8c9ad', warningSoft: '#d9c79d', scrollbarTrack: '#858b80', scrollbarThumb: '#5d675d', surfaceHover: '#c8cbc0', surfaceActive: '#b8c5b8', textFaint: '#626d62', textDisabled: '#707970', accentHover: '#6d9276', accentSelected: '#3f5d46', accentSoft: '#c3d2c4' },
-  copper: { surfaceMuted: '#aaa59e', surfaceDisabled: '#a39e96', dangerSoft: '#e1aeaa', successSoft: '#aec7a9', warningSoft: '#dcc79c', scrollbarTrack: '#918d87', scrollbarThumb: '#625d57', surfaceHover: '#cbc6bd', surfaceActive: '#b9b0aa', textFaint: '#706a63', textDisabled: '#7e7870', accentHover: '#aa7e63', accentSelected: '#73503f', accentSoft: '#d9c6b9' }
+  classic: { surfaceMuted: '#98a0a7', surfaceDisabled: '#adb2b5', dangerSoft: '#e7aeb5', successSoft: '#a8c7ae', warningSoft: '#d8c29b', scrollbarTrack: '#909097', scrollbarThumb: '#5d5d65', surfaceHover: '#c8c9c8', surfaceActive: '#95a8ba', textFaint: '#505a63', textDisabled: '#556069', accentHover: '#6284aa', accentSelected: '#3b5877', accentSoft: '#c1cfdd' },
+  slate: { surfaceMuted: '#98a097', surfaceDisabled: '#aab0a7', dangerSoft: '#e1afb2', successSoft: '#a8c9ad', warningSoft: '#d9c79d', scrollbarTrack: '#858b80', scrollbarThumb: '#5d675d', surfaceHover: '#c8cbc0', surfaceActive: '#98af9c', textFaint: '#535e53', textDisabled: '#545f54', accentHover: '#6d9276', accentSelected: '#3f5d46', accentSoft: '#c3d2c4' },
+  copper: { surfaceMuted: '#a19a92', surfaceDisabled: '#afa9a1', dangerSoft: '#e1aeaa', successSoft: '#aec7a9', warningSoft: '#dcc79c', scrollbarTrack: '#918d87', scrollbarThumb: '#625d57', surfaceHover: '#cbc6bd', surfaceActive: '#a78d81', textFaint: '#5e5852', textDisabled: '#5e5852', accentHover: '#aa7e63', accentSelected: '#73503f', accentSoft: '#d9c6b9' }
 } as const
 
 export const BUILT_IN_THEMES: readonly ThemeDefinition[] = [
@@ -199,6 +199,7 @@ const clamp = (value: number): number => Math.max(0, Math.min(255, Math.round(va
 const copyRgba = (value: RgbaColor): RgbaColor => ({ r: clamp(value.r), g: clamp(value.g), b: clamp(value.b), a: clamp(value.a) })
 const copyVisuals = (value: ThemeVisualDefaults): ThemeVisualDefaults => Object.fromEntries(visualKeys.map((key) => [key, copyRgba(value[key])])) as unknown as ThemeVisualDefaults
 const hexBytes = (value: string): [number, number, number, number] => { const hex = value.slice(1); return [Number.parseInt(hex.slice(0, 2), 16), Number.parseInt(hex.slice(2, 4), 16), Number.parseInt(hex.slice(4, 6), 16), hex.length === 8 ? Number.parseInt(hex.slice(6, 8), 16) : 255] }
+const mixThemeColors = (from: string, to: string, toAmount: number): string => { const [fromR, fromG, fromB] = hexBytes(from); const [toR, toG, toB] = hexBytes(to); const amount = Math.max(0, Math.min(1, toAmount)); return `#${[fromR + (toR - fromR) * amount, fromG + (toG - fromG) * amount, fromB + (toB - fromB) * amount].map((channel) => clamp(channel).toString(16).padStart(2, '0')).join('')}` }
 const cssColor = (value: string): string => { const [r, g, b, a] = hexBytes(value); return a === 255 ? value.slice(0, 7).toLowerCase() : `rgb(${r} ${g} ${b} / ${a / 255})` }
 const rgbaFromHex = (value: string): RgbaColor => { const [r, g, b, a] = hexBytes(value); return { r, g, b, a } }
 export const rgbaHex = (value: RgbaColor): string => `#${[value.r, value.g, value.b, value.a].map((channel) => clamp(channel).toString(16).padStart(2, '0')).join('')}`
@@ -217,6 +218,7 @@ export function resolveTheme(preferences: ThemePreferences): ResolvedTheme {
   const definition = themeById(preferences)
   const visualDefaults = copyVisuals({ ...definition.visualDefaults, ...preferences.visualOverrides })
   const s = definition.seeds
+  const mode = inferThemeMode(s)
   const dark = definition.id === 'dark'
   const light = definition.id === 'light'
   const gray = definition.id === 'gray'
@@ -226,41 +228,73 @@ export function resolveTheme(preferences: ThemePreferences): ResolvedTheme {
   const pixel = Boolean(pixelTheme)
   const onAccent = '#ffffff'
   const onDanger = '#ffffff'
-  const surfaceMuted = dark ? '#11141a' : light ? '#e2e8ee' : gray ? '#3f444b' : darkGray ? '#24272c' : classic ? pixelTheme?.surfaceMuted ?? s.deepSurface : pixel ? s.deepSurface : '#eef1f5'
-  const surfaceHover = dark ? '#20242d' : light ? '#dde4eb' : gray ? '#525965' : darkGray ? '#353a43' : pixelTheme?.surfaceHover ?? '#e3e8ef'
-  const surfaceActive = dark ? '#212c40' : gray ? '#465a78' : darkGray ? '#34445e' : pixelTheme?.surfaceActive ?? '#d7e5fb'
-  const surfaceDisabled = dark ? '#111319' : light ? '#d2dae3' : gray ? '#32363c' : darkGray ? '#202328' : classic ? pixelTheme?.surfaceDisabled ?? s.deepSurface : pixel ? s.deepSurface : '#e2e6eb'
-  const borderMuted = dark ? '#454d5c' : light ? '#7d8b9d' : gray ? '#747e8c' : darkGray ? '#555e6a' : pixel ? s.borderStrong : '#9aa6b5'
-  const borderHover = dark ? '#596476' : gray ? '#8e9aae' : darkGray ? '#768395' : pixel ? s.borderStrong : '#6f7d90'
-  const textFaint = dark ? '#7f8998' : gray ? '#9ca6b3' : darkGray ? '#818a96' : pixelTheme?.textFaint ?? '#8995a5'
-  const textSoft = dark ? '#d4dae4' : gray ? '#dfe4eb' : darkGray ? '#d9dee5' : pixel ? s.textSecondary : '#253246'
-  const textSecondaryStrong = dark ? '#c6ccd6' : gray ? '#cdd4de' : darkGray ? '#c4cad3' : pixel ? s.textSecondary : '#405069'
-  const textMutedStrong = dark ? '#8f99a8' : gray ? '#b4bdc8' : darkGray ? '#a1aab6' : pixel ? s.textMuted : '#667386'
-  const textSoftAlt = dark ? '#aeb8c7' : gray ? '#bcc5d0' : darkGray ? '#aeb7c3' : pixel ? s.textMuted : '#52627a'
-  const textBright = dark ? '#edf2fb' : gray || darkGray ? '#f5f5f5' : pixel ? s.textPrimary : '#17202b'
-  const textDisabled = dark ? '#616874' : gray ? '#858e9a' : darkGray ? '#666e79' : pixelTheme?.textDisabled ?? '#9aa5b4'
-  const iconMuted = dark ? '#727b89' : gray ? '#9aa4b1' : darkGray ? '#7d8793' : pixel ? s.textMuted : '#7e8998'
-  const accentHover = dark ? '#478bff' : gray || darkGray ? '#478bff' : pixelTheme?.accentHover ?? '#3d7bea'
-  const accentSelected = dark ? '#256de6' : gray || darkGray ? '#256de6' : pixelTheme?.accentSelected ?? '#1658c6'
-  const accentSoft = dark ? '#182a46' : gray ? '#354d72' : darkGray ? '#243650' : pixelTheme?.accentSoft ?? '#dbe8ff'
-  const dangerHover = dark ? '#f16b68' : gray || darkGray ? '#f16b68' : classic ? '#bd4554' : pixel ? '#ef766e' : '#c94b53'
-  const dangerSoft = dark ? '#422024' : gray ? '#573a40' : darkGray ? '#45272d' : classic ? pixelTheme?.dangerSoft ?? '#f8dfe1' : pixel ? '#542a2d' : '#f8dfe1'
-  const successSoft = dark ? '#233b28' : gray ? '#344b3d' : darkGray ? '#263b30' : classic ? pixelTheme?.successSoft ?? '#dcefe3' : pixel ? '#294a32' : '#dcefe3'
-  const warningSoft = dark ? '#45361d' : gray ? '#54472e' : darkGray ? '#433625' : classic ? pixelTheme?.warningSoft ?? '#f8ebd1' : pixel ? '#4c391c' : '#f8ebd1'
+  const lightDerived = {
+    surfaceMuted: mixThemeColors(s.raisedSurface, s.deepSurface, 0.55),
+    surfaceHover: mixThemeColors(s.raisedSurface, s.deepSurface, 0.45),
+    surfaceActive: mixThemeColors(s.surface, s.accent, 0.16),
+    surfaceDisabled: mixThemeColors(s.deepSurface, s.workspace, 0.18),
+    borderMuted: mixThemeColors(s.border, s.borderStrong, 0.3),
+    borderHover: mixThemeColors(s.borderStrong, s.textPrimary, 0.15),
+    textFaint: mixThemeColors(s.textMuted, s.surface, 0.18),
+    textSoft: mixThemeColors(s.textPrimary, s.textSecondary, 0.25),
+    textSecondaryStrong: mixThemeColors(s.textSecondary, s.textPrimary, 0.15),
+    textMutedStrong: mixThemeColors(s.textMuted, s.textSecondary, 0.18),
+    textSoftAlt: mixThemeColors(s.textMuted, s.textSecondary, 0.45),
+    textBright: mixThemeColors(s.textPrimary, '#000000', 0.18),
+    textDisabled: mixThemeColors(s.textMuted, s.surface, 0.38),
+    iconMuted: mixThemeColors(s.textMuted, s.surface, 0.14),
+    accentHover: mixThemeColors(s.accent, s.surface, 0.12),
+    accentSelected: mixThemeColors(s.accent, s.textPrimary, 0.16),
+    accentSoft: mixThemeColors(s.surface, s.accent, 0.14),
+    dangerHover: mixThemeColors(s.danger, s.textPrimary, 0.12),
+    dangerSoft: mixThemeColors(s.surface, s.danger, 0.12),
+    successSoft: mixThemeColors(s.surface, s.success, 0.12),
+    warningSoft: mixThemeColors(s.surface, s.warning, 0.12),
+    canvasGridBorder: mixThemeColors(s.border, s.borderStrong, 0.35),
+    divider: mixThemeColors(s.raisedSurface, s.border, 0.28),
+    scrollbarTrack: mixThemeColors(s.deepSurface, s.workspace, 0.18),
+    scrollbarThumb: mixThemeColors(s.border, s.borderStrong, 0.45)
+  }
+  const surfaceMuted = dark ? '#11141a' : light ? lightDerived.surfaceMuted : gray ? '#3f444b' : darkGray ? '#24272c' : classic ? pixelTheme?.surfaceMuted ?? s.deepSurface : pixel ? s.deepSurface : '#eef1f5'
+  const surfaceHover = dark ? '#20242d' : light ? lightDerived.surfaceHover : gray ? '#525965' : darkGray ? '#353a43' : pixelTheme?.surfaceHover ?? '#e3e8ef'
+  const surfaceActive = dark ? '#212c40' : light ? lightDerived.surfaceActive : gray ? '#465a78' : darkGray ? '#34445e' : pixelTheme?.surfaceActive ?? '#d7e5fb'
+  const surfaceDisabled = dark ? '#111319' : light ? lightDerived.surfaceDisabled : gray ? '#32363c' : darkGray ? '#202328' : classic ? pixelTheme?.surfaceDisabled ?? s.deepSurface : pixel ? s.deepSurface : '#e2e6eb'
+  const borderMuted = dark ? '#454d5c' : light ? lightDerived.borderMuted : gray ? '#747e8c' : darkGray ? '#555e6a' : pixel ? s.borderStrong : '#9aa6b5'
+  const borderHover = dark ? '#596476' : light ? lightDerived.borderHover : gray ? '#8e9aae' : darkGray ? '#768395' : pixel ? s.borderStrong : '#6f7d90'
+  const textFaint = dark ? '#7f8998' : light ? lightDerived.textFaint : gray ? '#9ca6b3' : darkGray ? '#818a96' : pixelTheme?.textFaint ?? '#8995a5'
+  const textSoft = dark ? '#d4dae4' : light ? lightDerived.textSoft : gray ? '#dfe4eb' : darkGray ? '#d9dee5' : pixel ? s.textSecondary : '#253246'
+  const textSecondaryStrong = dark ? '#c6ccd6' : light ? lightDerived.textSecondaryStrong : gray ? '#cdd4de' : darkGray ? '#c4cad3' : pixel ? s.textSecondary : '#405069'
+  const textMutedStrong = dark ? '#8f99a8' : light ? lightDerived.textMutedStrong : gray ? '#b4bdc8' : darkGray ? '#a1aab6' : pixel ? s.textMuted : '#667386'
+  const textSoftAlt = dark ? '#aeb8c7' : light ? lightDerived.textSoftAlt : gray ? '#bcc5d0' : darkGray ? '#aeb7c3' : pixel ? s.textMuted : '#52627a'
+  const textBright = dark ? '#edf2fb' : light ? lightDerived.textBright : gray || darkGray ? '#f5f5f5' : pixel ? s.textPrimary : '#17202b'
+  const textDisabled = dark ? '#616874' : light ? lightDerived.textDisabled : gray ? '#858e9a' : darkGray ? '#666e79' : pixelTheme?.textDisabled ?? '#9aa5b4'
+  const iconMuted = dark ? '#727b89' : light ? lightDerived.iconMuted : gray ? '#9aa4b1' : darkGray ? '#7d8793' : pixel ? s.textMuted : '#7e8998'
+  const accentHover = dark ? '#478bff' : light ? lightDerived.accentHover : gray || darkGray ? '#478bff' : pixelTheme?.accentHover ?? '#3d7bea'
+  const accentSelected = dark ? '#256de6' : light ? lightDerived.accentSelected : gray || darkGray ? '#256de6' : pixelTheme?.accentSelected ?? '#1658c6'
+  const accentSoft = dark ? '#182a46' : light ? lightDerived.accentSoft : gray ? '#354d72' : darkGray ? '#243650' : pixelTheme?.accentSoft ?? '#dbe8ff'
+  const dangerHover = dark ? '#f16b68' : light ? lightDerived.dangerHover : gray || darkGray ? '#f16b68' : classic ? '#bd4554' : pixel ? '#ef766e' : '#c94b53'
+  const dangerSoft = dark ? '#422024' : light ? lightDerived.dangerSoft : gray ? '#573a40' : darkGray ? '#45272d' : classic ? pixelTheme?.dangerSoft ?? '#f8dfe1' : pixel ? '#542a2d' : '#f8dfe1'
+  const successSoft = dark ? '#233b28' : light ? lightDerived.successSoft : gray ? '#344b3d' : darkGray ? '#263b30' : classic ? pixelTheme?.successSoft ?? '#dcefe3' : pixel ? '#294a32' : '#dcefe3'
+  const warningSoft = dark ? '#45361d' : light ? lightDerived.warningSoft : gray ? '#54472e' : darkGray ? '#433625' : classic ? pixelTheme?.warningSoft ?? '#f8ebd1' : pixel ? '#4c391c' : '#f8ebd1'
   const developmentNoticeText = highestContrastColor(warningSoft, [s.warning, s.textPrimary, '#ffffff', '#101216'])
-  const canvasGridBorder = dark ? '#566170' : gray ? '#838e9d' : darkGray ? '#697481' : pixel ? s.borderStrong : '#7b8797'
-  const divider = dark ? '#252b36' : light ? '#b7c2ce' : gray ? '#525861' : darkGray ? '#34383e' : pixel ? s.border : '#d0d7e1'
+  const canvasGridBorder = dark ? '#566170' : light ? lightDerived.canvasGridBorder : gray ? '#838e9d' : darkGray ? '#697481' : pixel ? s.borderStrong : '#7b8797'
+  const divider = dark ? '#252b36' : light ? lightDerived.divider : gray ? '#525861' : darkGray ? '#34383e' : pixel ? s.border : '#d0d7e1'
+  const layersBackground = s.surface
+  const homeBackground = s.deepSurface
+  const paletteBackground = mode === 'dark' ? s.surface : s.canvasSurround
+  const scrollbarTrack = classic ? pixelTheme?.scrollbarTrack ?? s.deepSurface : dark || darkGray || pixel ? s.deepSurface : light ? lightDerived.scrollbarTrack : gray ? '#30343a' : '#e2e6eb'
+  const scrollbarThumb = classic ? pixelTheme?.scrollbarThumb ?? s.borderStrong : dark || darkGray || pixel ? s.borderStrong : light ? lightDerived.scrollbarThumb : gray ? '#7c8796' : '#9aa6b5'
   const magnifierLine = darkestThemeSeed(s)
   const variables: Record<string, string> = {
-    '--theme-workspace-background': s.workspace, '--theme-app-background': s.workspace, '--theme-surface': s.surface, '--theme-raised-surface': s.raisedSurface, '--theme-control-background': s.controlBackground, '--theme-deep-surface': s.deepSurface, '--theme-magnifier-line': magnifierLine,
-    '--theme-surface-muted': surfaceMuted, '--theme-surface-hover': surfaceHover, '--theme-surface-active': surfaceActive, '--theme-surface-disabled': surfaceDisabled, '--theme-canvas-surround': s.canvasSurround,
+    '--theme-workspace-background': s.workspace, '--theme-app-background': s.workspace, '--theme-home-background': homeBackground, '--theme-surface': s.surface, '--theme-raised-surface': s.raisedSurface, '--theme-control-background': s.controlBackground, '--theme-deep-surface': s.deepSurface, '--theme-magnifier-line': magnifierLine,
+    '--theme-surface-muted': surfaceMuted, '--theme-surface-hover': surfaceHover, '--theme-surface-active': surfaceActive, '--theme-surface-disabled': surfaceDisabled, '--theme-canvas-surround': s.canvasSurround, '--theme-layers-background': layersBackground, '--theme-palette-background': paletteBackground,
     '--theme-border': s.border, '--theme-border-subtle': s.border, '--theme-border-strong': s.borderStrong, '--theme-border-muted': borderMuted, '--theme-border-hover': borderHover, '--theme-canvas-grid-border': canvasGridBorder, '--theme-divider': divider,
     '--theme-text-primary': s.textPrimary, '--theme-text-secondary': s.textSecondary, '--theme-text-muted': s.textMuted, '--theme-text-faint': textFaint, '--theme-text-soft': textSoft, '--theme-text-secondary-strong': textSecondaryStrong, '--theme-text-muted-strong': textMutedStrong, '--theme-text-soft-alt': textSoftAlt, '--theme-text-bright': textBright, '--theme-text-disabled': textDisabled, '--theme-icon-muted': iconMuted,
     '--theme-accent': s.accent, '--theme-accent-hover': accentHover, '--theme-accent-selected': accentSelected, '--theme-accent-soft': accentSoft, '--theme-on-accent': onAccent, '--theme-danger': s.danger, '--theme-danger-hover': dangerHover, '--theme-danger-soft': dangerSoft, '--theme-on-danger': onDanger, '--theme-success': s.success, '--theme-success-soft': successSoft, '--theme-warning': s.warning, '--theme-warning-soft': warningSoft, '--theme-development-notice-text': developmentNoticeText, '--theme-development-notice-background': warningSoft, '--theme-development-notice-border': s.warning,
-    '--theme-overlay': dark || darkGray || (pixel && !classic) ? '#00000073' : '#18202b52', '--theme-shadow': dark || darkGray || (pixel && !classic) ? '#0000006b' : '#18202b38', '--theme-shadow-strong': dark || darkGray || (pixel && !classic) ? '#0000009e' : '#18202b52', '--theme-scrollbar-track': classic ? pixelTheme?.scrollbarTrack ?? s.deepSurface : dark || darkGray || pixel ? s.deepSurface : light ? '#cdd6df' : gray ? '#30343a' : '#e2e6eb', '--theme-scrollbar-thumb': classic ? pixelTheme?.scrollbarThumb ?? s.borderStrong : dark || darkGray || pixel ? s.borderStrong : light ? '#788799' : gray ? '#7c8796' : '#9aa6b5', '--theme-selection-contrast': '#ffffff', '--theme-selection-outline-dark': '#090a0d', '--theme-selection-outline-light': '#f1f4f8',
+    '--theme-overlay': dark || darkGray || (pixel && !classic) ? '#00000073' : '#18202b52', '--theme-shadow': dark || darkGray || (pixel && !classic) ? '#0000006b' : '#18202b38', '--theme-shadow-strong': dark || darkGray || (pixel && !classic) ? '#0000009e' : '#18202b52', '--theme-scrollbar-track': scrollbarTrack, '--theme-scrollbar-thumb': scrollbarThumb, '--theme-selection-contrast': '#ffffff', '--theme-selection-outline-dark': '#090a0d', '--theme-selection-outline-light': '#f1f4f8',
     '--theme-checker-light': rgbaHex(visualDefaults.checkerLight), '--theme-checker-dark': rgbaHex(visualDefaults.checkerDark), '--theme-pixel-grid': rgbaHex(visualDefaults.pixelGrid), '--theme-custom-grid': rgbaHex(visualDefaults.customGrid), '--theme-onion-previous': rgbaHex(visualDefaults.onionPrevious), '--theme-onion-next': rgbaHex(visualDefaults.onionNext), '--theme-symmetry-axis': rgbaHex(visualDefaults.symmetryAxis), '--theme-selection': s.accent
   }
-  return { definition, visualDefaults, mode: inferThemeMode(s), variables: Object.fromEntries(Object.entries(variables).map(([key, value]) => [key, value.startsWith('#') ? cssColor(value) : value])) }
+  return { definition, visualDefaults, mode, variables: Object.fromEntries(Object.entries(variables).map(([key, value]) => [key, value.startsWith('#') ? cssColor(value) : value])) }
 }
 
 export function applyThemeToDocument(preferences: ThemePreferences): void { if (typeof document === 'undefined') return; const resolved = resolveTheme(preferences); for (const [name, value] of Object.entries(resolved.variables)) document.documentElement.style.setProperty(name, value); document.documentElement.dataset.themeId = resolved.definition.id; document.documentElement.dataset.themeMode = resolved.mode; document.documentElement.style.colorScheme = resolved.mode }

@@ -7,14 +7,15 @@ import { TRANSPARENT } from './raster'
 import { translateCurrent as tr } from './localization'
 import { applyImportedRgbaPalette, normalizeImportedIndexedPalette } from './imported-palette'
 import { encodePng, type PngExport } from './png-encode'
+import { encodePsd } from './psd'
 
 export { encodePng, type PngExport } from './png-encode'
 
-export type ImageExportKind = 'png-auto' | 'png-rgba' | 'jpeg' | 'webp' | 'svg' | 'gif'
+export type ImageExportKind = 'png-auto' | 'png-rgba' | 'jpeg' | 'webp' | 'svg' | 'gif' | 'psd'
 export type SaveImageKind = Exclude<ImageExportKind, 'gif'> | 'ase' | 'aseprite'
 export interface ImageExport {
   bytes: Uint8Array
-  extension: 'png' | 'jpg' | 'webp' | 'svg' | 'ase' | 'aseprite'
+  extension: 'png' | 'jpg' | 'webp' | 'svg' | 'psd' | 'ase' | 'aseprite'
   indexed: boolean
   width: number
   height: number
@@ -125,7 +126,7 @@ function scalePixels(source: Uint8ClampedArray, sourceWidth: number, sourceHeigh
   return { pixels: output, width, height }
 }
 
-async function encodeScaledPixels(scaled: { pixels: Uint8ClampedArray; width: number; height: number }, format: Exclude<SaveImageKind, 'ase' | 'aseprite'>): Promise<ImageExport> {
+async function encodeScaledPixels(scaled: { pixels: Uint8ClampedArray; width: number; height: number }, format: Exclude<SaveImageKind, 'ase' | 'aseprite' | 'psd'>): Promise<ImageExport> {
   if (format === 'svg') return { bytes: encodeSvg(scaled.pixels, scaled.width, scaled.height), extension: 'svg', indexed: false, width: scaled.width, height: scaled.height }
   if (format === 'png-auto' || format === 'png-rgba') {
     const png = encodePng(scaled.pixels, scaled.width, scaled.height, format === 'png-rgba')
@@ -173,13 +174,16 @@ function encodeSvg(rgba: Uint8ClampedArray, width: number, height: number): Uint
 }
 
 export async function exportDocumentImage(document: SpriteDocument, scalePercent: number, format: SaveImageKind): Promise<ImageExport> {
+  if (format === 'psd') {
+    return { bytes: encodePsd(document, scalePercent), extension: 'psd', indexed: false, width: Math.max(1, Math.round(document.width * scalePercent / 100)), height: Math.max(1, Math.round(document.height * scalePercent / 100)) }
+  }
   if (format === 'ase' || format === 'aseprite') {
     return { bytes: encodeAseprite(document, scalePercent), extension: format, indexed: false, width: Math.max(1, Math.round(document.width * scalePercent / 100)), height: Math.max(1, Math.round(document.height * scalePercent / 100)) }
   }
   return encodeScaledPixels(scaleDocumentPixels(document, scalePercent), format)
 }
 
-export async function exportDocumentSliceImage(document: SpriteDocument, slice: DocumentSlice, scalePercent: number, format: Exclude<SaveImageKind, 'ase' | 'aseprite'>): Promise<ImageExport> {
+export async function exportDocumentSliceImage(document: SpriteDocument, slice: DocumentSlice, scalePercent: number, format: Exclude<SaveImageKind, 'ase' | 'aseprite' | 'psd'>): Promise<ImageExport> {
   const composite = compositeDocument(document)
   const pixels = new Uint8ClampedArray(slice.width * slice.height * 4)
   for (let y = 0; y < slice.height; y += 1) {

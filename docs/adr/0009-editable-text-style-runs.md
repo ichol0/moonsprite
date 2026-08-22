@@ -1,5 +1,7 @@
 # ADR-0009: Editable Text Style Runs
 
+[中文](0009-editable-text-style-runs.zh-CN.md) | English
+
 ## Status
 
 Accepted

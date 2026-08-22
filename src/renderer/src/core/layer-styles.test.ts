@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { compositeRegion, createDocument, createLayer, createLayerMask, getActiveLayer, normalCompositeLayers, writeLayerColor } from './document'
 import { ensureAnimationDocument } from './animation'
-import { createDefaultLayerStyles, normalizeLayerStyles } from './layer-styles'
+import { createDefaultLayerStyles, hasConfiguredLayerStyles, hasEnabledLayerStyles, normalizeLayerStyles } from './layer-styles'
 
 const red = { r: 255, g: 0, b: 0, a: 255 }
 const blue = { r: 0, g: 0, b: 255, a: 255 }
@@ -16,12 +16,33 @@ describe('non-destructive layer styles', () => {
       stroke: { enabled: true, color: { r: -10, g: 20, b: 999, a: 300 }, size: 99, position: 'invalid' },
       shadow: { enabled: true, offsetX: -999, offsetY: 999, blur: -5 }
     })).toMatchObject({
+      enabled: true,
       stroke: { enabled: true, color: { r: 0, g: 20, b: 255, a: 255 }, size: 64, position: 'outside', kernel: 'round', directions: { nw: false, n: true, ne: false, w: true, e: true, sw: false, s: true, se: false }, smartHue: false, smartHueDarkness: 45 },
       shadow: { enabled: true, offsetX: -64, offsetY: 64, blur: 0, smartShadow: false, smartShadowDarkness: 45 },
       innerGlow: { enabled: false },
       colorOverlay: { enabled: false },
       gradientOverlay: { enabled: false, dither: 'none' }
     })
+  })
+
+  it('preserves configured effects while the global style switch suppresses rendering', () => {
+    const document = createDocument('disabled stroke', 3, 1, 'rgba')
+    const layer = getActiveLayer(document)
+    writeLayerColor(document, layer, 1, red)
+    const styles = createDefaultLayerStyles()
+    styles.enabled = false
+    styles.stroke = { ...styles.stroke, enabled: true, color: blue, size: 1, position: 'outside' }
+    layer.layerStyles = styles
+
+    expect(hasConfiguredLayerStyles(styles)).toBe(true)
+    expect(hasEnabledLayerStyles(styles)).toBe(false)
+    expect(normalCompositeLayers(document)).not.toBeNull()
+    expect(Array.from(compositeRegion(document, 0, 0, 3, 1))).toEqual([
+      0, 0, 0, 0,
+      255, 0, 0, 255,
+      0, 0, 0, 0
+    ])
+    expect(layer.layerStyles.stroke).toMatchObject({ enabled: true, size: 1, color: blue })
   })
 
   it('renders an outside stroke and disables the normal-layer fast path', () => {

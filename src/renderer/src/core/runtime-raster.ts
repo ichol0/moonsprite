@@ -283,7 +283,7 @@ export const runtimeTileHasVisiblePixels = (surface: RasterSurface, tileX: numbe
   return visible
 }
 
-export const runtimeRasterVisibleBounds = (surface: RasterSurface, opaquePaletteIds?: ReadonlySet<number>): RuntimeRasterVisibleBounds | null | undefined => {
+export const cachedRuntimeRasterVisibleBounds = (surface: RasterSurface, opaquePaletteIds?: ReadonlySet<number>): RuntimeRasterVisibleBounds | null | undefined => {
   const runtime = runtimeRasterForSurface(surface)
   if (!runtime || materializedByRuntime.has(runtime)) return undefined
   if (runtime.format === 'rgba' && Object.hasOwn(runtime, 'visibleBounds')) return runtime.visibleBounds ?? null
@@ -291,6 +291,16 @@ export const runtimeRasterVisibleBounds = (surface: RasterSurface, opaquePalette
   if (runtime.format === 'rgba' && rgbaVisibleBounds.has(runtime)) return rgbaVisibleBounds.get(runtime)!
   const indexedBoundsByKey = runtime.format === 'indexed' ? indexedVisibleBounds.get(runtime) : undefined
   if (indexedBoundsByKey?.has(visibilityKey)) return indexedBoundsByKey.get(visibilityKey)!
+  return undefined
+}
+
+export const runtimeRasterVisibleBounds = (surface: RasterSurface, opaquePaletteIds?: ReadonlySet<number>): RuntimeRasterVisibleBounds | null | undefined => {
+  const cached = cachedRuntimeRasterVisibleBounds(surface, opaquePaletteIds)
+  if (cached !== undefined) return cached
+  const runtime = runtimeRasterForSurface(surface)
+  if (!runtime || materializedByRuntime.has(runtime)) return undefined
+  const visibilityKey = opaquePaletteIds ?? nonZeroIndexedPixels
+  const indexedBoundsByKey = runtime.format === 'indexed' ? indexedVisibleBounds.get(runtime) : undefined
   const columns = Math.ceil(runtime.width / runtime.tileSize)
   let minX = runtime.width
   let minY = runtime.height

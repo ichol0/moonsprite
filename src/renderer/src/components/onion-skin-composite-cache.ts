@@ -91,6 +91,10 @@ export class OnionSkinCompositeCache {
     this.frames.clear()
   }
 
+  invalidateFrames(frameIds: readonly string[]): void {
+    for (const frameId of new Set(frameIds)) this.frames.delete(frameId)
+  }
+
   draw({ context, document, refs, style, originX, originY, canvasWidth, canvasHeight, fromX, fromY, toX, toY, zoom, revision, invalidation = null, imageSmoothingEnabled = false }: DrawOnionSkinOptions): void {
     const namespace = `${document.id}:${document.animation?.activeFrameId ?? 'static'}:${refs.map((ref) => `${ref.frameId}:${ref.side}:${ref.distance}`).join(',')}:${styleKey(style)}`
     if (this.namespace !== namespace) {

@@ -18,6 +18,8 @@ describe('tool preferences persistence boundary', () => {
   it('loads defaults when storage is empty or malformed', () => {
     const storage = createStorage()
     expect(loadToolSettings(storage).brushSize).toBe(1)
+    expect(loadToolSettings(storage).brushPaintMode).toBe('paint')
+    expect(loadToolSettings(storage).brushDither).toEqual({ enabled: false, template: 'bayer-4', stage: 8 })
     storage.setItem(TOOL_SETTINGS_KEY, '{bad')
     expect(loadToolSettings(storage).brushPaintMode).toBe(defaultToolSettings.brushPaintMode)
   })
@@ -46,18 +48,21 @@ describe('tool preferences persistence boundary', () => {
     storage.setItem(TOOL_SETTINGS_KEY, JSON.stringify({
       brushSize: 999,
       brushTextureScale: 0,
-      brushPaintMode: 'paint',
+      brushPaintMode: 'pattern-source',
       brushPaintModePreferenceVersion: 0,
       proceduralAntialiasStrength: 999,
       selectionMode: 'invalid'
     }))
     const settings = loadToolSettings(storage)
     expect(settings.brushSize).toBe(128)
+    expect(settings.brushDither).toEqual({ enabled: false, template: 'bayer-4', stage: 8 })
     expect(settings.brushTextureScale).toBe(1)
-    expect(settings.brushPaintMode).toBe('pattern-source')
+    expect(settings.brushPaintMode).toBe('paint')
     expect(settings.proceduralAntialiasStrength).toBe(100)
     expect(settings.selectionMode).toBe('replace')
     expect(settings.fillTolerance).toBe(0)
+    expect(settings.fillGapClosing).toBe(false)
+    expect(settings.fillGapThreshold).toBe(2)
     expect(settings.gradientTolerance).toBe(0)
     expect(settings.gradientContiguous).toBe(true)
     expect(settings.brushPressure).toEqual(DEFAULT_BRUSH_PRESSURE_SETTINGS)
@@ -65,6 +70,16 @@ describe('tool preferences persistence boundary', () => {
     expect(settings.brushDynamics.effects.gradient).toMatchObject({ sensor: null, outputMin: 0, outputMax: 100 })
     expect(settings.brushProfiles?.pencil?.brushPressure).toEqual(DEFAULT_BRUSH_PRESSURE_SETTINGS)
     expect(settings).toMatchObject({ airbrushParticleRadius: 1, airbrushParticleShape: 'round', airbrushScatterRadius: 12, airbrushDensity: 8, airbrushIntervalMs: 50 })
+  })
+
+  it('preserves an explicit versioned brush paint mode', () => {
+    const storage = createStorage()
+    storage.setItem(TOOL_SETTINGS_KEY, JSON.stringify({
+      brushPaintMode: 'pattern-target',
+      brushPaintModePreferenceVersion: 1
+    }))
+
+    expect(loadToolSettings(storage).brushPaintMode).toBe('pattern-target')
   })
 
   it('migrates legacy pressure settings when no version 2 dynamics exist', () => {
@@ -151,17 +166,41 @@ describe('tool preferences persistence boundary', () => {
     expect(restored.brushProfiles?.line).toMatchObject({ brushSize: 7, brushShape: 'square' })
   })
 
+  it('normalizes and persists dither settings independently for each brush profile', () => {
+    const storage = createStorage()
+    const profile = normalizePersistedBrushProfile(defaultToolSettings, defaultToolSettings)
+    saveToolSettings({
+      ...defaultToolSettings,
+      brushProfiles: {
+        pencil: { ...profile, brushDither: { enabled: true, template: 'bayer-8', stage: 32 } },
+        eraser: { ...profile, brushDither: { enabled: true, template: 'diagonal', stage: 6 } },
+        fill: profile,
+        line: profile
+      }
+    }, storage)
+
+    const restored = loadToolSettings(storage)
+    expect(restored.brushProfiles?.pencil?.brushDither).toEqual({ enabled: true, template: 'bayer-8', stage: 32 })
+    expect(restored.brushProfiles?.eraser?.brushDither).toEqual({ enabled: true, template: 'diagonal', stage: 6 })
+
+    storage.setItem(TOOL_SETTINGS_KEY, JSON.stringify({ brushDither: { enabled: true, template: 'unknown', stage: 999 } }))
+    expect(loadToolSettings(storage).brushDither).toEqual({ enabled: true, template: 'bayer-4', stage: 16 })
+  })
+
   it('writes a complete snapshot through the storage boundary', () => {
     const storage = createStorage()
     saveToolSettings(defaultToolSettings, storage)
     expect(storage.getItem(TOOL_SETTINGS_KEY)).toContain('moveAutoSelect')
-    expect(loadToolSettings(storage)).toMatchObject({ brushSize: 1, moveAutoSelect: true, selectionMode: 'replace', fillKind: 'bucket', gradientTolerance: 0, gradientContiguous: true, gradientDither: 'none' })
+    expect(loadToolSettings(storage)).toMatchObject({ brushSize: 1, brushDither: { enabled: false, template: 'bayer-4', stage: 8 }, moveAutoSelect: true, selectionMode: 'replace', fillKind: 'bucket', gradientTolerance: 0, gradientContiguous: true, gradientDither: 'none' })
   })
 
-  it('persists independent paint-bucket and gradient range settings', () => {
+  it('persists independent paint-bucket, magic-wand, and gradient range settings', () => {
     const storage = createStorage()
-    saveToolSettings({ ...defaultToolSettings, fillKind: 'gradient', gradientDither: 'bayer-4', fillTolerance: 37, gradientTolerance: 82, gradientContiguous: false }, storage)
-    expect(loadToolSettings(storage)).toMatchObject({ fillKind: 'gradient', gradientDither: 'bayer-4', fillTolerance: 37, gradientTolerance: 82, gradientContiguous: false })
+    saveToolSettings({ ...defaultToolSettings, fillKind: 'gradient', gradientDither: 'bayer-4', fillTolerance: 37, fillGapClosing: true, fillGapThreshold: 6, gradientTolerance: 82, gradientContiguous: false, wandGapClosing: true, wandGapThreshold: 9 }, storage)
+    expect(loadToolSettings(storage)).toMatchObject({ fillKind: 'gradient', gradientDither: 'bayer-4', fillTolerance: 37, fillGapClosing: true, fillGapThreshold: 6, gradientTolerance: 82, gradientContiguous: false, wandGapClosing: true, wandGapThreshold: 9 })
+
+    storage.setItem(TOOL_SETTINGS_KEY, JSON.stringify({ fillGapThreshold: 0, wandGapThreshold: 99 }))
+    expect(loadToolSettings(storage)).toMatchObject({ fillGapThreshold: 1, wandGapThreshold: 16 })
   })
 
   it('normalizes and persists airbrush settings', () => {

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { classifyValidationScope } from './validation-scope.mjs'
+import { classifyValidationScope, getRendererCodeFiles, isRendererCodeFile } from './validation-scope.mjs'
 
 test('文档修改不触发应用构建', () => {
   assert.deepEqual(
@@ -43,5 +43,21 @@ test('开发模式不让工程配置变化扩散到无关原生范围', () => {
   assert.deepEqual(
     scope,
     { files: ['package.json'], full: true, web: true, rust: false, thumbnail: false, desktop: false },
+  )
+})
+
+test('定向 Renderer 文件范围不包含样式、文档或 Rust 文件', () => {
+  assert.equal(isRendererCodeFile('src/renderer/src/components/Toolbar.tsx'), true)
+  assert.equal(isRendererCodeFile('src/shared/types.ts'), true)
+  assert.equal(isRendererCodeFile('src/renderer/src/styles.css'), false)
+  assert.equal(isRendererCodeFile('src-tauri/src/lib.rs'), false)
+  assert.deepEqual(
+    getRendererCodeFiles([
+      'src/renderer/src/components/Toolbar.tsx',
+      'src/renderer/src/components/Toolbar.tsx',
+      'src/renderer/src/styles.css',
+      'docs/product/behavior.md',
+    ]),
+    ['src/renderer/src/components/Toolbar.tsx'],
   )
 })

@@ -1,4 +1,4 @@
-import type { SpriteDocument } from '@shared/types'
+import type { SelectionRect, SpriteDocument } from '@shared/types'
 import { ensureAnimationDocument, syncActiveAnimationFrame } from './animation'
 import { compositeAnimationFrame } from './onion-skin'
 
@@ -9,6 +9,7 @@ export interface GifExportOptions {
   frameStart?: number
   frameEnd?: number
   direction: GifDirection
+  crop?: SelectionRect
 }
 
 interface GifFramePixels { pixels: Uint8ClampedArray; duration: number }
@@ -36,6 +37,27 @@ const scalePixels = (source: Uint8ClampedArray, sourceWidth: number, sourceHeigh
     pixels.set(source.subarray(sourceOffset, sourceOffset + 4), (y * width + x) * 4)
   }
   return { pixels, width, height }
+}
+
+const cropPixels = (source: Uint8ClampedArray, sourceWidth: number, bounds: SelectionRect): Uint8ClampedArray => {
+  const pixels = new Uint8ClampedArray(bounds.width * bounds.height * 4)
+  for (let y = 0; y < bounds.height; y += 1) {
+    const sourceOffset = ((bounds.y + y) * sourceWidth + bounds.x) * 4
+    pixels.set(source.subarray(sourceOffset, sourceOffset + bounds.width * 4), y * bounds.width * 4)
+  }
+  return pixels
+}
+
+const normalizeCrop = (document: SpriteDocument, crop: SelectionRect | undefined): SelectionRect => {
+  if (!crop) return { x: 0, y: 0, width: document.width, height: document.height }
+  const x = Math.max(0, Math.min(document.width - 1, Math.round(crop.x)))
+  const y = Math.max(0, Math.min(document.height - 1, Math.round(crop.y)))
+  return {
+    x,
+    y,
+    width: Math.max(1, Math.min(document.width - x, Math.round(crop.width))),
+    height: Math.max(1, Math.min(document.height - y, Math.round(crop.height)))
+  }
 }
 
 const pushU16 = (target: number[], value: number): void => { target.push(value & 0xff, value >>> 8 & 0xff) }
@@ -163,13 +185,20 @@ const encodeGif = (frames: readonly GifFramePixels[], width: number, height: num
 export const exportAnimationGif = (document: SpriteDocument, options: GifExportOptions): { bytes: Uint8Array; width: number; height: number; frameCount: number } => {
   syncActiveAnimationFrame(document)
   const timeline = ensureAnimationDocument(document)
+  const crop = normalizeCrop(document, options.crop)
   const start = Math.max(0, Math.min(timeline.frames.length - 1, Math.round(options.frameStart ?? 1) - 1))
   const end = Math.max(start, Math.min(timeline.frames.length - 1, Math.round(options.frameEnd ?? timeline.frames.length) - 1))
-  const selected = timeline.frames.slice(start, end + 1).map((frame) => ({ frame, pixels: compositeAnimationFrame(document, frame.id) }))
+  const selected = timeline.frames.slice(start, end + 1).map((frame) => {
+    const composite = compositeAnimationFrame(document, frame.id)
+    const pixels = crop.x === 0 && crop.y === 0 && crop.width === document.width && crop.height === document.height
+      ? composite
+      : cropPixels(composite, document.width, crop)
+    return { frame, pixels }
+  })
   const ordered = gifFrameSequence(selected, options.direction)
-  const scaled = ordered.map(({ frame, pixels }) => ({ ...scalePixels(pixels, document.width, document.height, options.scalePercent), duration: frame.duration }))
-  const width = scaled[0]?.width ?? Math.max(1, document.width)
-  const height = scaled[0]?.height ?? Math.max(1, document.height)
+  const scaled = ordered.map(({ frame, pixels }) => ({ ...scalePixels(pixels, crop.width, crop.height, options.scalePercent), duration: frame.duration }))
+  const width = scaled[0]?.width ?? Math.max(1, crop.width)
+  const height = scaled[0]?.height ?? Math.max(1, crop.height)
   const frames = scaled.map(({ pixels, duration }) => ({ pixels, duration }))
   return { bytes: encodeGif(frames, width, height, timeline.loop), width, height, frameCount: frames.length }
 }

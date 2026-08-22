@@ -18,4 +18,15 @@ describe('syncCanvasDisplaySize', () => {
     expect(canvas.style.width).toBe('240px')
     expect(canvas.width).toBe(480)
   })
+
+  it('can keep logical canvas coordinates separate from the rendered CSS size', () => {
+    const canvas = document.createElement('canvas')
+
+    syncCanvasDisplaySize(canvas, 1200, 900, 1, 800, 600)
+
+    expect(canvas.style.width).toBe('800px')
+    expect(canvas.style.height).toBe('600px')
+    expect(canvas.width).toBe(1200)
+    expect(canvas.height).toBe(900)
+  })
 })

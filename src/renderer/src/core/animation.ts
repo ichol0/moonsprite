@@ -1,9 +1,13 @@
-import type { AnimationCel, AnimationCelSurface, AnimationFrame, AnimationGroupMask, AnimationTimeline, LayerMask, PaletteEntry, RasterLayer, SelectionMask, SpriteDocument, TextCelData } from '@shared/types'
-import { animationMaskAt, createId, getLayerStorageOrigin, resolveAnimationMask, setLayerStorageOrigin } from './document'
+import type { AnimationCel, AnimationCelSurface, AnimationFrame, AnimationGroupMask, AnimationTimeline, FreeTileCelData, LayerMask, PaletteEntry, RasterLayer, SelectionMask, SpriteDocument, TextCelData, TilemapCelData } from '@shared/types'
+import { animationMaskAt, createId, getLayerStorageOrigin, paletteColorIdForCanvas, resolveAnimationMask, setLayerStorageOrigin } from './document'
 import { assignRasterStorage, installRuntimeRaster, rasterStorageIdentity, runtimeRasterVisibleBounds, readSurfacePackedLocal } from './runtime-raster'
-import { normalizeTextCelData, translateTextCelData } from './text-raster'
+import { normalizeTextCelData, translateTextCelData } from './text-cel-data'
 import { cloneLayerStyles } from './layer-styles'
 import { tileBackgroundSurfaceToCanvas } from './background-patterns'
+import { cloneTilemapCelData, cloneTileset, normalizeTilemapCelData, renderTilemapSurface, resizeTilemapCelDataToCanvas } from './tilemap'
+import { cloneFreeTileCelData, createFreeTileCelData, freeTileSourceRefs, freeTileSourceForInstance, normalizeFreeTileCelData, renderFreeTileSurface } from './free-tile'
+import { normalizeAnimationLoopSections, reconcileAnimationLoopSectionsAfterFrameDeletion, reconcileAnimationLoopSectionsAfterFrameInsertion } from './animation-loop-sections'
+import { linkedLayerGroups, linkedLayerMembers, normalizeLinkedLayerMetadata, shareLinkedRasterContent } from './linked-layers'
 
 export const DEFAULT_FRAME_DURATION = 100
 export const MAX_ANIMATION_FRAME_DURATION = 60_000
@@ -12,6 +16,7 @@ export const createDefaultAnimationTimeline = (): AnimationTimeline => ({
   frames: [{ id: 'frame-1', duration: DEFAULT_FRAME_DURATION }],
   cels: [],
   groupMasks: [],
+  loopSections: [],
   activeFrameId: 'frame-1',
   loop: true
 })
@@ -124,6 +129,20 @@ const cloneAnimationText = (text: TextCelData | undefined): TextCelData | undefi
   }))
 }) : undefined
 
+const cloneAnimationTilemap = (tilemap: TilemapCelData | undefined): TilemapCelData | undefined =>
+  tilemap ? cloneTilemapCelData(tilemap) : undefined
+
+const blankAnimationTilemap = (tilemap: TilemapCelData | undefined): TilemapCelData | undefined => tilemap ? ({
+  ...tilemap,
+  cells: Array.from({ length: tilemap.cells.length }, () => null)
+}) : undefined
+
+const cloneAnimationFreeTiles = (freeTiles: FreeTileCelData | undefined): FreeTileCelData | undefined =>
+  freeTiles ? cloneFreeTileCelData(freeTiles) : undefined
+
+const blankAnimationFreeTiles = (freeTiles: FreeTileCelData | undefined): FreeTileCelData | undefined =>
+  freeTiles ? createFreeTileCelData() : undefined
+
 export const cloneAnimationGroupMask = (entry: AnimationGroupMask, groupId = entry.groupId, frameId = entry.frameId, maskId = entry.mask.id): AnimationGroupMask => ({
   groupId,
   frameId,
@@ -147,6 +166,8 @@ const normalizeCels = (value: unknown, frameIds: Set<string>): AnimationCel[] =>
     const surface = normalizeSurface(candidate.surface)
     const mask = normalizeLayerMask(candidate.mask, candidate.id)
     const text = candidate.text && typeof candidate.text === 'object' ? normalizeTextCelData(candidate.text) : undefined
+    const tilemap = candidate.tilemap && typeof candidate.tilemap === 'object' ? normalizeTilemapCelData(candidate.tilemap) ?? undefined : undefined
+    const freeTiles = candidate.freeTiles && typeof candidate.freeTiles === 'object' ? normalizeFreeTileCelData(candidate.freeTiles) ?? undefined : undefined
     result.push({
       id: candidate.id,
       layerId: candidate.layerId,
@@ -155,6 +176,8 @@ const normalizeCels = (value: unknown, frameIds: Set<string>): AnimationCel[] =>
       ...(Number.isFinite(candidate.opacity) ? { opacity: Math.max(0, Math.min(1, Number(candidate.opacity))) } : {}),
       ...(surface ? { surface } : {}),
       ...(text ? { text } : {}),
+      ...(tilemap ? { tilemap } : {}),
+      ...(freeTiles ? { freeTiles } : {}),
       ...(mask ? { mask } : {})
     })
   }
@@ -175,6 +198,7 @@ export const normalizeAnimationTimeline = (value: unknown): AnimationTimeline =>
     frames,
     cels: normalizeCels(candidate.cels, frameIds),
     groupMasks: normalizeGroupMasks(candidate.groupMasks, frameIds),
+    loopSections: normalizeAnimationLoopSections(candidate.loopSections, frames),
     activeFrameId: typeof candidate.activeFrameId === 'string' && frameIds.has(candidate.activeFrameId) ? candidate.activeFrameId : frames[0].id,
     loop: candidate.loop !== false
   }
@@ -454,11 +478,83 @@ export const resizeAnimationCelsAt = (
   const vertical = Math.trunc(offsetY)
   const expanding = document.width > sourceCanvasWidth || document.height > sourceCanvasHeight
   const backgroundLayerIds = new Set(document.layers.filter((layer) => layer.background).map((layer) => layer.id))
-  const resized = new Set<AnimationCelSurface>()
+  syncFrameSurfaces(document, timeline)
+  const lookup = createAnimationCelLookup(timeline)
+  const activeSourceIds = new Set(timeline.cels
+    .filter((cel) => cel.frameId === timeline.activeFrameId)
+    .map((cel) => (lookup.resolve(cel) ?? cel).id))
+  const resized = new Set<object | string>()
   for (const cel of timeline.cels) {
-    const source = resolveAnimationCel(timeline, cel)
-    if (cel.frameId === timeline.activeFrameId || !source?.surface || resized.has(source.surface)) continue
-    resized.add(source.surface)
+    const source = lookup.resolve(cel) ?? cel
+    const storage = source.surface ? rasterStorageIdentity(source.surface) : source.id
+    if (resized.has(storage)) continue
+    resized.add(storage)
+    const activeSource = activeSourceIds.has(source.id)
+    if (source.tilemap) {
+      const layer = document.layers.find((candidate) => candidate.id === source.layerId)
+      const shiftedOffsetX = (source.surface?.offsetX ?? (activeSource ? layer?.offsetX ?? 0 : 0)) + (activeSource ? 0 : horizontal)
+      const shiftedOffsetY = (source.surface?.offsetY ?? (activeSource ? layer?.offsetY ?? 0 : 0)) + (activeSource ? 0 : vertical)
+      const resizedTilemap = resizeTilemapCelDataToCanvas(source.tilemap, shiftedOffsetX, shiftedOffsetY, document.width, document.height, trimOutside)
+      source.tilemap = resizedTilemap.tilemap
+      source.surface = renderTilemapSurface(source.tilemap, document.tilesets ?? [], document.colorMode, resizedTilemap.offsetX, resizedTilemap.offsetY)
+      continue
+    }
+    if (source.freeTiles) {
+      const layer = document.layers.find((candidate) => candidate.id === source.layerId && candidate.kind === 'free-tile')
+      const sources = layer ? freeTileSourceRefs(layer.freeTileSources, document.tilesets ?? []) : []
+      if (!layer || sources.length === 0) continue
+      const shiftedOffsetX = (source.surface?.offsetX ?? (activeSource ? layer.offsetX : 0)) + (activeSource ? 0 : horizontal)
+      const shiftedOffsetY = (source.surface?.offsetY ?? (activeSource ? layer.offsetY : 0)) + (activeSource ? 0 : vertical)
+      const currentWidth = source.surface?.width ?? sourceCanvasWidth
+      const currentHeight = source.surface?.height ?? sourceCanvasHeight
+      let left = shiftedOffsetX
+      let top = shiftedOffsetY
+      let right = shiftedOffsetX + currentWidth
+      let bottom = shiftedOffsetY + currentHeight
+      if (expanding) {
+        left = Math.min(left, 0)
+        top = Math.min(top, 0)
+        right = Math.max(right, document.width)
+        bottom = Math.max(bottom, document.height)
+      }
+      if (trimOutside) {
+        left = Math.max(0, left)
+        top = Math.max(0, top)
+        right = Math.min(document.width, right)
+        bottom = Math.min(document.height, bottom)
+        if (right <= left || bottom <= top) {
+          left = 0
+          top = 0
+          right = document.width
+          bottom = document.height
+        }
+      }
+      const localShiftX = shiftedOffsetX - left
+      const localShiftY = shiftedOffsetY - top
+      source.freeTiles.instances = source.freeTiles.instances
+        .map((instance) => ({ ...instance, x: instance.x + localShiftX, y: instance.y + localShiftY }))
+        .filter((instance) => {
+          if (!trimOutside) return true
+          const sourceRef = freeTileSourceForInstance(sources, instance)
+          if (!sourceRef) return false
+          return left + instance.x < document.width
+            && top + instance.y < document.height
+            && left + instance.x + sourceRef.tileset.tileWidth > 0
+            && top + instance.y + sourceRef.tileset.tileHeight > 0
+        })
+      source.surface = renderFreeTileSurface(
+        source.freeTiles,
+        sources,
+        document.colorMode,
+        Math.max(1, right - left),
+        Math.max(1, bottom - top),
+        left,
+        top,
+        document.colorMode === 'indexed' ? (color) => paletteColorIdForCanvas(document, color) : undefined
+      )
+      continue
+    }
+    if (activeSource || !source.surface) continue
     if (expanding && backgroundLayerIds.has(cel.layerId)) {
       tileBackgroundSurfaceToCanvas(source.surface, sourceCanvasWidth, sourceCanvasHeight, document.width, document.height, horizontal, vertical)
       continue
@@ -467,13 +563,17 @@ export const resizeAnimationCelsAt = (
     source.surface.offsetY += vertical
     if (trimOutside) cropAnimationCelSurface(source.surface, document.width, document.height)
   }
-  syncActiveAnimationFrame(document)
+  normalizeAnimationCelLinks(timeline)
+  synchronizeLinkedLayerContentsForTimeline(document, timeline)
+  applyFrameSurfaces(document, timeline)
 }
 
 export const cloneAnimationCel = (cel: AnimationCel): AnimationCel => ({
   ...cel,
   surface: cel.surface ? cloneAnimationCelSurface(cel.surface) : undefined,
   text: cloneAnimationText(cel.text),
+  tilemap: cloneAnimationTilemap(cel.tilemap),
+  freeTiles: cloneAnimationFreeTiles(cel.freeTiles),
   mask: cel.mask ? cloneLayerMaskForCel(cel.mask, cel.id) : undefined
 })
 
@@ -496,11 +596,12 @@ export const cloneDocumentForAnimationFrame = (document: SpriteDocument, frameId
     paletteSlots: document.paletteSlots ? [...document.paletteSlots] : undefined,
     paletteColumns: document.paletteColumns,
     customBrushes: document.customBrushes?.map((brush) => ({ ...brush, coverage: brush.coverage.slice(), colors: brush.colors?.slice() })),
+    tilesets: document.tilesets?.map(cloneTileset),
     animation: document.animation
       ? {
           ...document.animation,
           frames: document.animation.frames.map((frame) => ({ ...frame })),
-          cels: document.animation.cels.map((cel) => ({ ...cel, text: cloneAnimationText(cel.text), surface: cel.surface ? shareAnimationCelSurface(cel.surface) : undefined, mask: cel.mask ? { ...cel.mask, pixels: cel.mask.pixels } : undefined })),
+          cels: document.animation.cels.map((cel) => ({ ...cel, text: cloneAnimationText(cel.text), tilemap: cloneAnimationTilemap(cel.tilemap), freeTiles: cloneAnimationFreeTiles(cel.freeTiles), surface: cel.surface ? shareAnimationCelSurface(cel.surface) : undefined, mask: cel.mask ? { ...cel.mask, pixels: cel.mask.pixels } : undefined })),
           groupMasks: (document.animation.groupMasks ?? []).map((entry) => ({ ...entry, mask: { ...entry.mask, pixels: entry.mask.pixels } }))
         }
       : undefined
@@ -551,6 +652,7 @@ const syncFrameSurfaces = (document: SpriteDocument, timeline: AnimationTimeline
       }
     }
   }
+  synchronizeLinkedLayerContentsForTimeline(document, timeline, document.activeLayerId, timeline.activeFrameId)
 }
 
 const applyFrameSurfaces = (document: SpriteDocument, timeline: AnimationTimeline): void => {
@@ -586,12 +688,135 @@ const normalizeAnimationCelLinks = (timeline: AnimationTimeline): void => {
     cel.linkedCelId = current.id
     cel.surface = current.surface
     cel.opacity = current.opacity
+    cel.text = current.text
+    cel.tilemap = current.tilemap
+    cel.freeTiles = current.freeTiles
     if (!current.mask && cel.mask) current.mask = cloneLayerMaskForCel(cel.mask, current.id, `mask-${current.id}`)
     if (current.mask) {
       if (!cel.mask) cel.mask = cloneLayerMaskForCel(current.mask, cel.id, `mask-${cel.id}`)
       cel.mask.linkedMaskId = current.mask.id
     } else delete cel.mask
   }
+}
+
+const synchronizeLinkedLayerGroupContentsForTimeline = (
+  document: SpriteDocument,
+  timeline: AnimationTimeline,
+  linkedContentId: string,
+  preferredLayerId?: string,
+  preferredFrameId?: string
+): void => {
+  const members = linkedLayerMembers(document, linkedContentId)
+  if (members.length < 2) return
+  const lookup = createAnimationCelLookup(timeline)
+  const parent = new Map<string, string>()
+  const nodes = new Map<string, AnimationCel>()
+  const find = (id: string): string => {
+    const current = parent.get(id) ?? id
+    if (current === id) return id
+    const root = find(current)
+    parent.set(id, root)
+    return root
+  }
+  const union = (left: string, right: string): void => {
+    const leftRoot = find(left)
+    const rightRoot = find(right)
+    if (leftRoot !== rightRoot) parent.set(rightRoot, leftRoot)
+  }
+  for (const frame of timeline.frames) {
+    const sources = members.flatMap((layer) => {
+      const source = lookup.resolve(lookup.at(layer.id, frame.id))
+      if (!source?.surface) return []
+      nodes.set(source.id, source)
+      parent.set(source.id, parent.get(source.id) ?? source.id)
+      return [source]
+    })
+    for (let index = 1; index < sources.length; index += 1) union(sources[0].id, sources[index].id)
+  }
+  if (nodes.size < 2) return
+  const components = new Map<string, AnimationCel[]>()
+  for (const node of nodes.values()) {
+    const root = find(node.id)
+    const component = components.get(root) ?? []
+    component.push(node)
+    components.set(root, component)
+  }
+  const preferredFrame = preferredFrameId ?? timeline.activeFrameId
+  const preferredSource = preferredLayerId ? lookup.resolve(lookup.at(preferredLayerId, preferredFrame)) : null
+  const activeSource = lookup.resolve(lookup.at(document.activeLayerId, timeline.activeFrameId))
+  for (const component of components.values()) {
+    const preferred = preferredSource && component.some((candidate) => candidate.id === preferredSource.id) ? preferredSource : null
+    const active = activeSource && component.some((candidate) => candidate.id === activeSource.id) ? activeSource : null
+    const source = preferred ?? active ?? component[0]
+    if (!source.surface) continue
+    for (const candidate of component) if (candidate.surface) shareLinkedRasterContent(candidate.surface, source.surface)
+  }
+}
+
+const synchronizeLinkedLayerContentsForTimeline = (
+  document: SpriteDocument,
+  timeline: AnimationTimeline,
+  preferredLayerId?: string,
+  preferredFrameId?: string
+): void => {
+  for (const linkedContentId of linkedLayerGroups(document).keys()) {
+    synchronizeLinkedLayerGroupContentsForTimeline(document, timeline, linkedContentId, preferredLayerId, preferredFrameId)
+  }
+}
+
+const applyLinkedLayerGroupActiveSurfaces = (document: SpriteDocument, timeline: AnimationTimeline, linkedContentId: string): void => {
+  const lookup = createAnimationCelLookup(timeline)
+  for (const layer of linkedLayerMembers(document, linkedContentId)) {
+    const cel = lookup.at(layer.id, timeline.activeFrameId)
+    const source = lookup.resolve(cel)
+    if (source?.surface) applySurfaceToLayer(layer, source.surface, cel?.opacity)
+  }
+}
+
+export const synchronizeLinkedLayerGroupContents = (
+  document: SpriteDocument,
+  linkedContentId: string,
+  preferredLayerId?: string,
+  preferredFrameId?: string
+): void => {
+  const timeline = ensureAnimationDocument(document, preferredLayerId, preferredFrameId)
+  synchronizeLinkedLayerGroupContentsForTimeline(document, timeline, linkedContentId, preferredLayerId, preferredFrameId)
+  applyLinkedLayerGroupActiveSurfaces(document, timeline, linkedContentId)
+}
+
+export const synchronizeLinkedLayerContents = (
+  document: SpriteDocument,
+  preferredLayerId?: string,
+  preferredFrameId?: string
+): void => {
+  if (linkedLayerGroups(document).size === 0) return
+  const timeline = ensureAnimationDocument(document, preferredLayerId, preferredFrameId)
+  synchronizeLinkedLayerContentsForTimeline(document, timeline, preferredLayerId, preferredFrameId)
+  applyFrameSurfaces(document, timeline)
+}
+
+export const detachLinkedLayerContent = (document: SpriteDocument, layerId: string): void => {
+  const layer = document.layers.find((candidate) => candidate.id === layerId)
+  if (!layer?.linkedContentId) return
+  const timeline = ensureAnimationDocument(document, layerId, document.animation?.activeFrameId)
+  const lookup = createAnimationCelLookup(timeline)
+  const clonedBySourceId = new Map<string, AnimationCelSurface>()
+  for (const cel of timeline.cels) {
+    if (cel.layerId !== layerId) continue
+    const source = lookup.resolve(cel) ?? cel
+    if (source.layerId !== layerId || !source.surface) continue
+    let surface = clonedBySourceId.get(source.id)
+    if (!surface) {
+      surface = cloneAnimationCelSurface(source.surface)
+      clonedBySourceId.set(source.id, surface)
+      source.surface = surface
+    }
+    if (cel === source) cel.surface = surface
+  }
+  delete layer.linkedContentId
+  const active = lookup.at(layerId, timeline.activeFrameId)
+  const activeSource = lookup.resolve(active) ?? active
+  if (activeSource?.surface) applySurfaceToLayer(layer, activeSource.surface, active?.opacity)
 }
 
 const normalizeAnimationMaskLinks = (timeline: AnimationTimeline): void => {
@@ -611,27 +836,48 @@ const normalizeAnimationMaskLinks = (timeline: AnimationTimeline): void => {
 }
 
 /** 为旧工程或新图层补齐每个帧槽位，并让活动帧引用当前图层像素。 */
-export const ensureAnimationDocument = (document: SpriteDocument): AnimationTimeline => {
+export const ensureAnimationDocument = (
+  document: SpriteDocument,
+  preferredLinkedLayerId?: string,
+  preferredLinkedFrameId?: string
+): AnimationTimeline => {
   const timeline = document.animation ?? createDefaultAnimationTimeline()
   document.animation = timeline
+  normalizeLinkedLayerMetadata(document)
+  timeline.loopSections ??= []
   const frameIds = new Set(timeline.frames.map((frame) => frame.id))
   const layers = new Map(document.layers.map((layer) => [layer.id, layer]))
   const groups = new Set(document.groups.map((group) => group.id))
   timeline.cels = timeline.cels.filter((cel) => frameIds.has(cel.frameId) && layers.has(cel.layerId))
   timeline.groupMasks = (timeline.groupMasks ?? []).filter((entry) => frameIds.has(entry.frameId) && groups.has(entry.groupId))
   const celsBySlot = new Map(timeline.cels.map((cel) => [celSlotKey(cel.layerId, cel.frameId), cel]))
+  const tilemapTemplateByLayer = new Map<string, TilemapCelData>()
+  const freeTileTemplateByLayer = new Map<string, FreeTileCelData>()
+  for (const cel of timeline.cels) if (cel.tilemap && !tilemapTemplateByLayer.has(cel.layerId)) tilemapTemplateByLayer.set(cel.layerId, cel.tilemap)
+  for (const cel of timeline.cels) if (cel.freeTiles && !freeTileTemplateByLayer.has(cel.layerId)) freeTileTemplateByLayer.set(cel.layerId, cel.freeTiles)
   const nextCelId = createAnimationIdAllocator(timeline, 'cel')
   for (const layer of document.layers) {
     for (const frame of timeline.frames) {
       const slot = celSlotKey(layer.id, frame.id)
       let cel = celsBySlot.get(slot)
       if (!cel) {
+        const tilemap = layer.kind === 'tilemap' ? blankAnimationTilemap(tilemapTemplateByLayer.get(layer.id)) : undefined
+        const freeTiles = layer.kind === 'free-tile' ? blankAnimationFreeTiles(freeTileTemplateByLayer.get(layer.id)) ?? createFreeTileCelData() : undefined
+        const freeTileSources = layer.kind === 'free-tile' ? freeTileSourceRefs(layer.freeTileSources, document.tilesets ?? []) : []
         cel = {
           id: nextCelId(),
           layerId: layer.id,
           frameId: frame.id,
           opacity: layer.opacity,
-          surface: frame.id === timeline.activeFrameId ? surfaceFromLayer(layer) : blankSurfaceFromLayer(layer)
+          surface: frame.id === timeline.activeFrameId
+            ? surfaceFromLayer(layer)
+            : tilemap
+              ? renderTilemapSurface(tilemap, document.tilesets ?? [], document.colorMode)
+              : freeTiles && freeTileSources.length > 0
+                ? renderFreeTileSurface(freeTiles, freeTileSources, document.colorMode, document.width, document.height)
+              : blankSurfaceFromLayer(layer),
+          ...(tilemap ? { tilemap } : {}),
+          ...(freeTiles ? { freeTiles } : {})
         }
         timeline.cels.push(cel)
         celsBySlot.set(slot, cel)
@@ -639,13 +885,14 @@ export const ensureAnimationDocument = (document: SpriteDocument): AnimationTime
         cel.surface = frame.id === timeline.activeFrameId ? surfaceFromLayer(layer) : blankSurfaceFromLayer(layer)
       }
       if (frame.id === timeline.activeFrameId && cel.surface && rasterStorageIdentity(cel.surface) === rasterStorageIdentity(layer)) {
-        cel.surface = surfaceFromLayer(layer)
+        cel.surface = updateSurfaceFromLayer(cel.surface, layer)
         cel.opacity = layer.opacity
       }
       if (!Number.isFinite(cel.opacity)) cel.opacity = layer.opacity
     }
   }
   normalizeAnimationCelLinks(timeline)
+  synchronizeLinkedLayerContentsForTimeline(document, timeline, preferredLinkedLayerId, preferredLinkedFrameId)
   normalizeAnimationMaskLinks(timeline)
   return timeline
 }
@@ -682,11 +929,44 @@ export const connectAnimationCels = (document: SpriteDocument, celIds: readonly 
       cel.surface = source.surface
       cel.opacity = source.opacity
       cel.text = source.text
+      cel.tilemap = source.tilemap
+      cel.freeTiles = source.freeTiles
       if (source.mask) {
         if (!cel.mask) cel.mask = cloneLayerMaskForCel(source.mask, cel.id, `mask-${cel.id}`)
         cel.mask.linkedMaskId = source.mask.id
       } else delete cel.mask
     }
+  }
+  normalizeAnimationCelLinks(timeline)
+  applyFrameSurfaces(document, timeline)
+  return changed
+}
+
+/** Links target-frame cels directly to resolved source cels that contain visible content. */
+export const linkAnimationFrameCels = (document: SpriteDocument, sourceFrameId: string, targetFrameId: string, layerIds: readonly string[]): boolean => {
+  const timeline = ensureAnimationDocument(document)
+  if (sourceFrameId === targetFrameId) return false
+  syncFrameSurfaces(document, timeline)
+  const lookup = createAnimationCelLookup(timeline)
+  let changed = false
+  for (const layerId of new Set(layerIds)) {
+    const sourceSlot = lookup.at(layerId, sourceFrameId)
+    const target = lookup.at(layerId, targetFrameId)
+    const source = lookup.resolve(sourceSlot) ?? sourceSlot
+    if (!source || !target || source.id === target.id || !animationCelHasContent(source, document.palette)) continue
+    const sourceMask = source.mask ?? animationMaskAt(timeline, layerId, sourceFrameId)
+    if (!source.mask && sourceMask) source.mask = cloneLayerMaskForCel(sourceMask, source.id, `mask-${source.id}`)
+    target.linkedCelId = source.id
+    target.surface = source.surface
+    target.opacity = source.opacity
+    target.text = source.text
+    target.tilemap = source.tilemap
+    target.freeTiles = source.freeTiles
+    if (source.mask) {
+      if (!target.mask) target.mask = cloneLayerMaskForCel(source.mask, target.id, `mask-${target.id}`)
+      target.mask.linkedMaskId = source.mask.id
+    } else delete target.mask
+    changed = true
   }
   normalizeAnimationCelLinks(timeline)
   applyFrameSurfaces(document, timeline)
@@ -717,6 +997,8 @@ export const disconnectAnimationCels = (document: SpriteDocument, celIds: readon
     cel.surface = source.surface ? cloneAnimationCelSurface(source.surface) : undefined
     cel.opacity = source.opacity
     cel.text = cloneAnimationText(source.text)
+    cel.tilemap = cloneAnimationTilemap(source.tilemap)
+    cel.freeTiles = cloneAnimationFreeTiles(source.freeTiles)
     cel.mask = resolvedMask ? cloneLayerMaskForCel(resolvedMask, cel.id, `mask-${cel.id}`) : undefined
     cel.linkedCelId = null
     changed = true
@@ -729,6 +1011,7 @@ export const disconnectAnimationCels = (document: SpriteDocument, celIds: readon
 export const syncActiveAnimationFrame = (document: SpriteDocument): void => {
   const timeline = ensureAnimationDocument(document)
   syncFrameSurfaces(document, timeline)
+  applyFrameSurfaces(document, timeline)
 }
 
 const syncAnimationLayerSurface = (timeline: AnimationTimeline, lookup: AnimationCelLookup, layer: RasterLayer): boolean => {
@@ -757,6 +1040,8 @@ export const syncActiveAnimationLayers = (document: SpriteDocument): void => {
     return
   }
   for (const layer of document.layers) syncAnimationLayerSurface(timeline, lookup, layer)
+  synchronizeLinkedLayerContentsForTimeline(document, timeline, document.activeLayerId, timeline.activeFrameId)
+  applyFrameSurfaces(document, timeline)
 }
 
 /** Keeps a pixel edit on one active layer out of the full layer-by-frame normalization path. */
@@ -771,6 +1056,10 @@ export const syncActiveAnimationLayer = (document: SpriteDocument, layerId: stri
   }
   const lookup = cel.linkedCelId ? createAnimationCelLookup(timeline) : { at: () => cel, resolve: () => cel }
   syncAnimationLayerSurface(timeline, lookup, layer)
+  if (layer.linkedContentId) {
+    synchronizeLinkedLayerGroupContentsForTimeline(document, timeline, layer.linkedContentId, layer.id, timeline.activeFrameId)
+    applyLinkedLayerGroupActiveSurfaces(document, timeline, layer.linkedContentId)
+  }
 }
 
 export const refreshActiveAnimationFrame = (document: SpriteDocument): void => {
@@ -824,11 +1113,33 @@ export const activateAnimationFrame = (document: SpriteDocument, frameId: string
 export const addBlankAnimationFrame = (document: SpriteDocument): string => {
   const timeline = ensureAnimationDocument(document)
   syncFrameSurfaces(document, timeline)
-  const activeIndex = Math.max(0, timeline.frames.findIndex((frame) => frame.id === timeline.activeFrameId))
+  const sourceFrameId = timeline.activeFrameId
+  const previousFrames = [...timeline.frames]
+  const activeIndex = Math.max(0, timeline.frames.findIndex((frame) => frame.id === sourceFrameId))
   const id = uniqueAnimationId(timeline, 'frame')
   timeline.frames.splice(activeIndex + 1, 0, { id, duration: DEFAULT_FRAME_DURATION })
+  timeline.loopSections = reconcileAnimationLoopSectionsAfterFrameInsertion(timeline.loopSections, previousFrames, sourceFrameId, id)
   const nextCelId = createAnimationIdAllocator(timeline, 'cel')
-  for (const layer of document.layers) timeline.cels.push({ id: nextCelId(), layerId: layer.id, frameId: id, opacity: layer.opacity, surface: blankSurfaceFromLayer(layer) })
+  const lookup = createAnimationCelLookup(timeline)
+  for (const layer of document.layers) {
+    const source = lookup.resolve(lookup.at(layer.id, timeline.activeFrameId))
+    const tilemap = layer.kind === 'tilemap' ? blankAnimationTilemap(source?.tilemap) : undefined
+    const freeTiles = layer.kind === 'free-tile' ? blankAnimationFreeTiles(source?.freeTiles) ?? createFreeTileCelData() : undefined
+    const freeTileSources = layer.kind === 'free-tile' ? freeTileSourceRefs(layer.freeTileSources, document.tilesets ?? []) : []
+    timeline.cels.push({
+      id: nextCelId(),
+      layerId: layer.id,
+      frameId: id,
+      opacity: layer.opacity,
+      surface: tilemap
+        ? renderTilemapSurface(tilemap, document.tilesets ?? [], document.colorMode, source?.surface?.offsetX ?? 0, source?.surface?.offsetY ?? 0)
+        : freeTiles && freeTileSources.length > 0
+          ? renderFreeTileSurface(freeTiles, freeTileSources, document.colorMode, source?.surface?.width ?? document.width, source?.surface?.height ?? document.height, source?.surface?.offsetX ?? 0, source?.surface?.offsetY ?? 0)
+        : blankSurfaceFromLayer(layer),
+      ...(tilemap ? { tilemap } : {}),
+      ...(freeTiles ? { freeTiles } : {})
+    })
+  }
   timeline.activeFrameId = id
   applyFrameSurfaces(document, timeline)
   return id
@@ -838,9 +1149,11 @@ export const duplicateAnimationFrame = (document: SpriteDocument): string => {
   const timeline = ensureAnimationDocument(document)
   syncFrameSurfaces(document, timeline)
   const sourceId = timeline.activeFrameId
+  const previousFrames = [...timeline.frames]
   const sourceIndex = Math.max(0, timeline.frames.findIndex((frame) => frame.id === sourceId))
   const id = uniqueAnimationId(timeline, 'frame')
   timeline.frames.splice(sourceIndex + 1, 0, { id, duration: timeline.frames[sourceIndex]?.duration ?? DEFAULT_FRAME_DURATION })
+  timeline.loopSections = reconcileAnimationLoopSectionsAfterFrameInsertion(timeline.loopSections, previousFrames, sourceId, id)
   const sourceCels = celsByLayerForFrame(timeline, sourceId)
   const nextCelId = createAnimationIdAllocator(timeline, 'cel')
   for (const layer of document.layers) {
@@ -849,7 +1162,7 @@ export const duplicateAnimationFrame = (document: SpriteDocument): string => {
     const source = resolvedSourceCel?.surface ?? blankSurfaceFromLayer(layer)
     const celId = nextCelId()
     const sourceMask = animationMaskAt(timeline, layer.id, sourceId)
-    timeline.cels.push({ id: celId, layerId: layer.id, frameId: id, opacity: resolvedSourceCel?.opacity ?? layer.opacity, surface: cloneAnimationCelSurface(source), mask: sourceMask ? cloneLayerMaskForCel(sourceMask, celId, `mask-${celId}`) : undefined })
+    timeline.cels.push({ id: celId, layerId: layer.id, frameId: id, opacity: resolvedSourceCel?.opacity ?? layer.opacity, surface: cloneAnimationCelSurface(source), tilemap: cloneAnimationTilemap(resolvedSourceCel?.tilemap), freeTiles: cloneAnimationFreeTiles(resolvedSourceCel?.freeTiles), mask: sourceMask ? cloneLayerMaskForCel(sourceMask, celId, `mask-${celId}`) : undefined })
   }
   for (const entry of (timeline.groupMasks ?? []).filter((candidate) => candidate.frameId === sourceId)) {
     timeline.groupMasks!.push(cloneAnimationGroupMask(entry, entry.groupId, id, createId('mask')))
@@ -865,9 +1178,11 @@ export const deleteAnimationFrame = (document: SpriteDocument, frameId = documen
   const index = timeline.frames.findIndex((frame) => frame.id === frameId)
   if (index < 0) return false
   syncFrameSurfaces(document, timeline)
+  const previousFrames = [...timeline.frames]
   timeline.frames.splice(index, 1)
   timeline.cels = timeline.cels.filter((cel) => cel.frameId !== frameId)
   timeline.groupMasks = (timeline.groupMasks ?? []).filter((entry) => entry.frameId !== frameId)
+  timeline.loopSections = reconcileAnimationLoopSectionsAfterFrameDeletion(timeline.loopSections, previousFrames, timeline.frames, frameId)
   if (timeline.activeFrameId === frameId) {
     timeline.activeFrameId = timeline.frames[Math.min(index, timeline.frames.length - 1)].id
     applyFrameSurfaces(document, timeline)
@@ -910,11 +1225,15 @@ export const cloneAnimationCelsForLayer = (document: SpriteDocument, sourceLayer
       opacity: sourceCel?.opacity ?? targetLayer.opacity,
       surface: source ? cloneAnimationCelSurface(source) : blankSurfaceFromLayer(targetLayer),
       text: cloneAnimationText(resolvedSourceCel?.text),
+      tilemap: cloneAnimationTilemap(resolvedSourceCel?.tilemap),
+      freeTiles: cloneAnimationFreeTiles(resolvedSourceCel?.freeTiles),
       mask: animationMaskAt(timeline, sourceLayerId, frame.id) ? cloneLayerMaskForCel(animationMaskAt(timeline, sourceLayerId, frame.id)!, celId, `mask-${celId}`) : undefined
     })
   }
+  if (targetLayer.linkedContentId) synchronizeLinkedLayerGroupContentsForTimeline(document, timeline, targetLayer.linkedContentId, sourceLayerId, timeline.activeFrameId)
   const active = animationCelAt(timeline, targetLayer.id, timeline.activeFrameId)
-  if (active?.surface) applySurfaceToLayer(targetLayer, active.surface, active.opacity)
+  const activeSource = resolveAnimationCel(timeline, active)
+  if (activeSource?.surface) applySurfaceToLayer(targetLayer, activeSource.surface, active?.opacity)
 }
 
 export const removeAnimationCelsForLayers = (document: SpriteDocument, layerIds: readonly string[]): AnimationCel[] => {
@@ -931,6 +1250,14 @@ export const restoreAnimationCels = (document: SpriteDocument, cels: readonly An
   timeline.cels = timeline.cels.filter((cel) => !incomingSlots.has(`${cel.layerId}:${cel.frameId}`))
   for (const cel of cels) {
     timeline.cels.push(cloneAnimationCel(cel))
+  }
+  normalizeAnimationCelLinks(timeline)
+  const synchronized = new Set<string>()
+  for (const cel of cels) {
+    const layer = document.layers.find((candidate) => candidate.id === cel.layerId)
+    if (!layer?.linkedContentId || synchronized.has(layer.linkedContentId)) continue
+    synchronized.add(layer.linkedContentId)
+    synchronizeLinkedLayerGroupContentsForTimeline(document, timeline, layer.linkedContentId, layer.id, cel.frameId)
   }
   refreshActiveAnimationFrame(document)
 }
@@ -962,6 +1289,23 @@ export const animationLayerAtFrame = (document: SpriteDocument, layerId: string,
   const timeline = ensureAnimationDocument(document)
   const lookup = createAnimationCelLookup(timeline)
   return layerFromAnimationCel(layer, lookup.resolve(lookup.at(layerId, frameId)))
+}
+
+/** Persists geometry and raster storage from an editable frame proxy back to its resolved cel source. */
+export const syncAnimationLayerAtFrame = (document: SpriteDocument, layer: RasterLayer, frameId: string): boolean => {
+  const timeline = ensureAnimationDocument(document)
+  const lookup = createAnimationCelLookup(timeline)
+  const cel = lookup.at(layer.id, frameId)
+  if (!cel) return false
+  const source = lookup.resolve(cel) ?? cel
+  source.surface = source.surface ? updateSurfaceFromLayer(source.surface, layer) : surfaceFromLayer(layer)
+  if (cel !== source) cel.surface = source.surface
+  const documentLayer = document.layers.find((candidate) => candidate.id === layer.id)
+  if (documentLayer?.linkedContentId) {
+    synchronizeLinkedLayerGroupContentsForTimeline(document, timeline, documentLayer.linkedContentId, layer.id, frameId)
+    if (timeline.activeFrameId === frameId) applyLinkedLayerGroupActiveSurfaces(document, timeline, documentLayer.linkedContentId)
+  }
+  return true
 }
 
 /** Updates cel geometry without copying or materializing its raster storage. */

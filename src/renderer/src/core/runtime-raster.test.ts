@@ -3,6 +3,7 @@ import type { AnimationCelSurface, RgbaLayer, RuntimeRasterTiles } from '@shared
 import { compositeRegion, createDocument, markLayerContentChanged } from './document'
 import {
   assignRasterStorage,
+  cachedRuntimeRasterVisibleBounds,
   installRuntimeRaster,
   prepareRuntimeRasterMetadata,
   prepareRuntimeRasterDocumentForTransfer,
@@ -96,8 +97,10 @@ describe('runtime sparse raster', () => {
     installRuntimeRaster(layer, rgbaRuntime())
     installRuntimeRaster(document.animation!.cels[0].surface!, runtimeRasterForSurface(layer)!)
 
+    expect(cachedRuntimeRasterVisibleBounds(layer)).toBeUndefined()
     prepareRuntimeRasterMetadata(document)
     expect(runtimeRasterForSurface(layer)?.visibleBounds).toEqual({ x: 0, y: 0, width: 2, height: 2 })
+    expect(cachedRuntimeRasterVisibleBounds(layer)).toEqual({ x: 0, y: 0, width: 2, height: 2 })
     expect(surfacePixelsMaterialized(layer)).toBe(false)
 
     prepareRuntimeRasterDocumentForTransfer(document)

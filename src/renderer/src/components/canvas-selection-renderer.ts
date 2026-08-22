@@ -30,6 +30,89 @@ export interface SelectionBoundaryCache {
   }>
 }
 
+export interface SelectionSizeLabelLayout {
+  lines: readonly [string, string]
+  left: number
+  top: number
+  width: number
+  height: number
+}
+
+interface DrawSelectionSizeLabelOptions {
+  context: RasterContext2D
+  points: ReadonlyArray<{ x: number; y: number }>
+  selectionX: number
+  selectionY: number
+  selectionWidth: number
+  selectionHeight: number
+  viewportWidth: number
+  viewportHeight: number
+  startLabel: string
+  endLabel: string
+  sizeLabel: string
+  background: string
+  foreground: string
+}
+
+const SELECTION_SIZE_LABEL_LINE_HEIGHT_CSS = 14
+const SELECTION_SIZE_LABEL_HORIZONTAL_PADDING_CSS = 7
+const SELECTION_SIZE_LABEL_VERTICAL_PADDING_CSS = 4
+const SELECTION_SIZE_LABEL_GAP_CSS = 6
+const SELECTION_SIZE_LABEL_VIEWPORT_MARGIN_CSS = 4
+
+export function drawSelectionSizeLabel({
+  context,
+  points,
+  selectionX,
+  selectionY,
+  selectionWidth,
+  selectionHeight,
+  viewportWidth,
+  viewportHeight,
+  startLabel,
+  endLabel,
+  sizeLabel,
+  background,
+  foreground
+}: DrawSelectionSizeLabelOptions): SelectionSizeLabelLayout | null {
+  if (points.length === 0) return null
+  const startX = Math.round(selectionX)
+  const startY = Math.round(selectionY)
+  const widthValue = Math.max(1, Math.round(selectionWidth))
+  const heightValue = Math.max(1, Math.round(selectionHeight))
+  const endX = startX + widthValue - 1
+  const endY = startY + heightValue - 1
+  const lines = [
+    `${startLabel} ${startX}, ${startY}    ${endLabel} ${endX}, ${endY}`,
+    `${sizeLabel} ${widthValue} × ${heightValue}`
+  ] as const
+  const minX = Math.min(...points.map((point) => point.x))
+  const minY = Math.min(...points.map((point) => point.y))
+
+  context.save()
+  context.font = '11px ui-monospace, SFMono-Regular, Consolas, monospace'
+  const naturalWidth = Math.ceil(Math.max(...lines.map((line) => context.measureText(line).width))) + SELECTION_SIZE_LABEL_HORIZONTAL_PADDING_CSS * 2
+  const width = Math.min(naturalWidth, Math.max(1, viewportWidth - SELECTION_SIZE_LABEL_VIEWPORT_MARGIN_CSS * 2))
+  const height = SELECTION_SIZE_LABEL_VERTICAL_PADDING_CSS * 2 + SELECTION_SIZE_LABEL_LINE_HEIGHT_CSS * lines.length
+  const maxLeft = Math.max(SELECTION_SIZE_LABEL_VIEWPORT_MARGIN_CSS, viewportWidth - width - SELECTION_SIZE_LABEL_VIEWPORT_MARGIN_CSS)
+  const maxTop = Math.max(SELECTION_SIZE_LABEL_VIEWPORT_MARGIN_CSS, viewportHeight - height - SELECTION_SIZE_LABEL_VIEWPORT_MARGIN_CSS)
+  const left = Math.min(maxLeft, Math.max(SELECTION_SIZE_LABEL_VIEWPORT_MARGIN_CSS, Math.round(minX)))
+  const top = Math.min(maxTop, Math.max(SELECTION_SIZE_LABEL_VIEWPORT_MARGIN_CSS, Math.round(minY) - height - SELECTION_SIZE_LABEL_GAP_CSS))
+
+  context.fillStyle = background
+  context.fillRect(left, top, width, height)
+  context.fillStyle = foreground
+  context.textAlign = 'left'
+  context.textBaseline = 'middle'
+  lines.forEach((line, index) => context.fillText(
+    line,
+    left + SELECTION_SIZE_LABEL_HORIZONTAL_PADDING_CSS,
+    top + SELECTION_SIZE_LABEL_VERTICAL_PADDING_CSS + SELECTION_SIZE_LABEL_LINE_HEIGHT_CSS * (index + 0.5) + 0.5
+  ))
+  context.restore()
+  return { lines, left, top, width, height }
+}
+
 export function selectionScreenBox(
   stageWidth: number,
   stageHeight: number,

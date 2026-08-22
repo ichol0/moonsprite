@@ -6,14 +6,19 @@ export interface NativeDocumentDropSource {
   onDragDropEvent(handler: (event: Event<DragDropEvent>) => void): Promise<UnlistenFn>
 }
 
-export const subscribeToNativeDocumentDrops = async (source: NativeDocumentDropSource, onDrop: (paths: string[]) => void): Promise<() => void> =>
+export interface NativeDocumentDrop {
+  paths: string[]
+  position: { x: number; y: number }
+}
+
+export const subscribeToNativeDocumentDrops = async (source: NativeDocumentDropSource, onDrop: (drop: NativeDocumentDrop) => void): Promise<() => void> =>
   source.onDragDropEvent((event) => {
-    if (event.payload.type === 'drop' && event.payload.paths?.length) onDrop(event.payload.paths)
+    if (event.payload.type === 'drop' && event.payload.paths?.length) onDrop({ paths: event.payload.paths, position: event.payload.position })
   })
 
 export const subscribeToNativeDocumentDropSources = async (
   sources: NativeDocumentDropSource[],
-  onDrop: (paths: string[]) => void
+  onDrop: (drop: NativeDocumentDrop) => void
 ): Promise<() => void> => {
   const subscriptions = await Promise.allSettled(sources.map((source) => subscribeToNativeDocumentDrops(source, onDrop)))
   const cleanups = subscriptions.flatMap((subscription) => subscription.status === 'fulfilled' ? [subscription.value] : [])

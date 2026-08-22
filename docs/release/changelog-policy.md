@@ -1,5 +1,7 @@
 # 完整更新日志规则
 
+中文 | [English](changelog-policy.en.md)
+
 MoonSprite 使用“当前热区 + 按版本归档”的长期更新账本。所有完成的软件变化都必须保留，但连续 Debug 期间不逐项维护日志；发布 `dev.X` 时根据本周期基线后的完整 diff 集中整理。
 
 ## 记录范围

@@ -1,6 +1,8 @@
 # MoonSprite 文档索引
 
-这里是项目的唯一维护入口。代码与文档冲突时，先确认当前实现和测试，再更新对应契约，禁止让两个互相矛盾的说明长期共存。
+中文 | [English](README.en.md)
+
+这里是项目的中文规范入口，也是 AI 日常开发时唯一读取和维护的文档版本。页面顶部的 English 链接仅供人工阅读；普通任务不得跟随链接读取 `*.en.md`。代码与文档冲突时，先确认当前实现和测试，再更新对应中文契约，禁止让两个互相矛盾的说明长期共存。
 
 ## 产品与架构
 
@@ -10,7 +12,7 @@
 - [状态与历史](architecture/state-history.md)：会话、dirty、撤销和视图状态。
 - [坐标与渲染](architecture/coordinates-rendering.md)：屏幕、视图、画布和图层坐标。
 - [多语言架构](architecture/localization.md)：语言资源、回退、持久化和新增语言门禁。
-- [文件格式](file-format.md)：`.moonsprite` v12 容器。
+- [文件格式](file-format.md)：`.moonsprite` v17 容器。
 
 ## 交互契约
 
@@ -18,6 +20,11 @@
 - [选区与变换](interactions/selection-transform.md)
 - [笔刷与颜色](interactions/brush-color.md)
 - [工作区与停靠](interactions/workspace-docking.md)
+
+## 脚本开发
+
+- [Lua 脚本与 MSE API](scripting/README.md)
+- `.msext` 扩展包格式与安装行为见 [扩展包 ADR](adr/0020-extension-package-format.md)。
 
 ## 质量与发布
 
@@ -37,6 +44,7 @@
 - Bug 修复：曾复发、难以人工发现、共享算法以及坐标、撤销、文件数据和平台安全问题需要增加回归场景；普通视觉问题由用户验收。
 - 性能验证：普通需求不运行基准；每次 `dev.X` 或正式版本发布至少按 P3 审计一次，性能专项、实际退化或用户明确要求时按 [性能基线](testing/performance-baseline.md) 加强验证并记录。
 - 软件变化：在 `dev.X` 发布时根据本周期基线后的完整 diff 集中更新根目录 `CHANGELOG.md`，每个独立有效变化仍保留独立条目。
+- 语言同步：普通开发只更新中文文档；发布时只同步本周期实际修改文件对应的英文镜像。翻译、英文文档维护或双语审计属于显式专项，不得在普通任务中顺带执行。
 - 发布：逐项执行发布检查表。
 
 文档应描述当前有效规则，不记录逐日聊天过程。过期但有追溯价值的内容移入 `archive/`。

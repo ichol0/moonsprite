@@ -1,14 +1,13 @@
-import { zipSync, type Zippable } from 'fflate'
+import { encodeProjectWorkerPayload, type ProjectEncodeWorkerPayload, type ProjectEncodeWorkerResult } from '@/core/project-format'
 
 interface ProjectEncodeWorkerRequest {
   id: number
-  files: Zippable
-  compressionLevel: 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9
+  payload: ProjectEncodeWorkerPayload
 }
 
 interface ProjectEncodeWorkerResponse {
   id: number
-  data?: Uint8Array
+  result?: ProjectEncodeWorkerResult
   error?: string
 }
 
@@ -18,10 +17,10 @@ const scope = globalThis as unknown as {
 }
 
 scope.onmessage = (event): void => {
-  const { id, files, compressionLevel } = event.data
+  const { id, payload } = event.data
   try {
-    const data = zipSync(files, { level: compressionLevel })
-    scope.postMessage({ id, data }, [data.buffer])
+    const result = encodeProjectWorkerPayload(payload)
+    scope.postMessage({ id, result }, [result.data.buffer])
   } catch (error) {
     scope.postMessage({ id, error: error instanceof Error ? error.message : String(error) }, [])
   }

@@ -1,9 +1,12 @@
-import type { MoveKind, RasterLayer, RgbaColor, SelectionMask, SelectionMode, SelectionRect, ShapeRatio, SpriteDocument, ToolId } from '@shared/types'
+import type { AnimationCel, MoveKind, RasterLayer, RgbaColor, SelectionMask, SelectionMode, SelectionRect, ShapeRatio, SpriteDocument, TilemapCell, ToolId } from '@shared/types'
 import { revertPixelEdit, type PixelEdit } from './history'
-import { restoreSelectionTranslationPreview, type BrushGradientSample, type SelectionTransformSource, type SelectionTranslationPreview } from './tools'
+import { restoreSelectionTranslationPreview, type BrushGradientSample, type SelectionTransformLayerState, type SelectionTransformSource, type SelectionTranslationPreview } from './tools'
 import { combineSelection, inverseTransformedSelectionPoint, rasterLinePoints, rectSelection, remapTransformedSelectionPoint, selectionBoundarySegments, selectionContains, transformedSelectionPivotPreset, type SelectionShearTransform } from './selection'
 import { balancedStairLinePoints } from './pixel-line'
 import { modifierShortcutHeld } from './shortcuts'
+import type { TilemapEdit, TilemapSelectionMoveSource } from './tilemap'
+import type { FreeTilePlacementEdit, FreeTileSourceEditSnapshot } from './free-tile-document'
+import type { FreeTileInstanceTransform } from './free-tile'
 
 const selectionHitBoundaryCache = new WeakMap<SelectionMask, Int32Array>()
 
@@ -12,7 +15,10 @@ export const shouldUseTemporaryMoveTool = (
   event: Pick<KeyboardEvent, 'ctrlKey' | 'metaKey' | 'altKey' | 'shiftKey'>,
   shortcut: string,
   moveKind: MoveKind = 'move'
-): boolean => (tool !== 'move' || moveKind !== 'move') && modifierShortcutHeld(event, shortcut)
+): boolean => tool !== 'selection'
+  && tool !== 'shape'
+  && (tool !== 'move' || moveKind !== 'move')
+  && modifierShortcutHeld(event, shortcut)
 
 export const brushLineConnectionOverridesTemporaryMove = (
   tool: ToolId,
@@ -228,10 +234,38 @@ export const selectionResizeHit = (
 }
 
 export interface CanvasDragState {
-  kind: 'draw' | 'airbrush' | 'shape' | 'freeform-shape' | 'polygon-shape' | 'line-shape' | 'curve-shape' | 'gradient' | 'marquee' | 'lasso' | 'polygon-lasso' | 'magic-preview' | 'sample-color' | 'move-content' | 'move-selection' | 'move-selection-pivot' | 'transform-content' | 'rotate-content' | 'shear-content' | 'move-layer' | 'create-text-box' | 'transform-text-box' | 'create-slice' | 'move-slice' | 'resize-slice' | 'brush-size' | 'canvas-resize' | 'canvas-move' | 'zoom-drag' | 'rotate-view' | 'pan'
+  kind: 'draw' | 'tile-draw' | 'free-tile-draw' | 'free-tile-edit' | 'free-tile-instance-move' | 'airbrush' | 'shape' | 'freeform-shape' | 'polygon-shape' | 'line-shape' | 'curve-shape' | 'gradient' | 'marquee' | 'lasso' | 'polygon-lasso' | 'magic-preview' | 'sample-color' | 'move-content' | 'move-selection' | 'move-selection-pivot' | 'transform-content' | 'rotate-content' | 'shear-content' | 'move-layer' | 'create-text-box' | 'transform-text-box' | 'create-slice' | 'move-slice' | 'resize-slice' | 'brush-size' | 'canvas-resize' | 'canvas-move' | 'zoom-drag' | 'rotate-view' | 'pan'
   start: CanvasPoint
   last: CanvasPoint
   edit?: PixelEdit
+  tilemapEdit?: TilemapEdit
+  tilemapCell?: TilemapCell | null
+  tilemapCellIndex?: number
+  tilemapEditCellIndex?: number
+  tilemapEditSelection?: SelectionMask
+  tilemapSelectionMoveSource?: TilemapSelectionMoveSource
+  tilemapSelectionMoveDelta?: { columns: number; rows: number }
+  freeTilePlacementEdit?: FreeTilePlacementEdit
+  freeTileSourceId?: string
+  freeTileInstanceId?: string
+  freeTileInstanceStart?: CanvasPoint
+  freeTileEditDocument?: SpriteDocument
+  freeTileEditLayer?: RasterLayer
+  freeTileSourceBefore?: FreeTileSourceEditSnapshot
+  freeTileEditOrigin?: CanvasPoint
+  freeTileEditSourceOffset?: CanvasPoint
+  freeTileEditInstanceTransform?: FreeTileInstanceTransform
+  freeTileEditTransformedSourceBounds?: SelectionRect
+  freeTileEditSelection?: SelectionMask | null
+  freeTileSelectionBounds?: SelectionRect
+  freeTileSelectionTransform?: boolean
+  freeTileSelectionSource?: SelectionMask
+  freeTileSelectionPivotBefore?: CanvasPoint | null
+  freeTileGradientPaintRegion?: SelectionMask | null
+  freeTileLastLocal?: CanvasPoint
+  freeTileLastStampOrigin?: CanvasPoint
+  tileRepeatPoint?: CanvasPoint
+  tileRepeatStart?: CanvasPoint
   selectionStart?: SelectionMask | null
   selectionMode?: SelectionMode
   startPan?: CanvasPoint
@@ -240,6 +274,7 @@ export interface CanvasDragState {
   shearAmount?: number
   angle?: number
   selectionSource?: SelectionTransformSource
+  selectionLayers?: SelectionTransformLayerState[]
   selectionSourceCacheKey?: SelectionMask
   previewEdit?: PixelEdit | null
   copy?: boolean
@@ -252,6 +287,7 @@ export interface CanvasDragState {
   patternOrigin?: CanvasPoint
   constrain?: boolean
   path?: CanvasStrokePoint[]
+  pathRedo?: CanvasStrokePoint[]
   curvePhase?: 'endpoint' | 'anchors'
   curveEnd?: CanvasPoint
   curveControls?: CanvasPoint[]
@@ -265,6 +301,10 @@ export interface CanvasDragState {
   previewTarget?: SelectionRect
   previewAngle?: number
   previewShear?: SelectionShearTransform
+  appliedPreviewTarget?: SelectionRect
+  appliedPreviewAngle?: number
+  appliedPreviewShear?: SelectionShearTransform
+  appliedPreviewPivot?: CanvasPoint
   selectionPivotStart?: CanvasPoint
   previewPivot?: CanvasPoint
   selectionPivotCustom?: boolean
@@ -280,6 +320,7 @@ export interface CanvasDragState {
   marqueeTemporaryCenterRestore?: MarqueeTemporaryCenterRestore
   marqueeDirection?: { x: -1 | 1; y: -1 | 1 }
   marqueePreviewSelection?: SelectionMask | null
+  marqueeDisplaySelection?: SelectionMask | null
   quickSelectCell?: SelectionRect
   selectionCommitStart?: SelectionMask | null
   previewPending?: boolean
@@ -302,6 +343,7 @@ export interface CanvasDragState {
   duplicateOnDrag?: boolean
   duplicatedLayerId?: string
   duplicatedLayer?: RasterLayer
+  duplicatedAnimationCels?: AnimationCel[]
   duplicatedLayerIndex?: number
   originalSelectedLayerIds?: string[]
   clickLayerId?: string
@@ -323,6 +365,7 @@ export interface CanvasDragState {
   gradientPaintRegion?: SelectionMask | null
   axisLock?: 'x' | 'y'
   sampleSecondary?: boolean
+  tileSampling?: boolean
   temporarySampling?: boolean
   sampledColor?: RgbaColor
   moved?: boolean
@@ -429,6 +472,13 @@ export const deferredSelectionPreviewOwner = (
 export const canvasGestureForPreview = (drag: CanvasDragState | null | undefined): CanvasDragState | null =>
   drag?.kind === 'pan' && drag.resumeDrag?.kind === 'polygon-lasso' ? drag.resumeDrag : drag ?? null
 
+export const marqueePreviewTargetForDrag = (drag: CanvasDragState | null | undefined): SelectionRect | null => {
+  const previewDrag = canvasGestureForPreview(drag)
+  return previewDrag?.kind === 'marquee' && (previewDrag.moved || previewDrag.quickSelectCell)
+    ? previewDrag.previewTarget ?? previewDrag.marqueeBounds ?? null
+    : null
+}
+
 export const selectionOverlayMaskForDrag = (
   currentSelection: SelectionMask | null,
   drag: CanvasDragState | null | undefined
@@ -439,6 +489,52 @@ export const selectionOverlayMaskForDrag = (
   if (selectionCreationKinds.has(previewDrag.kind)) return previewDrag.selectionStart ?? null
   if (selectionPreviewKinds.has(previewDrag.kind)) return previewDrag.previewSelection ?? currentSelection
   return currentSelection
+}
+
+export interface SelectionOverlayFrame {
+  selection: SelectionMask | null
+  target?: SelectionRect
+  angle: number
+  shear?: SelectionShearTransform
+  pivot?: CanvasPoint
+}
+
+/** Keeps Free Tile pixels and transform chrome on the same applied preview update. */
+export const selectionOverlayFrameForDrag = (
+  currentSelection: SelectionMask | null,
+  drag: CanvasDragState | null | undefined
+): SelectionOverlayFrame => {
+  const previewDrag = canvasGestureForPreview(drag)
+  const transformed = previewDrag && selectionContentTransformKinds.has(previewDrag.kind) ? previewDrag : null
+  const useAppliedFreeTileFrame = Boolean(
+    transformed?.freeTileSelectionTransform
+    && transformed.appliedPreviewTarget
+  )
+  return {
+    selection: useAppliedFreeTileFrame
+      ? transformed?.appliedSelection === undefined ? currentSelection : transformed.appliedSelection
+      : selectionOverlayMaskForDrag(currentSelection, previewDrag),
+    target: transformed
+      ? useAppliedFreeTileFrame
+        ? transformed.appliedPreviewTarget
+        : transformed.previewTarget ?? transformed.transformStartTarget ?? transformed.selectionStart ?? undefined
+      : undefined,
+    angle: transformed
+      ? useAppliedFreeTileFrame
+        ? transformed.appliedPreviewAngle ?? transformed.previewAngle ?? transformed.startAngle ?? 0
+        : transformed.previewAngle ?? transformed.startAngle ?? 0
+      : 0,
+    shear: transformed
+      ? useAppliedFreeTileFrame
+        ? transformed.appliedPreviewShear
+        : transformed.previewShear ?? transformed.transformStartShear
+      : undefined,
+    pivot: previewDrag
+      ? useAppliedFreeTileFrame
+        ? transformed?.appliedPreviewPivot
+        : previewDrag.previewPivot
+      : undefined
+  }
 }
 
 export const createCanvasPanDrag = (
@@ -465,6 +561,61 @@ export const appendPolygonLassoVertex = (path: readonly CanvasPoint[], point: Ca
   const last = path.at(-1)
   return last?.x === point.x && last.y === point.y ? [...path] : [...path, { ...point }]
 }
+
+const PENDING_CANVAS_PATH_KINDS = new Set<CanvasDragState['kind']>(['freeform-shape', 'polygon-shape', 'lasso', 'polygon-lasso'])
+
+export const isPendingCanvasPathGesture = (drag: CanvasDragState | null | undefined): drag is CanvasDragState =>
+  Boolean(drag && PENDING_CANVAS_PATH_KINDS.has(drag.kind))
+
+export const appendCanvasPathStep = (drag: CanvasDragState, point: CanvasStrokePoint): boolean => {
+  if (!isPendingCanvasPathGesture(drag)) return false
+  const path = drag.path ?? []
+  const nextPath = appendPolygonLassoVertex(path, point)
+  if (nextPath.length === path.length) return false
+  drag.path = nextPath
+  drag.pathRedo = undefined
+  return true
+}
+
+export const undoCanvasPathStep = (drag: CanvasDragState | null | undefined): boolean => {
+  if (!isPendingCanvasPathGesture(drag)) return false
+  const path = drag.path ?? []
+  const point = path.at(-1)
+  if (!point) return false
+  drag.path = path.slice(0, -1)
+  drag.pathRedo = [...(drag.pathRedo ?? []), { ...point }]
+  return true
+}
+
+export const redoCanvasPathStep = (drag: CanvasDragState | null | undefined): boolean => {
+  if (!isPendingCanvasPathGesture(drag)) return false
+  const redo = drag.pathRedo ?? []
+  const point = redo.at(-1)
+  if (!point) return false
+  drag.path = [...(drag.path ?? []), { ...point }]
+  drag.pathRedo = redo.length > 1 ? redo.slice(0, -1) : undefined
+  return true
+}
+
+export interface PendingCanvasGestureHistoryController {
+  undo(): boolean
+  redo(): boolean
+}
+
+const pendingCanvasGestureHistory = new Map<string, PendingCanvasGestureHistoryController>()
+
+export const registerPendingCanvasGestureHistory = (
+  documentId: string,
+  controller: PendingCanvasGestureHistoryController
+): (() => void) => {
+  pendingCanvasGestureHistory.set(documentId, controller)
+  return () => {
+    if (pendingCanvasGestureHistory.get(documentId) === controller) pendingCanvasGestureHistory.delete(documentId)
+  }
+}
+
+export const consumePendingCanvasGestureHistory = (documentId: string, direction: 'undo' | 'redo'): boolean =>
+  pendingCanvasGestureHistory.get(documentId)?.[direction]() ?? false
 
 export const shouldClosePolygonLasso = (path: readonly CanvasPoint[], point: CanvasPoint, clickCount: number): boolean =>
   path.length >= 3 && (clickCount >= 2 || (path[0].x === point.x && path[0].y === point.y))
@@ -643,9 +794,17 @@ export class CanvasInputState {
   }
 }
 
+export const undoActiveCanvasPathGesture = (input: CanvasInputState): boolean => {
+  const drag = input.drag
+  if (!isPendingCanvasPathGesture(drag)) return false
+  const changed = undoCanvasPathStep(drag)
+  if (!changed || (drag.path?.length ?? 0) === 0) input.finish()
+  return true
+}
+
 export const clampCanvasZoom = (zoom: number): number => Math.max(0.0625, Math.min(64, zoom))
 
-export const CANVAS_ZOOM_LEVELS = [0.0625, 0.083333, 0.125, 0.166667, 0.25, 0.333333, 0.5, 0.666667, 1, 1.25, 1.5, 2, 3, 4, 5, 6, 8, 10, 12, 16, 20, 24, 32, 48, 64] as const
+export const CANVAS_ZOOM_LEVELS = [0.0625, 0.083333, 0.125, 0.166667, 0.25, 0.333333, 0.5, 0.666667, 1, 2, 3, 4, 5, 6, 8, 10, 12, 16, 20, 24, 32, 48, 64] as const
 
 export const steppedCanvasZoom = (zoom: number, zoomIn: boolean): number => {
   const epsilon = 0.000001
@@ -1010,8 +1169,7 @@ export const selectionMarqueeUsesConstraint = (
   mode: SelectionMode,
   afterRotation = false
 ): boolean => {
-  if (afterRotation && (modifiers.ctrlKey || modifiers.metaKey) && !modifiers.shiftKey) return false
-  if (modifiers.ctrlKey || modifiers.metaKey) return true
+  if (afterRotation && !modifiers.shiftKey) return false
   return modifiers.shiftKey && (!hasSelection || mode !== 'add')
 }
 
@@ -1068,6 +1226,20 @@ export const constrainedTranslation = (drag: CanvasDragState, deltaX: number, de
   if (drag.axisLock === 'x' && absoluteY > absoluteX * 1.2) drag.axisLock = 'y'
   if (drag.axisLock === 'y' && absoluteX > absoluteY * 1.2) drag.axisLock = 'x'
   return drag.axisLock === 'x' ? { x: deltaX, y: 0 } : { x: 0, y: deltaY }
+}
+
+export const selectionMovePointerDelta = (
+  drag: Pick<CanvasDragState, 'start' | 'tileRepeatStart'>,
+  point: CanvasPoint,
+  repeatedPoint?: CanvasPoint | null
+): CanvasPoint => {
+  const useRepeatedPoint = Boolean(drag.tileRepeatStart && repeatedPoint)
+  const start = useRepeatedPoint ? drag.tileRepeatStart! : drag.start
+  const current = useRepeatedPoint ? repeatedPoint! : point
+  return {
+    x: Math.floor(current.x) - Math.floor(start.x),
+    y: Math.floor(current.y) - Math.floor(start.y)
+  }
 }
 
 export const resizeSelectionBounds = (

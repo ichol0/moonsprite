@@ -99,6 +99,26 @@ describe('CanvasResizeDialog', () => {
     expect(preview).toHaveBeenCalledWith({ width: 48, height: 32, offsetX: 8, offsetY: 0 })
   })
 
+  it('updates all four bounds after edge synchronization is enabled', () => {
+    render(
+      <CanvasResizeDialog
+        open
+        currentWidth={32}
+        currentHeight={32}
+        onClose={vi.fn()}
+        onResize={vi.fn(async () => {})}
+        onPreview={vi.fn()}
+        preview={null}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('checkbox', { name: '同步四边' }))
+    const bounds = screen.getAllByRole('spinbutton').slice(2)
+    fireEvent.change(bounds[2], { target: { value: '4' } })
+
+    for (const bound of bounds) expect(bound).toHaveValue('4')
+  })
+
   it('undoes a complete live dimension edit instead of one browser character', () => {
     const preview = vi.fn()
     render(

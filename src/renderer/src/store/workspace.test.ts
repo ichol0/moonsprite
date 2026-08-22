@@ -6,16 +6,20 @@ import { packColor, relativeLuminanceColor } from '@/core/raster'
 import { applySelectionTransform, applySelectionTranslationPreview, captureSelectionTransform, paintBrush, selectionTranslationPreviewEdit } from '@/core/tools'
 import { builtInPalettes } from '@/core/built-in-palettes'
 import { createProceduralBrush } from '@/core/brushes'
-import { addBlankAnimationFrame, animationCelAt, animationCelKey, ensureAnimationDocument, resolveAnimationCel, setAnimationCelOffsetsForKeys } from '@/core/animation'
+import { brushLibraryLocation } from '@/core/brush-library-location'
+import { addBlankAnimationFrame, animationCelAt, animationCelHasContent, animationCelKey, animationLayerAtFrame, ensureAnimationDocument, resolveAnimationCel, setAnimationCelOffsetsForKeys } from '@/core/animation'
 import { buildLayerPanelTree } from '@/core/layer-panel-layout'
 import { transformedSelectionBounds, transformSelectionMask } from '@/core/selection'
 import { registerViewPreviewFlusher } from '@/core/view-preview-lifecycle'
+import { registerPendingCanvasGestureHistory } from '@/core/canvas-input'
 import { RECENT_EXPORT_PATHS_STORAGE_KEY } from '@/core/export-settings'
 import { decodeProject, encodeProject, registerProjectSaveBaseline } from '@/core/project-format'
 import { LAYER_PANEL_STATE_STORAGE_KEY } from '@/core/layer-panel-state'
 import { saveProgress } from '@/core/save-progress'
 import { repositionPaletteSlots } from '@/core/palette-layout'
 import { decodePng } from '@/core/png'
+import { createDefaultLayerStyles } from '@/core/layer-styles'
+import { adjustColor } from '@/core/adjustments'
 import { useWorkspace } from './workspace'
 
 const transparent = { r: 0, g: 0, b: 0, a: 0 }
@@ -75,8 +79,83 @@ beforeEach(() => {
   installApi()
   vi.stubGlobal('OffscreenCanvas', MockTextCanvas)
   localStorage.clear()
+  brushLibraryLocation.set(null)
   saveProgress.dismiss()
   useWorkspace.setState({ sessions: [], activeId: null, message: null, saveProgress: null, dialog: null })
+})
+
+describe('symmetry axis placement', () => {
+  it('uses the canvas center only when each axis is enabled for the first time', () => {
+    const document = createDocument('symmetry pointer', 16, 12, 'rgba')
+    useWorkspace.getState().addSession(document)
+
+    useWorkspace.getState().setSymmetryCenter({ x: 3.5, y: 4.5 })
+    useWorkspace.getState().setSymmetryAxis('horizontal', true)
+    expect(useWorkspace.getState().sessions[0].symmetryCenter).toEqual({ x: 8, y: 6 })
+
+    useWorkspace.getState().setSymmetryCenter({ x: 9.5, y: 8.5 })
+    useWorkspace.getState().setSymmetryAxis('horizontal', false)
+    useWorkspace.getState().setSymmetryAxis('horizontal', true)
+    expect(useWorkspace.getState().sessions[0].symmetryCenter).toEqual({ x: 9.5, y: 8.5 })
+
+    useWorkspace.getState().setSymmetryAxis('vertical', true)
+    expect(useWorkspace.getState().sessions[0].symmetryCenter).toEqual({ x: 8, y: 6 })
+  })
+
+  it('tracks first-use placement independently for each open project', () => {
+    const first = createDocument('first symmetry project', 20, 16, 'rgba')
+    const second = createDocument('second symmetry project', 30, 24, 'rgba')
+    useWorkspace.getState().addSession(first)
+    useWorkspace.getState().addSession(second)
+
+    useWorkspace.getState().setActive(first.id)
+    useWorkspace.getState().setSymmetryCenter({ x: 2.5, y: 3.5 })
+    useWorkspace.getState().setSymmetryAxis('diagonalUp', true)
+
+    useWorkspace.getState().setActive(second.id)
+    useWorkspace.getState().setSymmetryCenter({ x: 12.5, y: 13.5 })
+    useWorkspace.getState().setSymmetryAxis('diagonalUp', true)
+
+    expect(useWorkspace.getState().sessions.find((session) => session.document.id === first.id)?.symmetryCenter).toEqual({ x: 10, y: 8 })
+    expect(useWorkspace.getState().sessions.find((session) => session.document.id === second.id)?.symmetryCenter).toEqual({ x: 15, y: 12 })
+  })
+})
+
+describe('pending canvas gesture history', () => {
+  it('consumes path undo and redo before the committed document history', () => {
+    const document = createDocument('pending path history', 4, 4, 'rgba')
+    useWorkspace.getState().addSession(document)
+    const session = useWorkspace.getState().sessions[0]
+    let documentUndo = 0
+    let documentRedo = 0
+    let gestureUndo = 0
+    let gestureRedo = 0
+    session.history.push({
+      label: 'committed edit',
+      bytes: 0,
+      undo: () => { documentUndo += 1 },
+      redo: () => { documentRedo += 1 },
+      documentChanged: false
+    })
+    const unregister = registerPendingCanvasGestureHistory(document.id, {
+      undo: () => { gestureUndo += 1; return true },
+      redo: () => { gestureRedo += 1; return true }
+    })
+
+    try {
+      useWorkspace.getState().undo()
+      useWorkspace.getState().redo()
+      expect({ gestureUndo, gestureRedo }).toEqual({ gestureUndo: 1, gestureRedo: 1 })
+      expect({ documentUndo, documentRedo }).toEqual({ documentUndo: 0, documentRedo: 0 })
+      expect(session.history.canUndo).toBe(true)
+    } finally {
+      unregister()
+    }
+
+    useWorkspace.getState().undo()
+    useWorkspace.getState().redo()
+    expect({ documentUndo, documentRedo }).toEqual({ documentUndo: 1, documentRedo: 1 })
+  })
 })
 
 describe('editable text layers', () => {
@@ -322,6 +401,25 @@ describe('editable text layers', () => {
   })
 })
 
+describe('tool availability', () => {
+  it('blocks the fill tool while a layer group is selected', () => {
+    const document = createDocument('group fill boundary', 8, 8, 'rgba')
+    const layer = getActiveLayer(document)
+    document.groups.push({ id: 'group', name: '组', parentGroupId: null, visible: true, locked: false, opacity: 1, blendMode: 'normal' })
+    layer.groupId = 'group'
+    useWorkspace.getState().addSession(document)
+    useWorkspace.getState().selectGroup('group')
+    useWorkspace.getState().setTool('move')
+
+    useWorkspace.getState().setTool('fill')
+    expect(useWorkspace.getState().sessions[0].tool).toBe('move')
+    expect(useWorkspace.getState().message).toBe('选择图层组时无法使用填充工具。')
+
+    useWorkspace.getState().setTool('selection')
+    expect(useWorkspace.getState().sessions[0].tool).toBe('selection')
+  })
+})
+
 describe('gradient tool settings', () => {
   it('keeps gradient tolerance and contiguous mode independent from the paint bucket', () => {
     const document = createDocument('gradient settings', 2, 2, 'rgba')
@@ -341,6 +439,59 @@ describe('gradient tool settings', () => {
 })
 
 describe('pixel content invalidation', () => {
+  it('limits full-selection deletion to the active layer content bounds', () => {
+    const document = createDocument('bounded full delete', 4000, 4000, 'rgba')
+    useWorkspace.getState().addSession(document)
+    const layer = getActiveLayer(document)
+    layer.width = 2
+    layer.height = 1
+    layer.offsetX = 1700
+    layer.offsetY = 1900
+    layer.pixels = new Uint8ClampedArray([red.r, red.g, red.b, red.a, blue.r, blue.g, blue.b, blue.a])
+    useWorkspace.getState().setSelection({ x: 0, y: 0, width: document.width, height: document.height })
+
+    useWorkspace.getState().deleteSelection()
+
+    let session = useWorkspace.getState().sessions[0]
+    expect(session.contentInvalidation).toEqual(expect.objectContaining({
+      kind: 'region',
+      rect: { x: 1700, y: 1900, width: 2, height: 1 }
+    }))
+    expect(readLayerColorAt(document, layer, 1700, 1900)).toEqual(transparent)
+    expect(readLayerColorAt(document, layer, 1701, 1900)).toEqual(transparent)
+
+    useWorkspace.getState().undo()
+    session = useWorkspace.getState().sessions[0]
+    expect(session.contentInvalidation).toEqual(expect.objectContaining({
+      kind: 'region',
+      rect: { x: 1700, y: 1900, width: 2, height: 1 }
+    }))
+    expect(readLayerColorAt(document, layer, 1700, 1900)).toEqual(red)
+    expect(readLayerColorAt(document, layer, 1701, 1900)).toEqual(blue)
+  })
+
+  it('limits live layer-style previews to the style-expanded content bounds', () => {
+    const document = createDocument('bounded style preview', 200, 160, 'rgba')
+    useWorkspace.getState().addSession(document)
+    const layer = getActiveLayer(document)
+    layer.width = 2
+    layer.height = 1
+    layer.offsetX = 40
+    layer.offsetY = 30
+    layer.pixels = new Uint8ClampedArray([red.r, red.g, red.b, red.a, blue.r, blue.g, blue.b, blue.a])
+    const styles = createDefaultLayerStyles()
+    styles.shadow = { ...styles.shadow, enabled: true, offsetX: 2, offsetY: 2, blur: 3 }
+
+    useWorkspace.getState().previewLayerStyles('layer', layer.id, styles)
+
+    expect(useWorkspace.getState().sessions[0].contentInvalidation).toEqual({
+      kind: 'region',
+      rect: { x: 39, y: 29, width: 8, height: 7 },
+      fromRevision: 0,
+      revision: 1
+    })
+  })
+
   it('tracks the edited document region for commit, undo, and redo', () => {
     const document = createDocument('dirty region', 8, 6, 'rgba')
     const layer = getActiveLayer(document)
@@ -614,6 +765,22 @@ it('stores shape ratios with at most one decimal place', () => {
   expect(useWorkspace.getState().sessions[0].shapeRatio).toEqual({ width: 1.3, height: 3.9 })
 })
 
+describe('keyboard layer navigation', () => {
+  it('steps through layers in visual top-to-bottom order without creating history', () => {
+    const document = createDocument('layer arrows', 1, 1, 'rgba')
+    const bottom = getActiveLayer(document)
+    const top = createLayer('Top', 1, 1, 'rgba')
+    document.layers.push(top)
+    useWorkspace.getState().addSession(document)
+
+    useWorkspace.getState().stepLayerSelection(-1)
+    expect(document.activeLayerId).toBe(top.id)
+    useWorkspace.getState().stepLayerSelection(1)
+    expect(document.activeLayerId).toBe(bottom.id)
+    expect(useWorkspace.getState().sessions[0].history.canUndo).toBe(false)
+  })
+})
+
 describe('animation workspace', () => {
   it('opens a dirty single-layer sprite sheet document containing every frame', async () => {
     const document = createDocument('animated', 2, 1, 'rgba')
@@ -716,6 +883,101 @@ describe('animation workspace', () => {
     useWorkspace.getState().selectAnimationFrame(first.id)
     expect(session.selectedAnimationCellKeys).toEqual([])
     expect(session.selectedAnimationFrameIds).toEqual([first.id])
+  })
+
+  it('keeps layer and frame multi-selection together in either selection order', () => {
+    const document = createDocument('combined frame and layer selection', 2, 1, 'rgba')
+    const bottom = getActiveLayer(document)
+    const top = createLayer('Top', 2, 1, 'rgba')
+    document.layers.push(top)
+    useWorkspace.getState().addSession(document)
+    useWorkspace.getState().duplicateAnimationFrame()
+    useWorkspace.getState().selectLayerRows([bottom.id, top.id], [])
+    const [first, second] = ensureAnimationDocument(document).frames
+
+    useWorkspace.getState().selectAnimationFrame(first.id)
+    useWorkspace.getState().selectAnimationFrame(second.id, 'range')
+
+    const session = useWorkspace.getState().sessions[0]
+    expect(session.selectedAnimationFrameIds).toEqual([first.id, second.id])
+    expect(session.selectedLayerIds).toEqual([bottom.id, top.id])
+    expect(session.selectedGroupIds).toEqual([])
+
+    useWorkspace.getState().selectLayer(top.id)
+    useWorkspace.getState().selectLayer(bottom.id, 'toggle')
+    expect(session.selectedLayerIds).toEqual([top.id, bottom.id])
+    expect(session.selectedAnimationFrameIds).toEqual([first.id, second.id])
+  })
+
+  it('deletes selected animation frames as one undoable action', () => {
+    const document = createDocument('delete selected animation frames', 1, 1, 'rgba')
+    useWorkspace.getState().addSession(document)
+    useWorkspace.getState().duplicateAnimationFrame()
+    useWorkspace.getState().duplicateAnimationFrame()
+    const timeline = ensureAnimationDocument(document)
+    const originalFrameIds = timeline.frames.map((frame) => frame.id)
+
+    useWorkspace.getState().selectAnimationFrame(originalFrameIds[0])
+    useWorkspace.getState().selectAnimationFrame(originalFrameIds[1], 'range')
+    useWorkspace.getState().deleteSelectedAnimationItems()
+
+    expect(timeline.frames.map((frame) => frame.id)).toEqual([originalFrameIds[2]])
+    expect(useWorkspace.getState().sessions[0].selectedAnimationFrameIds).toEqual([])
+    useWorkspace.getState().undo()
+    expect(timeline.frames.map((frame) => frame.id)).toEqual(originalFrameIds)
+    useWorkspace.getState().redo()
+    expect(timeline.frames.map((frame) => frame.id)).toEqual([originalFrameIds[2]])
+  })
+
+  it('creates a new frame linked only to the selected cel', () => {
+    const document = createDocument('linked selected cel', 1, 1, 'rgba')
+    const firstLayer = getActiveLayer(document)
+    writeLayerColor(document, firstLayer, 0, red)
+    const secondLayer = createLayer('Second', 1, 1, 'rgba')
+    writeLayerColor(document, secondLayer, 0, blue)
+    document.layers.push(secondLayer)
+    const sourceFrameId = ensureAnimationDocument(document).activeFrameId
+    useWorkspace.getState().addSession(document)
+    useWorkspace.getState().selectAnimationCell(animationCelKey(firstLayer.id, sourceFrameId))
+
+    useWorkspace.getState().addLinkedAnimationFrame()
+
+    const timeline = ensureAnimationDocument(document)
+    const targetFrameId = timeline.activeFrameId
+    const sourceFirst = animationCelAt(timeline, firstLayer.id, sourceFrameId)!
+    const targetFirst = animationCelAt(timeline, firstLayer.id, targetFrameId)!
+    const targetSecond = animationCelAt(timeline, secondLayer.id, targetFrameId)!
+    expect(targetFirst.linkedCelId).toBe(sourceFirst.id)
+    expect(resolveAnimationCel(timeline, targetFirst)).toBe(sourceFirst)
+    expect(targetSecond.linkedCelId).toBeUndefined()
+  })
+
+  it('links non-empty cels from a selected frame while leaving empty cels blank through undo and redo', () => {
+    const document = createDocument('linked selected frame', 1, 1, 'rgba')
+    const firstLayer = getActiveLayer(document)
+    writeLayerColor(document, firstLayer, 0, red)
+    const secondLayer = createLayer('Second', 1, 1, 'rgba')
+    document.layers.push(secondLayer)
+    const sourceFrameId = ensureAnimationDocument(document).activeFrameId
+    useWorkspace.getState().addSession(document)
+    useWorkspace.getState().selectAnimationFrame(sourceFrameId)
+
+    useWorkspace.getState().addLinkedAnimationFrame()
+
+    let timeline = ensureAnimationDocument(document)
+    const targetFrameId = timeline.activeFrameId
+    expect(animationCelAt(timeline, firstLayer.id, targetFrameId)?.linkedCelId).toBe(animationCelAt(timeline, firstLayer.id, sourceFrameId)?.id)
+    expect(animationCelAt(timeline, secondLayer.id, targetFrameId)?.linkedCelId).toBeUndefined()
+    expect(animationCelHasContent(animationCelAt(timeline, secondLayer.id, targetFrameId) ?? null, document.palette)).toBe(false)
+
+    useWorkspace.getState().undo()
+    expect(ensureAnimationDocument(document).frames).toHaveLength(1)
+    useWorkspace.getState().redo()
+    timeline = ensureAnimationDocument(document)
+    expect(timeline.activeFrameId).toBe(targetFrameId)
+    expect(animationCelAt(timeline, firstLayer.id, targetFrameId)?.linkedCelId).toBe(animationCelAt(timeline, firstLayer.id, sourceFrameId)?.id)
+    expect(animationCelAt(timeline, secondLayer.id, targetFrameId)?.linkedCelId).toBeUndefined()
+    expect(animationCelHasContent(animationCelAt(timeline, secondLayer.id, targetFrameId) ?? null, document.palette)).toBe(false)
   })
 
   it('uses Ctrl for cel toggles and Shift for a rectangular cel range', () => {
@@ -1296,8 +1558,12 @@ describe('multi-layer deletion', () => {
   })
 })
 
-describe('procedural brush settings', () => {
-  it('creates a project brush from non-transparent selected pixels', () => {
+describe('brush settings', () => {
+  it('stores a selection brush in the local library without dirtying the project', async () => {
+    const saveBrush = vi.fn(async (name: string, _data: Uint8Array, intrinsicSize?: boolean, sourceX?: number, sourceY?: number) => ({
+      id: 'selection-brush.png', name, filePath: 'brushes/selection-brush.png', intrinsicSize, sourceX, sourceY
+    }))
+    installApi({ saveBrush })
     const document = createDocument('selection brush', 4, 3, 'rgba')
     const layer = getActiveLayer(document)
     writeLayerColor(document, layer, 0, red)
@@ -1306,24 +1572,48 @@ describe('procedural brush settings', () => {
     useWorkspace.getState().setTool('selection')
     useWorkspace.getState().setSelection({ x: 0, y: 0, width: 3, height: 1 })
 
-    useWorkspace.getState().createBrushFromSelection()
+    await useWorkspace.getState().createBrushFromSelection()
 
     const session = useWorkspace.getState().sessions[0]
-    expect(session).toMatchObject({ tool: 'pencil', brushImageTemporary: false, brushPaintMode: 'pattern-source', selection: null })
-    expect(session.brushImage).toMatchObject({ name: '选区笔刷', width: 3, height: 1, sourceX: 0, sourceY: 0 })
+    expect(session).toMatchObject({ tool: 'pencil', brushImageTemporary: false, brushPaintMode: 'paint', selection: null })
+    expect(session.brushImage).toMatchObject({ id: 'selection-brush.png', name: '选区笔刷', width: 3, height: 1, sourceX: 0, sourceY: 0 })
     expect(session.brushImage?.coverage).toEqual(Uint8Array.from([255, 0, 128]))
-    expect(session.brushImageId).toMatch(/^project-brush-/)
-    expect(session.document.customBrushes).toHaveLength(1)
+    expect(session.brushImageId).toBe('selection-brush.png')
+    expect(session.document.customBrushes ?? []).toEqual([])
+    expect(document.dirty).toBe(false)
+    expect(saveBrush).toHaveBeenCalledWith('选区笔刷', expect.any(Uint8Array), true, 0, 0, null)
   })
 
-  it('persists pattern alignment without persisting a temporary brush id', () => {
+  it('stores a selection brush in the active brush-library folder', async () => {
+    const saveBrush = vi.fn(async (name: string, _data: Uint8Array, intrinsicSize?: boolean, sourceX?: number, sourceY?: number, folderId?: string | null) => ({
+      id: 'folder-brush.png', name, filePath: `brushes/${folderId}/folder-brush.png`, intrinsicSize, sourceX, sourceY, folderId
+    }))
+    installApi({ saveBrush })
+    const document = createDocument('folder brush', 2, 2, 'rgba')
+    writeLayerColor(document, getActiveLayer(document), 0, red)
+    useWorkspace.getState().addSession(document)
+    useWorkspace.getState().setSelection({ x: 0, y: 0, width: 1, height: 1 })
+    brushLibraryLocation.set('Characters/Heroes')
+
+    await useWorkspace.getState().createBrushFromSelection()
+
+    expect(saveBrush).toHaveBeenCalledWith('选区笔刷', expect.any(Uint8Array), true, 0, 0, 'Characters/Heroes')
+    expect(useWorkspace.getState().sessions[0].brushImageId).toBe('folder-brush.png')
+  })
+
+  it('persists pattern alignment and the stored local brush id', async () => {
     vi.useFakeTimers()
     try {
+      installApi({
+        saveBrush: vi.fn(async (name: string, _data: Uint8Array, intrinsicSize?: boolean, sourceX?: number, sourceY?: number) => ({
+          id: 'persistent-selection.png', name, filePath: 'brushes/persistent-selection.png', intrinsicSize, sourceX, sourceY
+        }))
+      })
       const document = createDocument('temporary persistence', 2, 2, 'rgba')
       writeLayerColor(document, getActiveLayer(document), 0, red)
       useWorkspace.getState().addSession(document)
       useWorkspace.getState().setSelection({ x: 0, y: 0, width: 1, height: 1 })
-      useWorkspace.getState().createBrushFromSelection()
+      await useWorkspace.getState().createBrushFromSelection()
       useWorkspace.getState().setBrushPaintMode('pattern-target')
       vi.advanceTimersByTime(101)
 
@@ -1331,7 +1621,7 @@ describe('procedural brush settings', () => {
       useWorkspace.getState().addSession(createDocument('restored settings', 2, 2, 'rgba'))
       const restored = useWorkspace.getState().sessions[0]
       expect(restored.brushPaintMode).toBe('pattern-target')
-      expect(restored.brushImageId).toBeTruthy()
+      expect(restored.brushImageId).toBe('persistent-selection.png')
       expect(restored.brushImage).toBeNull()
       expect(restored.brushImageTemporary).toBe(false)
     } finally {
@@ -1415,7 +1705,7 @@ describe('procedural brush settings', () => {
     const session = useWorkspace.getState().sessions[0]
     expect(session.brushSize).toBe(37)
     expect(session.proceduralAntialias).toBe(false)
-    expect(session.brushPaintMode).toBe('pattern-source')
+    expect(session.brushPaintMode).toBe('paint')
   })
 
   it('disables procedural texture antialiasing by default and persists an explicit choice', () => {
@@ -1696,6 +1986,23 @@ describe('foreground fill command', () => {
     expect(readLayerColor(document, layer, 1)).toEqual(blue)
   })
 
+  it('ignores the foreground fill command while a layer group is selected', () => {
+    const document = createDocument('group fill command', 2, 1, 'rgba')
+    const layer = getActiveLayer(document)
+    document.groups.push({ id: 'group', name: '组', parentGroupId: null, visible: true, locked: false, opacity: 1, blendMode: 'normal' })
+    layer.groupId = 'group'
+    useWorkspace.getState().addSession(document)
+    useWorkspace.getState().setPrimaryColor(blue)
+    useWorkspace.getState().selectGroup('group')
+
+    useWorkspace.getState().fillForeground()
+
+    expect(readLayerColorAt(document, layer, 0, 0).a).toBe(0)
+    expect(readLayerColorAt(document, layer, 1, 0).a).toBe(0)
+    expect(useWorkspace.getState().sessions[0].history.canUndo).toBe(false)
+    expect(useWorkspace.getState().message).toBeNull()
+  })
+
   it('fills an uncovered canvas area on a cropped layer and remains undoable', () => {
     const document = createDocument('cropped fill command', 4, 3, 'rgba')
     const layer = getActiveLayer(document)
@@ -1737,6 +2044,40 @@ describe('layer duplication', () => {
 })
 
 describe('selection clipboard', () => {
+  it('moves a transformed selection boundary without moving the committed pixels again', () => {
+    const document = createDocument('transformed selection boundary move', 10, 10, 'rgba')
+    const layer = getActiveLayer(document)
+    writeLayerColor(document, layer, 1 + layer.width, red)
+    writeLayerColor(document, layer, 2 + layer.width, blue)
+    useWorkspace.getState().addSession(document)
+    const original = { x: 1, y: 1, width: 2, height: 1 }
+    const target = { x: 4, y: 3, width: 4, height: 2 }
+    const angle = 45
+    const source = captureSelectionTransform(document, original, layer)!
+    const preview = applySelectionTransform(document, source, target, angle)!
+    const transformed = transformSelectionMask(source.selection, target, document.width, document.height, angle, undefined, false)!
+
+    useWorkspace.getState().beginFloatingSelectionTransform(source, preview, original, transformed, false, 'transform', null, target, angle)
+    useWorkspace.getState().commitFloatingPaste()
+    const committedPixels = layer.pixels.slice()
+    const committedSelection = useWorkspace.getState().sessions[0].selection!
+    const movedSelection = { ...committedSelection, x: committedSelection.x + 1 }
+
+    useWorkspace.getState().commitSelectionChange(committedSelection, movedSelection, 'move selection box')
+
+    const session = useWorkspace.getState().sessions[0]
+    expect(session.pendingPaste).toBeNull()
+    expect(session.selection).toEqual(movedSelection)
+    expect(layer.pixels).toEqual(committedPixels)
+    useWorkspace.getState().undo()
+    expect(session.selection).toEqual(committedSelection)
+    expect(layer.pixels).toEqual(committedPixels)
+    useWorkspace.getState().undo()
+    expect(session.selection).toEqual(original)
+    expect(readLayerColorAt(document, layer, 1, 1)).toEqual(red)
+    expect(readLayerColorAt(document, layer, 2, 1)).toEqual(blue)
+  })
+
   it('nudges selection content by one pixel and restores both pixels and bounds on undo', () => {
     const document = createDocument('selection nudge', 4, 2, 'rgba')
     const layer = getActiveLayer(document)
@@ -1756,6 +2097,160 @@ describe('selection clipboard', () => {
     expect(session.selection).toEqual({ x: 1, y: 0, width: 1, height: 1 })
     expect(readLayerColorAt(document, layer, 1, 0)).toEqual(red)
     expect(readLayerColorAt(document, layer, 2, 0).a).toBe(0)
+  })
+
+  it('moves selection content across selected animation frames as one undoable action', () => {
+    const document = createDocument('multi-frame selection move', 4, 1, 'rgba')
+    const layer = getActiveLayer(document)
+    writeLayerColor(document, layer, 0, red)
+    useWorkspace.getState().addSession(document)
+    useWorkspace.getState().duplicateAnimationFrame()
+    writeLayerColor(document, getActiveLayer(document), 0, blue)
+    const timeline = ensureAnimationDocument(document)
+    const [first, second] = timeline.frames
+    useWorkspace.getState().selectAnimationFrame(first.id)
+    useWorkspace.getState().selectAnimationFrame(second.id, 'range')
+    useWorkspace.getState().setSelection({ x: 0, y: 0, width: 1, height: 1 })
+
+    useWorkspace.getState().moveActiveSelectionWithSelectionHistory(1, 0)
+    useWorkspace.getState().moveActiveSelectionWithSelectionHistory(1, 0)
+
+    const session = useWorkspace.getState().sessions[0]
+    expect(session.pendingPaste?.layers?.map((state) => state.frameId)).toEqual([second.id, first.id])
+    expect(readLayerColorAt(document, animationLayerAtFrame(document, layer.id, first.id)!, 2, 0)).toEqual(red)
+    expect(readLayerColorAt(document, animationLayerAtFrame(document, layer.id, second.id)!, 2, 0)).toEqual(blue)
+    useWorkspace.getState().commitFloatingPaste()
+
+    useWorkspace.getState().undo()
+    expect(session.selection).toEqual({ x: 0, y: 0, width: 1, height: 1 })
+    expect(readLayerColorAt(document, animationLayerAtFrame(document, layer.id, first.id)!, 0, 0)).toEqual(red)
+    expect(readLayerColorAt(document, animationLayerAtFrame(document, layer.id, second.id)!, 0, 0)).toEqual(blue)
+  })
+
+  it('moves selection content across selected layers and animation frames as one undoable action', () => {
+    const document = createDocument('multi-layer multi-frame selection move', 4, 1, 'rgba')
+    const bottom = getActiveLayer(document)
+    const top = createLayer('Top', 4, 1, 'rgba')
+    const green = { r: 0, g: 200, b: 80, a: 255 }
+    const yellow = { r: 240, g: 190, b: 0, a: 255 }
+    document.layers.push(top)
+    writeLayerColor(document, bottom, 0, red)
+    writeLayerColor(document, top, 0, blue)
+    useWorkspace.getState().addSession(document)
+    useWorkspace.getState().duplicateAnimationFrame()
+    writeLayerColor(document, bottom, 0, green)
+    writeLayerColor(document, top, 0, yellow)
+    const timeline = ensureAnimationDocument(document)
+    const [first, second] = timeline.frames
+    useWorkspace.getState().selectLayerRows([bottom.id, top.id], [])
+    useWorkspace.getState().selectAnimationFrame(first.id)
+    useWorkspace.getState().selectAnimationFrame(second.id, 'range')
+    useWorkspace.getState().setSelection({ x: 0, y: 0, width: 1, height: 1 })
+
+    useWorkspace.getState().moveActiveSelectionWithSelectionHistory(1, 0)
+
+    const session = useWorkspace.getState().sessions[0]
+    expect(session.pendingPaste?.layers?.map(({ layerId, frameId }) => `${layerId}:${frameId}`)).toEqual([
+      `${top.id}:${second.id}`,
+      `${bottom.id}:${second.id}`,
+      `${top.id}:${first.id}`,
+      `${bottom.id}:${first.id}`
+    ])
+    expect(readLayerColorAt(document, animationLayerAtFrame(document, bottom.id, first.id)!, 1, 0)).toEqual(red)
+    expect(readLayerColorAt(document, animationLayerAtFrame(document, top.id, first.id)!, 1, 0)).toEqual(blue)
+    expect(readLayerColorAt(document, animationLayerAtFrame(document, bottom.id, second.id)!, 1, 0)).toEqual(green)
+    expect(readLayerColorAt(document, animationLayerAtFrame(document, top.id, second.id)!, 1, 0)).toEqual(yellow)
+    useWorkspace.getState().commitFloatingPaste()
+
+    useWorkspace.getState().undo()
+    expect(readLayerColorAt(document, animationLayerAtFrame(document, bottom.id, first.id)!, 0, 0)).toEqual(red)
+    expect(readLayerColorAt(document, animationLayerAtFrame(document, top.id, first.id)!, 0, 0)).toEqual(blue)
+    expect(readLayerColorAt(document, animationLayerAtFrame(document, bottom.id, second.id)!, 0, 0)).toEqual(green)
+    expect(readLayerColorAt(document, animationLayerAtFrame(document, top.id, second.id)!, 0, 0)).toEqual(yellow)
+
+    useWorkspace.getState().redo()
+    expect(readLayerColorAt(document, animationLayerAtFrame(document, bottom.id, first.id)!, 1, 0)).toEqual(red)
+    expect(readLayerColorAt(document, animationLayerAtFrame(document, top.id, first.id)!, 1, 0)).toEqual(blue)
+    expect(readLayerColorAt(document, animationLayerAtFrame(document, bottom.id, second.id)!, 1, 0)).toEqual(green)
+    expect(readLayerColorAt(document, animationLayerAtFrame(document, top.id, second.id)!, 1, 0)).toEqual(yellow)
+  })
+
+  it('blocks a combined frame and layer selection move when any target layer is locked', () => {
+    const document = createDocument('locked multi-layer multi-frame selection move', 3, 1, 'rgba')
+    const bottom = getActiveLayer(document)
+    const top = createLayer('Top', 3, 1, 'rgba')
+    top.locked = true
+    document.layers.push(top)
+    writeLayerColor(document, bottom, 0, red)
+    writeLayerColor(document, top, 0, blue)
+    useWorkspace.getState().addSession(document)
+    useWorkspace.getState().duplicateAnimationFrame()
+    const [first, second] = ensureAnimationDocument(document).frames
+    useWorkspace.getState().selectLayerRows([bottom.id, top.id], [])
+    useWorkspace.getState().selectAnimationFrame(first.id)
+    useWorkspace.getState().selectAnimationFrame(second.id, 'range')
+    useWorkspace.getState().setSelection({ x: 0, y: 0, width: 1, height: 1 })
+
+    useWorkspace.getState().moveActiveSelectionWithSelectionHistory(1, 0)
+
+    const session = useWorkspace.getState().sessions[0]
+    expect(session.pendingPaste).toBeNull()
+    expect(session.selection).toEqual({ x: 0, y: 0, width: 1, height: 1 })
+    expect(readLayerColorAt(document, animationLayerAtFrame(document, bottom.id, first.id)!, 0, 0)).toEqual(red)
+    expect(readLayerColorAt(document, animationLayerAtFrame(document, bottom.id, first.id)!, 1, 0)).toEqual(transparent)
+  })
+
+  it('moves a linked cel source only once when both linked frames are selected', () => {
+    const document = createDocument('linked multi-frame selection move', 4, 1, 'rgba')
+    const layer = getActiveLayer(document)
+    writeLayerColor(document, layer, 0, red)
+    useWorkspace.getState().addSession(document)
+    useWorkspace.getState().duplicateAnimationFrame()
+    const timeline = ensureAnimationDocument(document)
+    const [first, second] = timeline.frames
+    useWorkspace.getState().selectAnimationCell(animationCelKey(layer.id, first.id))
+    useWorkspace.getState().selectAnimationCell(animationCelKey(layer.id, second.id), 'toggle')
+    useWorkspace.getState().connectSelectedAnimationCels()
+    useWorkspace.getState().selectAnimationFrame(first.id)
+    useWorkspace.getState().selectAnimationFrame(second.id, 'range')
+    useWorkspace.getState().setSelection({ x: 0, y: 0, width: 1, height: 1 })
+
+    useWorkspace.getState().moveActiveSelectionWithSelectionHistory(1, 0)
+
+    const session = useWorkspace.getState().sessions[0]
+    expect(session.pendingPaste?.layers).toHaveLength(1)
+    const linkedLayer = animationLayerAtFrame(document, layer.id, second.id)!
+    expect(readLayerColorAt(document, linkedLayer, 1, 0)).toEqual(red)
+    expect(readLayerColorAt(document, linkedLayer, 2, 0).a).toBe(0)
+    useWorkspace.getState().commitFloatingPaste()
+    useWorkspace.getState().undo()
+    expect(readLayerColorAt(document, animationLayerAtFrame(document, layer.id, first.id)!, 0, 0)).toEqual(red)
+  })
+
+  it('wraps a deferred tiled selection move on commit and preserves it through undo and redo', () => {
+    const document = createDocument('tiled selection commit', 4, 1, 'rgba')
+    const layer = getActiveLayer(document)
+    writeLayerColor(document, layer, 3, blue)
+    useWorkspace.getState().addSession(document)
+    useWorkspace.getState().setTileRepeatMode('x')
+    const selection = { x: 3, y: 0, width: 1, height: 1 }
+    const target = { ...selection, x: 4 }
+    const source = captureSelectionTransform(document, selection, layer, { cacheOpaqueOffsets: false })!
+
+    useWorkspace.getState().beginFloatingSelectionTransform(source, null, selection, target, false, 'repeat move', null, target, 0, undefined, true)
+    useWorkspace.getState().commitFloatingPaste()
+
+    const session = useWorkspace.getState().sessions[0]
+    expect(session.selection).toEqual({ x: 0, y: 0, width: 1, height: 1 })
+    expect(readLayerColorAt(document, layer, 3, 0).a).toBe(0)
+    expect(readLayerColorAt(document, layer, 0, 0)).toEqual(blue)
+    useWorkspace.getState().undo()
+    expect(session.selection).toEqual(selection)
+    expect(readLayerColorAt(document, layer, 3, 0)).toEqual(blue)
+    expect(readLayerColorAt(document, layer, 0, 0).a).toBe(0)
+    useWorkspace.getState().redo()
+    expect(session.selection).toEqual({ x: 0, y: 0, width: 1, height: 1 })
+    expect(readLayerColorAt(document, layer, 0, 0)).toEqual(blue)
   })
 
   it('restores unselected destination pixels while repeatedly nudging a floating selection', () => {
@@ -1804,6 +2299,84 @@ describe('selection clipboard', () => {
     expect(session.selectionMode).toBe('replace')
     expect(session.selection).toEqual({ x: 1, y: 2, width: 5, height: 3 })
     expect(document.dirty).toBe(false)
+  })
+
+  it('starts one transform around the combined bounds of multiple selected pixel layers', () => {
+    const document = createDocument('multi-layer transform bounds', 8, 6, 'rgba')
+    const bottom = getActiveLayer(document)
+    const top = createLayer('Top', 8, 6, 'rgba')
+    document.layers.push(top)
+    writeLayerColor(document, bottom, 1 + 2 * bottom.width, red)
+    writeLayerColor(document, top, 6 + 4 * top.width, blue)
+    useWorkspace.getState().addSession(document)
+    useWorkspace.getState().selectLayerRows([bottom.id, top.id], [])
+
+    useWorkspace.getState().beginLayerTransform()
+
+    const session = useWorkspace.getState().sessions[0]
+    expect(session.tool).toBe('selection')
+    expect(session.selection).toEqual({ x: 1, y: 2, width: 6, height: 3 })
+    expect(session.selectedLayerIds).toEqual([bottom.id, top.id])
+    expect(session.selectedGroupIds).toEqual([])
+    expect(document.activeLayerId).toBe(top.id)
+  })
+
+  it('moves and mirrors multiple selected layers as one undoable floating transform', () => {
+    const document = createDocument('multi-layer floating transform', 8, 2, 'rgba')
+    const bottom = getActiveLayer(document)
+    const top = createLayer('Top', 8, 2, 'rgba')
+    document.layers.push(top)
+    writeLayerColor(document, bottom, 1, red)
+    writeLayerColor(document, top, 2, blue)
+    useWorkspace.getState().addSession(document)
+    useWorkspace.getState().selectLayerRows([bottom.id, top.id], [])
+    useWorkspace.getState().setSelection({ x: 1, y: 0, width: 2, height: 1 })
+
+    useWorkspace.getState().moveActiveSelectionWithSelectionHistory(2, 0)
+    let session = useWorkspace.getState().sessions[0]
+    expect(session.pendingPaste?.layers?.map((layer) => layer.layerId)).toEqual([bottom.id, top.id])
+    expect(readLayerColorAt(document, bottom, 3, 0)).toEqual(red)
+    expect(readLayerColorAt(document, top, 4, 0)).toEqual(blue)
+
+    useWorkspace.getState().flipActiveSelection('horizontal')
+    expect(readLayerColorAt(document, bottom, 4, 0)).toEqual(red)
+    expect(readLayerColorAt(document, top, 3, 0)).toEqual(blue)
+    useWorkspace.getState().commitFloatingPaste()
+
+    session = useWorkspace.getState().sessions[0]
+    expect(session.pendingPaste).toBeNull()
+    expect(session.selection).toEqual({ x: 3, y: 0, width: 2, height: 1 })
+    useWorkspace.getState().undo()
+    expect(session.selection).toEqual({ x: 1, y: 0, width: 2, height: 1 })
+    expect(readLayerColorAt(document, bottom, 1, 0)).toEqual(red)
+    expect(readLayerColorAt(document, top, 2, 0)).toEqual(blue)
+    expect(readLayerColorAt(document, bottom, 4, 0)).toEqual(transparent)
+    expect(readLayerColorAt(document, top, 3, 0)).toEqual(transparent)
+
+    useWorkspace.getState().redo()
+    expect(session.selection).toEqual({ x: 3, y: 0, width: 2, height: 1 })
+    expect(readLayerColorAt(document, bottom, 4, 0)).toEqual(red)
+    expect(readLayerColorAt(document, top, 3, 0)).toEqual(blue)
+  })
+
+  it('blocks mixed special layers instead of partially starting a multi-layer transform', () => {
+    const document = createDocument('mixed transform targets', 4, 4, 'rgba')
+    const pixelLayer = getActiveLayer(document)
+    const textLayer = createLayer('Text', 4, 4, 'rgba')
+    textLayer.kind = 'text'
+    document.layers.push(textLayer)
+    writeLayerColor(document, pixelLayer, 0, red)
+    writeLayerColor(document, textLayer, 1, blue)
+    useWorkspace.getState().addSession(document)
+    useWorkspace.getState().selectLayerRows([pixelLayer.id, textLayer.id], [])
+
+    useWorkspace.getState().beginLayerTransform()
+
+    const session = useWorkspace.getState().sessions[0]
+    expect(session.selection).toBeNull()
+    expect(useWorkspace.getState().message).toContain('仅支持普通像素图层')
+    expect(readLayerColorAt(document, pixelLayer, 0, 0)).toEqual(red)
+    expect(readLayerColorAt(document, textLayer, 1, 0)).toEqual(blue)
   })
 
   it('does not start layer transform for an empty layer', () => {
@@ -2143,12 +2716,14 @@ describe('selection clipboard', () => {
     useWorkspace.getState().addSession(document)
 
     await useWorkspace.getState().pasteSelection()
-    expect(readLayerColor(document, layer, 0)).toEqual(red)
+    const target = useWorkspace.getState().sessions[0].pendingPaste?.target
+    if (!target) throw new Error('missing floating paste')
+    expect(readLayerColorAt(document, layer, target.x, target.y)).toEqual(red)
     expect(useWorkspace.getState().sessions[0].history.canUndo).toBe(false)
 
     useWorkspace.getState().cancelFloatingPaste()
 
-    expect(readLayerColor(document, layer, 0)).toEqual(transparent)
+    expect(readLayerColorAt(document, layer, target.x, target.y)).toEqual(transparent)
     expect(useWorkspace.getState().sessions[0].pendingPaste).toBeNull()
     expect(useWorkspace.getState().sessions[0].history.canUndo).toBe(false)
   })
@@ -2214,6 +2789,26 @@ describe('selection clipboard', () => {
     expect(useWorkspace.getState().sessions[0].selection?.mask).toEqual(Uint8Array.from([0, 1]))
     expect(readLayerColor(document, layer, 1).a).toBe(0)
     expect(readLayerColor(document, layer, 2)).toEqual(blue)
+  })
+
+  it('reuses the visible-area position for repeated external pastes', async () => {
+    const color = Uint8Array.from([17, 29, 41, 255])
+    installApi({ readClipboardImage: vi.fn(async () => ({ width: 1, height: 1, data: color })) })
+    const document = createDocument('repeat external paste', 100, 100, 'rgba')
+    useWorkspace.getState().addSession(document)
+    useWorkspace.getState().setViewportSize({ width: 20, height: 20 })
+    useWorkspace.getState().setView({ zoom: 1, panX: 20, panY: 10 })
+
+    await useWorkspace.getState().pasteSelection()
+    const firstTarget = useWorkspace.getState().sessions[0].pendingPaste?.target
+    if (!firstTarget) throw new Error('missing first floating paste')
+    const first = { ...firstTarget, mask: firstTarget.mask?.slice() }
+    useWorkspace.getState().cancelFloatingPaste()
+
+    await useWorkspace.getState().pasteSelection()
+
+    expect(first).toMatchObject({ x: 30, y: 40 })
+    expect(useWorkspace.getState().sessions[0].pendingPaste?.target).toEqual(first)
   })
 
   it('keeps a large pasted image deferred until confirmation', async () => {
@@ -3324,14 +3919,17 @@ describe('animation keyboard navigation', () => {
     useWorkspace.getState().addSession(document)
     useWorkspace.getState().duplicateAnimationFrame()
     const session = useWorkspace.getState().sessions[0]
+    useWorkspace.getState().setSelection({ x: 0, y: 0, width: 1, height: 1 })
     const first = document.animation!.frames[0].id
     const second = document.animation!.frames[1].id
     expect(document.animation!.activeFrameId).toBe(second)
 
     useWorkspace.getState().stepAnimationFrame(-1)
     expect(document.animation!.activeFrameId).toBe(first)
+    expect(session.selection).toMatchObject({ x: 0, y: 0, width: 1, height: 1 })
     useWorkspace.getState().stepAnimationFrame(1)
     expect(document.animation!.activeFrameId).toBe(second)
+    expect(session.selection).toMatchObject({ x: 0, y: 0, width: 1, height: 1 })
     expect(session.history.canUndo).toBe(true)
   })
 })
@@ -3472,6 +4070,46 @@ describe('linked animation cel history', () => {
 })
 
 describe('multi-layer adjustments', () => {
+  it('keeps a linked cel source unchanged during preview and updates it only on commit', () => {
+    const document = createDocument('linked adjustment preview', 1, 1, 'rgba')
+    const layer = getActiveLayer(document)
+    writeLayerColor(document, layer, 0, red)
+    const sourceFrameId = ensureAnimationDocument(document).activeFrameId
+    useWorkspace.getState().addSession(document)
+    useWorkspace.getState().selectAnimationCell(animationCelKey(layer.id, sourceFrameId))
+    useWorkspace.getState().addLinkedAnimationFrame()
+    const timeline = ensureAnimationDocument(document)
+    const linkedTarget = animationCelAt(timeline, layer.id, timeline.activeFrameId)!
+    const source = resolveAnimationCel(timeline, linkedTarget)!
+    const baseline = useWorkspace.getState().captureActiveLayerAdjustmentSnapshot()!
+
+    useWorkspace.getState().previewActiveLayerAdjustment({ kind: 'brightness-contrast', brightness: 20 }, baseline)
+
+    expect(Array.from(source.surface!.pixels)).toEqual([red.r, red.g, red.b, red.a])
+    expect(readLayerColor(document, layer, 0)).not.toEqual(red)
+    useWorkspace.getState().applyActiveLayerAdjustmentFromSnapshot({ kind: 'brightness-contrast', brightness: 20 }, baseline)
+    expect(Array.from(source.surface!.pixels)).not.toEqual([red.r, red.g, red.b, red.a])
+    expect(linkedTarget.linkedCelId).toBe(source.id)
+    useWorkspace.getState().undo()
+    expect(Array.from(resolveAnimationCel(timeline, linkedTarget)!.surface!.pixels)).toEqual([red.r, red.g, red.b, red.a])
+  })
+
+  it('recomputes previews from the immutable baseline instead of stacking prior values', () => {
+    const document = createDocument('adjustment preview baseline', 1, 1, 'rgba')
+    const layer = getActiveLayer(document)
+    writeLayerColor(document, layer, 0, { r: 20, g: 30, b: 40, a: 255 })
+    useWorkspace.getState().addSession(document)
+    const baseline = useWorkspace.getState().captureActiveLayerAdjustmentSnapshot()!
+
+    useWorkspace.getState().previewActiveLayerAdjustment({ kind: 'brightness-contrast', brightness: 20 }, baseline)
+    useWorkspace.getState().previewActiveLayerAdjustment({ kind: 'brightness-contrast', brightness: 40 }, baseline)
+
+    expect(readLayerColor(document, layer, 0)).toEqual(adjustColor({ r: 20, g: 30, b: 40, a: 255 }, { kind: 'brightness-contrast', brightness: 40 }))
+    expect(Array.from(baseline.layers[0].pixels)).toEqual([20, 30, 40, 255])
+    useWorkspace.getState().restoreActiveDocumentSnapshot(baseline)
+    expect(readLayerColor(document, layer, 0)).toEqual({ r: 20, g: 30, b: 40, a: 255 })
+  })
+
   it('undoes a later pixel operation before undoing the earlier adjustment', () => {
     const document = createDocument('ordered adjustment history', 2, 1, 'rgba')
     const layer = getActiveLayer(document)
@@ -3572,6 +4210,59 @@ describe('resize history', () => {
     expect(document.width).toBe(3)
     useWorkspace.getState().redo()
     expect(document.width).toBe(4)
+  })
+
+  it('crops the canvas to the selection and restores the prior selection through undo and redo', async () => {
+    const document = createDocument('crop selection', 4, 3, 'rgba')
+    const layer = getActiveLayer(document)
+    writeLayerColor(document, layer, 1 * document.width + 2, red)
+    writeLayerColor(document, layer, 2 * document.width + 1, blue)
+    useWorkspace.getState().addSession(document)
+    useWorkspace.getState().setSelection({ x: 1, y: 1, width: 2, height: 2 })
+
+    await useWorkspace.getState().cropActiveCanvas()
+
+    expect(document).toMatchObject({ width: 2, height: 2 })
+    expect(readLayerColorAt(document, layer, 1, 0)).toEqual(red)
+    expect(readLayerColorAt(document, layer, 0, 1)).toEqual(blue)
+    expect(useWorkspace.getState().sessions[0].selection).toMatchObject({ x: 0, y: 0, width: 2, height: 2 })
+
+    useWorkspace.getState().undo()
+    expect(document).toMatchObject({ width: 4, height: 3 })
+    expect(useWorkspace.getState().sessions[0].selection).toMatchObject({ x: 1, y: 1, width: 2, height: 2 })
+
+    useWorkspace.getState().redo()
+    expect(document).toMatchObject({ width: 2, height: 2 })
+    expect(useWorkspace.getState().sessions[0].selection).toMatchObject({ x: 0, y: 0, width: 2, height: 2 })
+  })
+
+  it('trims to the final visible composite and ignores hidden layer content', async () => {
+    const document = createDocument('trim visible', 4, 3, 'rgba')
+    const visible = getActiveLayer(document)
+    writeLayerColor(document, visible, 1 * document.width + 2, red)
+    const hidden = createLayer('Hidden', 4, 3, 'rgba')
+    hidden.visible = false
+    writeLayerColor(document, hidden, 0, blue)
+    document.layers.push(hidden)
+    useWorkspace.getState().addSession(document)
+
+    await useWorkspace.getState().trimActiveCanvas()
+
+    expect(document).toMatchObject({ width: 1, height: 1 })
+    expect(readLayerColorAt(document, visible, 0, 0)).toEqual(red)
+    useWorkspace.getState().undo()
+    expect(document).toMatchObject({ width: 4, height: 3 })
+  })
+
+  it('leaves an empty canvas unchanged when trim has no visible bounds', async () => {
+    const document = createDocument('trim empty', 3, 2, 'rgba')
+    useWorkspace.getState().addSession(document)
+
+    await useWorkspace.getState().trimActiveCanvas()
+
+    expect(document).toMatchObject({ width: 3, height: 2 })
+    expect(useWorkspace.getState().sessions[0].history.canUndo).toBe(false)
+    expect(useWorkspace.getState().message).toBe('画布内没有可用于修剪的可见内容。')
   })
 
   it('keeps every animation cel aligned through canvas resize undo and redo', async () => {
@@ -3792,6 +4483,48 @@ describe('save concurrency', () => {
     expect(useWorkspace.getState().saveProgress).toBeNull()
   })
 
+  it('exports every slice as an animated GIF with slice-specific dimensions', async () => {
+    const chooseDirectory = vi.fn(async () => ({ canceled: false, directoryPath: 'D:/exports' }))
+    const writes: Array<{ filePath: string; data: Uint8Array }> = []
+    const writeBinaryAtomic = vi.fn(async (filePath: string, data: Uint8Array) => { writes.push({ filePath, data }) })
+    const exportImage = vi.fn()
+    installApi({ chooseDirectory, writeBinaryAtomic, exportImage })
+    const document = createDocument('gif slices', 3, 2, 'rgba')
+    addBlankAnimationFrame(document)
+    document.slices = [
+      { id: 'left', name: 'Left', x: 0, y: 0, width: 1, height: 2 },
+      { id: 'right', name: 'Right', x: 1, y: 1, width: 2, height: 1 }
+    ]
+    useWorkspace.getState().addSession(document)
+
+    await expect(useWorkspace.getState().exportActive({ name: 'ignored.gif', format: 'gif', scalePercent: 200, target: 'slices', directory: 'D:/exports', gifDirection: 'forward' })).resolves.toBe(true)
+
+    expect(chooseDirectory).toHaveBeenCalledWith('D:/exports')
+    expect(exportImage).not.toHaveBeenCalled()
+    expect(writes.map((entry) => entry.filePath)).toEqual(['D:/exports/Left.gif', 'D:/exports/Right.gif'])
+    expect(writes.map(({ data }) => ({ signature: new TextDecoder().decode(data.subarray(0, 6)), width: data[6] | data[7] << 8, height: data[8] | data[9] << 8 }))).toEqual([
+      { signature: 'GIF89a', width: 2, height: 4 },
+      { signature: 'GIF89a', width: 4, height: 2 }
+    ])
+  })
+
+  it('exports only the selected slice when a slice id is provided', async () => {
+    const chooseDirectory = vi.fn(async () => ({ canceled: false, directoryPath: 'D:/exports' }))
+    const writeBinaryAtomic = vi.fn(async (_filePath: string, _data: Uint8Array) => {})
+    installApi({ chooseDirectory, writeBinaryAtomic })
+    const document = createDocument('selected slice', 3, 2, 'rgba')
+    document.slices = [
+      { id: 'left', name: 'Left', x: 0, y: 0, width: 1, height: 2 },
+      { id: 'right', name: 'Right', x: 1, y: 1, width: 2, height: 1 }
+    ]
+    useWorkspace.getState().addSession(document)
+
+    await expect(useWorkspace.getState().exportActive({ name: 'ignored.png', format: 'png-rgba', scalePercent: 100, target: 'slices', sliceId: 'right', directory: 'D:/exports' })).resolves.toBe(true)
+
+    expect(chooseDirectory).toHaveBeenCalledWith('D:/exports')
+    expect(writeBinaryAtomic.mock.calls.map(([filePath]) => filePath)).toEqual(['D:/exports/Right.png'])
+  })
+
   it('uses the preferred image format when saving an unsaved document', async () => {
     localStorage.setItem('moonsprite.preference.save-format', 'png')
     const saveProject = vi.fn(async () => ({ canceled: false, filePath: 'D:/gallery/preferred.png' }))
@@ -3859,6 +4592,18 @@ describe('save concurrency', () => {
     expect(saveProject).toHaveBeenCalledWith('D:\\MoonSprite\\gallery\\custom.moonsprite')
     await expect(useWorkspace.getState().exportActive({ name: 'custom', format: 'png-rgba', scalePercent: 100 })).resolves.toBe(true)
     expect(exportImage).toHaveBeenCalledWith('D:/MoonSprite/exports/custom.png', 'png')
+  })
+
+  it('lets the Save As dialog directory override the default save directory', async () => {
+    localStorage.setItem('moonsprite.preference.save-directory', 'D:/MoonSprite/gallery')
+    const saveProject = vi.fn(async () => ({ canceled: false, filePath: 'E:/delivery/custom.moonsprite' }))
+    const writeBinaryAtomic = vi.fn(async () => {})
+    installApi({ saveProject, writeBinaryAtomic })
+    useWorkspace.getState().addSession(createDocument('custom', 2, 2, 'rgba'))
+
+    await expect(useWorkspace.getState().saveActive(true, { name: 'custom', format: 'moonsprite', scalePercent: 100, directory: 'E:/delivery' })).resolves.toBe(true)
+
+    expect(saveProject).toHaveBeenCalledWith('E:/delivery/custom.moonsprite')
   })
 
   it('lets the export dialog directory override the default export directory', async () => {

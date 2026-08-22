@@ -1,6 +1,7 @@
 export type ColorMode = 'rgba' | 'indexed' | 'grayscale'
 export type RasterFormat = 'rgba' | 'indexed'
 export type ImageResizeInterpolation = 'nearest' | 'smooth'
+export type TileRepeatMode = 'off' | 'x' | 'y' | 'both'
 export type ToolId = 'pencil' | 'airbrush' | 'eraser' | 'fill' | 'eyedropper' | 'selection' | 'shape' | 'line' | 'text' | 'move' | 'hand' | 'zoom' | 'rotate'
 export type MoveKind = 'move' | 'slice'
 export type BrushShape = 'round' | 'square' | 'line'
@@ -16,19 +17,19 @@ export interface ProceduralBrushSettings {
   angle: number
 }
 
-/** A grayscale brush stamp. Coverage is 0-255 and is not stored in projects. */
+/** A bitmap brush stamp. Coverage is 0-255; colors preserve source RGBA pixels when present. */
 export interface ImageBrush {
   id: string
   name: string
   width: number
   height: number
   coverage: Uint8Array
-  /** Optional source colors for selection-created brushes. Packed RGBA, one per pixel. */
+  /** Optional source colors for imported and selection-created brushes. Packed RGBA, one per pixel. */
   colors?: Uint32Array
-  /** Temporary foreground/background remap used while painting; never serialized. */
+  /** Temporary foreground/background remap for selection-created brushes; never serialized. */
   paintColors?: Uint32Array
   proceduralSettings?: ProceduralBrushSettings
-  /** Selection-created brushes keep their source dimensions instead of scaling to brushSize. */
+  /** Imported and selection-created brushes keep their source dimensions instead of scaling to brushSize. */
   intrinsicSize?: boolean
   /** Canvas-space origin used by source-aligned pattern painting. */
   sourceX?: number
@@ -48,6 +49,7 @@ export interface ProjectBrush {
   sourceY?: number
 }
 
+/** Legacy grayscale output settings kept only for persisted tool-setting compatibility. */
 export type GrayscaleBrushMode = 'dither' | 'threshold'
 
 export interface ImageBrushSettings {
@@ -65,11 +67,19 @@ export interface StoredBrush {
   intrinsicSize?: boolean
   sourceX?: number
   sourceY?: number
+  folderId?: string | null
+}
+
+export interface StoredBrushFolder {
+  id: string
+  name: string
+  filePath: string
 }
 
 export interface BrushListing {
   directoryPath: string
   brushes: StoredBrush[]
+  folders: StoredBrushFolder[]
 }
 
 export interface StoredFont {
@@ -95,12 +105,90 @@ export interface BackgroundPresetListing {
   directoryPath: string
   presets: StoredBackgroundPreset[]
 }
+
+export interface LuaScriptEntry {
+  id: string
+  name: string
+  filePath: string
+  extensionId?: string
+  extensionName?: string
+  extensionCommandId?: string
+  extensionDescription?: string
+}
+
+export interface LuaScriptListing {
+  directoryPath: string
+  scripts: LuaScriptEntry[]
+}
+
+export interface StoredExtension {
+  id: string
+  name: string
+  version: string
+  description: string
+  author: string
+  apiVersion?: string
+  entry?: string
+  commands: StoredExtensionCommand[]
+  panels: StoredExtensionPanel[]
+  menuItems: StoredExtensionMenuItem[]
+  topMenus: StoredExtensionTopMenu[]
+  filePath: string
+  enabled: boolean
+}
+
+export interface StoredExtensionCommand {
+  id: string
+  name: string
+  description: string
+  entry: string
+}
+
+export interface StoredExtensionPanel {
+  id: string
+  name: string
+  description: string
+  defaultVisible: boolean
+  commands: string[]
+}
+
+export type ExtensionBuiltInMenuId = 'file' | 'edit' | 'select' | 'canvas' | 'layer' | 'window' | 'help'
+export type ExtensionMenuItemPosition = 'start' | 'end'
+export type ExtensionTopMenuPosition = ExtensionMenuItemPosition | `before:${ExtensionBuiltInMenuId}` | `after:${ExtensionBuiltInMenuId}`
+
+export interface StoredExtensionMenuItem {
+  id: string
+  menu: ExtensionBuiltInMenuId
+  position: ExtensionMenuItemPosition
+  commands: string[]
+}
+
+export interface StoredExtensionTopMenu {
+  id: string
+  name: string
+  description: string
+  position: ExtensionTopMenuPosition
+  commands: string[]
+}
+
+export interface ExtensionListing {
+  directoryPath: string
+  extensions: StoredExtension[]
+}
 export type ShapeKind = 'rectangle' | 'ellipse' | 'rectangle-outline' | 'ellipse-outline' | 'freeform' | 'polygon'
 export type LineKind = 'line' | 'curve'
 export interface ShapeRatio { width: number; height: number }
 export type FillMode = 'contiguous' | 'global'
 export type FillKind = 'bucket' | 'gradient'
 export type GradientDither = 'none' | 'checker' | 'diagonal' | 'diagonal-reverse' | 'horizontal' | 'vertical' | 'bayer-2' | 'bayer-4' | 'bayer-8'
+export type BrushDitherTemplate = Exclude<GradientDither, 'none'>
+
+export interface BrushDitherSettings {
+  enabled: boolean
+  template: BrushDitherTemplate
+  stage: number
+}
+
 export type BlendMode =
   | 'normal'
   | 'darken'
@@ -132,8 +220,8 @@ export const BLEND_MODES: readonly BlendMode[] = [
   'overlay', 'soft-light', 'hard-light', 'vivid-light', 'linear-light', 'pin-light', 'hard-mix', 'difference',
   'exclusion', 'subtract', 'divide', 'hue', 'saturation', 'color', 'luminosity'
 ]
-export type ImageExportFormat = 'png' | 'jpeg' | 'webp' | 'svg' | 'gif' | 'mp4' | 'webm' | 'aseprite'
-export type SaveDialogFormat = 'moonsprite' | 'png' | 'jpeg' | 'webp' | 'ase' | 'aseprite'
+export type ImageExportFormat = 'png' | 'jpeg' | 'webp' | 'svg' | 'gif' | 'psd' | 'mp4' | 'webm' | 'aseprite'
+export type SaveDialogFormat = 'moonsprite' | 'png' | 'jpeg' | 'webp' | 'psd' | 'ase' | 'aseprite'
 
 export interface RgbaColor {
   r: number
@@ -204,6 +292,88 @@ export interface RuntimeRasterTiles {
   visibleBounds?: { x: number; y: number; width: number; height: number } | null
 }
 
+export type TilemapQuarterTurns = 0 | 1 | 2 | 3
+
+export interface TilemapCell {
+  tilesetId: string
+  tileId: string
+  flipHorizontal?: boolean
+  flipVertical?: boolean
+  /** Clockwise quarter turns applied after flips. */
+  rotation?: TilemapQuarterTurns
+}
+
+export interface TilemapCelData {
+  tileWidth: number
+  tileHeight: number
+  columns: number
+  rows: number
+  cells: Array<TilemapCell | null>
+}
+
+/** A reusable source owned by one free-tile layer. Source dimensions come from its Tileset. */
+export interface FreeTileSourceLayer {
+  id: string
+  name: string
+  /** The one-tile Tileset that stores this source's pixels. */
+  tilesetId: string
+  description?: string
+  displayColor?: RgbaColor
+  visible: boolean
+  locked: boolean
+  /** Legacy source-wide appearance values. New instances override these values. */
+  opacity: number
+  /** Legacy source-wide appearance values. New instances override these values. */
+  blendMode: BlendMode
+  /** Source-local layer offset retained for layer-like editing and future group transforms. */
+  offsetX: number
+  offsetY: number
+}
+
+export interface FreeTileInstance {
+  /** Stable instance ID; array order is the compositing order from back to front. */
+  id: string
+  /** Source layer in the owning Free Tile Layer. */
+  sourceId?: string
+  /** Legacy source tile ID used by schema v14 projects. */
+  tileId?: string
+  /** Pixel position in the cel surface's local coordinate system. */
+  x: number
+  y: number
+  /** Instance-level visibility; omitted legacy values are visible. */
+  visible?: boolean
+  /** Instance-level edit lock; omitted legacy values are unlocked. */
+  locked?: boolean
+  /** Instance opacity. Omitted legacy values inherit the source opacity. */
+  opacity?: number
+  /** Instance blend mode. Omitted legacy values inherit the source blend mode. */
+  blendMode?: BlendMode
+  /** Clockwise quarter turns applied only to this instance. */
+  rotation?: TilemapQuarterTurns
+  /** Instance-only mirrors; source pixels remain unchanged. */
+  flipHorizontal?: boolean
+  flipVertical?: boolean
+}
+
+export interface FreeTileCelData {
+  instances: FreeTileInstance[]
+}
+
+export interface Tileset {
+  id: string
+  name: string
+  tileWidth: number
+  tileHeight: number
+  columns: number
+  rows: number
+  /** Stable IDs in row-major sheet order. */
+  tileIds: string[]
+  /** Nullable row-major positions used by the Tileset panel; omitted legacy data is compact. */
+  tileSlots?: Array<string | null>
+  /** Padded RGBA sheet sized columns * tileWidth by rows * tileHeight. */
+  pixels: Uint8ClampedArray
+}
+
 export interface LayerStyleStroke {
   enabled: boolean
   color: RgbaColor
@@ -245,6 +415,8 @@ export interface LayerStyleGradientOverlay {
 }
 
 export interface LayerStyles {
+  /** Global visibility switch that preserves every configured effect. */
+  enabled: boolean
   stroke: LayerStyleStroke
   shadow: LayerStyleShadow
   innerGlow: LayerStyleInnerGlow
@@ -262,12 +434,20 @@ export interface BackgroundLayerSettings {
 export interface RgbaLayer {
   id: string
   name: string
+  /** Stable group whose ordinary raster layers share editable pixel content. */
+  linkedContentId?: string
   /** Optional visual marker shown in the layer panel. */
   displayColor?: RgbaColor
   /** Optional user-facing note shown when hovering the layer row. */
   description?: string
   /** Editable text layers retain raster surfaces for the existing compositor. */
-  kind?: 'text'
+  kind?: 'text' | 'tilemap' | 'free-tile'
+  /** Project Tileset owned by this Tilemap layer. */
+  tilemapTilesetId?: string
+  /** Legacy v14 Free Tile ownership, retained only while decoding and migrating older projects. */
+  freeTileTilesetId?: string
+  /** Reusable source layers owned by this Free Tile layer. */
+  freeTileSources?: FreeTileSourceLayer[]
   visible: boolean
   locked: boolean
   opacity: number
@@ -293,12 +473,20 @@ export interface RgbaLayer {
 export interface IndexedLayer {
   id: string
   name: string
+  /** Stable group whose ordinary raster layers share editable pixel content. */
+  linkedContentId?: string
   /** Optional visual marker shown in the layer panel. */
   displayColor?: RgbaColor
   /** Optional user-facing note shown when hovering the layer row. */
   description?: string
   /** Editable text layers retain raster surfaces for the existing compositor. */
-  kind?: 'text'
+  kind?: 'text' | 'tilemap' | 'free-tile'
+  /** Project Tileset owned by this Tilemap layer. */
+  tilemapTilesetId?: string
+  /** Legacy v14 Free Tile ownership, retained only while decoding and migrating older projects. */
+  freeTileTilesetId?: string
+  /** Reusable source layers owned by this Free Tile layer. */
+  freeTileSources?: FreeTileSourceLayer[]
   visible: boolean
   locked: boolean
   opacity: number
@@ -397,8 +585,24 @@ export interface AnimationCel {
   surface?: AnimationCelSurface
   /** Editable source data for text cels. The surface remains the rendered cache. */
   text?: TextCelData
+  /** Editable tile references for Tilemap cels. The surface remains the rendered cache. */
+  tilemap?: TilemapCelData
+  /** Arbitrarily positioned reusable tile instances. The surface remains the rendered cache. */
+  freeTiles?: FreeTileCelData
   /** Independent grayscale surface for this cell; transparent pixels are neutral/unpainted. */
   mask?: LayerMask
+}
+
+export type AnimationLoopDirection = 'forward' | 'reverse'
+
+export interface AnimationLoopSection {
+  id: string
+  name: string
+  startFrameId: string
+  endFrameId: string
+  direction: AnimationLoopDirection
+  /** Total playback passes. Null means repeat indefinitely. */
+  repeatCount: number | null
 }
 
 export interface AnimationTimeline {
@@ -406,6 +610,8 @@ export interface AnimationTimeline {
   cels: AnimationCel[]
   /** Frame-specific masks attached to layer groups. */
   groupMasks?: AnimationGroupMask[]
+  /** Named frame ranges that can be played independently. */
+  loopSections?: AnimationLoopSection[]
   activeFrameId: string
   loop: boolean
 }
@@ -461,7 +667,7 @@ export interface DocumentSlice {
 }
 
 export interface SpriteDocument {
-  schemaVersion: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12
+  schemaVersion: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 17
   id: string
   name: string
   width: number
@@ -479,6 +685,8 @@ export interface SpriteDocument {
   nextColorId: number
   /** Project-owned brushes are stored in the .moonsprite container. */
   customBrushes?: ProjectBrush[]
+  /** Project-owned tile sheets referenced by Tilemap cells. */
+  tilesets?: Tileset[]
   /** Animation metadata is independent from layer ordering and optional for v1 compatibility. */
   animation?: AnimationTimeline
   /** Project-owned defaults for the selection outline dialog. */
@@ -550,6 +758,8 @@ export interface ViewState {
   /** View-only configurable grid origin and cell size. */
   grid?: GridSettings
   relativeLuminance: boolean
+  /** View-only repeated canvas preview and wrapped painting mode. */
+  tileRepeatMode?: TileRepeatMode
   /** View-only selection outline visibility. The selection itself remains active. */
   showSelectionOutline?: boolean
   /** View-only transform pivot visibility. The configured pivot still affects transforms while hidden. */
@@ -629,9 +839,9 @@ export interface PaletteListing {
   palettes: StoredPalette[]
 }
 
-export type WorkspacePanelId = 'color' | 'palette' | 'layers' | 'preview'
+export type WorkspacePanelId = 'color' | 'palette' | 'layers' | 'preview' | 'tileset' | 'brushes'
 export type WorkspacePanelDock = 'right' | 'left' | 'bottom' | 'floating'
-export type ToolRailSide = 'left' | 'right'
+export type ToolRailSide = 'left' | 'right' | 'top' | 'bottom'
 
 export interface WorkspaceLayout {
   panelDocks: Record<WorkspacePanelId, WorkspacePanelDock>
@@ -640,7 +850,7 @@ export interface WorkspaceLayout {
   inspectorWidth: number
   leftDockWidth: number
   bottomDockHeight: number
-  /** Preferred dock proportions within the editor layout. Pixel fields remain for older workspaces. */
+  /** Side ratios are retained for legacy migration; bottom height continues to use its ratio. */
   inspectorWidthRatio?: number
   leftDockWidthRatio?: number
   bottomDockHeightRatio?: number
@@ -691,8 +901,128 @@ export interface BinaryReadProgress {
   totalBytes: number
 }
 
+export interface LuaScriptExecutionContext {
+  documentId: string
+  documentName: string
+  documentWidth: number
+  documentHeight: number
+  documentFilePath: string
+  colorMode: ColorMode
+  layerId: string
+  layerName: string
+  layerWidth: number
+  layerHeight: number
+  layerOffsetX: number
+  layerOffsetY: number
+  layerOpacity: number
+  layerVisible: boolean
+  layerLocked: boolean
+  layerFormat: RasterLayer['format']
+  frameNumber: number
+  pixels: number[]
+  selection: {
+    x: number
+    y: number
+    width: number
+    height: number
+    mask: number[] | null
+  } | null
+  transparentColor: number
+  foreground: number
+  background: number
+}
+
+export type LuaScriptDialogValue = string | number | boolean | RgbaColor | null
+export type LuaScriptDialogEvent = 'change' | 'release' | 'click' | 'close'
+export type LuaScriptDialogControlKind = 'button' | 'check' | 'color' | 'combobox' | 'entry' | 'label' | 'number' | 'radio' | 'separator' | 'slider'
+
+export interface LuaScriptDialogControl {
+  id: string
+  dataKey: string | null
+  kind: LuaScriptDialogControlKind
+  label: string
+  text: string
+  value: LuaScriptDialogValue
+  min: number | null
+  max: number | null
+  step: number | null
+  decimals: number | null
+  options: string[]
+  enabled: boolean
+  visible: boolean
+}
+
+export interface LuaScriptDialog {
+  id: string
+  title: string
+  controls: LuaScriptDialogControl[]
+}
+
+export interface LuaScriptDialogAction {
+  dialogId: string
+  controlId: string | null
+  event: LuaScriptDialogEvent
+  values: Record<string, LuaScriptDialogValue>
+}
+
+export interface LuaScriptPixelChange {
+  index: number
+  before: number
+  after: number
+}
+
+export interface LuaScriptBatch {
+  label: string
+  changes: LuaScriptPixelChange[]
+  surfaceChange: {
+    before: LuaScriptSurfaceSnapshot
+    after: LuaScriptSurfaceSnapshot
+  } | null
+}
+
+export interface LuaScriptSurfaceSnapshot {
+  format: RasterLayer['format']
+  width: number
+  height: number
+  offsetX: number
+  offsetY: number
+  pixels: number[]
+}
+
+export interface LuaScriptCreatedLayer {
+  id: string
+  name: string
+  opacity: number
+  visible: boolean
+  locked: boolean
+  frameNumber: number
+  surface: LuaScriptSurfaceSnapshot
+}
+
+export interface LuaScriptCreatedDocument {
+  name: string
+  width: number
+  height: number
+  colorMode: ColorMode
+  layers: LuaScriptCreatedLayer[]
+}
+
+export interface LuaScriptRunResult {
+  sessionId: string | null
+  filePath: string
+  fileName: string
+  output: string[]
+  batches: LuaScriptBatch[]
+  createdLayers: LuaScriptCreatedLayer[]
+  createdDocuments: LuaScriptCreatedDocument[]
+  dialogs: LuaScriptDialog[]
+  finished: boolean
+  elapsedMs: number
+}
+
 export interface MoonSpriteApi {
   openFiles(): Promise<OpenDialogResult>
+  openBrushImages(): Promise<OpenDialogResult>
   takeStartupFiles(): Promise<string[]>
   saveProject(defaultPath?: string, format?: SaveDialogFormat): Promise<SaveDialogResult>
   exportImage(defaultPath: string | undefined, format: ImageExportFormat): Promise<SaveDialogResult>
@@ -720,8 +1050,13 @@ export interface MoonSpriteApi {
   deleteWorkspace(id: string): Promise<void>
   openWorkspaceFolder(): Promise<void>
   listBrushes(): Promise<BrushListing>
-  saveBrush(name: string, data: Uint8Array, intrinsicSize?: boolean, sourceX?: number, sourceY?: number): Promise<StoredBrush>
+  saveBrush(name: string, data: Uint8Array, intrinsicSize?: boolean, sourceX?: number, sourceY?: number, folderId?: string | null): Promise<StoredBrush>
   deleteBrush(id: string): Promise<void>
+  setBrushOrder(ids: string[]): Promise<void>
+  createBrushFolder(name: string, parentFolderId?: string | null): Promise<StoredBrushFolder>
+  renameBrushFolder(id: string, name: string): Promise<StoredBrushFolder>
+  deleteBrushFolder(id: string): Promise<void>
+  moveBrush(id: string, folderId?: string | null): Promise<StoredBrush>
   openBrushFolder(): Promise<void>
   listFonts(): Promise<FontListing>
   listSystemFonts(): Promise<StoredFont[]>
@@ -742,6 +1077,17 @@ export interface MoonSpriteApi {
   ensureBuiltinExample(): Promise<string | null>
   openProjectInFolder(filePath: string): Promise<void>
   openExternalUrl(url: string): Promise<void>
+  listLuaScripts(): Promise<LuaScriptListing>
+  openLuaScriptFolder(): Promise<void>
+  runLuaScript(scriptId: string, context: LuaScriptExecutionContext): Promise<LuaScriptRunResult>
+  dispatchLuaScriptDialog(sessionId: string, action: LuaScriptDialogAction, context: LuaScriptExecutionContext): Promise<LuaScriptRunResult>
+  closeLuaScriptSession(sessionId: string): Promise<void>
+  listExtensions(): Promise<ExtensionListing>
+  installExtension(filePath: string): Promise<StoredExtension>
+  chooseAndInstallExtension(): Promise<StoredExtension | null>
+  setExtensionEnabled(id: string, enabled: boolean): Promise<StoredExtension>
+  uninstallExtension(id: string): Promise<void>
+  openExtensionFolder(): Promise<void>
   getResourceInfo(): Promise<ResourceInfo>
   confirmUnsaved(name: string): Promise<'save' | 'discard' | 'cancel'>
   pathForFile(file: unknown): string

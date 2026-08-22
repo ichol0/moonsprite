@@ -92,6 +92,21 @@ describe('GIF animation export', () => {
     expect([...result.bytes].filter((value) => value === 0x2c)).toHaveLength(2)
   })
 
+  it('crops every animation frame to the requested slice before scaling', () => {
+    const document = createDocument('gif slice', 3, 2, 'rgba')
+    const layer = document.layers[0]
+    writeLayerColor(document, layer, 1, { r: 255, g: 0, b: 0, a: 255 })
+    addBlankAnimationFrame(document)
+    writeLayerColor(document, layer, 5, { r: 0, g: 0, b: 255, a: 255 })
+
+    const result = exportAnimationGif(document, { scalePercent: 200, direction: 'forward', crop: { x: 1, y: 0, width: 2, height: 2 } })
+    const decoded = firstGifFrame(result.bytes)
+
+    expect(result).toMatchObject({ width: 4, height: 4, frameCount: 2 })
+    expect([...decoded.pixels.subarray(0, 4)]).toEqual([255, 0, 0, 255])
+    expect([...decoded.pixels.subarray(2 * 4, 3 * 4)]).toEqual([0, 0, 0, 0])
+  })
+
   it('keeps every source pixel as an exact 10x10 block at 1000 percent across LZW code widths', () => {
     const document = createDocument('gif scale', 32, 32, 'rgba')
     const layer = document.layers[0]

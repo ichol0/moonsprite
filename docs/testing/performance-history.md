@@ -11,6 +11,30 @@
 5. 没有自动基准覆盖的交互必须明确写“未覆盖”，禁止用主观流畅度代替数据。
 6. 性能优化不能改变像素结果、快捷键、撤销语义或文件兼容性。
 
+## 2026-08-22 DEV.6 自动性能审计
+
+审计编号：`2026-08-22_17-28-58-623`。性能等级为 P3，结果为“用户批准不改代码”。用户明确要求打包、推送并合并当前 DEV.6；最终候选为 4000x4000 带样式图层移动的高风险渲染路径，本次发布不继续扩大核心画布改动。
+
+候选热点：4000x4000 large-layer-style-move 主绘制 p95；初始值 204.900，测量噪声 0.78%。
+本次没有执行代码复测。
+执行套件：canvas-standard、canvas-profile、canvas-large-800、canvas-large-2048、canvas-large-4000、canvas-large-sentinel、canvas-complex、document-composite、project-format、selection、adjustments、bundle。
+
+## 2026-08-22 DEV.6 自动性能审计
+
+审计编号：`2026-08-22_17-03-04-529`。性能等级为 P3，结果为“用户批准不改代码”。用户明确要求按当前 DEV.6 状态打包、推送并合并；候选属于高风险像素渲染路径，本次不在发布前扩大核心画布改动范围。
+
+候选热点：4000x4000 large-layer-style-shadow-size 主绘制 p95；初始值 251.600，测量噪声 0.28%。
+本次没有执行代码复测。
+执行套件：canvas-standard、canvas-profile、canvas-large-800、canvas-large-2048、canvas-large-4000、canvas-large-sentinel、canvas-complex、document-composite、project-format、selection、adjustments、bundle。
+
+## 2026-08-16 DEV.5 自动性能审计
+
+审计编号：`2026-08-16_15-21-05-056`。性能等级为 P4，结果为“用户批准不改代码”。候选相对历史基线已改善18.72%，且与本次单实例和Worker兼容修复无关；按用户要求先打包验证，不扩大动画核心改动范围。
+
+候选热点：1024x1024 complex-playback 主绘制 p95；初始值 106.800，测量噪声 1.40%。
+本次没有执行代码复测。
+执行套件：canvas-standard、canvas-profile、canvas-complex、canvas-large-800、canvas-large-2048、canvas-large-4000、canvas-large-sentinel、selection、document-composite、project-format、bundle、desktop。
+
 ## 2026-08-16 DEV.5 自动性能审计
 
 审计编号：`2026-08-16_13-51-24-452`。性能等级为 P4，结果为“用户批准不改代码”。候选为大画布油漆桶慢帧比例，测量噪声 57.86%，无法确认稳定退化；像素填充算法属于高风险关键路径，用户明确批准 DEV.5 本次不改代码直接发布。

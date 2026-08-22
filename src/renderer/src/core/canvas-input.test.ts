@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { BRUSH_SPEED_STOP_MS, CanvasInputState, SELECTION_CORNER_RESIZE_HIT_RADIUS, SELECTION_RESIZE_HIT_RADIUS, appendPolygonLassoVertex, beginBrushSpeedTracking, beginTemporaryCenteredMarqueeResize, brushLineConnectionOverridesTemporaryMove, cachedSelectionTransformSource, canvasGestureForPreview, centerMarqueeBoundsAtCreationPoint, centeredShapeBounds, clampCanvasZoom, coalescedPointerClientPoints, constrainedTranslation, createCanvasPanDrag, createMarqueeResizeStart, deferredSelectionCommitInvalidationRects, deferredSelectionPreviewOwner, finalizeMarqueeSelection, floatingSelectionCopyMode, isQuickSelectionSecondPress, marqueeSelectionCommit, normalizeCanvasWheelDelta, paletteSamplingShortcutStartsPrimarySample, polygonLassoClosedPathPoints, polygonLassoPreviewPoints, quickSelectCellDragBounds, quickSelectCellSelection, resizeRotatedMarqueeBounds, resizeSelectionBounds, resizeTransformedSelectionBounds, resolveMarqueeModifierMode, restoreCanvasDragAfterPan, restoreTemporaryCenteredMarqueeResize, revertCancelledCanvasDragPixelChanges, rotationHandles, sampledForegroundColorToAdd, selectionGestureMoved, selectionInteractionHit, selectionInteractionOverridesTemporaryMove, selectionMarqueeUsesConstraint, selectionOverlayMaskForDrag, selectionPivotAfterResize, selectionPivotAtDragPoint, selectionPivotHit, selectionResizeHit, selectionRotationAngle, selectionRotationHit, selectionShearHit, selectionTransformedInteractionHit, selectionTransformDeferredPreviewEnabled, selectionTransformModifiers, selectionTransformPreviewChanged, shapeBounds, shouldClosePolygonLasso, shouldRestartFloatingSelectionForCopy, shouldStartCanvasPan, shouldUseTemporaryMoveForCanvasInteraction, shouldUseTemporaryMoveTool, snapSelectionRotation, steppedCanvasZoom, temporaryMoveSuppressesToolPreview, temporaryTransformOffset, translatedSelectionRect, updateBrushSpeedTracking, wheelCanvasZoom, zoomDragModeForModifiers, zoomDragTarget, type CanvasDragState } from './canvas-input'
+import { BRUSH_SPEED_STOP_MS, CanvasInputState, SELECTION_CORNER_RESIZE_HIT_RADIUS, SELECTION_RESIZE_HIT_RADIUS, appendCanvasPathStep, appendPolygonLassoVertex, beginBrushSpeedTracking, beginTemporaryCenteredMarqueeResize, brushLineConnectionOverridesTemporaryMove, cachedSelectionTransformSource, canvasGestureForPreview, centerMarqueeBoundsAtCreationPoint, centeredShapeBounds, clampCanvasZoom, coalescedPointerClientPoints, constrainedTranslation, consumePendingCanvasGestureHistory, createCanvasPanDrag, createMarqueeResizeStart, deferredSelectionCommitInvalidationRects, deferredSelectionPreviewOwner, finalizeMarqueeSelection, floatingSelectionCopyMode, isPendingCanvasPathGesture, isQuickSelectionSecondPress, marqueePreviewTargetForDrag, marqueeSelectionCommit, normalizeCanvasWheelDelta, paletteSamplingShortcutStartsPrimarySample, polygonLassoClosedPathPoints, polygonLassoPreviewPoints, quickSelectCellDragBounds, quickSelectCellSelection, redoCanvasPathStep, registerPendingCanvasGestureHistory, resizeRotatedMarqueeBounds, resizeSelectionBounds, resizeTransformedSelectionBounds, resolveMarqueeModifierMode, restoreCanvasDragAfterPan, restoreTemporaryCenteredMarqueeResize, revertCancelledCanvasDragPixelChanges, rotationHandles, sampledForegroundColorToAdd, selectionGestureMoved, selectionInteractionHit, selectionInteractionOverridesTemporaryMove, selectionMarqueeUsesConstraint, selectionMovePointerDelta, selectionOverlayFrameForDrag, selectionOverlayMaskForDrag, selectionPivotAfterResize, selectionPivotAtDragPoint, selectionPivotHit, selectionResizeHit, selectionRotationAngle, selectionRotationHit, selectionShearHit, selectionTransformedInteractionHit, selectionTransformDeferredPreviewEnabled, selectionTransformModifiers, selectionTransformPreviewChanged, shapeBounds, shouldClosePolygonLasso, shouldRestartFloatingSelectionForCopy, shouldStartCanvasPan, shouldUseTemporaryMoveForCanvasInteraction, shouldUseTemporaryMoveTool, snapSelectionRotation, steppedCanvasZoom, temporaryMoveSuppressesToolPreview, temporaryTransformOffset, translatedSelectionRect, undoActiveCanvasPathGesture, undoCanvasPathStep, updateBrushSpeedTracking, wheelCanvasZoom, zoomDragModeForModifiers, zoomDragTarget, type CanvasDragState } from './canvas-input'
 import { balancedStairLinePoints } from './pixel-line'
 import { createDocument, getActiveLayer, readLayerColor } from './document'
 import { beginPixelEdit } from './history'
@@ -55,16 +55,16 @@ describe('canvas input helpers', () => {
     expect(cachedSelectionTransformSource(cached, document, 4, document.activeLayerId, { ...selection })).toBeNull()
   })
 
-  it('keeps temporary Move active for every other tool while Ctrl remains held', () => {
+  it('keeps temporary Move active only for tools without a dedicated Ctrl gesture', () => {
     const ctrl = { ctrlKey: true, metaKey: false, altKey: false, shiftKey: false }
     expect(shouldUseTemporaryMoveTool('pencil', ctrl, 'Ctrl')).toBe(true)
     expect(shouldUseTemporaryMoveTool('text', ctrl, 'Ctrl')).toBe(true)
-    expect(shouldUseTemporaryMoveTool('selection', ctrl, 'Ctrl')).toBe(true)
+    expect(shouldUseTemporaryMoveTool('selection', ctrl, 'Ctrl')).toBe(false)
     expect(shouldUseTemporaryMoveTool('move', ctrl, 'Ctrl', 'slice')).toBe(true)
     expect(shouldUseTemporaryMoveTool('eyedropper', ctrl, 'Ctrl')).toBe(true)
     expect(shouldUseTemporaryMoveTool('zoom', ctrl, 'Ctrl')).toBe(true)
     expect(shouldUseTemporaryMoveTool('rotate', ctrl, 'Ctrl')).toBe(true)
-    expect(shouldUseTemporaryMoveTool('shape', ctrl, 'Ctrl')).toBe(true)
+    expect(shouldUseTemporaryMoveTool('shape', ctrl, 'Ctrl')).toBe(false)
     expect(shouldUseTemporaryMoveTool('move', { ...ctrl, altKey: true }, 'Ctrl', 'slice')).toBe(true)
     expect(shouldUseTemporaryMoveTool('move', { ...ctrl, shiftKey: true }, 'Ctrl', 'slice')).toBe(true)
     expect(shouldUseTemporaryMoveTool('move', ctrl, 'Ctrl')).toBe(false)
@@ -89,9 +89,9 @@ describe('canvas input helpers', () => {
     expect(selectionInteractionOverridesTemporaryMove('pencil', 'inside')).toBe(false)
   })
 
-  it('uses Ctrl as temporary Move outside a selection without taking over selection interactions', () => {
+  it('keeps Ctrl inside every selection-tool interaction instead of activating temporary Move', () => {
     const ctrl = { ctrlKey: true, metaKey: false, altKey: false, shiftKey: false }
-    expect(shouldUseTemporaryMoveForCanvasInteraction('selection', ctrl, 'Ctrl', 'move', 'outside')).toBe(true)
+    expect(shouldUseTemporaryMoveForCanvasInteraction('selection', ctrl, 'Ctrl', 'move', 'outside')).toBe(false)
     expect(shouldUseTemporaryMoveForCanvasInteraction('selection', ctrl, 'Ctrl', 'move', 'inside')).toBe(false)
     expect(shouldUseTemporaryMoveForCanvasInteraction('selection', ctrl, 'Ctrl', 'move', 'se')).toBe(false)
     expect(shouldUseTemporaryMoveForCanvasInteraction('selection', ctrl, 'Ctrl', 'move', 'outside', true)).toBe(false)
@@ -293,6 +293,25 @@ describe('canvas input helpers', () => {
     expect(selectionOverlayMaskForDrag(null, pan)).toEqual(polygon.selectionStart)
   })
 
+  it('uses the live marquee target for selection dimension displays', () => {
+    const previewTarget = { x: 3, y: 4, width: 18, height: 11 }
+    expect(marqueePreviewTargetForDrag({
+      kind: 'marquee',
+      start: { x: 3, y: 4 },
+      last: { x: 20, y: 14 },
+      moved: true,
+      marqueeBounds: { x: 3, y: 4, width: 12, height: 8 },
+      previewTarget
+    })).toEqual(previewTarget)
+    expect(marqueePreviewTargetForDrag({
+      kind: 'marquee',
+      start: { x: 3, y: 4 },
+      last: { x: 3, y: 4 },
+      moved: false,
+      marqueeBounds: { x: 3, y: 4, width: 1, height: 1 }
+    })).toBeNull()
+  })
+
   it('keeps polygon vertices unique and closes when the first vertex is clicked', () => {
     const path = [{ x: 2, y: 2 }, { x: 8, y: 2 }, { x: 8, y: 7 }]
     expect(appendPolygonLassoVertex(path, { x: 8, y: 7 })).toEqual(path)
@@ -300,6 +319,53 @@ describe('canvas input helpers', () => {
     expect(shouldClosePolygonLasso(path, { x: 2, y: 2 }, 1)).toBe(true)
     expect(shouldClosePolygonLasso(path, { x: 4, y: 6 }, 2)).toBe(true)
     expect(shouldClosePolygonLasso(path.slice(0, 2), { x: 2, y: 2 }, 2)).toBe(false)
+  })
+
+  it('undoes and redoes in-progress freeform and polygon path steps without touching document history', () => {
+    for (const kind of ['freeform-shape', 'polygon-shape', 'lasso', 'polygon-lasso'] as const) {
+      const gesture: CanvasDragState = {
+        kind,
+        start: { x: 1, y: 1 },
+        last: { x: 3, y: 1 },
+        path: [{ x: 1, y: 1 }, { x: 2, y: 1 }]
+      }
+      expect(isPendingCanvasPathGesture(gesture)).toBe(true)
+      expect(appendCanvasPathStep(gesture, { x: 3, y: 1 })).toBe(true)
+      expect(undoCanvasPathStep(gesture)).toBe(true)
+      expect(gesture.path).toEqual([{ x: 1, y: 1 }, { x: 2, y: 1 }])
+      expect(redoCanvasPathStep(gesture)).toBe(true)
+      expect(gesture.path).toEqual([{ x: 1, y: 1 }, { x: 2, y: 1 }, { x: 3, y: 1 }])
+      expect(undoCanvasPathStep(gesture)).toBe(true)
+      expect(appendCanvasPathStep(gesture, { x: 4, y: 1 })).toBe(true)
+      expect(redoCanvasPathStep(gesture)).toBe(false)
+    }
+    expect(isPendingCanvasPathGesture({ kind: 'draw', start: { x: 0, y: 0 }, last: { x: 0, y: 0 } })).toBe(false)
+
+    const input = new CanvasInputState()
+    input.begin({ kind: 'polygon-shape', start: { x: 1, y: 1 }, last: { x: 1, y: 1 }, path: [{ x: 1, y: 1 }] })
+    expect(undoActiveCanvasPathGesture(input)).toBe(true)
+    expect(input.drag).toBeNull()
+    expect(undoActiveCanvasPathGesture(input)).toBe(false)
+  })
+
+  it('routes active canvas gesture history by document and unregisters without clearing replacements', () => {
+    let firstUndo = 0
+    let replacementUndo = 0
+    const unregisterFirst = registerPendingCanvasGestureHistory('document', {
+      undo: () => { firstUndo += 1; return true },
+      redo: () => true
+    })
+    const unregisterReplacement = registerPendingCanvasGestureHistory('document', {
+      undo: () => { replacementUndo += 1; return true },
+      redo: () => true
+    })
+
+    unregisterFirst()
+    expect(consumePendingCanvasGestureHistory('document', 'undo')).toBe(true)
+    expect(firstUndo).toBe(0)
+    expect(replacementUndo).toBe(1)
+    unregisterReplacement()
+    expect(consumePendingCanvasGestureHistory('document', 'undo')).toBe(false)
   })
 
   it('connects polygon vertices with rasterized straight lines instead of rectangular elbows', () => {
@@ -343,23 +409,62 @@ describe('canvas input helpers', () => {
     expect(deferredSelectionPreviewOwner({ ...rotating, selectionPreparationPending: false, deferredSelectionPreview: false }, true)).toBeNull()
   })
 
+  it('keeps Free Tile overlay geometry on the last applied pixel preview', () => {
+    const appliedSelection = { x: 3, y: 4, width: 6, height: 5 }
+    const pendingSelection = { x: 14, y: 2, width: 6, height: 5 }
+    const drag: CanvasDragState = {
+      kind: 'move-content',
+      start: { x: 0, y: 0 },
+      last: { x: 0, y: 0 },
+      freeTileSelectionTransform: true,
+      previewSelection: pendingSelection,
+      previewTarget: pendingSelection,
+      previewAngle: 90,
+      previewPivot: { x: 17, y: 4 },
+      appliedSelection,
+      appliedPreviewTarget: appliedSelection,
+      appliedPreviewAngle: 0,
+      appliedPreviewPivot: { x: 6, y: 6 }
+    }
+
+    expect(selectionOverlayFrameForDrag(null, drag)).toEqual({
+      selection: appliedSelection,
+      target: appliedSelection,
+      angle: 0,
+      shear: undefined,
+      pivot: { x: 6, y: 6 }
+    })
+
+    drag.appliedSelection = pendingSelection
+    drag.appliedPreviewTarget = pendingSelection
+    drag.appliedPreviewAngle = 90
+    drag.appliedPreviewPivot = { x: 17, y: 4 }
+    expect(selectionOverlayFrameForDrag(null, drag)).toEqual({
+      selection: pendingSelection,
+      target: pendingSelection,
+      angle: 90,
+      shear: undefined,
+      pivot: { x: 17, y: 4 }
+    })
+  })
+
   it('keeps zoom levels within the supported range', () => {
     expect(clampCanvasZoom(100)).toBe(64)
-    expect(steppedCanvasZoom(1, true)).toBe(1.25)
+    expect(steppedCanvasZoom(1, true)).toBe(2)
     expect(steppedCanvasZoom(0.0625, false)).toBe(0.0625)
   })
 
   it('supports smooth and percentage wheel zoom modes', () => {
-    expect(wheelCanvasZoom(1, -120, 'stepped')).toBe(1.25)
+    expect(wheelCanvasZoom(1, -120, 'stepped')).toBe(2)
     expect(wheelCanvasZoom(1, 120, 'stepped')).toBe(0.666667)
     expect(wheelCanvasZoom(1, -120, 'smooth')).toBeGreaterThan(1)
-    expect(wheelCanvasZoom(1, -120, 'smooth')).toBeLessThan(1.25)
+    expect(wheelCanvasZoom(1, -120, 'smooth')).toBeLessThan(2)
     expect(wheelCanvasZoom(64, -120, 'smooth')).toBe(64)
   })
 
   it('supports smooth and stepped zoom-tool drag preferences', () => {
     expect(zoomDragTarget(1, 96, 'smooth')).toBe(2)
-    expect(zoomDragTarget(1, 48, 'stepped')).toBe(1.5)
+    expect(zoomDragTarget(1, 48, 'stepped')).toBe(3)
     expect(zoomDragTarget(1, -48, 'stepped')).toBe(0.5)
   })
 
@@ -499,13 +604,14 @@ describe('canvas input helpers', () => {
     expect(selectionInteractionHit(selection, { x: 245, y: 239 }, 1)).toBe('rotate-se')
   })
 
-  it('uses Shift for a new square marquee but keeps Shift-add freeform unless Ctrl is also held', () => {
+  it('uses Ctrl only for centered marquee creation and Shift for the 1:1 constraint', () => {
     expect(selectionMarqueeUsesConstraint({ ctrlKey: false, shiftKey: true }, false, 'replace')).toBe(true)
     expect(selectionMarqueeUsesConstraint({ ctrlKey: false, shiftKey: true }, true, 'add')).toBe(false)
-    expect(selectionMarqueeUsesConstraint({ ctrlKey: true, shiftKey: true }, true, 'add')).toBe(true)
-    expect(selectionMarqueeUsesConstraint({ ctrlKey: true, shiftKey: false }, true, 'replace')).toBe(true)
+    expect(selectionMarqueeUsesConstraint({ ctrlKey: true, shiftKey: true }, false, 'replace')).toBe(true)
+    expect(selectionMarqueeUsesConstraint({ ctrlKey: true, shiftKey: true }, true, 'add')).toBe(false)
+    expect(selectionMarqueeUsesConstraint({ ctrlKey: true, shiftKey: false }, true, 'replace')).toBe(false)
     expect(selectionMarqueeUsesConstraint({ ctrlKey: true, shiftKey: false }, true, 'replace', true)).toBe(false)
-    expect(selectionMarqueeUsesConstraint({ ctrlKey: true, shiftKey: true }, true, 'add', true)).toBe(true)
+    expect(selectionMarqueeUsesConstraint({ ctrlKey: true, shiftKey: true }, true, 'add', true)).toBe(false)
   })
 
   it('uses Shift for proportional transform and Ctrl for integer scaling without copying', () => {
@@ -525,6 +631,16 @@ describe('canvas input helpers', () => {
     expect(constrainedTranslation(state, 8, 4, true)).toEqual({ x: 8, y: 0 })
     expect(constrainedTranslation(state, 4, 8, true)).toEqual({ x: 0, y: 8 })
     expect(constrainedTranslation(state, 4, 8, false)).toEqual({ x: 4, y: 8 })
+  })
+
+  it('keeps selection movement continuous across a repeated-canvas seam', () => {
+    const repeatedDrag: Pick<CanvasDragState, 'start' | 'tileRepeatStart'> = {
+      start: { x: 15, y: 2 },
+      tileRepeatStart: { x: 15.75, y: 2.25 }
+    }
+    expect(selectionMovePointerDelta(repeatedDrag, { x: 0, y: 2 }, { x: 16.1, y: 2.25 })).toEqual({ x: 1, y: 0 })
+    expect(selectionMovePointerDelta(repeatedDrag, { x: 14, y: 3 }, { x: 14.9, y: 3.1 })).toEqual({ x: -1, y: 1 })
+    expect(selectionMovePointerDelta({ start: { x: 4, y: 5 } }, { x: 7, y: 3 })).toEqual({ x: 3, y: -2 })
   })
 
   it('creates constrained square bounds in every drag direction', () => {
@@ -761,6 +877,8 @@ describe('canvas input helpers', () => {
     expect(selectionTransformedInteractionHit(selection, target, 90, undefined, { x: 40, y: 10 }, 1)).toBe('nw')
     expect(selectionTransformedInteractionHit(selection, target, 90, undefined, { x: 46, y: 4 }, 1)).toBe('rotate-nw')
     expect(selectionTransformedInteractionHit(selection, target, 90, undefined, { x: 10, y: 20 }, 1)).not.toBe('nw')
+    expect(selectionTransformedInteractionHit(selection, target, 90, undefined, { x: 20, y: 20 }, 8)).toBe('edge')
+    expect(selectionTransformedInteractionHit(selection, target, 90, undefined, { x: 30, y: 30 }, 8)).toBe('inside')
   })
 
   it('persists selection-only transforms only after their geometry changes', () => {

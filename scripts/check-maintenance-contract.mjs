@@ -34,6 +34,11 @@ const requiredFiles = [
   'scripts/check-changelog-update.mjs',
   'scripts/check-module-boundaries.mjs',
   'scripts/module-boundaries.test.mjs',
+  'scripts/architecture-budget.mjs',
+  'scripts/architecture-contract.mjs',
+  'scripts/architecture-contract.test.mjs',
+  'scripts/architecture-debt-budget.json',
+  'scripts/fixtures/architecture-contract/cases.json',
   'scripts/check-version-contract.mjs',
   'scripts/version-contract.test.mjs',
   'scripts/validation-scope.mjs',
@@ -68,6 +73,7 @@ if (missing.length > 0) {
 
 const overviewPath = join(root, 'docs/architecture/overview.md')
 const overview = await readFile(overviewPath, 'utf8')
+const architectureBudget = JSON.parse(await readFile(join(root, 'scripts/architecture-debt-budget.json'), 'utf8'))
 const statusMatch = overview.match(/^- 计划状态：(已完成|进行中|暂停)$/m)
 const remainingMatch = overview.match(/^- 未完成高风险拆分项：(\d+)$/m)
 const contentErrors = []
@@ -83,11 +89,15 @@ if (!remainingMatch) {
 if (statusMatch && remainingMatch) {
   const status = statusMatch[1]
   const remaining = Number(remainingMatch[1])
+  const budgetRemaining = Object.values(architectureBudget.rules ?? {}).filter((entry) => Number(entry.remaining) > 0).length
   if (status === '已完成' && remaining !== 0) {
     contentErrors.push('计划状态为“已完成”时，未完成高风险拆分项必须为 0。')
   }
   if (status === '进行中' && remaining === 0) {
     contentErrors.push('计划状态为“进行中”时，必须登记至少 1 个未完成高风险拆分项。')
+  }
+  if (remaining !== budgetRemaining) {
+    contentErrors.push(`未完成高风险拆分项应与非零架构债务类别一致：文档 ${remaining}，预算 ${budgetRemaining}。`)
   }
 }
 

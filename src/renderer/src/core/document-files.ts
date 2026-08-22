@@ -4,13 +4,14 @@ import { decodePng, exportDocumentImage, type SaveImageKind } from './png'
 import { decodeProject, encodeProjectAsync, readProjectExpandedRasterBytes, registerProjectSaveBaseline } from './project-format'
 import { browserRasterImageExtensions, decodeBrowserRasterImage } from './raster-image'
 import { currentAppLocale } from './localization'
-import { canPrepareInitialDocumentComposite, registerInitialDocumentComposite, registerPendingInitialDocumentComposite } from './initial-document-composite'
+import { registerInitialDocumentComposite, registerPendingInitialDocumentComposite } from './initial-document-composite'
 import { rehydrateRuntimeRasterDocument } from './runtime-raster'
 import { exportAnimationGif } from './gif'
+import { decodeGifAnimation } from './gif-import'
 import { compositeDocument } from './document'
 import { encodeBmp } from './bmp'
 
-export type SaveImageDialogFormat = 'png' | 'jpeg' | 'webp' | 'ase' | 'aseprite'
+export type SaveImageDialogFormat = 'png' | 'jpeg' | 'webp' | 'psd' | 'ase' | 'aseprite'
 
 export function fileNameFromPath(filePath: string): string {
   return filePath.split(/[\\/]/).pop() ?? filePath
@@ -29,14 +30,15 @@ export function joinDirectoryPath(directory: string, fileName: string): string {
 
 export function sanitizeFileStem(name: string, fallback: string): string {
   const stem = name
-    .replace(/\.(moonsprite|aseprite|ase|png|jpe?g|webp|bmp|svg|gif)$/i, '')
+    .replace(/\.(moonsprite|aseprite|ase|png|jpe?g|webp|bmp|svg|gif|psd)$/i, '')
     .replace(/[\\/:*?"<>|]/g, '_')
     .trim()
   return stem || fallback
 }
 
-export function saveImageExtension(format: SaveImageKind): 'png' | 'jpg' | 'webp' | 'svg' | 'ase' | 'aseprite' {
+export function saveImageExtension(format: SaveImageKind): 'png' | 'jpg' | 'webp' | 'svg' | 'psd' | 'ase' | 'aseprite' {
   if (format === 'jpeg') return 'jpg'
+  if (format === 'psd') return 'psd'
   if (format === 'ase') return 'ase'
   if (format === 'aseprite') return 'aseprite'
   if (format === 'svg') return 'svg'
@@ -47,6 +49,7 @@ export function saveImageExtension(format: SaveImageKind): 'png' | 'jpg' | 'webp
 export function saveImageDialogFormat(format: SaveImageKind): SaveImageDialogFormat {
   if (format === 'jpeg') return 'jpeg'
   if (format === 'webp') return 'webp'
+  if (format === 'psd') return 'psd'
   if (format === 'ase') return 'ase'
   if (format === 'aseprite') return 'aseprite'
   return 'png'
@@ -57,6 +60,7 @@ export function saveImageKindForPath(filePath: string): SaveImageKind | null {
   if (suffix === 'png') return 'png-auto'
   if (suffix === 'jpg' || suffix === 'jpeg') return 'jpeg'
   if (suffix === 'webp') return 'webp'
+  if (suffix === 'psd') return 'psd'
   if (suffix === 'ase') return 'ase'
   if (suffix === 'aseprite') return 'aseprite'
   return null
@@ -115,29 +119,35 @@ export function normalizeSaveDialogPath(filePath: string, format: SaveImageKind)
       ? /\.(ase|aseprite)$/i.test(filePath)
       : filePath.toLowerCase().endsWith(`.${extension}`)
   if (accepted) return filePath
-  return /\.(moonsprite|png|jpg|jpeg|webp|bmp|svg|gif|ase|aseprite)$/i.test(filePath)
-    ? filePath.replace(/\.(moonsprite|png|jpg|jpeg|webp|bmp|svg|gif|ase|aseprite)$/i, `.${extension}`)
+  return /\.(moonsprite|png|jpg|jpeg|webp|bmp|svg|gif|psd|ase|aseprite)$/i.test(filePath)
+    ? filePath.replace(/\.(moonsprite|png|jpg|jpeg|webp|bmp|svg|gif|psd|ase|aseprite)$/i, `.${extension}`)
     : `${filePath}.${extension}`
 }
 
-export function decodeDocumentFile(data: Uint8Array, filePath: string): SpriteDocument {
+const decodeStructuredDocumentFile = (data: Uint8Array, filePath: string, onProgress?: (value: number) => void): SpriteDocument => {
   const suffix = fileExtension(filePath)
   const fileName = fileNameFromPath(filePath)
   const document = suffix === 'moonsprite'
-    ? decodeProject(data)
+    ? decodeProject(data, onProgress)
     : suffix === 'ase' || suffix === 'aseprite'
-      ? decodeAseprite(data, fileName.replace(/\.(aseprite|ase)$/i, ''))
+      ? decodeAseprite(data, fileName.replace(/\.(aseprite|ase)$/i, ''), onProgress)
       : decodePng(data, fileName.replace(/\.png$/i, ''))
+  onProgress?.(1)
   document.filePath = suffix === 'moonsprite' ? filePath : null
   document.sourceFilePath = filePath
   document.name = fileName
   return document
 }
 
+export function decodeDocumentFile(data: Uint8Array, filePath: string): SpriteDocument {
+  return decodeStructuredDocumentFile(data, filePath)
+}
+
 interface DecodeWorkerResponse {
   id: number
   document?: SpriteDocument
   initialComposite?: Uint8ClampedArray
+  initialCompositePending?: boolean
   completed?: boolean
   error?: string
   progress?: number
@@ -205,12 +215,21 @@ export const shouldDecodeDocumentInWorker = (data: Uint8Array, filePath: string)
 }
 
 interface PendingDecodeRequest {
-  resolve: (document: SpriteDocument) => void
+  resolve: (result: WorkerDecodeResult) => void
   reject: (error: Error) => void
   onProgress?: (value: number) => void
-  backgroundCompositeFor?: SpriteDocument
+  document?: SpriteDocument
   initialCompositeFrameId?: string
+  initialComposite: Promise<void>
+  resolveInitialComposite: () => void
 }
+
+interface WorkerDecodeResult {
+  document: SpriteDocument
+  initialComposite?: Promise<void>
+}
+
+class DocumentDecodeWorkerTransportError extends Error {}
 
 let sharedDecodeWorker: Worker | null = null
 const pendingDecodeRequests = new Map<number, PendingDecodeRequest>()
@@ -219,7 +238,10 @@ const resetDecodeWorker = (error?: Error): void => {
   sharedDecodeWorker?.terminate()
   sharedDecodeWorker = null
   if (!error) return
-  for (const request of pendingDecodeRequests.values()) request.reject(error)
+  for (const request of pendingDecodeRequests.values()) {
+    if (request.document) request.resolveInitialComposite()
+    else request.reject(error)
+  }
   pendingDecodeRequests.clear()
 }
 
@@ -233,16 +255,32 @@ const ensureDecodeWorker = (): Worker => {
       request.onProgress?.(event.data.progress)
       return
     }
-    pendingDecodeRequests.delete(event.data.id)
-    if (event.data.document || (request.backgroundCompositeFor && event.data.completed)) {
-      if (event.data.document) rehydrateRuntimeRasterDocument(event.data.document)
-      const targetDocument = request.backgroundCompositeFor ?? event.data.document
-      if (targetDocument && event.data.initialComposite) registerInitialDocumentComposite(targetDocument, event.data.initialComposite, request.initialCompositeFrameId ?? event.data.document?.animation?.activeFrameId)
-      request.resolve(event.data.document ?? request.backgroundCompositeFor!)
+    if (event.data.document) {
+      rehydrateRuntimeRasterDocument(event.data.document)
+      request.document = event.data.document
+      request.initialCompositeFrameId = event.data.document.animation?.activeFrameId
+      if (event.data.initialComposite) registerInitialDocumentComposite(event.data.document, event.data.initialComposite, request.initialCompositeFrameId)
+      if (!event.data.initialCompositePending) {
+        pendingDecodeRequests.delete(event.data.id)
+        request.resolveInitialComposite()
+      }
+      request.resolve({
+        document: event.data.document,
+        ...(event.data.initialCompositePending ? { initialComposite: request.initialComposite } : {})
+      })
+      return
     }
-    else request.reject(new Error(event.data.error || 'Document decode failed'))
+    if (event.data.completed && request.document) {
+      pendingDecodeRequests.delete(event.data.id)
+      if (event.data.initialComposite) registerInitialDocumentComposite(request.document, event.data.initialComposite, request.initialCompositeFrameId)
+      request.resolveInitialComposite()
+      return
+    }
+    pendingDecodeRequests.delete(event.data.id)
+    request.resolveInitialComposite()
+    request.reject(new Error(event.data.error || 'Document decode failed'))
   }
-  worker.onerror = (event) => resetDecodeWorker(new Error(event.message || 'Document decode worker failed'))
+  worker.onerror = (event) => resetDecodeWorker(new DocumentDecodeWorkerTransportError(event.message || 'Document decode worker failed'))
   sharedDecodeWorker = worker
   return worker
 }
@@ -251,59 +289,54 @@ export const warmDocumentDecodeWorker = (): void => {
   if (typeof Worker !== 'undefined') ensureDecodeWorker()
 }
 
-const decodeDocumentFileInWorker = (data: Uint8Array, filePath: string, onProgress?: (value: number) => void, prepareInitialComposite = true, backgroundCompositeFor?: SpriteDocument, initialCompositeFrameId?: string): Promise<SpriteDocument> => new Promise((resolve, reject) => {
-  const worker = ensureDecodeWorker()
+const decodeDocumentFileInWorker = (data: Uint8Array, filePath: string, onProgress?: (value: number) => void, prepareInitialComposite = true): Promise<WorkerDecodeResult> => new Promise((resolve, reject) => {
+  let resolveInitialComposite!: () => void
+  const initialComposite = new Promise<void>((complete) => { resolveInitialComposite = complete })
   const id = ++decodeRequestSequence
-  pendingDecodeRequests.set(id, { resolve, reject, onProgress, backgroundCompositeFor, initialCompositeFrameId })
+  let worker: Worker
+  try {
+    worker = ensureDecodeWorker()
+  } catch (error) {
+    reject(new DocumentDecodeWorkerTransportError(error instanceof Error ? error.message : String(error)))
+    return
+  }
+  pendingDecodeRequests.set(id, { resolve, reject, onProgress, initialComposite, resolveInitialComposite })
   const transfer = data.buffer instanceof ArrayBuffer ? [data.buffer] : []
   try {
-    worker.postMessage({ id, data, filePath, locale: currentAppLocale(), prepareInitialComposite, reportProgress: Boolean(onProgress), returnDocument: !backgroundCompositeFor }, transfer)
+    worker.postMessage({ id, data, filePath, locale: currentAppLocale(), prepareInitialComposite, reportProgress: Boolean(onProgress) }, transfer)
   } catch (error) {
     pendingDecodeRequests.delete(id)
-    reject(error instanceof Error ? error : new Error(String(error)))
+    resolveInitialComposite()
+    reject(new DocumentDecodeWorkerTransportError(error instanceof Error ? error.message : String(error)))
   }
 })
-
-const scheduleBackgroundInitialComposite = (document: SpriteDocument, source: Uint8Array, filePath: string): void => {
-  if (!canPrepareInitialDocumentComposite(document.width, document.height)) return
-  const frameId = document.animation?.activeFrameId
-  const run = (): Promise<void> => decodeDocumentFileInWorker(source, filePath, undefined, true, document, frameId).then(() => undefined)
-  const pending = new Promise<void>((resolve) => {
-    const start = (): void => { void run().then(resolve, resolve) }
-    window.requestAnimationFrame(() => window.requestAnimationFrame(() => {
-      if (typeof window.requestIdleCallback === 'function') window.requestIdleCallback(start)
-      else window.setTimeout(start, 250)
-    }))
-  })
-  registerPendingInitialDocumentComposite(document, pending, frameId)
-}
 
 export async function decodeDocumentFileAsync(data: Uint8Array, filePath: string, onProgress?: (value: number) => void): Promise<SpriteDocument> {
   const suffix = fileExtension(filePath)
   if ((suffix === 'moonsprite' || suffix === 'ase' || suffix === 'aseprite') && typeof Worker !== 'undefined' && shouldDecodeDocumentInWorker(data, filePath)) {
-    const source = suffix === 'moonsprite' ? data.slice() : null
-    const document = await decodeDocumentFileInWorker(data, filePath, onProgress, false)
-    if (source) registerProjectSaveBaseline(document, filePath, source)
-    if (source) scheduleBackgroundInitialComposite(document, source, filePath)
-    return document
+    const source = data.slice()
+    try {
+      const result = await decodeDocumentFileInWorker(data, filePath, onProgress, suffix === 'moonsprite')
+      if (suffix === 'moonsprite') registerProjectSaveBaseline(result.document, filePath, source)
+      if (result.initialComposite) registerPendingInitialDocumentComposite(result.document, result.initialComposite, result.document.animation?.activeFrameId)
+      return result.document
+    } catch (error) {
+      if (!(error instanceof DocumentDecodeWorkerTransportError)) throw error
+      const document = decodeStructuredDocumentFile(source, filePath, onProgress)
+      if (suffix === 'moonsprite') registerProjectSaveBaseline(document, filePath, source)
+      return document
+    }
   }
   if (!browserRasterImageExtensions.includes(suffix as (typeof browserRasterImageExtensions)[number])) {
-    const fileName = fileNameFromPath(filePath)
-    const document = suffix === 'moonsprite'
-      ? decodeProject(data, onProgress)
-      : suffix === 'ase' || suffix === 'aseprite'
-        ? decodeAseprite(data, fileName.replace(/\.(aseprite|ase)$/i, ''), onProgress)
-        : decodePng(data, fileName.replace(/\.png$/i, ''))
-    onProgress?.(1)
-    document.filePath = suffix === 'moonsprite' ? filePath : null
-    document.sourceFilePath = filePath
-    document.name = fileName
+    const document = decodeStructuredDocumentFile(data, filePath, onProgress)
     if (suffix === 'moonsprite') registerProjectSaveBaseline(document, filePath, data)
     return document
   }
   const fileName = fileNameFromPath(filePath)
   const mimeType = suffix === 'jpg' || suffix === 'jpeg' ? 'image/jpeg' : `image/${suffix}`
-  const document = await decodeBrowserRasterImage(data, fileName.replace(/\.(jpe?g|webp|bmp|gif)$/i, ''), mimeType)
+  const document = suffix === 'gif'
+    ? decodeGifAnimation(data, fileName.replace(/\.gif$/i, ''))
+    : await decodeBrowserRasterImage(data, fileName.replace(/\.(jpe?g|webp|bmp)$/i, ''), mimeType)
   onProgress?.(1)
   document.filePath = null
   document.sourceFilePath = filePath

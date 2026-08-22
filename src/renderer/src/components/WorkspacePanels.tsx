@@ -6,12 +6,15 @@ import { ColorPanel } from '@/components/panels/ColorPanel'
 import { LayersPanel } from '@/components/panels/LayersPanel'
 import { PalettePanel } from '@/components/panels/PalettePanel'
 import { PreviewPanel } from '@/components/panels/PreviewPanel'
+import { TilesetPanel } from '@/components/panels/TilesetPanel'
+import { BrushLibraryPanel } from '@/components/panels/BrushLibraryPanel'
+import { useBrushLibrary } from '@/components/app/useBrushLibrary'
 import { PixelUtilityIcon } from '@/components/PixelUtilityIcon'
 import type { DockDragProps } from '@/components/workspace-panel-types'
 import { readStoredString, removeStoredValue, saveFloatingPosition, writeStoredString } from '@/core/panel-preferences'
-import { COLOR_SQUARE_ANCHOR_STORAGE_KEY, COLOR_SQUARE_DOCK_STORAGE_KEY, DEFAULT_BOTTOM_WIDTHS, DEFAULT_INSPECTOR_ORDER, DEFAULT_INSPECTOR_SIZES, INSPECTOR_LAYOUT_STORAGE_KEY, MINIMUM_BOTTOM_WIDTHS, MINIMUM_INSPECTOR_SIZES, loadInspectorLayout, moveInspectorPanel, proportionalPanelFlex, type WorkspacePanelId } from '@/core/panel-layout'
+import { bottomPanelFlex, COLOR_SQUARE_ANCHOR_STORAGE_KEY, COLOR_SQUARE_DOCK_STORAGE_KEY, DEFAULT_BOTTOM_WIDTHS, DEFAULT_INSPECTOR_ORDER, DEFAULT_INSPECTOR_SIZES, INSPECTOR_LAYOUT_STORAGE_KEY, MINIMUM_BOTTOM_WIDTHS, MINIMUM_INSPECTOR_SIZES, loadInspectorLayout, moveInspectorPanel, proportionalPanelFlex, type WorkspacePanelId } from '@/core/panel-layout'
 import { FLOATING_PANEL_STORAGE_KEYS } from '@/core/workspace-layout-preferences'
-import { colorPanelRenderKey, layersPanelRenderKey, palettePanelRenderKey, previewPanelRenderKey } from '@/core/panel-render-keys'
+import { brushPanelRenderKey, colorPanelRenderKey, layersPanelRenderKey, palettePanelRenderKey, previewPanelRenderKey, tilesetPanelRenderKey } from '@/core/panel-render-keys'
 import { FloatingDockPreview, panelDockZoneAt } from './floating-panel'
 import type { FixedPanelDock, PanelDock } from './floating-panel'
 import { PerformanceProfiler } from './PerformanceProfiler'
@@ -54,6 +57,10 @@ const MemoPreviewPanel = memo(function MemoPreviewPanel({ renderKey: _renderKey,
   return <PreviewPanel {...props} />
 }, (previous, next) => samePanelRender(previous, next) && previous.relativeLuminanceInPreview === next.relativeLuminanceInPreview && previous.relativeLuminanceOverride === next.relativeLuminanceOverride)
 
+const MemoTilesetPanel = memo(function MemoTilesetPanel({ renderKey: _renderKey, ...props }: PanelRenderProps<ComponentProps<typeof TilesetPanel>>) {
+  return <TilesetPanel {...props} />
+}, samePanelRender)
+
 export function inspectorDockHitAtPoint(movingId: WorkspacePanelId, clientX: number, clientY: number): InspectorDockHit | null {
   const zone = panelDockZoneAt(clientX, clientY)
   if (!zone) return null
@@ -92,7 +99,8 @@ export function InspectorPanels({ session, panelVisibility, onClosePreview, pane
   onPopupPanelClose?: () => void
 }) {
   const { t } = useI18n()
-  const panelLabels: Record<WorkspacePanelId, string> = { color: t('panel.color'), palette: t('panel.palette'), layers: t('panel.layers'), preview: t('panel.preview') }
+  const brushLibrary = useBrushLibrary(session)
+  const panelLabels: Record<WorkspacePanelId, string> = { color: t('panel.color'), palette: t('panel.palette'), layers: t('panel.layers'), preview: t('panel.preview'), tileset: t('panel.tileset'), brushes: t('panel.brushes') }
   const panelDockLabels: Record<PanelDock, string> = { left: t('panel.dock.left'), right: t('panel.dock.right'), bottom: t('panel.dock.bottom'), floating: t('panel.dock.floating') }
   const panelStateKey = useWorkspace((state) => {
     const current = state.sessions.find((item) => item.document.id === session.document.id) ?? session
@@ -100,7 +108,9 @@ export function InspectorPanels({ session, panelVisibility, onClosePreview, pane
       colorPanelRenderKey(current),
       palettePanelRenderKey(current),
       layersPanelRenderKey(current),
-      previewPanelRenderKey(current)
+      previewPanelRenderKey(current),
+      tilesetPanelRenderKey(current),
+      brushPanelRenderKey(current)
     ].join('::')
   })
   void panelStateKey
@@ -196,10 +206,12 @@ export function InspectorPanels({ session, panelVisibility, onClosePreview, pane
     }
     onPanelVisibilityChange(id, true)
     onPanelDockChange(id, dock)
+    if (popupPanelId === id) onPopupPanelClose?.()
     notifyWorkspaceLayoutChanged()
     setPanelContextMenu(null)
   }
   const dockFor = (id: WorkspacePanelId): PanelDock => panelDocks[id] ?? (id === 'preview' ? 'floating' : 'right')
+  const activePopupPanelId = popupPanelId && dockFor(popupPanelId) !== 'floating' ? popupPanelId : null
 
   const persistLayout = (nextOrder = order, nextVerticalWeights = verticalWeightsRef.current, nextBottomWeights = bottomWeightsRef.current): void => {
     try {
@@ -402,7 +414,7 @@ export function InspectorPanels({ session, panelVisibility, onClosePreview, pane
   }
 
   const panelFor = (id: WorkspacePanelId, docked: boolean, dock?: PanelDock, popup = false, popupDragStart?: (event: ReactPointerEvent<HTMLElement>) => void) => {
-    const dockProps: DockDragProps = popup ? { docked: true, onDockDragStart: (event) => popupDragStart?.(event) } : { docked, onFloatingDock: (dock) => onPanelDockChange(id, dock), onPanelContextMenu: (event) => openPanelContextMenu(id, event), onDockDragStart: (event, detach) => {
+    const dockProps: DockDragProps = popup ? { docked: true, onPanelContextMenu: (event) => openPanelContextMenu(id, event), onDockDragStart: (event) => popupDragStart?.(event) } : { docked, onFloatingDock: (dock) => onPanelDockChange(id, dock), onPanelContextMenu: (event) => openPanelContextMenu(id, event), onDockDragStart: (event, detach) => {
       if (event.button !== 0 || (event.target as HTMLElement).closest('button, input, select')) return
       dockDragRef.current = { id, startX: event.clientX, startY: event.clientY, detach, moved: false }
       document.documentElement.classList.add(workspacePanelDraggingClass)
@@ -414,20 +426,29 @@ export function InspectorPanels({ session, panelVisibility, onClosePreview, pane
         ? <MemoPalettePanel renderKey={palettePanelRenderKey(session)} session={session} {...dockProps} />
         : id === 'layers'
           ? <MemoLayersPanel renderKey={layersPanelRenderKey(session)} session={session} sideDocked={dock === 'left' || dock === 'right'} {...dockProps} />
-          : <MemoPreviewPanel renderKey={previewPanelRenderKey(session)} session={session} onClose={popup ? onPopupPanelClose ?? onClosePreview : onClosePreview} relativeLuminanceInPreview={relativeLuminanceInPreview} relativeLuminanceOverride={previewRelativeLuminanceOverride} {...dockProps} />
+          : id === 'brushes'
+            ? <BrushLibraryPanel session={session} controller={brushLibrary} {...dockProps} />
+            : id === 'tileset'
+              ? <MemoTilesetPanel renderKey={tilesetPanelRenderKey(session)} session={session} {...dockProps} />
+              : <MemoPreviewPanel renderKey={previewPanelRenderKey(session)} session={session} onClose={popup ? onPopupPanelClose ?? onClosePreview : onClosePreview} relativeLuminanceInPreview={relativeLuminanceInPreview} relativeLuminanceOverride={previewRelativeLuminanceOverride} {...dockProps} />
     return <PerformanceProfiler id={`Panel:${id}`}>{panel}</PerformanceProfiler>
   }
 
   const completeOrder = [...order, ...DEFAULT_INSPECTOR_ORDER.filter((id) => !order.includes(id))]
-  const activeOrder = completeOrder.filter((id) => panelVisibility[id] && id !== popupPanelId)
+  const activeOrder = completeOrder.filter((id) => panelVisibility[id])
   const renderDock = (dock: FixedPanelDock) => {
-    const dockOrder = activeOrder.filter((id) => dockFor(id) === dock)
+    const dockOrder = activeOrder.filter((id) => id !== activePopupPanelId && dockFor(id) === dock)
     const horizontal = dock === 'bottom'
+    const bottomFillId = horizontal
+      ? dockOrder.includes('layers')
+        ? 'layers'
+        : dockOrder.find((id) => id !== 'color' || colorSquareDock !== 'bottom') ?? dockOrder[0]
+      : undefined
     return <div className={horizontal ? 'bottom-panel-stack' : 'inspector-stack'} data-panel-dock-content={dock}>{dockOrder.map((id, index) => {
       const dropPreview = dockDropTarget?.kind === 'dock' && dockDropTarget.dock === dock && dockDropTarget.id === id ? dockDropTarget : null
       const nextId = dockOrder[index + 1]
       const squareLocked = id === 'color' && colorSquareDock === dock
-      return <Fragment key={id}><div className={`${horizontal ? 'bottom-panel-group' : 'inspector-panel-group'} ${draggingPanel === id ? 'dock-dragging' : ''} ${squareLocked && (horizontal || dockOrder.length > 1) ? 'square-locked' : ''}`} data-inspector-panel-id={id} style={horizontal ? { flex: squareLocked ? `0 0 ${bottomWeights[id]}px` : proportionalPanelFlex(bottomWeights[id]), minWidth: MINIMUM_BOTTOM_WIDTHS[id], '--locked-size': `${bottomWeights[id]}px` } as React.CSSProperties : { flex: squareLocked ? `0 0 ${verticalWeights[id]}px` : proportionalPanelFlex(verticalWeights[id]), minHeight: MINIMUM_INSPECTOR_SIZES[id] + (index < dockOrder.length - 1 ? 7 : 0), '--locked-size': `${verticalWeights[id]}px` } as React.CSSProperties}>
+      return <Fragment key={id}><div className={`${horizontal ? 'bottom-panel-group' : 'inspector-panel-group'} ${draggingPanel === id ? 'dock-dragging' : ''} ${squareLocked && (horizontal || dockOrder.length > 1) ? 'square-locked' : ''}`} data-inspector-panel-id={id} style={horizontal ? { flex: squareLocked ? `0 0 ${bottomWeights[id]}px` : bottomPanelFlex(bottomWeights[id], id === bottomFillId), minWidth: MINIMUM_BOTTOM_WIDTHS[id], '--locked-size': `${bottomWeights[id]}px` } as React.CSSProperties : { flex: squareLocked ? `0 0 ${verticalWeights[id]}px` : proportionalPanelFlex(verticalWeights[id]), minHeight: MINIMUM_INSPECTOR_SIZES[id] + (index < dockOrder.length - 1 ? 7 : 0), '--locked-size': `${verticalWeights[id]}px` } as React.CSSProperties}>
         <div className="inspector-panel-slot">{panelFor(id, true, dock)}</div>
         {!horizontal && index < dockOrder.length - 1 && <div className="panel-resizer" role="separator" aria-orientation="horizontal" aria-label={t('panel.resizeHeight', { panel: panelLabels[id] })} onPointerDown={(event) => {
           const measured = { ...verticalWeightsRef.current }
@@ -459,17 +480,17 @@ export function InspectorPanels({ session, panelVisibility, onClosePreview, pane
     {leftDockHost && createPortal(renderDock('left'), leftDockHost)}
     {bottomDockHost && createPortal(renderDock('bottom'), bottomDockHost)}
     {createPortal(<>{activeOrder.filter((id) => dockFor(id) === 'floating').map((id) => <span className="floating-panel-host" key={id}>{panelFor(id, false, 'floating')}</span>)}</>, document.body)}
-    {popupPanelId && createPortal(<PopupPanelWindow
-      key={popupPanelId}
-      id={popupPanelId}
+    {activePopupPanelId && createPortal(<PopupPanelWindow
+      key={activePopupPanelId}
+      id={activePopupPanelId}
       anchor={popupPanelAnchorRef.current}
-      label={panelLabels[popupPanelId]}
+      label={panelLabels[activePopupPanelId]}
       onClose={() => onPopupPanelClose?.()}
-      renderPanel={(startDrag) => panelFor(popupPanelId, true, undefined, true, startDrag)}
+      renderPanel={(startDrag) => panelFor(activePopupPanelId, true, undefined, true, startDrag)}
     />, document.body)}
     <FloatingDockPreview style={detachPreview} />
     {panelContextMenu && createPortal(<div className="context-menu workspace-panel-context-menu" role="menu" aria-label={t('panel.settings', { panel: panelLabels[panelContextMenu.id] })} style={{ left: panelContextMenu.x, top: panelContextMenu.y }} onContextMenu={(event) => event.preventDefault()}>
-      <button className="context-menu-item" type="button" role="menuitem" onClick={() => { onPanelVisibilityChange(panelContextMenu.id, false); setPanelContextMenu(null) }}><PixelUtilityIcon kind="eyeOff" /><span>{t('panel.hide', { panel: panelLabels[panelContextMenu.id] })}</span></button>
+      <button className="context-menu-item" type="button" role="menuitem" onClick={() => { onPanelVisibilityChange(panelContextMenu.id, false); if (popupPanelId === panelContextMenu.id) onPopupPanelClose?.(); setPanelContextMenu(null) }}><PixelUtilityIcon kind="eyeOff" /><span>{t('panel.hide', { panel: panelLabels[panelContextMenu.id] })}</span></button>
       <span className="context-menu-divider" />
       {(['left', 'right', 'bottom', 'floating'] as PanelDock[]).map((dock) => <button key={dock} className="context-menu-item" type="button" role="menuitemradio" aria-checked={dockFor(panelContextMenu.id) === dock} onClick={() => movePanelFromMenu(panelContextMenu.id, dock)}>{dockFor(panelContextMenu.id) === dock ? <PixelUtilityIcon kind="check" /> : <PixelUtilityIcon kind="move" />}<span>{panelDockLabels[dock]}</span></button>)}
       {panelContextMenu.id === 'preview' && <><span className="context-menu-divider" /><button className="context-menu-item" type="button" role="menuitemcheckbox" aria-checked={previewRelativeLuminance} onClick={() => { setPreviewRelativeLuminanceOverride(!previewRelativeLuminance); setPanelContextMenu(null) }}>{previewRelativeLuminance ? <PixelUtilityIcon kind="check" /> : <span />}<span>{t('preview.relativeLuminance')}</span></button></>}

@@ -13,12 +13,16 @@ test('普通 UI、交互热点和高频渲染分别归入 P1、P2、P3', () => {
   assert.equal(input.suites[0].id, 'canvas-interaction')
   assert.deepEqual(input.commands, ['pnpm bench:canvas -- --size=512 --scenario=pan,zoom --runtime=production'])
   assert.equal(classifyPerformanceImpact(['src/renderer/src/components/CanvasStage.tsx']).level, 'P3')
+
+  const adjustments = classifyPerformanceImpact(['src/renderer/src/core/adjustments.ts'])
+  assert.equal(adjustments.level, 'P2')
+  assert.deepEqual(adjustments.suites.map((suite) => suite.id), ['adjustments'])
 })
 
 test('依赖与构建配置归入 P4 并覆盖其他级别', () => {
   const result = classifyPerformanceImpact(['src/renderer/src/components/CanvasStage.tsx', 'pnpm-lock.yaml'])
   assert.equal(result.level, 'P4')
-  assert.deepEqual(result.suites.map((suite) => suite.id), ['canvas-standard', 'canvas-profile', 'canvas-complex', 'canvas-large-800', 'canvas-large-2048', 'canvas-large-4000', 'canvas-large-sentinel', 'selection', 'document-composite', 'project-format', 'bundle', 'desktop'])
+  assert.deepEqual(result.suites.map((suite) => suite.id), ['canvas-standard', 'canvas-profile', 'canvas-complex', 'canvas-large-800', 'canvas-large-2048', 'canvas-large-4000', 'canvas-large-sentinel', 'selection', 'adjustments', 'document-composite', 'project-format', 'bundle', 'desktop'])
   assert.deepEqual(result.suites.find((suite) => suite.id === 'canvas-complex').sizes, [800, 1024])
   assert.equal(result.suites.find((suite) => suite.id === 'canvas-profile').runtime, 'profile')
 })
@@ -32,7 +36,7 @@ test('发布审计至少运行 P3 并固定覆盖标准、Profiler、大画布�
   assert.equal(ordinaryRelease.level, 'P3')
   assert.deepEqual(ordinaryRelease.suites.map((suite) => suite.id), ['canvas-standard', 'canvas-profile', 'canvas-large-800', 'canvas-large-2048', 'canvas-large-4000', 'canvas-large-sentinel', 'canvas-complex', 'project-format', 'bundle'])
   assert.deepEqual(ordinaryRelease.suites[0].scenarios, ['pan', 'zoom', 'rotated-zoom', 'draw', 'shape', 'marquee', 'bucket-fill', 'gradient'])
-  assert.deepEqual(ordinaryRelease.suites.find((suite) => suite.id === 'canvas-large-4000').scenarios, ['large-pan', 'large-zoom', 'large-draw', 'large-shape', 'large-marquee', 'large-bucket-fill', 'large-gradient', 'large-detail-pan', 'large-detail-draw', 'large-detail-draw-timelapse'])
+  assert.deepEqual(ordinaryRelease.suites.find((suite) => suite.id === 'canvas-large-4000').scenarios, ['large-pan', 'large-zoom', 'large-draw', 'large-shape', 'large-marquee', 'large-bucket-fill', 'large-selection-fill', 'large-selection-delete', 'large-layer-visibility', 'large-group-visibility', 'large-layer-opacity', 'large-layer-reorder', 'large-layer-style-move', 'large-layer-style-shadow-size', 'large-layer-style-inner-glow-size', 'large-gradient', 'large-detail-pan', 'large-detail-draw', 'large-detail-draw-timelapse'])
   const complexSuite = ordinaryRelease.suites.find((suite) => suite.id === 'canvas-complex')
   assert.deepEqual(complexSuite.sizes, [1024])
   assert.deepEqual(complexSuite.scenarios, ['complex-draw', 'complex-undo', 'complex-playback'])

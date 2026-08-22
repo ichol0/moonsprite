@@ -1,7 +1,9 @@
-import type { BrushPaintMode, BrushShape, BrushTexture, FillKind, FillMode, GradientDither, ImageBrushSettings, LineKind, ProceduralBrushId, ProceduralBrushSettings, SelectionKind, SelectionMode, ShapeKind, ShapeRatio, ToolId } from '@shared/types'
+import type { BrushDitherSettings, BrushPaintMode, BrushShape, BrushTexture, FillKind, FillMode, GradientDither, ImageBrushSettings, LineKind, ProceduralBrushId, ProceduralBrushSettings, SelectionKind, SelectionMode, ShapeKind, ShapeRatio, ToolId } from '@shared/types'
 import { normalizeProceduralBrushSettings, PROCEDURAL_BRUSH_IDS } from './brushes'
+import { DEFAULT_BRUSH_DITHER_SETTINGS, normalizeBrushDitherSettings } from './gradient-color'
 import { readStoredJson, writeStoredJson } from './storage'
 import { DEFAULT_SYMMETRY_AXES, type SymmetryAxes } from './symmetry'
+import { DEFAULT_GAP_CLOSING_THRESHOLD, normalizeGapClosingThreshold } from './contiguous-region'
 import {
   DEFAULT_BRUSH_DYNAMICS_SETTINGS,
   DEFAULT_BRUSH_PRESSURE_SETTINGS,
@@ -23,6 +25,7 @@ export type BrushTool = typeof BRUSH_TOOLS[number]
 export interface PersistedBrushProfile {
   brushSize: number
   brushShape: BrushShape
+  brushDither: BrushDitherSettings
   brushTexture: BrushTexture
   brushTextureScale: number
   brushPaintMode: BrushPaintMode
@@ -46,6 +49,8 @@ export interface PersistedToolSettings extends PersistedBrushProfile {
   fillMode: FillMode
   fillKind: FillKind
   fillTolerance: number
+  fillGapClosing: boolean
+  fillGapThreshold: number
   gradientTolerance: number
   gradientContiguous: boolean
   gradientDither: GradientDither
@@ -54,6 +59,8 @@ export interface PersistedToolSettings extends PersistedBrushProfile {
   selectionMode: SelectionMode
   wandTolerance: number
   wandContiguous: boolean
+  wandGapClosing: boolean
+  wandGapThreshold: number
   perfectPixels: boolean
   symmetryAxes: SymmetryAxes
   airbrushParticleRadius: number
@@ -70,9 +77,10 @@ const createDefaultProceduralBrushSettings = (): Record<ProceduralBrushId, Proce
 export const defaultToolSettings: PersistedToolSettings = {
   brushSize: 1,
   brushShape: 'round',
+  brushDither: { ...DEFAULT_BRUSH_DITHER_SETTINGS },
   brushTexture: 'solid',
   brushTextureScale: 1,
-  brushPaintMode: 'pattern-source',
+  brushPaintMode: 'paint',
   brushPaintModePreferenceVersion: 1,
   brushImageId: null,
   brushImageSettings: { mode: 'dither', threshold: 128, blackPoint: 0, whitePoint: 255, invert: false },
@@ -90,6 +98,8 @@ export const defaultToolSettings: PersistedToolSettings = {
   fillMode: 'contiguous',
   fillKind: 'bucket',
   fillTolerance: 0,
+  fillGapClosing: false,
+  fillGapThreshold: DEFAULT_GAP_CLOSING_THRESHOLD,
   gradientTolerance: 0,
   gradientContiguous: true,
   gradientDither: 'none',
@@ -98,6 +108,8 @@ export const defaultToolSettings: PersistedToolSettings = {
   selectionMode: 'replace',
   wandTolerance: 0,
   wandContiguous: true,
+  wandGapClosing: false,
+  wandGapThreshold: DEFAULT_GAP_CLOSING_THRESHOLD,
   perfectPixels: false,
   symmetryAxes: { ...DEFAULT_SYMMETRY_AXES },
   airbrushParticleRadius: 1,
@@ -134,6 +146,7 @@ export function normalizePersistedBrushProfile(stored: Partial<PersistedBrushPro
   return {
     brushSize: Number.isFinite(stored?.brushSize) ? Math.max(1, Math.min(128, Math.round(stored!.brushSize!))) : fallback.brushSize,
     brushShape: stored?.brushShape === 'square' || stored?.brushShape === 'round' || stored?.brushShape === 'line' ? stored.brushShape : fallback.brushShape,
+    brushDither: normalizeBrushDitherSettings(stored?.brushDither, fallback.brushDither),
     brushTexture: stored?.brushTexture === 'cracks' || stored?.brushTexture === 'wood' || stored?.brushTexture === 'grain' || stored?.brushTexture === 'solid' ? stored.brushTexture : fallback.brushTexture,
     brushTextureScale: Number.isFinite(stored?.brushTextureScale) ? Math.max(1, Math.min(16, Math.round(stored!.brushTextureScale!))) : fallback.brushTextureScale,
     brushPaintMode: stored?.brushPaintMode === 'paint' || stored?.brushPaintMode === 'pattern-source' || stored?.brushPaintMode === 'pattern-target' ? stored.brushPaintMode : fallback.brushPaintMode,
@@ -158,6 +171,7 @@ export function loadToolSettings(storage?: Storage): PersistedToolSettings {
     const stored = readStoredJson<Partial<PersistedToolSettings> | null>(TOOL_SETTINGS_KEY, null, storage)
     if (!stored) return {
       ...defaultToolSettings,
+      brushDither: { ...DEFAULT_BRUSH_DITHER_SETTINGS },
       proceduralBrushSettings: createDefaultProceduralBrushSettings(),
       brushDynamics: cloneBrushDynamicsSettings(DEFAULT_BRUSH_DYNAMICS_SETTINGS),
       brushPressure: { ...DEFAULT_BRUSH_PRESSURE_SETTINGS }
@@ -183,6 +197,8 @@ export function loadToolSettings(storage?: Storage): PersistedToolSettings {
       fillMode: stored.fillMode === 'global' || stored.fillMode === 'contiguous' ? stored.fillMode : defaultToolSettings.fillMode,
       fillKind: stored.fillKind === 'gradient' || stored.fillKind === 'bucket' ? stored.fillKind : defaultToolSettings.fillKind,
       fillTolerance: Number.isFinite(stored.fillTolerance) ? Math.max(0, Math.min(255, Math.round(stored.fillTolerance!))) : defaultToolSettings.fillTolerance,
+      fillGapClosing: typeof stored.fillGapClosing === 'boolean' ? stored.fillGapClosing : defaultToolSettings.fillGapClosing,
+      fillGapThreshold: Number.isFinite(stored.fillGapThreshold) ? normalizeGapClosingThreshold(stored.fillGapThreshold!) : defaultToolSettings.fillGapThreshold,
       gradientTolerance: Number.isFinite(stored.gradientTolerance) ? Math.max(0, Math.min(255, Math.round(stored.gradientTolerance!))) : defaultToolSettings.gradientTolerance,
       gradientContiguous: typeof stored.gradientContiguous === 'boolean' ? stored.gradientContiguous : defaultToolSettings.gradientContiguous,
       gradientDither: stored.gradientDither === 'checker' || stored.gradientDither === 'diagonal' || stored.gradientDither === 'diagonal-reverse' || stored.gradientDither === 'horizontal' || stored.gradientDither === 'vertical' || stored.gradientDither === 'bayer-2' || stored.gradientDither === 'bayer-4' || stored.gradientDither === 'bayer-8' || stored.gradientDither === 'none' ? stored.gradientDither : defaultToolSettings.gradientDither,
@@ -191,6 +207,8 @@ export function loadToolSettings(storage?: Storage): PersistedToolSettings {
       selectionMode: stored.selectionMode === 'add' || stored.selectionMode === 'subtract' || stored.selectionMode === 'intersect' || stored.selectionMode === 'replace' ? stored.selectionMode : defaultToolSettings.selectionMode,
       wandTolerance: Number.isFinite(stored.wandTolerance) ? Math.max(0, Math.min(255, Math.round(stored.wandTolerance!))) : defaultToolSettings.wandTolerance,
       wandContiguous: typeof stored.wandContiguous === 'boolean' ? stored.wandContiguous : defaultToolSettings.wandContiguous,
+      wandGapClosing: typeof stored.wandGapClosing === 'boolean' ? stored.wandGapClosing : defaultToolSettings.wandGapClosing,
+      wandGapThreshold: Number.isFinite(stored.wandGapThreshold) ? normalizeGapClosingThreshold(stored.wandGapThreshold!) : defaultToolSettings.wandGapThreshold,
       perfectPixels: typeof stored.perfectPixels === 'boolean' ? stored.perfectPixels : defaultToolSettings.perfectPixels,
       airbrushParticleRadius: Number.isFinite(stored.airbrushParticleRadius) ? Math.max(1, Math.min(16, Math.round(stored.airbrushParticleRadius!))) : defaultToolSettings.airbrushParticleRadius,
       airbrushParticleShape: stored.airbrushParticleShape === 'square' || stored.airbrushParticleShape === 'line' || stored.airbrushParticleShape === 'round' ? stored.airbrushParticleShape : defaultToolSettings.airbrushParticleShape,
@@ -208,6 +226,7 @@ export function loadToolSettings(storage?: Storage): PersistedToolSettings {
   } catch {
     return {
       ...defaultToolSettings,
+      brushDither: { ...DEFAULT_BRUSH_DITHER_SETTINGS },
       proceduralBrushSettings: createDefaultProceduralBrushSettings(),
       brushDynamics: cloneBrushDynamicsSettings(DEFAULT_BRUSH_DYNAMICS_SETTINGS),
       brushPressure: { ...DEFAULT_BRUSH_PRESSURE_SETTINGS }

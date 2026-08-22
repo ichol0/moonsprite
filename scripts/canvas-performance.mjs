@@ -54,6 +54,17 @@ function summarize(label, canvasSize, samples) {
     const durations = samples.reactCommits.filter((sample) => sample.region === region).map((sample) => sample.duration)
     return [region, { count: durations.length, p95: percentile(durations, 0.95), longest: Math.max(0, ...durations) }]
   }))
+  const operationByStage = Object.fromEntries([...new Set(samples.operationStages.map((sample) => sample.stage))].map((stage) => {
+    const stageSamples = samples.operationStages.filter((sample) => sample.stage === stage)
+    const durations = stageSamples.map((sample) => sample.duration)
+    return [stage, {
+      count: durations.length,
+      p50: percentile(durations, 0.5),
+      p95: percentile(durations, 0.95),
+      longest: Math.max(0, ...durations),
+      detail: stageSamples.at(-1)?.detail ?? {}
+    }]
+  }))
   return {
     canvasSize,
     scenario: label,
@@ -76,13 +87,14 @@ function summarize(label, canvasSize, samples) {
     reactCommitCount: rootReactCommits.length,
     reactCommitP95: percentile(rootReactCommits, 0.95),
     longestReactCommit: Math.max(0, ...rootReactCommits),
-    reactByRegion
+    reactByRegion,
+    operationByStage
   }
 }
 
 async function startFrameProbe(page) {
   await page.evaluate(() => {
-    const samples = { frames: [], longTasks: [], draws: [], inputs: [], reactCommits: [] }
+    const samples = { frames: [], longTasks: [], draws: [], inputs: [], reactCommits: [], operationStages: [] }
     let lastFrame = 0
     let running = true
     let observer = null
@@ -112,6 +124,9 @@ async function startFrameProbe(page) {
       },
       recordReactCommit(region, duration, phase) {
         samples.reactCommits.push({ region, duration, phase })
+      },
+      recordOperationStage(stage, duration, detail = {}) {
+        samples.operationStages.push({ stage, duration, detail })
       },
       stop() {
         running = false
@@ -327,6 +342,89 @@ async function benchmarkScenarioPage(page, size, scenario) {
     if (initialView) await prepareToolScenario(page, initialView, 'fill', 'bucket')
     results.push(await runScenario(page, size, scenario, async () => {
       await page.mouse.click(center.x, center.y, { button: 'left' })
+    }))
+  }
+
+  if (actionKind === 'selection-fill') {
+    if (initialView) await resetSimpleScenario(page, initialView)
+    await page.evaluate(() => {
+      const harness = window.__moonSpritePerformanceHarness
+      if (!harness) throw new Error('Performance harness is unavailable.')
+      harness.prepareCenteredSelection(1024)
+    })
+    results.push(await runScenario(page, size, scenario, async () => {
+      await page.keyboard.press('F')
+    }))
+  }
+
+  if (actionKind === 'selection-delete') {
+    if (initialView) await resetSimpleScenario(page, initialView)
+    await page.evaluate((selectionSize) => {
+      const harness = window.__moonSpritePerformanceHarness
+      if (!harness) throw new Error('Performance harness is unavailable.')
+      harness.prepareCenteredSelection(selectionSize)
+    }, size)
+    results.push(await runScenario(page, size, scenario, async () => {
+      await page.keyboard.press('Delete')
+    }))
+  }
+
+  if (actionKind === 'layer-visibility' || actionKind === 'group-visibility' || actionKind === 'layer-opacity' || actionKind === 'layer-reorder') {
+    if (initialView) await resetSimpleScenario(page, initialView)
+    await page.waitForTimeout(500)
+    results.push(await runScenario(page, size, scenario, async () => {
+      await page.evaluate((operation) => {
+        const harness = window.__moonSpritePerformanceHarness
+        if (!harness) throw new Error('Performance harness is unavailable.')
+        if (operation === 'layer-visibility') harness.toggleActiveLayerVisibility()
+        else if (operation === 'group-visibility') harness.toggleActiveLayerGroupVisibility()
+        else if (operation === 'layer-opacity') harness.previewActiveLayerOpacity(0.5)
+        else harness.reorderActiveLayer()
+      }, actionKind)
+    }))
+  }
+
+  if (actionKind === 'layer-style-move') {
+    if (initialView) await resetSimpleScenario(page, initialView)
+    await page.evaluate(() => {
+      const harness = window.__moonSpritePerformanceHarness
+      if (!harness) throw new Error('Performance harness is unavailable.')
+      harness.prepareActiveLayerStyle(0, 2)
+      harness.prepareTool('move')
+      harness.setMoveAutoSelect(false)
+    })
+    await page.waitForTimeout(1_000)
+    results.push(await runScenario(page, size, scenario, async () => {
+      await page.mouse.move(center.x, center.y)
+      await page.mouse.down({ button: 'left' })
+      for (let index = 0; index < 8; index += 1) {
+        const progress = index / 7
+        await page.mouse.move(center.x - 100 + progress * 200, center.y - 60 + progress * 120)
+        await page.waitForTimeout(12)
+      }
+      await page.mouse.up({ button: 'left' })
+    }))
+  }
+
+  if (actionKind === 'layer-style-shadow-size' || actionKind === 'layer-style-inner-glow-size') {
+    if (initialView) await resetSimpleScenario(page, initialView)
+    const effect = actionKind === 'layer-style-shadow-size' ? 'shadow' : 'innerGlow'
+    await page.evaluate((targetEffect) => {
+      const harness = window.__moonSpritePerformanceHarness
+      if (!harness) throw new Error('Performance harness is unavailable.')
+      harness.prepareActiveLayerStyle(targetEffect === 'shadow' ? 2 : 0, targetEffect === 'innerGlow' ? 2 : 0)
+    }, effect)
+    await page.waitForTimeout(1_000)
+    results.push(await runScenario(page, size, scenario, async () => {
+      for (let index = 0; index < 4; index += 1) {
+        const value = 2 + index
+        await page.evaluate(({ targetEffect, nextValue }) => {
+          const harness = window.__moonSpritePerformanceHarness
+          if (!harness) throw new Error('Performance harness is unavailable.')
+          harness.previewActiveLayerStyleSize(targetEffect, nextValue)
+        }, { targetEffect: effect, nextValue: value })
+        await page.waitForTimeout(12)
+      }
     }))
   }
 

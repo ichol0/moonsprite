@@ -2,6 +2,7 @@ import type {
   AnimationCel,
   AnimationCelSurface,
   AnimationGroupMask,
+  BrushDitherSettings,
   BrushPaintMode,
   BrushShape,
   BrushTexture,
@@ -33,10 +34,13 @@ import type {
 } from '@shared/types'
 import type { ContentInvalidationHint, HistoryStack, PixelEdit } from '@/core/history'
 import type { SelectionShearTransform } from '@/core/selection'
-import type { SelectionTransformSource, SelectionTranslationPreview } from '@/core/tools'
-import type { SymmetryAxes, SymmetryCenter } from '@/core/symmetry'
+import type { SelectionTransformLayerState, SelectionTransformSource, SelectionTranslationPreview } from '@/core/tools'
+import type { SymmetryAxes, SymmetryCenter, SymmetryMode } from '@/core/symmetry'
 import type { BrushTool } from '@/core/tool-preferences'
 import type { BrushDynamicsSettings, BrushPressureSettings } from '@/core/pressure'
+import type { TilemapDrawingMode } from '@/core/tilemap'
+import type { FreeTileDrawingMode } from '@/core/free-tile'
+import type { FreeTileSourceEditRaster } from '@/core/free-tile-edit'
 
 export interface CanvasResizePreview {
   width: number
@@ -88,6 +92,7 @@ export interface SelectionPivot {
 
 export interface FloatingPaste {
   layerId: string
+  layers?: SelectionTransformLayerState[]
   beforeSelection: SelectionMask | null
   beforeSelectionPivot?: SelectionPivot | null
   source: SelectionTransformSource
@@ -98,8 +103,15 @@ export interface FloatingPaste {
   previewEdit: PixelEdit | null
   translationPreview: SelectionTranslationPreview | null
   previewDeferred?: boolean
+  tilemapEditCellIndex?: number
   copy: boolean
   label: string
+  freeTile?: {
+    sourceId: string
+    instanceId: string
+    edit: FreeTileSourceEditRaster
+    selectionSource: SelectionMask
+  }
 }
 
 export interface TextBoxTransformState {
@@ -113,6 +125,7 @@ export interface TextBoxTransformState {
 export interface BrushProfile {
   brushSize: number
   brushShape: BrushShape
+  brushDither: BrushDitherSettings
   brushTexture: BrushTexture
   brushTextureScale: number
   brushPaintMode: BrushPaintMode
@@ -132,6 +145,8 @@ export type DocumentContentInvalidation = ContentInvalidationHint & {
   revision: number
 }
 
+export type AnimationPlaybackMode = 'once' | 'all' | 'tag'
+
 export interface DocumentSession {
   document: SpriteDocument
   history: HistoryStack
@@ -139,10 +154,24 @@ export interface DocumentSession {
   moveKind: MoveKind
   selectedSliceId: string | null
   selectedSliceIds: string[]
+  selectedTilesetId: string | null
+  selectedTileId: string | null
+  secondaryTileId: string | null
+  /** View-only instance selection inside the active Free Tile source page. */
+  selectedFreeTileInstanceId: string | null
+  /** View-only multi-selection for instance rows in the active Free Tile cel. */
+  selectedFreeTileInstanceIds: string[]
+  /** Range-selection anchor for Free Tile instance rows. */
+  freeTileInstanceSelectionAnchorId: string | null
+  /** View-only Free Tile layer whose instances are exposed as layer rows. */
+  freeTileInstanceLayerId: string | null
+  tilemapMode: TilemapDrawingMode
+  freeTileMode: FreeTileDrawingMode
   primaryColor: RgbaColor
   secondaryColor: RgbaColor
   brushSize: number
   brushShape: BrushShape
+  brushDither: BrushDitherSettings
   brushTexture: BrushTexture
   brushTextureScale: number
   brushPaintMode: BrushPaintMode
@@ -163,6 +192,8 @@ export interface DocumentSession {
   fillMode: FillMode
   fillKind: FillKind
   fillTolerance: number
+  fillGapClosing: boolean
+  fillGapThreshold: number
   gradientTolerance: number
   gradientContiguous: boolean
   gradientDither: GradientDither
@@ -174,8 +205,11 @@ export interface DocumentSession {
   selectionMode: SelectionMode
   wandTolerance: number
   wandContiguous: boolean
+  wandGapClosing: boolean
+  wandGapThreshold: number
   perfectPixels: boolean
   symmetryAxes: SymmetryAxes
+  symmetryAxesInitialized: Record<SymmetryMode, boolean>
   symmetryCenter: SymmetryCenter
   airbrushParticleRadius: number
   airbrushParticleShape: BrushShape
@@ -202,12 +236,18 @@ export interface DocumentSession {
   collapsedGroupIds: string[]
   animationPlaying: boolean
   animationPlaybackRate: number
+  animationPlaybackMode: AnimationPlaybackMode
   animationPlaybackStartFrameId: string | null
+  animationPlaybackLoopSectionId: string | null
+  animationPlaybackLoopIteration: number
+  animationPlaybackLoopSectionRepeatIndefinitely: boolean
   animationReturnToStart: boolean
   selectedAnimationFrameIds: string[]
   animationFrameSelectionAnchorId: string | null
   selectedAnimationCellKeys: string[]
   animationCellSelectionAnchorKey: string | null
+  /** Distinguishes timeline cel selection from cells derived only for selected-layer highlighting. */
+  animationCellSelectionExplicit: boolean
   /** Timeline cells whose attached masks are selected in the panel. */
   selectedAnimationMaskCellKeys: string[]
   animationMaskCellSelectionAnchorKey: string | null

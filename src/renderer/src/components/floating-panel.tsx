@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { CSSProperties, PointerEvent as ReactPointerEvent, RefObject } from 'react'
-import { loadFloatingPosition, resizeFloatingPosition, saveFloatingPosition, type FloatingAnchor, type FloatingPosition } from '@/core/panel-preferences'
+import { loadFloatingPosition, resizeFloatingPosition, saveFloatingPosition, type FloatingPosition } from '@/core/panel-preferences'
 
-let floatingZIndex = 40
+let floatingZIndex = 220
 
 export type PanelDock = 'right' | 'left' | 'bottom' | 'floating'
 export type FixedPanelDock = Exclude<PanelDock, 'floating'>
@@ -17,13 +17,6 @@ interface PanelDockZone {
 }
 
 const notifyWorkspaceLayoutChanged = (): void => { window.dispatchEvent(new Event('moonsprite-workspace-layout-change')) }
-
-const currentFloatingAnchor = (): FloatingAnchor => {
-  const stage = document.querySelector<HTMLElement>('.stage-wrap')?.getBoundingClientRect()
-  return stage && stage.width > 0 && stage.height > 0
-    ? { left: stage.left, top: stage.top, width: stage.width, height: stage.height }
-    : { left: 0, top: 0, width: window.innerWidth, height: window.innerHeight }
-}
 
 export function panelDockZoneAt(clientX: number, clientY: number): PanelDockZone | null {
   const contains = (bounds: DOMRect): boolean => clientX >= bounds.left && clientX <= bounds.right && clientY >= bounds.top && clientY <= bounds.bottom
@@ -61,20 +54,22 @@ export function panelDockZoneAt(clientX: number, clientY: number): PanelDockZone
 export function useFloatingPanel(initialPosition: FloatingPosition | null = null, followViewportRight = false, canDock = true, storageKey?: string, responsiveToViewport = false, onDock?: (dock: FixedPanelDock) => void, forceDocked = false, constraints: FloatingSizeConstraints = {}) {
   const minimumWidth = constraints.minWidth ?? 180
   const minimumHeight = constraints.minHeight ?? 120
-  const maximumWidth = (): number => Math.max(minimumWidth, Math.min(constraints.maxWidth ?? window.innerWidth, window.innerWidth - 6))
-  const maximumHeight = (): number => Math.max(minimumHeight, Math.min(constraints.maxHeight ?? window.innerHeight, window.innerHeight - 6))
+  const minimumWidthForViewport = (): number => Math.min(minimumWidth, Math.max(1, window.innerWidth - 6))
+  const minimumHeightForViewport = (): number => Math.min(minimumHeight, Math.max(1, window.innerHeight - 6))
+  const maximumWidth = (): number => Math.max(minimumWidthForViewport(), Math.min(constraints.maxWidth ?? window.innerWidth, window.innerWidth - 6))
+  const maximumHeight = (): number => Math.max(minimumHeightForViewport(), Math.min(constraints.maxHeight ?? window.innerHeight, window.innerHeight - 6))
   const ref = useRef<HTMLElement>(null)
   const [position, setPosition] = useState<FloatingPosition | null>(() => {
     const loaded = loadFloatingPosition(storageKey, initialPosition, { width: window.innerWidth, height: window.innerHeight }, responsiveToViewport, forceDocked)
     if (!loaded) return null
     const constrained = {
       ...loaded,
-      width: loaded.width === undefined ? undefined : Math.max(minimumWidth, Math.min(maximumWidth(), loaded.width)),
-      height: loaded.height === undefined ? undefined : Math.max(minimumHeight, Math.min(maximumHeight(), loaded.height))
+      width: loaded.width === undefined ? undefined : Math.max(minimumWidthForViewport(), Math.min(maximumWidth(), loaded.width)),
+      height: loaded.height === undefined ? undefined : Math.max(minimumHeightForViewport(), Math.min(maximumHeight(), loaded.height))
     }
     if (!constraints.restoreSizeOnly || !initialPosition) return constrained
-    const initialWidth = initialPosition.width ?? constrained.width ?? minimumWidth
-    const initialHeight = initialPosition.height ?? constrained.height ?? minimumHeight
+    const initialWidth = initialPosition.width ?? constrained.width ?? minimumWidthForViewport()
+    const initialHeight = initialPosition.height ?? constrained.height ?? minimumHeightForViewport()
     const width = constrained.width ?? initialWidth
     const height = constrained.height ?? initialHeight
     const centerX = initialPosition.x + initialWidth / 2
@@ -94,7 +89,6 @@ export function useFloatingPanel(initialPosition: FloatingPosition | null = null
   const pointerCaptureRef = useRef<{ element: HTMLElement; pointerId: number } | null>(null)
   const positionRef = useRef(position)
   const viewportRef = useRef({ width: window.innerWidth, height: window.innerHeight })
-  const anchorRef = useRef(currentFloatingAnchor())
   const userPositioned = useRef(false)
   const initialRightOffset = useRef(initialPosition ? window.innerWidth - initialPosition.x : 0)
 
@@ -121,10 +115,10 @@ export function useFloatingPanel(initialPosition: FloatingPosition | null = null
         let y = start.y
         let width = start.width
         let height = start.height
-        if (start.direction.includes('e')) width = Math.max(minimumWidth, Math.min(maximumWidth(), window.innerWidth - start.x, start.width + deltaX))
-        if (start.direction.includes('s')) height = Math.max(minimumHeight, Math.min(maximumHeight(), window.innerHeight - start.y, start.height + deltaY))
-        if (start.direction.includes('w')) { width = Math.max(minimumWidth, Math.min(maximumWidth(), start.x + start.width, start.width - deltaX)); x = start.x + start.width - width }
-        if (start.direction.includes('n')) { height = Math.max(minimumHeight, Math.min(maximumHeight(), start.y + start.height, start.height - deltaY)); y = start.y + start.height - height }
+        if (start.direction.includes('e')) width = Math.max(minimumWidthForViewport(), Math.min(maximumWidth(), window.innerWidth - start.x, start.width + deltaX))
+        if (start.direction.includes('s')) height = Math.max(minimumHeightForViewport(), Math.min(maximumHeight(), window.innerHeight - start.y, start.height + deltaY))
+        if (start.direction.includes('w')) { width = Math.max(minimumWidthForViewport(), Math.min(maximumWidth(), start.x + start.width, start.width - deltaX)); x = start.x + start.width - width }
+        if (start.direction.includes('n')) { height = Math.max(minimumHeightForViewport(), Math.min(maximumHeight(), start.y + start.height, start.height - deltaY)); y = start.y + start.height - height }
         updatePosition(() => ({ x, y, width, height }))
         return
       }
@@ -166,11 +160,8 @@ export function useFloatingPanel(initialPosition: FloatingPosition | null = null
     }
     const resize = (): void => {
       const previousViewport = viewportRef.current
-      const previousAnchor = anchorRef.current
       const viewport = { width: window.innerWidth, height: window.innerHeight }
-      const nextAnchor = currentFloatingAnchor()
       viewportRef.current = viewport
-      anchorRef.current = nextAnchor
       updatePosition((current) => {
         if (!current) return current
         const next = resizeFloatingPosition(current, previousViewport, viewport, {
@@ -178,9 +169,9 @@ export function useFloatingPanel(initialPosition: FloatingPosition | null = null
           followViewportRight,
           userPositioned: userPositioned.current,
           initialRightOffset: initialRightOffset.current,
-          minWidth: minimumWidth,
-          minHeight: minimumHeight
-        }, ref.current?.getBoundingClientRect(), previousAnchor, nextAnchor)
+          minWidth: minimumWidthForViewport(),
+          minHeight: minimumHeightForViewport()
+        }, ref.current?.getBoundingClientRect())
         window.requestAnimationFrame(() => persistPosition(next))
         return next
       })
@@ -272,7 +263,7 @@ export function useFloatingPanel(initialPosition: FloatingPosition | null = null
     let nextPosition: FloatingPosition | null = null
     updatePosition((current) => {
       if (!current) return current
-      nextPosition = { ...current, width: Math.max(minimumWidth, Math.min(maximumWidth(), window.innerWidth - current.x, width)), height: Math.max(minimumHeight, Math.min(maximumHeight(), window.innerHeight - current.y, height)) }
+      nextPosition = { ...current, width: Math.max(minimumWidthForViewport(), Math.min(maximumWidth(), window.innerWidth - current.x, width)), height: Math.max(minimumHeightForViewport(), Math.min(maximumHeight(), window.innerHeight - current.y, height)) }
       return nextPosition
     })
     if (nextPosition) persistPosition(nextPosition)

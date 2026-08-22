@@ -1,11 +1,14 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { strFromU8, unzipSync, zipSync, type Zippable } from 'fflate'
-import { activateAnimationFrame, addBlankAnimationFrame, connectAnimationCels, duplicateAnimationFrame, ensureAnimationDocument, resizeAnimationCelsAt, syncActiveAnimationFrame } from './animation'
-import { animationMaskAt, createDocument, createLayerMask, getActiveLayer, getLayerStorageOrigin, readLayerColorAt, resizeDocumentAt, writeLayerColor } from './document'
+import { activateAnimationFrame, addBlankAnimationFrame, cloneAnimationCelsForLayer, connectAnimationCels, duplicateAnimationFrame, ensureAnimationDocument, refreshActiveAnimationFrame, resizeAnimationCelsAt, syncActiveAnimationFrame, syncActiveAnimationLayer } from './animation'
+import { animationMaskAt, createDocument, createLayer, createLayerMask, duplicateLayer, getActiveLayer, getLayerStorageOrigin, readLayerColorAt, resizeDocumentAt, writeLayerColor } from './document'
 import { applySelectionTranslationPreview, captureSelectionTransform, restoreSelectionTranslationPreview } from './tools'
-import { acceptProjectSaveBaseline, compactProjectRasterStorage, decodeProject, encodeProject, encodeProjectAsync, encodeProjectSaveAsync, PROJECT_SCHEMA_VERSION, migrateProjectManifest, readProjectGalleryMetadata, registerProjectSaveBaseline } from './project-format'
-import { runtimeRasterForSurface, surfacePixelsMaterialized } from './runtime-raster'
+import { acceptProjectSaveBaseline, compactProjectRasterStorage, decodeProject, encodeProject, encodeProjectAsync, encodeProjectSaveAsync, encodeProjectWorkerPayload, PROJECT_SCHEMA_VERSION, migrateProjectManifest, readProjectGalleryMetadata, registerProjectSaveBaseline, type ProjectEncodeWorkerPayload } from './project-format'
+import { rasterStorageIdentity, runtimeRasterForSurface, surfacePixelsMaterialized } from './runtime-raster'
 import { createDefaultLayerStyles } from './layer-styles'
+import { createSolidTileset, createTilemapCelData, createTilesetFromRgba, deleteTilesetTile, renderTilemapSurface, writeTilesetTilePixels } from './tilemap'
+import { freeTileSourceRefs, renderFreeTileSurface } from './free-tile'
+import { rerenderFreeTileReferences } from './free-tile-document'
 
 const zipCompressionMethods = (data: Uint8Array): Map<string, number> => {
   const view = new DataView(data.buffer, data.byteOffset, data.byteLength)
@@ -30,6 +33,7 @@ const zipCompressionMethods = (data: Uint8Array): Map<string, number> => {
 
 interface TestRasterManifestEntry {
   dataFile: string
+  linkedContentId?: string
   dataEncoding?: string
   layerStyles?: unknown
   width?: number
@@ -62,9 +66,13 @@ interface TestProjectManifest {
   schemaVersion: number
   document: {
     schemaVersion: number
-    layers: Array<TestRasterManifestEntry & { kind?: 'text' }>
+    layers: Array<TestRasterManifestEntry & { id: string; kind?: 'text' | 'tilemap' | 'free-tile'; tilemapTilesetId?: string; freeTileTilesetId?: string; freeTileSources?: Array<{ id: string; tilesetId: string }> }>
     groups?: Array<{ layerStyles?: unknown }>
-    animation: { cels: TestRasterManifestEntry[] }
+    tilesets?: Array<{ id: string; dataFile: string; tileSlots?: Array<string | null> }>
+    animation: {
+      cels: Array<TestRasterManifestEntry & { id: string; layerId: string; frameId: string; tilemap?: { cells: Array<{ index: number; tilesetId: string; tileId: string }> }; freeTiles?: { instances: Array<{ id: string; sourceId?: string; tileId?: string; x: number; y: number; rotation?: number; flipHorizontal?: boolean; flipVertical?: boolean }> } }>
+      loopSections?: Array<{ id: string; name: string; startFrameId: string; endFrameId: string; direction: 'forward' | 'reverse'; repeatCount: number | null }>
+    }
   }
 }
 
@@ -83,6 +91,84 @@ describe('project manifest migration boundary', () => {
     expect(migrateProjectManifest(manifest)).toMatchObject({ ...manifest, document: { ...manifest.document, animation: { activeFrameId: 'frame-1' } } })
   })
 
+  it('opens v16 projects saved before linked layers were introduced', () => {
+    const files = unzipSync(encodeProject(createDocument('v16 project', 8, 6, 'rgba')))
+    const manifest = readTestManifest(files)
+    manifest.schemaVersion = 16
+    manifest.document.schemaVersion = 16
+    files['manifest.json'] = new TextEncoder().encode(JSON.stringify(manifest))
+
+    expect(decodeProject(zipSync(files))).toMatchObject({
+      name: 'v16 project',
+      width: 8,
+      height: 6,
+      schemaVersion: PROJECT_SCHEMA_VERSION
+    })
+  })
+
+  it('round-trips linked layer frame content while preserving independent placement', () => {
+    const document = createDocument('linked layer project', 4, 1, 'rgba')
+    const source = getActiveLayer(document)
+    writeLayerColor(document, source, 0, { r: 255, g: 0, b: 0, a: 255 })
+    syncActiveAnimationLayer(document, source.id)
+    const secondFrameId = addBlankAnimationFrame(document)
+    activateAnimationFrame(document, secondFrameId)
+    writeLayerColor(document, source, 0, { r: 0, g: 80, b: 255, a: 255 })
+    syncActiveAnimationLayer(document, source.id)
+    source.linkedContentId = 'layer-link-roundtrip'
+    const linked = duplicateLayer(document, source.id)
+    cloneAnimationCelsForLayer(document, source.id, linked)
+    linked.offsetX = 3
+    syncActiveAnimationLayer(document, linked.id)
+
+    const files = unzipSync(encodeProject(document))
+    const manifest = readTestManifest(files)
+    const sourceMetadata = manifest.document.layers.find((layer) => layer.id === source.id)!
+    const linkedMetadata = manifest.document.layers.find((layer) => layer.id === linked.id)!
+    expect(sourceMetadata.linkedContentId).toBe('layer-link-roundtrip')
+    expect(linkedMetadata.linkedContentId).toBe(sourceMetadata.linkedContentId)
+    expect(linkedMetadata.dataFile).toBe(sourceMetadata.dataFile)
+    for (const frame of ensureAnimationDocument(document).frames) {
+      const sourceCel = manifest.document.animation.cels.find((cel) => cel.layerId === source.id && cel.frameId === frame.id)!
+      const linkedCel = manifest.document.animation.cels.find((cel) => cel.layerId === linked.id && cel.frameId === frame.id)!
+      expect(linkedCel.dataFile).toBe(sourceCel.dataFile)
+    }
+
+    const reopened = decodeProject(zipSync(files))
+    const reopenedSource = reopened.layers.find((layer) => layer.id === source.id)!
+    const reopenedLinked = reopened.layers.find((layer) => layer.id === linked.id)!
+    expect(reopenedSource.linkedContentId).toBe('layer-link-roundtrip')
+    expect(reopenedLinked.linkedContentId).toBe(reopenedSource.linkedContentId)
+    expect(reopenedSource.offsetX).toBe(0)
+    expect(reopenedLinked.offsetX).toBe(3)
+    expect(rasterStorageIdentity(reopenedLinked)).toBe(rasterStorageIdentity(reopenedSource))
+    const reopenedTimeline = ensureAnimationDocument(reopened)
+    for (const frame of reopenedTimeline.frames) {
+      const sourceCel = reopenedTimeline.cels.find((cel) => cel.layerId === source.id && cel.frameId === frame.id)!
+      const linkedCel = reopenedTimeline.cels.find((cel) => cel.layerId === linked.id && cel.frameId === frame.id)!
+      expect(rasterStorageIdentity(linkedCel.surface!)).toBe(rasterStorageIdentity(sourceCel.surface!))
+    }
+  })
+
+  it('rejects linked layer groups whose manifest points members at different raster storage', () => {
+    const document = createDocument('corrupt linked layer project', 2, 1, 'rgba')
+    const source = getActiveLayer(document)
+    source.linkedContentId = 'layer-link-corrupt'
+    const linked = duplicateLayer(document, source.id)
+    cloneAnimationCelsForLayer(document, source.id, linked)
+    const files = unzipSync(encodeProject(document))
+    const manifest = readTestManifest(files)
+    const linkedMetadata = manifest.document.layers.find((layer) => layer.id === linked.id)!
+    const linkedCel = manifest.document.animation.cels.find((cel) => cel.layerId === linked.id)!
+    const corruptDataFile = 'cels/corrupt-linked-storage.rgba'
+    files[corruptDataFile] = files[linkedCel.dataFile].slice()
+    linkedMetadata.dataFile = corruptDataFile
+    linkedCel.dataFile = corruptDataFile
+    files['manifest.json'] = new TextEncoder().encode(JSON.stringify(manifest))
+
+    expect(() => decodeProject(zipSync(files))).toThrow()
+  })
+
   it('round-trips document slices and normalizes invalid persisted entries', () => {
     const document = createDocument('slice project', 16, 12, 'rgba')
     document.slices = [
@@ -96,9 +182,28 @@ describe('project manifest migration boundary', () => {
     ])
   })
 
+  it('round-trips named animation loop sections in the current manifest', () => {
+    const document = createDocument('loop section project', 2, 2, 'rgba')
+    const secondFrameId = addBlankAnimationFrame(document)
+    const timeline = ensureAnimationDocument(document)
+    timeline.loopSections = [{
+      id: 'loop-run',
+      name: 'Run',
+      startFrameId: timeline.frames[0].id,
+      endFrameId: secondFrameId,
+      direction: 'reverse',
+      repeatCount: 3
+    }]
+
+    const files = unzipSync(encodeProject(document))
+    expect(readTestManifest(files).document.animation.loopSections).toEqual(timeline.loopSections)
+    expect(decodeProject(zipSync(files)).animation?.loopSections).toEqual(timeline.loopSections)
+  })
+
   it('round-trips non-destructive layer styles introduced by v11', () => {
     const document = createDocument('styled layer project', 8, 8, 'rgba')
     const styles = createDefaultLayerStyles()
+    styles.enabled = false
     styles.stroke = { ...styles.stroke, enabled: true, color: { r: 10, g: 20, b: 30, a: 255 }, size: 4, position: 'both', kernel: 'horizontal', directions: { nw: false, n: false, ne: false, w: true, e: true, sw: false, s: false, se: false }, smartHue: true, smartHueDarkness: 68 }
     styles.shadow = { ...styles.shadow, enabled: true, color: { r: 0, g: 0, b: 0, a: 128 }, offsetX: -3, offsetY: 5, blur: 2, smartShadow: true, smartShadowDarkness: 62 }
     styles.gradientOverlay = { ...styles.gradientOverlay, enabled: true, dither: 'bayer-4' }
@@ -108,7 +213,7 @@ describe('project manifest migration boundary', () => {
 
     const files = unzipSync(encodeProject(document))
     const manifest = readTestManifest(files)
-    expect(manifest.document.layers[0].layerStyles).toMatchObject({ stroke: { enabled: true, size: 4, position: 'both', kernel: 'horizontal', directions: { w: true, e: true, n: false, s: false }, smartHue: true, smartHueDarkness: 68 }, shadow: { offsetX: -3, offsetY: 5, blur: 2, smartShadow: true, smartShadowDarkness: 62 }, gradientOverlay: { enabled: true, dither: 'bayer-4' } })
+    expect(manifest.document.layers[0].layerStyles).toMatchObject({ enabled: false, stroke: { enabled: true, size: 4, position: 'both', kernel: 'horizontal', directions: { w: true, e: true, n: false, s: false }, smartHue: true, smartHueDarkness: 68 }, shadow: { offsetX: -3, offsetY: 5, blur: 2, smartShadow: true, smartShadowDarkness: 62 }, gradientOverlay: { enabled: true, dither: 'bayer-4' } })
     expect(manifest.document.groups?.[0].layerStyles).toMatchObject({ stroke: { enabled: true, position: 'both', kernel: 'horizontal' } })
     const reopened = decodeProject(zipSync(files))
     expect(reopened.layers[0].layerStyles).toEqual(styles)
@@ -126,9 +231,315 @@ describe('project manifest migration boundary', () => {
     expect(reopened.schemaVersion).toBe(PROJECT_SCHEMA_VERSION)
   })
 
+  it('round-trips v13 tilesets and editable tilemap cells', () => {
+    const document = createDocument('tilemap project', 4, 2, 'rgba')
+    const layer = getActiveLayer(document)
+    const cel = ensureAnimationDocument(document).cels[0]
+    const tileset = createSolidTileset('tileset-1', 'Solid', 2, 2, { r: 10, g: 20, b: 30, a: 255 }, 'tile-1')
+    tileset.tileSlots = [null, null, 'tile-1']
+    const tilemap = createTilemapCelData(document.width, document.height, 2, 2)
+    tilemap.cells[1] = { tilesetId: tileset.id, tileId: tileset.tileIds[0] }
+    document.tilesets = [tileset]
+    layer.kind = 'tilemap'
+    layer.tilemapTilesetId = tileset.id
+    cel.tilemap = tilemap
+    cel.surface = renderTilemapSurface(tilemap, document.tilesets, document.colorMode)
+    refreshActiveAnimationFrame(document)
+
+    const files = unzipSync(encodeProject(document))
+    const manifest = readTestManifest(files)
+    expect(manifest.document.layers[0].kind).toBe('tilemap')
+    expect(manifest.document.layers[0].tilemapTilesetId).toBe('tileset-1')
+    expect(manifest.document.tilesets).toEqual([expect.objectContaining({ id: 'tileset-1', tileSlots: [null, null, 'tile-1'], dataFile: 'tilesets/tileset-1.rgba' })])
+    expect(manifest.document.animation.cels[0].tilemap?.cells).toEqual([{ index: 1, tilesetId: 'tileset-1', tileId: 'tile-1' }])
+
+    const reopened = decodeProject(zipSync(files))
+    const reopenedCel = ensureAnimationDocument(reopened).cels[0]
+    expect(reopened.layers[0].kind).toBe('tilemap')
+    expect(reopened.layers[0].tilemapTilesetId).toBe('tileset-1')
+    expect(reopened.tilesets?.[0]).toMatchObject({ id: 'tileset-1', tileWidth: 2, tileHeight: 2, tileIds: ['tile-1'], tileSlots: [null, null, 'tile-1'] })
+    expect(reopenedCel.tilemap?.cells[1]).toEqual({ tilesetId: 'tileset-1', tileId: 'tile-1' })
+    expect(readLayerColorAt(reopened, getActiveLayer(reopened), 2, 0)).toEqual({ r: 10, g: 20, b: 30, a: 255 })
+  })
+
+  it('round-trips one Tileset referenced by multiple Tilemap layers', () => {
+    const document = createDocument('shared tilemap tileset project', 4, 2, 'rgba')
+    const firstLayer = getActiveLayer(document)
+    const firstCel = ensureAnimationDocument(document).cels[0]
+    const tileset = createSolidTileset('shared-tileset', 'Shared Tiles', 2, 1, { r: 10, g: 20, b: 30, a: 255 }, 'tile-1')
+    document.tilesets = [tileset]
+    firstLayer.kind = 'tilemap'
+    firstLayer.tilemapTilesetId = tileset.id
+    const firstTilemap = createTilemapCelData(document.width, document.height, 2, 1)
+    firstTilemap.cells[0] = { tilesetId: tileset.id, tileId: tileset.tileIds[0] }
+    firstCel.tilemap = firstTilemap
+    firstCel.surface = renderTilemapSurface(firstTilemap, document.tilesets, document.colorMode)
+
+    const secondLayer = createLayer('Props', document.width, document.height, document.colorMode)
+    secondLayer.kind = 'tilemap'
+    secondLayer.tilemapTilesetId = tileset.id
+    document.layers.push(secondLayer)
+    const secondTilemap = createTilemapCelData(document.width, document.height, 2, 1)
+    secondTilemap.cells[1] = { tilesetId: tileset.id, tileId: tileset.tileIds[0] }
+    const timeline = ensureAnimationDocument(document)
+    const secondCel = timeline.cels.find((cel) => cel.layerId === secondLayer.id && cel.frameId === timeline.activeFrameId)!
+    secondCel.tilemap = secondTilemap
+    secondCel.surface = renderTilemapSurface(secondTilemap, document.tilesets, document.colorMode)
+    refreshActiveAnimationFrame(document)
+
+    const reopened = decodeProject(encodeProject(document))
+    const reopenedTimeline = ensureAnimationDocument(reopened)
+    expect(reopened.tilesets).toHaveLength(1)
+    expect(reopened.layers.filter((layer) => layer.kind === 'tilemap').map((layer) => layer.tilemapTilesetId)).toEqual(['shared-tileset', 'shared-tileset'])
+    expect(reopenedTimeline.cels.filter((cel) => cel.tilemap)).toHaveLength(2)
+    expect(reopenedTimeline.cels.find((cel) => cel.layerId === secondLayer.id)?.tilemap?.cells[1]).toEqual({ tilesetId: 'shared-tileset', tileId: 'tile-1' })
+  })
+
+  it('round-trips v15 overlapping Free Tile instances and keeps source edits reusable', () => {
+    const document = createDocument('free tile project', 5, 2, 'rgba')
+    const layer = getActiveLayer(document)
+    const cel = ensureAnimationDocument(document).cels[0]
+    const red = createSolidTileset('free-red', 'Red Source', 1, 1, { r: 255, g: 0, b: 0, a: 255 }, 'red')
+    const blue = createSolidTileset('free-blue', 'Blue Source', 1, 1, { r: 0, g: 0, b: 255, a: 255 }, 'blue')
+    document.tilesets = [red, blue]
+    layer.kind = 'free-tile'
+    layer.freeTileSources = [
+      { id: 'source-red', name: 'Red Source', tilesetId: red.id, visible: true, locked: false, opacity: 1, blendMode: 'normal', offsetX: 0, offsetY: 0 },
+      { id: 'source-blue', name: 'Blue Source', tilesetId: blue.id, visible: true, locked: false, opacity: 1, blendMode: 'normal', offsetX: 1, offsetY: 0 }
+    ]
+    cel.freeTiles = { instances: [
+      { id: 'instance-red', sourceId: 'source-red', x: 0, y: 1, rotation: 2, flipHorizontal: true },
+      { id: 'instance-blue-overlap', sourceId: 'source-blue', x: 0, y: 0 },
+      { id: 'instance-blue-copy', sourceId: 'source-blue', x: 2, y: 0 }
+    ] }
+    cel.surface = renderFreeTileSurface(cel.freeTiles, freeTileSourceRefs(layer.freeTileSources, document.tilesets), document.colorMode, document.width, document.height)
+    refreshActiveAnimationFrame(document)
+
+    const files = unzipSync(encodeProject(document))
+    const manifest = readTestManifest(files)
+    expect(manifest.document.layers[0]).toMatchObject({ kind: 'free-tile', freeTileSources: [{ id: 'source-red', tilesetId: 'free-red' }, { id: 'source-blue', tilesetId: 'free-blue' }] })
+    expect(manifest.document.layers[0]).not.toHaveProperty('freeTileTilesetId')
+    expect(manifest.document.animation.cels[0].freeTiles?.instances).toEqual(cel.freeTiles.instances)
+
+    const reopened = decodeProject(zipSync(files))
+    const reopenedCel = ensureAnimationDocument(reopened).cels[0]
+    expect(reopened.layers[0]).toMatchObject({ kind: 'free-tile', freeTileSources: [{ id: 'source-red' }, { id: 'source-blue', offsetX: 1 }] })
+    expect(reopenedCel.freeTiles?.instances).toEqual(cel.freeTiles.instances.map((instance) => ({
+      ...instance,
+      visible: instance.visible ?? true,
+      locked: instance.locked ?? false
+    })))
+    expect(readLayerColorAt(reopened, getActiveLayer(reopened), 1, 0)).toEqual({ r: 0, g: 0, b: 255, a: 255 })
+
+    const edited = new Uint8ClampedArray([0, 255, 0, 255])
+    expect(writeTilesetTilePixels(reopened.tilesets!.find((tileset) => tileset.id === 'free-blue')!, 'blue', edited)).toBe(true)
+    expect(rerenderFreeTileReferences(reopened, 'free-blue', 'blue')).toBe(2)
+    expect(readLayerColorAt(reopened, getActiveLayer(reopened), 1, 0)).toEqual({ r: 0, g: 255, b: 0, a: 255 })
+    expect(readLayerColorAt(reopened, getActiveLayer(reopened), 3, 0)).toEqual({ r: 0, g: 255, b: 0, a: 255 })
+  })
+
+  it('migrates v14 multi-tile Free Tile ownership into independent v15 sources', () => {
+    const document = createDocument('legacy free tile project', 5, 2, 'rgba')
+    const layer = getActiveLayer(document)
+    const cel = ensureAnimationDocument(document).cels[0]
+    const pixels = new Uint8ClampedArray(4 * 1 * 4)
+    pixels.set([255, 0, 0, 255, 255, 0, 0, 255, 0, 0, 255, 255, 0, 0, 255, 255])
+    const tileset = createTilesetFromRgba('legacy-free-tileset', 'Legacy Free Tiles', 4, 1, pixels, 2, 1, (index) => `tile-${index}`)
+    document.tilesets = [tileset]
+    layer.kind = 'tilemap'
+    layer.tilemapTilesetId = tileset.id
+    const tilemap = createTilemapCelData(document.width, document.height, 2, 1)
+    tilemap.cells[0] = { tilesetId: tileset.id, tileId: 'tile-0' }
+    tilemap.cells[1] = { tilesetId: tileset.id, tileId: 'tile-1' }
+    cel.tilemap = tilemap
+    cel.surface = renderTilemapSurface(tilemap, document.tilesets, document.colorMode)
+    refreshActiveAnimationFrame(document)
+
+    const files = unzipSync(encodeProject(document))
+    const manifest = readTestManifest(files)
+    const layerManifest = manifest.document.layers[0]
+    layerManifest.kind = 'free-tile'
+    layerManifest.freeTileTilesetId = tileset.id
+    delete layerManifest.tilemapTilesetId
+    const celManifest = manifest.document.animation.cels[0]
+    celManifest.freeTiles = { instances: [
+      { id: 'legacy-red', tileId: 'tile-0', x: 0, y: 0 },
+      { id: 'legacy-blue', tileId: 'tile-1', x: 1, y: 0 }
+    ] }
+    delete celManifest.tilemap
+    manifest.schemaVersion = 14
+    manifest.document.schemaVersion = 14
+    files['manifest.json'] = new TextEncoder().encode(JSON.stringify(manifest))
+
+    const reopened = decodeProject(zipSync(files))
+    const migratedLayer = reopened.layers[0]
+    const migratedCel = ensureAnimationDocument(reopened).cels[0]
+    expect(migratedLayer).toMatchObject({ kind: 'free-tile' })
+    expect(migratedLayer.freeTileSources).toHaveLength(2)
+    expect(reopened.tilesets).toHaveLength(2)
+    expect(reopened.tilesets?.some((candidate) => candidate.id === tileset.id)).toBe(false)
+    expect(migratedCel.freeTiles?.instances).toEqual([
+      expect.objectContaining({ id: 'legacy-red', sourceId: migratedLayer.freeTileSources![0].id }),
+      expect.objectContaining({ id: 'legacy-blue', sourceId: migratedLayer.freeTileSources![1].id })
+    ])
+    expect(readLayerColorAt(reopened, getActiveLayer(reopened), 1, 0)).toEqual({ r: 0, g: 0, b: 255, a: 255 })
+  })
+
+  it('rejects corrupt Free Tile instances and non-exclusive source ownership', () => {
+    const createFreeTileProject = () => {
+      const document = createDocument('free tile validation', 2, 2, 'rgba')
+      const layer = getActiveLayer(document)
+      const cel = ensureAnimationDocument(document).cels[0]
+      const tileset = createSolidTileset('free-tileset', 'Free Tiles', 1, 1, { r: 255, g: 0, b: 0, a: 255 }, 'tile-1')
+      document.tilesets = [tileset]
+      layer.kind = 'free-tile'
+      layer.freeTileSources = [{ id: 'source-1', name: 'Free Tiles', tilesetId: tileset.id, visible: true, locked: false, opacity: 1, blendMode: 'normal', offsetX: 0, offsetY: 0 }]
+      cel.freeTiles = { instances: [
+        { id: 'instance-1', sourceId: 'source-1', x: 0, y: 0 },
+        { id: 'instance-2', sourceId: 'source-1', x: 1, y: 0 }
+      ] }
+      cel.surface = renderFreeTileSurface(cel.freeTiles, freeTileSourceRefs(layer.freeTileSources, document.tilesets), document.colorMode, document.width, document.height)
+      refreshActiveAnimationFrame(document)
+      return document
+    }
+
+    for (const corrupt of [
+      (manifest: TestProjectManifest) => { manifest.document.animation.cels[0].freeTiles!.instances[1].id = 'instance-1' },
+      (manifest: TestProjectManifest) => { manifest.document.animation.cels[0].freeTiles!.instances[0].sourceId = 'missing' },
+      (manifest: TestProjectManifest) => { manifest.document.animation.cels[0].freeTiles!.instances[0].tileId = 'tile-1' },
+      (manifest: TestProjectManifest) => { manifest.document.animation.cels[0].freeTiles!.instances[0].rotation = 4 }
+    ]) {
+      const files = unzipSync(encodeProject(createFreeTileProject()))
+      const manifest = readTestManifest(files)
+      corrupt(manifest)
+      files['manifest.json'] = new TextEncoder().encode(JSON.stringify(manifest))
+      expect(() => decodeProject(zipSync(files))).toThrow()
+    }
+
+    const shared = createFreeTileProject()
+    const tileset = shared.tilesets![0]
+    const second = createLayer('Second Free Tiles', shared.width, shared.height, shared.colorMode)
+    second.kind = 'free-tile'
+    second.freeTileSources = [{ id: 'source-2', name: 'Second Free Tiles', tilesetId: tileset.id, visible: true, locked: false, opacity: 1, blendMode: 'normal', offsetX: 0, offsetY: 0 }]
+    shared.layers.push(second)
+    ensureAnimationDocument(shared).cels.push({
+      id: 'second-free-tile-cel',
+      layerId: second.id,
+      frameId: ensureAnimationDocument(shared).activeFrameId,
+      opacity: second.opacity,
+      freeTiles: { instances: [] },
+      surface: renderFreeTileSurface({ instances: [] }, freeTileSourceRefs(second.freeTileSources, shared.tilesets ?? []), shared.colorMode, shared.width, shared.height)
+    })
+    expect(() => decodeProject(encodeProject(shared))).toThrow()
+
+    const sharedAcrossKinds = createFreeTileProject()
+    const sharedTileset = sharedAcrossKinds.tilesets![0]
+    const tilemapLayer = createLayer('Tilemap Owner', sharedAcrossKinds.width, sharedAcrossKinds.height, sharedAcrossKinds.colorMode)
+    tilemapLayer.kind = 'tilemap'
+    tilemapLayer.tilemapTilesetId = sharedTileset.id
+    sharedAcrossKinds.layers.push(tilemapLayer)
+    const tilemap = createTilemapCelData(sharedAcrossKinds.width, sharedAcrossKinds.height, 1, 1)
+    ensureAnimationDocument(sharedAcrossKinds).cels.push({
+      id: 'shared-tilemap-cel',
+      layerId: tilemapLayer.id,
+      frameId: ensureAnimationDocument(sharedAcrossKinds).activeFrameId,
+      opacity: tilemapLayer.opacity,
+      tilemap,
+      surface: renderTilemapSurface(tilemap, sharedAcrossKinds.tilesets!, sharedAcrossKinds.colorMode)
+    })
+    expect(() => decodeProject(encodeProject(sharedAcrossKinds))).toThrow()
+  })
+
+  it('round-trips a tileset whose sheet has spare trailing capacity', () => {
+    const document = createDocument('sparse tileset project', 2, 2, 'rgba')
+    const source = new Uint8ClampedArray(4 * 2 * 4)
+    source.fill(255)
+    const full = createTilesetFromRgba('tileset-sparse', 'Sparse', 4, 2, source, 2, 2, (index) => `tile-${index + 1}`)
+    const sparse = deleteTilesetTile(full, 'tile-1')!
+    expect(sparse.tileIds).toEqual(['tile-2'])
+    expect(sparse.columns * sparse.rows).toBe(2)
+    document.tilesets = [sparse]
+
+    const reopened = decodeProject(encodeProject(document))
+    expect(reopened.tilesets?.[0]).toMatchObject({ columns: 2, rows: 1, tileIds: ['tile-2'] })
+  })
+
+  it('opens earlier v13 Tilesets without explicit layout slots as compact rows', () => {
+    const document = createDocument('legacy tileset layout', 2, 2, 'rgba')
+    document.tilesets = [createSolidTileset('tileset-legacy', 'Legacy', 1, 1, { r: 20, g: 40, b: 60, a: 255 }, 'tile-1')]
+    const files = unzipSync(encodeProject(document))
+    const manifest = readTestManifest(files)
+    delete manifest.document.tilesets![0].tileSlots
+    files['manifest.json'] = new TextEncoder().encode(JSON.stringify(manifest))
+
+    expect(decodeProject(zipSync(files)).tilesets?.[0].tileSlots).toEqual(['tile-1'])
+  })
+
+  it('migrates v12 projects with an empty tileset collection', () => {
+    const migrated = migrateProjectManifest({
+      app: 'MoonSprite',
+      schemaVersion: 12,
+      document: { schemaVersion: 12, width: 4, height: 4, layers: [], animation: { frames: [], cels: [] } }
+    })
+    expect(migrated).toMatchObject({
+      schemaVersion: PROJECT_SCHEMA_VERSION,
+      sourceSchemaVersion: 12,
+      document: { schemaVersion: PROJECT_SCHEMA_VERSION, tilesets: [] }
+    })
+  })
+
+  it('does not invent Free Tile metadata while migrating v13 projects', () => {
+    const migrated = migrateProjectManifest({
+      app: 'MoonSprite',
+      schemaVersion: 13,
+      document: {
+        schemaVersion: 13,
+        width: 2,
+        height: 2,
+        layers: [{ id: 'layer', kind: 'free-tile', freeTileTilesetId: 'tileset' }],
+        tilesets: [],
+        animation: { frames: [{ id: 'frame-1', duration: 100 }], activeFrameId: 'frame-1', cels: [{ id: 'cel', layerId: 'layer', frameId: 'frame-1', freeTiles: { instances: [] } }] }
+      }
+    })
+    expect(migrated.document.layers[0]).not.toMatchObject({ kind: 'free-tile' })
+    expect(migrated.document.animation.cels[0]).not.toHaveProperty('freeTiles')
+  })
+
+  it('rejects tilemap cells that reference a missing tile', () => {
+    const document = createDocument('broken tilemap project', 2, 2, 'rgba')
+    const layer = getActiveLayer(document)
+    const cel = ensureAnimationDocument(document).cels[0]
+    const tileset = createSolidTileset('tileset-1', 'Solid', 2, 2, { r: 255, g: 0, b: 0, a: 255 }, 'tile-1')
+    const tilemap = createTilemapCelData(2, 2, 2, 2)
+    tilemap.cells[0] = { tilesetId: 'tileset-1', tileId: 'tile-1' }
+    document.tilesets = [tileset]
+    layer.kind = 'tilemap'
+    cel.tilemap = tilemap
+    cel.surface = renderTilemapSurface(tilemap, document.tilesets, document.colorMode)
+    refreshActiveAnimationFrame(document)
+    const files = unzipSync(encodeProject(document))
+    const manifest = readTestManifest(files)
+    manifest.document.animation.cels[0].tilemap!.cells[0].tileId = 'missing'
+    files['manifest.json'] = new TextEncoder().encode(JSON.stringify(manifest))
+
+    expect(() => decodeProject(zipSync(files))).toThrow()
+  })
+
+  it('rejects Tileset layouts that omit or duplicate stable tile IDs', () => {
+    const document = createDocument('broken tileset layout', 2, 2, 'rgba')
+    document.tilesets = [createSolidTileset('tileset-1', 'Solid', 1, 1, { r: 255, g: 0, b: 0, a: 255 }, 'tile-1')]
+    const files = unzipSync(encodeProject(document))
+    const manifest = readTestManifest(files)
+    manifest.document.tilesets![0].tileSlots = [null, null]
+    files['manifest.json'] = new TextEncoder().encode(JSON.stringify(manifest))
+
+    expect(() => decodeProject(zipSync(files))).toThrow()
+  })
+
   it('keeps v11 layer styles without accepting future background metadata', () => {
     const styles = createDefaultLayerStyles()
     styles.stroke.enabled = true
+    delete (styles as { enabled?: boolean }).enabled
     const migrated = migrateProjectManifest({
       app: 'MoonSprite',
       schemaVersion: 11,
@@ -142,7 +553,7 @@ describe('project manifest migration boundary', () => {
       }
     })
 
-    expect(migrated.document.layers[0].layerStyles).toEqual(styles)
+    expect(migrated.document.layers[0].layerStyles).toMatchObject({ enabled: true, stroke: { enabled: true } })
     expect(migrated.document.layers[0].background).toBeUndefined()
   })
 
@@ -218,6 +629,44 @@ describe('project manifest migration boundary', () => {
     expect(migrated).toMatchObject({ schemaVersion: PROJECT_SCHEMA_VERSION, sourceSchemaVersion: 10, document: { schemaVersion: PROJECT_SCHEMA_VERSION, colorMode: 'grayscale' } })
     expect(migrated.document.layers[0].layerStyles).toBeUndefined()
     expect(migrated.document.groups[0].layerStyles).toBeUndefined()
+  })
+
+  it('migrates v15 projects without inventing or trusting loop sections', () => {
+    const migrated = migrateProjectManifest({
+      app: 'MoonSprite',
+      schemaVersion: 15,
+      document: {
+        schemaVersion: 15,
+        width: 2,
+        height: 2,
+        layers: [],
+        animation: {
+          frames: [{ id: 'frame-1', duration: 100 }, { id: 'frame-2', duration: 100 }],
+          cels: [],
+          activeFrameId: 'frame-1',
+          loop: true,
+          loopSections: [{ id: 'future-field', name: 'Ignore', startFrameId: 'frame-1', endFrameId: 'frame-2', direction: 'reverse', repeatCount: 2 }]
+        }
+      }
+    })
+
+    expect(migrated.document.animation.loopSections).toEqual([])
+  })
+
+  it('does not trust linked-layer metadata from v16 projects', () => {
+    const migrated = migrateProjectManifest({
+      app: 'MoonSprite',
+      schemaVersion: 16,
+      document: {
+        schemaVersion: 16,
+        width: 1,
+        height: 1,
+        layers: [{ id: 'layer-1', name: 'Layer', linkedContentId: 'future-link', dataFile: 'layers/layer-1.rgba' }],
+        animation: { frames: [], cels: [] }
+      }
+    })
+
+    expect(migrated.document.layers[0].linkedContentId).toBeUndefined()
   })
 
   it('migrates v4 raster resources as raw data', () => {
@@ -739,9 +1188,9 @@ describe('project manifest migration boundary', () => {
       onmessage: ((event: MessageEvent) => void) | null = null
       onerror: ((event: ErrorEvent) => void) | null = null
       constructor() { workers.push(this) }
-      postMessage(message: { id: number; files: Zippable; compressionLevel: 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 }): void {
-        const data = zipSync(message.files, { level: message.compressionLevel })
-        this.onmessage?.({ data: { id: message.id, data } } as MessageEvent)
+      postMessage(message: { id: number; payload: ProjectEncodeWorkerPayload }): void {
+        const result = encodeProjectWorkerPayload(structuredClone(message.payload))
+        this.onmessage?.({ data: { id: message.id, result } } as MessageEvent)
       }
       terminate(): void {}
     }

@@ -1,4 +1,4 @@
-import type { DocumentSession } from '@/store/workspace'
+import type { DocumentSession } from '@/store/workspace-types'
 
 interface DocumentTabsState {
   activeId: string | null
@@ -28,9 +28,17 @@ export const documentTabsRenderKey = (state: DocumentTabsState): string => [
 export const appCoordinatorRenderKey = (state: AppCoordinatorState): string => {
   const session = state.sessions.find((item) => item.document.id === state.activeId)
   const preview = session?.canvasResizePreview
+  // The coordinator owns low-frequency surfaces such as persistent script dialogs.
+  // Keep their target identity in the key without subscribing to pixel revisions.
+  const layerStructure = session?.document.layers
+    .map((layer) => `${layer.id}:${layer.kind ?? 'raster'}`)
+    .join(',') ?? ''
   return [
     state.activeId ?? '',
     state.sessions.map((item) => item.document.id).join(','),
+    session?.document.activeLayerId ?? '',
+    session?.document.animation?.activeFrameId ?? '',
+    layerStructure,
     session?.document.width ?? 0,
     session?.document.height ?? 0,
     session?.tool ?? '',
@@ -40,6 +48,7 @@ export const appCoordinatorRenderKey = (state: AppCoordinatorState): string => {
     session?.fillKind ?? 'bucket',
     session?.view.showPixelGrid ? 1 : 0,
     session?.view.showGrid ? 1 : 0,
+    session?.view.tileRepeatMode ?? 'off',
     session?.view.grid ? `${session.view.grid.x}:${session.view.grid.y}:${session.view.grid.width}:${session.view.grid.height}` : '',
     session?.view.relativeLuminance ? 1 : 0,
     session?.view.showSelectionOutline === false ? 0 : 1,
@@ -51,7 +60,7 @@ export const appCoordinatorRenderKey = (state: AppCoordinatorState): string => {
 }
 
 export const toolRailRenderKey = (session: DocumentSession | null): string => session
-  ? `${session.document.id}:${session.tool}:${session.moveKind}:${session.selectionKind}:${session.shapeKind}:${session.lineKind}:${session.fillKind ?? 'bucket'}:${session.activeLayerMaskId ?? ''}:${session.selectedGroupIds.join(',')}:${session.selectedLayerIds.filter((id) => session.document.layers.some((layer) => layer.id === id && layer.kind === 'text')).join(',')}`
+  ? `${session.document.id}:${session.tool}:${session.moveKind}:${session.selectionKind}:${session.shapeKind}:${session.lineKind}:${session.fillKind ?? 'bucket'}:${session.activeLayerMaskId ?? ''}:${session.selectedGroupIds.join(',')}:${session.selectedLayerIds.filter((id) => session.document.layers.some((layer) => layer.id === id && layer.kind)).join(',')}:${session.tilemapMode}`
   : ''
 
 export const appMenuRenderKey = (session: DocumentSession | null): string => session
@@ -69,6 +78,7 @@ export const appMenuRenderKey = (session: DocumentSession | null): string => ses
       session.selectedLayerIds.join(','),
       session.view.showPixelGrid ? 1 : 0,
       session.view.showGrid ? 1 : 0,
+      session.view.tileRepeatMode ?? 'off',
       session.view.grid ? `${session.view.grid.x}:${session.view.grid.y}:${session.view.grid.width}:${session.view.grid.height}` : '',
       session.view.relativeLuminance ? 1 : 0,
       session.view.showSelectionOutline === false ? 0 : 1,
@@ -89,6 +99,9 @@ export const toolOptionsRenderKey = (session: DocumentSession | null): string =>
     session.tool,
     session.brushSize,
     session.brushShape,
+    session.brushDither?.enabled ? 1 : 0,
+    session.brushDither?.template ?? 'bayer-4',
+    session.brushDither?.stage ?? 8,
     session.brushTexture,
     session.brushTextureScale,
     session.brushPaintMode,
@@ -119,6 +132,8 @@ export const toolOptionsRenderKey = (session: DocumentSession | null): string =>
     session.fillMode,
     session.fillKind ?? 'bucket',
     session.fillTolerance,
+    session.fillGapClosing ? 1 : 0,
+    session.fillGapThreshold,
     session.gradientTolerance,
     session.gradientContiguous ? 1 : 0,
     session.gradientDither ?? 'none',
@@ -137,6 +152,8 @@ export const toolOptionsRenderKey = (session: DocumentSession | null): string =>
     session.view.showSelectionPivot === false ? 0 : 1,
     session.wandTolerance,
     session.wandContiguous ? 1 : 0,
+    session.wandGapClosing ? 1 : 0,
+    session.wandGapThreshold,
     session.perfectPixels ? 1 : 0,
     session.airbrushParticleRadius,
     session.airbrushParticleShape,

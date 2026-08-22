@@ -1,4 +1,4 @@
-import { useMemo, type ReactNode, type PointerEvent as ReactPointerEvent } from 'react'
+import { useEffect, useMemo, type ReactNode, type PointerEvent as ReactPointerEvent } from 'react'
 import { PanelResizeHandles, useFloatingPanel } from '@/components/floating-panel'
 import type { FloatingPosition, ViewportSize } from '@/core/panel-preferences'
 import type { WorkspacePanelId } from '@/core/panel-layout'
@@ -13,7 +13,9 @@ const POPUP_PANEL_DEFAULT_SIZES: Record<WorkspacePanelId, { width: number; heigh
   color: { width: 360, height: 520 },
   palette: { width: 360, height: 520 },
   layers: { width: 760, height: 520 },
-  preview: { width: 360, height: 380 }
+  preview: { width: 360, height: 380 },
+  tileset: { width: 420, height: 520 },
+  brushes: { width: 380, height: 480 }
 }
 
 export function popupPanelInitialPosition(id: WorkspacePanelId, anchor: PopupPanelAnchor, viewport: ViewportSize): FloatingPosition {
@@ -52,6 +54,11 @@ export function PopupPanelWindow({ id, anchor, label, onClose, renderPanel }: {
     false,
     { minWidth: 180, minHeight: 120, restoreSizeOnly: true }
   )
+
+  useEffect(() => {
+    window.addEventListener('blur', onClose)
+    return () => window.removeEventListener('blur', onClose)
+  }, [onClose])
 
   return <div className="workspace-panel-popup-layer" onPointerDown={(event) => { if (event.target === event.currentTarget) onClose() }}>
     <section

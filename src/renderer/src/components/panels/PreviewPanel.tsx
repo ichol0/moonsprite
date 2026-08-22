@@ -6,14 +6,16 @@ import { PixelUtilityIcon } from '@/components/PixelUtilityIcon'
 import { CanvasCompositeCache } from '@/components/canvas-composite-cache'
 import type { DockDragProps } from '@/components/workspace-panel-types'
 import { cloneDocumentForAnimationFrame, ensureAnimationDocument, nextAnimationFrameId } from '@/core/animation'
+import { advanceAnimationLoopSectionPlayback, animationLoopSectionAtFrame, animationLoopSectionStartFrameId } from '@/core/animation-loop-sections'
 import { anchoredPreviewPan, followPreviewPosition, previewCheckerCellSize } from '@/core/preview-geometry'
-import { steppedCanvasZoom } from '@/core/canvas-input'
+import { normalizeCanvasWheelDelta, steppedCanvasZoom } from '@/core/canvas-input'
 import { loadEditorPreferences, type CheckerboardPreferences } from '@/core/file-preferences'
 import { registerViewPreviewListener } from '@/core/view-preview-lifecycle'
-import { useWorkspace, type DocumentSession } from '@/store/workspace'
+import { useWorkspace, type AnimationPlaybackMode, type DocumentSession } from '@/store/workspace'
 import { useI18n } from '@/components/I18nProvider'
 import { resolveTheme } from '@/core/theme'
 import { initialDocumentCompositePending, subscribeInitialDocumentComposite } from '@/core/initial-document-composite'
+import { pixelSamplingMode } from '@/core/pixel-display'
 
 interface FollowViewportSnapshot {
   viewportSize: { width: number; height: number }
@@ -62,7 +64,9 @@ export function PreviewPanel({ session, onClose, docked = false, onDockDragStart
   const [previewStartFrameId, setPreviewStartFrameId] = useState<string | null>(null)
   const [previewPlaying, setPreviewPlaying] = useState(false)
   const [previewRate, setPreviewRate] = useState(1)
-  const [previewLoop, setPreviewLoop] = useState(timeline.loop)
+  const [previewPlaybackMode, setPreviewPlaybackMode] = useState<AnimationPlaybackMode>(timeline.loop ? 'all' : 'once')
+  const [previewLoopSectionId, setPreviewLoopSectionId] = useState<string | null>(null)
+  const [previewLoopIteration, setPreviewLoopIteration] = useState(0)
   const [previewReturnToStart, setPreviewReturnToStart] = useState(false)
   const panDrag = useRef<{ x: number; y: number; panX: number; panY: number } | null>(null)
   const compositeCacheRef = useRef(new CanvasCompositeCache())
@@ -124,40 +128,73 @@ export function PreviewPanel({ session, onClose, docked = false, onDockDragStart
     if (!previewPlaying) return
     const frame = timeline.frames.find((candidate) => candidate.id === previewFrameId)
     if (!frame) return
-    const nextFrameId = nextAnimationFrameId({ ...timeline, loop: previewLoop }, previewFrameId)
+    const loopSection = previewLoopSectionId ? (timeline.loopSections ?? []).find((section) => section.id === previewLoopSectionId) ?? null : null
+    if (previewLoopSectionId && !loopSection) {
+      setPreviewPlaying(false)
+      setPreviewLoopSectionId(null)
+      setPreviewLoopIteration(0)
+      return
+    }
+    const loopStep = loopSection
+      ? advanceAnimationLoopSectionPlayback(timeline, { ...loopSection, repeatCount: null }, previewFrameId, previewLoopIteration)
+      : null
+    const loopAllFrames = previewPlaybackMode !== 'once'
+    const nextFrameId = loopStep?.frameId ?? nextAnimationFrameId({ ...timeline, loop: loopAllFrames }, previewFrameId)
     const timer = window.setTimeout(() => {
-      if (nextFrameId === previewFrameId) {
+      if (!loopSection && !loopAllFrames && nextFrameId === previewFrameId) {
         const returnFrameId = previewReturnToStart ? previewStartFrameId : previewFrameId
         setPreviewPlaying(false)
         setPreviewStartFrameId(null)
         if (returnFrameId) setPreviewFrameId(returnFrameId)
         return
       }
+      if (loopStep) setPreviewLoopIteration(loopStep.completedIterations)
       setPreviewFrameId(nextFrameId)
     }, frame.duration / Math.max(0.01, previewRate))
     return () => window.clearTimeout(timer)
-  }, [previewFrameId, previewPlaying, previewRate, previewLoop, previewReturnToStart, previewStartFrameId, timeline])
+  }, [previewFrameId, previewPlaying, previewRate, previewPlaybackMode, previewLoopIteration, previewLoopSectionId, previewReturnToStart, previewStartFrameId, timeline])
 
   const setPreviewPlayingState = (playing: boolean): void => {
     if (playing) {
       const startFrameId = previewFrameId
       setPreviewStartFrameId(startFrameId)
-      if (!previewLoop && startFrameId !== timeline.frames[0]?.id) setPreviewFrameId(timeline.frames[0]?.id ?? startFrameId)
+      setPreviewLoopSectionId(null)
+      setPreviewLoopIteration(0)
+      const loopSection = previewPlaybackMode === 'tag' ? animationLoopSectionAtFrame(timeline, startFrameId) : null
+      const targetFrameId = loopSection
+        ? animationLoopSectionStartFrameId(timeline, loopSection)
+        : previewPlaybackMode === 'once' ? timeline.frames[0]?.id ?? startFrameId : startFrameId
+      if (loopSection) setPreviewLoopSectionId(loopSection.id)
+      if (targetFrameId && targetFrameId !== startFrameId) setPreviewFrameId(targetFrameId)
     } else {
       if (previewReturnToStart && previewStartFrameId) setPreviewFrameId(previewStartFrameId)
       setPreviewStartFrameId(null)
+      setPreviewLoopSectionId(null)
+      setPreviewLoopIteration(0)
     }
     setPreviewPlaying(playing)
+  }
+
+  const setPreviewPlaybackModeState = (mode: AnimationPlaybackMode): void => {
+    setPreviewPlaybackMode(mode)
+    setPreviewLoopSectionId(null)
+    setPreviewLoopIteration(0)
+    if (!previewPlaying || mode !== 'tag') return
+    const loopSection = animationLoopSectionAtFrame(timeline, previewFrameId)
+    const firstFrameId = loopSection ? animationLoopSectionStartFrameId(timeline, loopSection) : null
+    if (!loopSection || !firstFrameId) return
+    setPreviewLoopSectionId(loopSection.id)
+    if (firstFrameId !== previewFrameId) setPreviewFrameId(firstFrameId)
   }
 
   const previewPlayback = {
     playing: previewPlaying,
     rate: previewRate,
-    loop: previewLoop,
+    mode: previewPlaybackMode,
     returnToStart: previewReturnToStart,
     setPlaying: setPreviewPlayingState,
     setRate: setPreviewRate,
-    setLoop: setPreviewLoop,
+    setMode: setPreviewPlaybackModeState,
     setReturnToStart: setPreviewReturnToStart
   }
 
@@ -226,6 +263,7 @@ export function PreviewPanel({ session, onClose, docked = false, onDockDragStart
         baseFitRef.current = baseFit
       }
       const scale = baseFit.scale * zoom
+      const smoothPixelSampling = pixelSamplingMode(scale) === 'smooth'
       const followSnapshot = followSnapshotRef.current
       const effectivePan = followViewport ? followPreviewPosition({
         documentSize: { width: session.document.width, height: session.document.height },
@@ -261,7 +299,8 @@ export function PreviewPanel({ session, onClose, docked = false, onDockDragStart
           context.fillRect(originX + column * checkerCell, originY + row * checkerCell, checkerCell, checkerCell)
         }
       }
-      context.imageSmoothingEnabled = false
+      context.imageSmoothingEnabled = smoothPixelSampling
+      if (smoothPixelSampling) context.imageSmoothingQuality = 'high'
       const fromX = Math.max(0, Math.floor((0 - originX) / scale))
       const fromY = Math.max(0, Math.floor((0 - originY) / scale))
       const toX = Math.min(session.document.width, Math.ceil((displayWidth - originX) / scale))
@@ -282,7 +321,7 @@ export function PreviewPanel({ session, onClose, docked = false, onDockDragStart
         contentRevision: session.contentRevision,
         contentInvalidation: session.contentInvalidation,
         frameId: previewFrameId,
-        imageSmoothingEnabled: context.imageSmoothingEnabled
+        imageSmoothingEnabled: smoothPixelSampling
       })
       context.restore()
     }
@@ -353,6 +392,30 @@ export function PreviewPanel({ session, onClose, docked = false, onDockDragStart
     }))
     setZoom(nextZoom)
   }
+  const adjustWheelZoom = (event: React.WheelEvent<HTMLDivElement>): void => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+    const bounds = canvas.getBoundingClientRect()
+    if (bounds.width < 1 || bounds.height < 1) return
+    const delta = normalizeCanvasWheelDelta(event.nativeEvent)
+    if (delta === 0) return
+    event.preventDefault()
+    const nextZoom = steppedCanvasZoom(zoom, delta < 0)
+    if (nextZoom === zoom) return
+    if (followViewport) {
+      setZoom(nextZoom)
+      return
+    }
+    setPan(anchoredPreviewPan({
+      documentSize: { width: session.document.width, height: session.document.height },
+      viewportSize: { width: bounds.width, height: bounds.height },
+      pointer: { x: event.clientX - bounds.left, y: event.clientY - bounds.top },
+      pan,
+      zoom,
+      nextZoom
+    }))
+    setZoom(nextZoom)
+  }
   const toggleFollowViewport = (): void => {
     if (followViewport) {
       const followedPan = currentFollowPan()
@@ -383,7 +446,7 @@ export function PreviewPanel({ session, onClose, docked = false, onDockDragStart
   }
   return <section ref={floating.ref} className={`panel preview-panel ${floating.style ? 'floating-panel' : ''}`} style={floating.style} onPointerDown={floating.bringToFront} onContextMenu={onPanelContextMenu}>
     <header onPointerDown={(event) => floating.style ? floating.startDrag(event) : onDockDragStart?.(event, floating.startDetachedDrag)}><span>{t('panel.preview')}</span><span className="panel-actions"><button className={followViewport ? 'active' : ''} title={t('preview.followViewport')} aria-label={t('preview.followViewport')} aria-pressed={followViewport} onClick={toggleFollowViewport}><PixelUtilityIcon kind="follow" /></button><button title={t('preview.zoomOut')} aria-label={t('preview.zoomOut')} onClick={() => adjustZoom(false)}><PixelUtilityIcon kind="minus" /></button><button title={t('preview.zoomIn')} aria-label={t('preview.zoomIn')} onClick={() => adjustZoom(true)}><PixelUtilityIcon kind="plus" /></button><button className={previewPlaying ? 'active' : ''} disabled={timelineHidden || timeline.frames.length <= 1} title={t(previewPlaying ? 'timeline.pause' : 'timeline.play')} aria-label={t(previewPlaying ? 'timeline.pause' : 'timeline.play')} onClick={() => setPreviewPlayingState(!previewPlaying)} onContextMenu={(event) => { event.preventDefault(); event.stopPropagation(); if (!timelineHidden) setPlaybackMenu({ x: event.clientX, y: event.clientY }) }}><PlaybackPixelIcon kind={previewPlaying ? 'pause' : 'play'} /></button><button title={t('preview.close')} aria-label={t('preview.close')} onClick={onClose}><PixelUtilityIcon kind="close" /></button></span></header>
-    <div className={`preview-canvas-wrap ${panning ? 'space-panning' : ''}`} onWheel={(event) => { const bounds = canvasRef.current?.getBoundingClientRect(); if (!bounds) return; event.preventDefault(); adjustZoom(event.deltaY < 0, { x: event.clientX - bounds.left, y: event.clientY - bounds.top }) }} onPointerDown={startPan} onPointerMove={(event) => { const drag = panDrag.current; if (!drag) return; schedulePan({ x: drag.panX + event.clientX - drag.x, y: drag.panY + event.clientY - drag.y }) }} onPointerUp={finishPan} onPointerCancel={finishPan}><div className="preview-canvas-frame"><canvas ref={canvasRef} aria-label={t('preview.canvasAria')} /></div></div>
+    <div className={`preview-canvas-wrap ${panning ? 'space-panning' : ''}`} onWheel={adjustWheelZoom} onPointerDown={startPan} onPointerMove={(event) => { const drag = panDrag.current; if (!drag) return; schedulePan({ x: drag.panX + event.clientX - drag.x, y: drag.panY + event.clientY - drag.y }) }} onPointerUp={finishPan} onPointerCancel={finishPan}><div className="preview-canvas-frame"><canvas ref={canvasRef} aria-label={t('preview.canvasAria')} /></div></div>
     {floating.style && <PanelResizeHandles onResize={floating.startResize} />}
     <FloatingDockPreview style={floating.dockPreview} />
     {playbackMenu && <AnimationPlaybackMenu session={session} x={playbackMenu.x} y={playbackMenu.y} playback={previewPlayback} onClose={() => setPlaybackMenu(null)} />}

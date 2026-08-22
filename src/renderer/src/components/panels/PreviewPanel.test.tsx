@@ -1,6 +1,7 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createDocument } from '@/core/document'
+import { WHEEL_ZOOM_MODE_PREFERENCE_KEY } from '@/core/file-preferences'
 import { useWorkspace } from '@/store/workspace'
 import { PreviewPanel } from './PreviewPanel'
 
@@ -23,6 +24,7 @@ beforeEach(() => {
   MockOffscreenCanvas.instances = []
   MockResizeObserver.created = 0
   MockResizeObserver.disconnected = 0
+  window.localStorage.clear()
   useWorkspace.setState({ sessions: [], activeId: null, message: null, dialog: null })
   vi.stubGlobal('ResizeObserver', MockResizeObserver)
   vi.stubGlobal('OffscreenCanvas', MockOffscreenCanvas)
@@ -55,7 +57,8 @@ describe('PreviewPanel animation controls', () => {
     const { rerender } = render(<PreviewPanel session={session} onClose={vi.fn()} docked />)
     const exactSurface = MockOffscreenCanvas.instances.find((canvas) => canvas.width === 512 && canvas.height === 256)
     expect(exactSurface).toBeDefined()
-    expect(context.imageSmoothingEnabled).toBe(false)
+    expect(context.imageSmoothingEnabled).toBe(true)
+    expect(context.imageSmoothingQuality).toBe('high')
 
     const nextSession = {
       ...session,
@@ -70,6 +73,47 @@ describe('PreviewPanel animation controls', () => {
     expect(MockResizeObserver.disconnected).toBe(0)
   })
 
+  it('matches canvas sampling as preview zoom crosses 100%', () => {
+    const context = {
+      setTransform: vi.fn(), clearRect: vi.fn(), fillRect: vi.fn(), save: vi.fn(), restore: vi.fn(),
+      beginPath: vi.fn(), rect: vi.fn(), clip: vi.fn(), translate: vi.fn(), scale: vi.fn(), drawImage: vi.fn(),
+      imageSmoothingEnabled: false, imageSmoothingQuality: 'low', fillStyle: ''
+    }
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockImplementation(() => context as never)
+    vi.spyOn(HTMLCanvasElement.prototype, 'getBoundingClientRect').mockReturnValue({
+      x: 0, y: 0, top: 0, left: 0, right: 320, bottom: 180, width: 320, height: 180, toJSON: () => ({})
+    })
+    const document = createDocument('preview sampling', 512, 256, 'rgba')
+    useWorkspace.getState().addSession(document)
+    render(<PreviewPanel session={useWorkspace.getState().sessions[0]} onClose={vi.fn()} docked />)
+
+    expect(context.imageSmoothingEnabled).toBe(true)
+    fireEvent.click(screen.getByRole('button', { name: '放大预览' }))
+    expect(context.imageSmoothingEnabled).toBe(false)
+  })
+
+  it('keeps preview wheel zoom on percentage levels when smooth canvas zoom is enabled', () => {
+    window.localStorage.setItem(WHEEL_ZOOM_MODE_PREFERENCE_KEY, 'smooth')
+    const context = {
+      setTransform: vi.fn(), clearRect: vi.fn(), fillRect: vi.fn(), save: vi.fn(), restore: vi.fn(),
+      beginPath: vi.fn(), rect: vi.fn(), clip: vi.fn(), translate: vi.fn(), scale: vi.fn(), drawImage: vi.fn(),
+      imageSmoothingEnabled: false, imageSmoothingQuality: 'low', fillStyle: ''
+    }
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockImplementation(() => context as never)
+    vi.spyOn(HTMLCanvasElement.prototype, 'getBoundingClientRect').mockReturnValue({
+      x: 0, y: 0, top: 0, left: 0, right: 320, bottom: 180, width: 320, height: 180, toJSON: () => ({})
+    })
+    const document = createDocument('smooth preview zoom', 512, 256, 'rgba')
+    useWorkspace.getState().addSession(document)
+    render(<PreviewPanel session={useWorkspace.getState().sessions[0]} onClose={vi.fn()} docked />)
+    const drawsBeforeWheel = context.clearRect.mock.calls.length
+
+    fireEvent.wheel(window.document.querySelector('.preview-canvas-wrap')!, { deltaY: -120, clientX: 160, clientY: 90 })
+
+    expect(context.clearRect.mock.calls.length).toBeGreaterThan(drawsBeforeWheel)
+    expect(context.imageSmoothingEnabled).toBe(false)
+  })
+
   it('keeps preview playback independent from canvas playback', () => {
     const document = createDocument('preview animation', 1, 1, 'rgba')
     useWorkspace.getState().addSession(document)
@@ -82,6 +126,10 @@ describe('PreviewPanel animation controls', () => {
     expect(screen.getByRole('menu', { name: '播放设置' })).toBeInTheDocument()
     fireEvent.click(screen.getByRole('menuitemradio', { name: '播放速度 2x' }))
     expect(session.animationPlaybackRate).toBe(1)
+
+    fireEvent.contextMenu(play)
+    fireEvent.click(screen.getByRole('menuitemradio', { name: '播放标签并重复' }))
+    expect(session.animationPlaybackMode).not.toBe('tag')
 
     fireEvent.click(play)
     expect(session.animationPlaying).toBe(false)

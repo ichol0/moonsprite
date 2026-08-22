@@ -1,8 +1,11 @@
 import { act, cleanup, createEvent, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import type { MoonSpriteApi } from '@shared/types'
 import { createDocument, createLayer, ensureLayerCoversCanvas, getActiveLayer } from '@/core/document'
 import { animationCelAt, animationCelKey, connectAnimationCels, ensureAnimationDocument } from '@/core/animation'
+import { activeFreeTileCelTarget } from '@/core/free-tile-document'
 import { buildLayerPanelTree } from '@/core/layer-panel-layout'
+import { layersPanelRenderKey } from '@/core/panel-render-keys'
 import { ONION_SKIN_PREFERENCE_KEY, TIMELINE_HIDDEN_PREFERENCE_KEY } from '@/core/file-preferences'
 import { useWorkspace } from '@/store/workspace'
 import { finishAnimationCellOperation, revealLayerInPanel } from '@/components/layer-panel-reveal'
@@ -11,12 +14,277 @@ import { createDefaultLayerStyles } from '@/core/layer-styles'
 
 beforeEach(() => {
   localStorage.clear()
-  useWorkspace.setState({ sessions: [], activeId: null, message: null, dialog: null })
+  Object.defineProperty(window, 'moonSprite', {
+    configurable: true,
+    writable: true,
+    value: { getResourceInfo: vi.fn(async () => ({ totalBytes: 8_000_000_000, freeBytes: 4_000_000_000 })) } as unknown as MoonSpriteApi
+  })
+  useWorkspace.setState({ sessions: [], activeId: null, layerStyleClipboard: null, message: null, dialog: null })
 })
 
 afterEach(() => {
   vi.useRealTimers()
   cleanup()
+})
+
+function ConnectedLayersPanel() {
+  const revision = useWorkspace((state) => state.sessions[0] ? layersPanelRenderKey(state.sessions[0]) : '')
+  const session = useWorkspace.getState().sessions[0]
+  void revision
+  return session ? <LayersPanel session={session} docked /> : null
+}
+
+describe('LayersPanel Free Tile instances', () => {
+  it('keeps the layer view open and reports when the active frame has no instances', async () => {
+    const document = createDocument('empty free tile instance layers', 8, 8, 'rgba')
+    useWorkspace.getState().addSession(document)
+    await useWorkspace.getState().createFreeTileLayer({ name: 'Reusable Props' })
+
+    const { container } = render(<ConnectedLayersPanel />)
+    const entry = container.querySelector<HTMLElement>('.free-tile-layer .layer-tilemap-indicator')!
+    fireEvent.click(entry)
+
+    expect(container.querySelector('.free-tile-instance-layer-view')).toBeNull()
+    expect(container.querySelector('.layer-animation-list')).toBeTruthy()
+    expect(useWorkspace.getState().message).toBe('当前帧没有自由瓦片实例，无法打开实例图层。')
+  })
+
+  it('opens instance layers from the Free Tile icon and exposes layer-style controls', async () => {
+    const document = createDocument('free tile instance layers', 8, 8, 'rgba')
+    useWorkspace.getState().addSession(document)
+    await useWorkspace.getState().createFreeTileLayer({ name: 'Reusable Props' })
+    const target = activeFreeTileCelTarget(document)!
+    const sourceId = target.layer.freeTileSources![0].id
+    const placement = useWorkspace.getState().beginFreeTilePlacement()!
+    placement.after.instances = [{ id: 'instance-layer-a', sourceId, x: 2, y: 3 }]
+    useWorkspace.getState().previewFreeTilePlacement(placement)
+    useWorkspace.getState().commitFreeTilePlacement(placement, 'Place instance')
+
+    const { container } = render(<ConnectedLayersPanel />)
+    const entry = container.querySelector<HTMLElement>('.free-tile-layer .layer-tilemap-indicator')!
+    fireEvent.pointerDown(entry, { button: 0, pointerId: 41 })
+    fireEvent.click(entry)
+
+    expect(container.querySelector('.free-tile-instance-layer-view')).toBeTruthy()
+    expect(container.querySelector('.free-tile-instance-layer-view .layer-animation-grid')).toBeNull()
+    expect(container.querySelector('.free-tile-instance-layer-view .layer-animation-frame-header')).toBeNull()
+    expect(useWorkspace.getState().sessions[0].freeTileInstanceLayerId).toBe(target.layer.id)
+    let row = container.querySelector<HTMLButtonElement>('[data-free-tile-instance-id="instance-layer-a"]')!
+    expect(row).toHaveClass('layer-row')
+    expect(row).toHaveAttribute('aria-label', '自由瓦片1 实例1')
+    expect(row.querySelector('.layer-color-stripe')).toBeTruthy()
+    expect(row.querySelector('.layer-visibility')).toBeTruthy()
+    expect(row.querySelector('.layer-lock-toggle')).toBeTruthy()
+    expect(row.querySelector('.layer-instance-properties')).toBeTruthy()
+
+    fireEvent.pointerDown(row, { button: 0, pointerId: 42 })
+    expect(row).toHaveClass('selected')
+
+    fireEvent.pointerDown(row.querySelector('.layer-visibility')!, { button: 0 })
+    fireEvent.click(row.querySelector('.layer-visibility')!)
+    expect(activeFreeTileCelTarget(document)!.freeTiles.instances[0].visible).toBe(false)
+
+    row = container.querySelector<HTMLButtonElement>('[data-free-tile-instance-id="instance-layer-a"]')!
+    fireEvent.pointerDown(row.querySelector('.layer-lock-toggle')!, { button: 0 })
+    fireEvent.click(row.querySelector('.layer-lock-toggle')!)
+    expect(activeFreeTileCelTarget(document)!.freeTiles.instances[0].locked).toBe(true)
+
+    row = container.querySelector<HTMLButtonElement>('[data-free-tile-instance-id="instance-layer-a"]')!
+    fireEvent.pointerDown(row.querySelector('.layer-instance-properties')!, { button: 0 })
+    fireEvent.click(row.querySelector('.layer-instance-properties')!)
+    expect(globalThis.document.body.querySelector('.free-tile-instance-properties-dialog')).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: '返回图层' }))
+    expect(container.querySelector('.layer-animation-list')).toBeTruthy()
+    expect(useWorkspace.getState().sessions[0].freeTileInstanceLayerId).toBeNull()
+    expect(useWorkspace.getState().sessions[0].selectedFreeTileInstanceId).toBeNull()
+  })
+
+  it('shows only the instances from the outer Free Tile layer active frame', async () => {
+    const document = createDocument('free tile instance active frame', 8, 8, 'rgba')
+    useWorkspace.getState().addSession(document)
+    await useWorkspace.getState().createFreeTileLayer({ name: 'Animated Props' })
+    const target = activeFreeTileCelTarget(document)!
+    const sourceId = target.layer.freeTileSources![0].id
+    const placement = useWorkspace.getState().beginFreeTilePlacement()!
+    placement.after.instances = [{ id: 'stable-instance', sourceId, x: 2, y: 3 }]
+    useWorkspace.getState().previewFreeTilePlacement(placement)
+    useWorkspace.getState().commitFreeTilePlacement(placement, 'Place instance')
+    useWorkspace.getState().duplicateAnimationFrame()
+    const secondPlacement = useWorkspace.getState().beginFreeTilePlacement()!
+    secondPlacement.after.instances.push({ id: 'second-frame-instance', sourceId, x: 5, y: 3 })
+    useWorkspace.getState().previewFreeTilePlacement(secondPlacement)
+    useWorkspace.getState().commitFreeTilePlacement(secondPlacement, 'Place second frame instance')
+    const timeline = ensureAnimationDocument(document)
+    useWorkspace.getState().setActiveAnimationFrame(timeline.frames[0].id)
+
+    const { container } = render(<ConnectedLayersPanel />)
+    fireEvent.click(container.querySelector<HTMLElement>('.free-tile-layer .layer-tilemap-indicator')!)
+
+    expect(container.querySelector('.free-tile-instance-layer-view .layer-animation-grid')).toBeNull()
+    expect(container.querySelector('[data-free-tile-instance-id="stable-instance"]')).toBeTruthy()
+    expect(container.querySelector('[data-free-tile-instance-id="second-frame-instance"]')).toBeNull()
+
+    act(() => { useWorkspace.getState().setActiveAnimationFrame(timeline.frames[1].id) })
+    await waitFor(() => expect(container.querySelector('[data-free-tile-instance-id="second-frame-instance"]')).toBeTruthy())
+  })
+
+  it('offers Show Only from an instance context menu', async () => {
+    const document = createDocument('show only instance menu', 8, 8, 'rgba')
+    useWorkspace.getState().addSession(document)
+    await useWorkspace.getState().createFreeTileLayer({ name: 'Reusable Props' })
+    const target = activeFreeTileCelTarget(document)!
+    const sourceId = target.layer.freeTileSources![0].id
+    const placement = useWorkspace.getState().beginFreeTilePlacement()!
+    placement.after.instances = [
+      { id: 'instance-layer-a', sourceId, x: 1, y: 1 },
+      { id: 'instance-layer-b', sourceId, x: 4, y: 4 }
+    ]
+    useWorkspace.getState().previewFreeTilePlacement(placement)
+    useWorkspace.getState().commitFreeTilePlacement(placement, 'Place instances')
+
+    const { container } = render(<ConnectedLayersPanel />)
+    fireEvent.click(container.querySelector<HTMLElement>('.free-tile-layer .layer-tilemap-indicator')!)
+    fireEvent.contextMenu(container.querySelector('[data-free-tile-instance-id="instance-layer-a"]')!, { clientX: 80, clientY: 80 })
+    fireEvent.click(screen.getByRole('menuitem', { name: '仅显示' }))
+
+    expect(activeFreeTileCelTarget(document)!.freeTiles.instances.map(({ id, visible }) => ({ id, visible }))).toEqual([
+      { id: 'instance-layer-a', visible: true },
+      { id: 'instance-layer-b', visible: false }
+    ])
+  })
+
+  it('reuses layer eye and lock gestures for Alt-all and drag ranges', async () => {
+    const document = createDocument('instance layer gestures', 8, 8, 'rgba')
+    useWorkspace.getState().addSession(document)
+    await useWorkspace.getState().createFreeTileLayer({ name: 'Gesture Props' })
+    const target = activeFreeTileCelTarget(document)!
+    const sourceId = target.layer.freeTileSources![0].id
+    const placement = useWorkspace.getState().beginFreeTilePlacement()!
+    placement.after.instances = [
+      { id: 'gesture-a', sourceId, x: 0, y: 0 },
+      { id: 'gesture-b', sourceId, x: 2, y: 0 },
+      { id: 'gesture-c', sourceId, x: 4, y: 0 }
+    ]
+    useWorkspace.getState().previewFreeTilePlacement(placement)
+    useWorkspace.getState().commitFreeTilePlacement(placement, 'Place instances')
+
+    const { container } = render(<ConnectedLayersPanel />)
+    fireEvent.click(container.querySelector<HTMLElement>('.free-tile-layer .layer-tilemap-indicator')!)
+    const rowA = container.querySelector<HTMLElement>('[data-free-tile-instance-id="gesture-a"]')!
+    fireEvent.pointerDown(rowA.querySelector('.layer-visibility')!, { button: 0, pointerId: 51, altKey: true })
+    fireEvent.pointerUp(rowA.querySelector('.layer-visibility')!, { pointerId: 51 })
+
+    expect(activeFreeTileCelTarget(document)!.freeTiles.instances.every((instance) => instance.visible === false)).toBe(true)
+    expect(useWorkspace.getState().sessions[0].selectedFreeTileInstanceId).toBeNull()
+    useWorkspace.getState().undo()
+    expect(activeFreeTileCelTarget(document)!.freeTiles.instances.every((instance) => instance.visible !== false)).toBe(true)
+
+    const visualRows = Array.from(container.querySelectorAll<HTMLElement>('[data-free-tile-instance-active="true"]'))
+    const firstLock = visualRows[0].querySelector<HTMLElement>('.layer-lock-toggle')!
+    const lastLock = visualRows.at(-1)!.querySelector<HTMLElement>('.layer-lock-toggle')!
+    fireEvent.pointerDown(firstLock, { button: 0, pointerId: 52 })
+    fireEvent.pointerEnter(lastLock, { buttons: 1, pointerId: 52 })
+    fireEvent.pointerUp(lastLock, { pointerId: 52 })
+
+    expect(activeFreeTileCelTarget(document)!.freeTiles.instances.every((instance) => instance.locked === true)).toBe(true)
+    useWorkspace.getState().undo()
+    expect(activeFreeTileCelTarget(document)!.freeTiles.instances.every((instance) => instance.locked !== true)).toBe(true)
+  })
+
+  it('edits instance-only rotation and mirroring from the context menu and properties', async () => {
+    const document = createDocument('instance transform controls', 8, 8, 'rgba')
+    useWorkspace.getState().addSession(document)
+    await useWorkspace.getState().createFreeTileLayer({ name: 'Transform Props' })
+    const target = activeFreeTileCelTarget(document)!
+    const sourceId = target.layer.freeTileSources![0].id
+    const placement = useWorkspace.getState().beginFreeTilePlacement()!
+    placement.after.instances = [{ id: 'transform-instance', sourceId, x: 2, y: 3 }]
+    useWorkspace.getState().previewFreeTilePlacement(placement)
+    useWorkspace.getState().commitFreeTilePlacement(placement, 'Place instance')
+
+    const { container } = render(<ConnectedLayersPanel />)
+    fireEvent.click(container.querySelector<HTMLElement>('.free-tile-layer .layer-tilemap-indicator')!)
+    const row = container.querySelector<HTMLElement>('[data-free-tile-instance-id="transform-instance"]')!
+    fireEvent.contextMenu(row, { clientX: 80, clientY: 80 })
+    fireEvent.click(screen.getByRole('menuitem', { name: '顺时针旋转 90°' }))
+    expect(activeFreeTileCelTarget(document)!.freeTiles.instances[0].rotation).toBe(1)
+
+    fireEvent.contextMenu(row, { clientX: 80, clientY: 80 })
+    fireEvent.click(screen.getByRole('menuitem', { name: '实例属性' }))
+    const dialog = globalThis.document.body.querySelector<HTMLElement>('.free-tile-instance-properties-dialog')!
+    expect(dialog.querySelector('.free-tile-instance-properties-meta')).toBeNull()
+    expect(dialog.textContent!.indexOf('混合模式')).toBeLessThan(dialog.textContent!.indexOf('X 位置'))
+    expect(within(dialog).queryByRole('button', { name: '保存' })).toBeNull()
+    expect(within(dialog).queryByRole('button', { name: '取消' })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: '180°' }))
+    fireEvent.click(screen.getByRole('button', { name: '垂直镜像实例' }))
+
+    expect(activeFreeTileCelTarget(document)!.freeTiles.instances[0]).toMatchObject({ rotation: 2, flipVertical: true })
+    fireEvent.click(within(dialog).getByRole('button', { name: '关闭' }))
+    useWorkspace.getState().undo()
+    expect(activeFreeTileCelTarget(document)!.freeTiles.instances[0]).toMatchObject({ rotation: 1 })
+    expect(activeFreeTileCelTarget(document)!.freeTiles.instances[0]).not.toHaveProperty('flipVertical')
+  })
+
+  it('multi-selects instance rows and applies touched properties as one undo step', async () => {
+    const document = createDocument('instance batch properties', 8, 8, 'rgba')
+    useWorkspace.getState().addSession(document)
+    await useWorkspace.getState().createFreeTileLayer({ name: 'Batch Props' })
+    const target = activeFreeTileCelTarget(document)!
+    const sourceId = target.layer.freeTileSources![0].id
+    const placement = useWorkspace.getState().beginFreeTilePlacement()!
+    placement.after.instances = [
+      { id: 'batch-a', sourceId, x: 1, y: 1 },
+      { id: 'batch-b', sourceId, x: 3, y: 1 },
+      { id: 'batch-c', sourceId, x: 5, y: 1 }
+    ]
+    useWorkspace.getState().previewFreeTilePlacement(placement)
+    useWorkspace.getState().commitFreeTilePlacement(placement, 'Place instances')
+
+    const { container } = render(<ConnectedLayersPanel />)
+    fireEvent.click(container.querySelector<HTMLElement>('.free-tile-layer .layer-tilemap-indicator')!)
+    const rowA = container.querySelector<HTMLButtonElement>('[data-free-tile-instance-id="batch-a"]')!
+    const rowB = container.querySelector<HTMLButtonElement>('[data-free-tile-instance-id="batch-b"]')!
+    fireEvent.pointerDown(rowA, { button: 0, pointerId: 61 })
+    fireEvent.pointerUp(rowA, { pointerId: 61 })
+    fireEvent.pointerDown(rowB, { button: 0, pointerId: 62, ctrlKey: true })
+    fireEvent.pointerUp(rowB, { pointerId: 62 })
+    fireEvent.click(rowB, { ctrlKey: true })
+
+    await waitFor(() => {
+      expect(container.querySelector('[data-free-tile-instance-id="batch-a"]')).toHaveClass('selected')
+      expect(container.querySelector('[data-free-tile-instance-id="batch-b"]')).toHaveClass('selected')
+    })
+    expect(useWorkspace.getState().sessions[0].selectedFreeTileInstanceIds).toEqual(['batch-a', 'batch-b'])
+
+    const propertiesButton = container.querySelector('[data-free-tile-instance-id="batch-b"] .layer-instance-properties')!
+    fireEvent.pointerDown(propertiesButton, { button: 0, pointerId: 63 })
+    fireEvent.click(propertiesButton)
+    const dialog = globalThis.document.body.querySelector<HTMLElement>('.free-tile-instance-properties-dialog')!
+    expect(within(dialog).getByText('多个实例属性')).toBeTruthy()
+    fireEvent.change(within(dialog).getByRole('slider', { name: '不透明度' }), { target: { value: '50' } })
+    expect(activeFreeTileCelTarget(document)!.freeTiles.instances.filter((instance) => instance.id !== 'batch-c').map((instance) => instance.opacity)).toEqual([0.5, 0.5])
+
+    fireEvent.click(within(dialog).getByRole('button', { name: '关闭' }))
+    useWorkspace.getState().undo()
+    expect(activeFreeTileCelTarget(document)!.freeTiles.instances.map((instance) => instance.opacity)).toEqual([undefined, undefined, undefined])
+
+    fireEvent.pointerDown(rowA, { button: 0, pointerId: 64 })
+    fireEvent.pointerUp(rowA, { pointerId: 64 })
+    fireEvent.click(rowA)
+    expect(useWorkspace.getState().sessions[0].selectedFreeTileInstanceIds).toEqual(['batch-a'])
+    expect(rowA).toHaveClass('selected')
+    expect(rowB).not.toHaveClass('selected')
+
+    fireEvent.pointerDown(rowB, { button: 0, pointerId: 65, ctrlKey: true })
+    fireEvent.pointerUp(rowB, { pointerId: 65 })
+    fireEvent.click(rowB, { ctrlKey: true })
+    fireEvent.keyDown(rowA, { key: 'Delete' })
+    expect(activeFreeTileCelTarget(document)!.freeTiles.instances.map((instance) => instance.id)).toEqual(['batch-c'])
+    useWorkspace.getState().undo()
+    expect(activeFreeTileCelTarget(document)!.freeTiles.instances.map((instance) => instance.id)).toEqual(['batch-a', 'batch-b', 'batch-c'])
+  })
 })
 
 describe('LayersPanel animation', () => {
@@ -28,7 +296,7 @@ describe('LayersPanel animation', () => {
     expect(container.querySelector('.layers-panel')).toHaveClass('layer-density-compact')
   })
 
-  it('removes frame and layer edit buttons while docked on either side', () => {
+  it('can keep frame and layer edit buttons while docked on either side', () => {
     const document = createDocument('side dock actions', 2, 2, 'rgba')
     useWorkspace.getState().addSession(document)
     const session = useWorkspace.getState().sessions[0]
@@ -39,9 +307,16 @@ describe('LayersPanel animation', () => {
     expect(container.querySelectorAll('.layer-animation-edit button')).toHaveLength(1)
     expect(container.querySelectorAll('.panel-actions button')).toHaveLength(1)
 
+    fireEvent.click(container.querySelector<HTMLButtonElement>('.panel-actions button')!)
+    fireEvent.click(screen.getByRole('checkbox', { name: '左右吸附时自动隐藏按钮' }))
+
+    expect(container.querySelectorAll('.timeline-frame-edit-button')).toHaveLength(2)
+    expect(container.querySelectorAll('.layer-structure-edit-button')).toHaveLength(5)
+    expect(localStorage.getItem('moonsprite.layers.side-dock-auto-hide')).toBe('false')
+
     rerender(<LayersPanel session={session} docked />)
     expect(container.querySelectorAll('.timeline-frame-edit-button')).toHaveLength(2)
-    expect(container.querySelectorAll('.layer-structure-edit-button')).toHaveLength(3)
+    expect(container.querySelectorAll('.layer-structure-edit-button')).toHaveLength(5)
   })
 
   it('keeps timeline selections while interacting with a marked floating dialog', () => {
@@ -81,6 +356,182 @@ describe('LayersPanel animation', () => {
 
     expect(useWorkspace.getState().sessions[0].selectedAnimationCellKeys).toEqual([key])
     canvas.remove()
+  })
+
+  it('keeps a frame multi-selection when the selection tool starts a canvas interaction', () => {
+    const document = createDocument('preserved frame selection', 2, 2, 'rgba')
+    useWorkspace.getState().addSession(document)
+    useWorkspace.getState().duplicateAnimationFrame()
+    const timeline = ensureAnimationDocument(document)
+    const [firstFrame, secondFrame] = timeline.frames
+    useWorkspace.getState().selectAnimationFrame(firstFrame.id)
+    useWorkspace.getState().selectAnimationFrame(secondFrame.id, 'toggle')
+    useWorkspace.getState().setTool('selection')
+    render(<LayersPanel session={useWorkspace.getState().sessions[0]} docked />)
+    const canvas = globalThis.document.createElement('canvas')
+    canvas.className = 'stage-canvas'
+    globalThis.document.body.appendChild(canvas)
+
+    fireEvent.pointerDown(canvas)
+
+    expect(useWorkspace.getState().sessions[0].selectedAnimationFrameIds).toEqual([firstFrame.id, secondFrame.id])
+    canvas.remove()
+  })
+
+  it('highlights every selected layer and frame intersection without creating a cel selection', () => {
+    const document = createDocument('selected frame cells', 2, 2, 'rgba')
+    const firstLayer = getActiveLayer(document)
+    const secondLayer = createLayer('Second', 2, 2, 'rgba')
+    document.layers.push(secondLayer)
+    useWorkspace.getState().addSession(document)
+    useWorkspace.getState().duplicateAnimationFrame()
+    useWorkspace.getState().duplicateAnimationFrame()
+    const timeline = ensureAnimationDocument(document)
+    const [firstFrame, secondFrame, thirdFrame] = timeline.frames
+    useWorkspace.getState().selectLayerRows([firstLayer.id, secondLayer.id], [])
+    useWorkspace.getState().selectAnimationFrame(firstFrame.id)
+    useWorkspace.getState().selectAnimationFrame(secondFrame.id, 'toggle')
+    const session = useWorkspace.getState().sessions[0]
+    const { container } = render(<LayersPanel session={session} docked />)
+    const cell = (layerId: string, frameId: string) => container.querySelector(`[data-animation-cel-key="${animationCelKey(layerId, frameId)}"]`)
+
+    for (const layer of [firstLayer, secondLayer]) {
+      expect(cell(layer.id, firstFrame.id)).toHaveClass('selected-animation-frame', 'selected-cel')
+      expect(cell(layer.id, secondFrame.id)).toHaveClass('selected-animation-frame', 'selected-cel')
+      expect(cell(layer.id, thirdFrame.id)).not.toHaveClass('selected-animation-frame', 'selected-cel')
+    }
+    expect(session.selectedAnimationCellKeys).toEqual([])
+  })
+
+  it('creates a named loop section from selected frames and exposes play, edit, and delete actions', () => {
+    const document = createDocument('timeline loop section', 2, 2, 'rgba')
+    useWorkspace.getState().addSession(document)
+    useWorkspace.getState().duplicateAnimationFrame()
+    useWorkspace.getState().duplicateAnimationFrame()
+    const timeline = ensureAnimationDocument(document)
+    useWorkspace.getState().selectAnimationFrame(timeline.frames[0].id)
+    useWorkspace.getState().selectAnimationFrame(timeline.frames[2].id, 'range')
+    const { container } = render(<ConnectedLayersPanel />)
+
+    const headers = container.querySelectorAll<HTMLElement>('.layer-animation-frame-header')
+    fireEvent.contextMenu(headers[2], { clientX: 40, clientY: 30 })
+    fireEvent.click(screen.getByRole('menuitem', { name: '创建循环节' }))
+    let dialog = globalThis.document.querySelector<HTMLElement>('.animation-loop-section-modal')!
+    expect(within(dialog).getByRole('spinbutton', { name: '开始帧' })).toHaveValue('1')
+    expect(within(dialog).getByRole('spinbutton', { name: '结束帧' })).toHaveValue('3')
+    fireEvent.pointerDown(within(dialog).getByRole('textbox', { name: '名称' }))
+    expect(useWorkspace.getState().sessions[0].selectedAnimationFrameIds).toEqual(timeline.frames.slice(0, 3).map((frame) => frame.id))
+    const repeatToggle = within(dialog).getByRole('checkbox', { name: '重复' })
+    expect(repeatToggle).not.toBeChecked()
+    expect(within(dialog).getByRole('textbox', { name: '重复' })).toHaveValue('无限')
+    fireEvent.click(repeatToggle)
+    expect(within(dialog).getByRole('spinbutton', { name: '重复' })).toHaveValue('1')
+    fireEvent.click(repeatToggle)
+    expect(within(dialog).getByRole('textbox', { name: '重复' })).toHaveValue('无限')
+    fireEvent.change(within(dialog).getByRole('textbox', { name: '名称' }), { target: { value: '行走' } })
+    fireEvent.click(within(dialog).getByRole('button', { name: '保存' }))
+
+    let loopBar = container.querySelector<HTMLButtonElement>('[data-animation-loop-section-id]')!
+    const loopId = loopBar.dataset.animationLoopSectionId!
+    expect(loopBar).toHaveTextContent('行走')
+    expect(loopBar.style.gridColumn).toBe('1 / span 3')
+    const loopTrack = loopBar.closest<HTMLElement>('.animation-loop-section-track')!
+    expect(loopTrack).toBeInTheDocument()
+    expect(loopBar.closest('header')).toBe(container.querySelector('.layers-panel > header'))
+    expect(loopBar.closest('.layer-animation-grid')).toBeNull()
+    const animationList = container.querySelector<HTMLElement>('.layer-animation-list')!
+    animationList.scrollLeft = 37
+    fireEvent.scroll(animationList)
+    expect(loopTrack.style.transform).toBe('translate3d(-37px, 0, 0)')
+
+    fireEvent.contextMenu(loopBar, { clientX: 50, clientY: 40 })
+    fireEvent.click(screen.getByRole('menuitem', { name: '播放循环节' }))
+    expect(useWorkspace.getState().sessions[0]).toMatchObject({ animationPlaying: true, animationPlaybackLoopSectionId: loopId })
+
+    loopBar = container.querySelector<HTMLButtonElement>(`[data-animation-loop-section-id="${loopId}"]`)!
+    fireEvent.doubleClick(loopBar)
+    dialog = globalThis.document.querySelector<HTMLElement>('.animation-loop-section-modal')!
+    fireEvent.change(within(dialog).getByRole('textbox', { name: '名称' }), { target: { value: '反向行走' } })
+    fireEvent.click(within(dialog).getByRole('button', { name: '播放方向' }))
+    fireEvent.click(screen.getByRole('option', { name: '反向' }))
+    fireEvent.click(within(dialog).getByRole('button', { name: '保存' }))
+    expect(container.querySelector(`[data-animation-loop-section-id="${loopId}"]`)).toHaveTextContent('反向行走')
+
+    loopBar = container.querySelector<HTMLButtonElement>(`[data-animation-loop-section-id="${loopId}"]`)!
+    fireEvent.contextMenu(loopBar, { clientX: 50, clientY: 40 })
+    fireEvent.click(screen.getByRole('menuitem', { name: '删除循环节' }))
+    expect(container.querySelector(`[data-animation-loop-section-id="${loopId}"]`)).not.toBeInTheDocument()
+  })
+
+  it('renders a contained loop section inside its parent bracket', () => {
+    const document = createDocument('nested timeline loop sections', 2, 2, 'rgba')
+    useWorkspace.getState().addSession(document)
+    for (let index = 0; index < 5; index += 1) useWorkspace.getState().duplicateAnimationFrame()
+    const timeline = ensureAnimationDocument(document)
+    const parentId = useWorkspace.getState().createAnimationLoopSection({
+      name: '父循环节',
+      startFrameId: timeline.frames[0].id,
+      endFrameId: timeline.frames[4].id,
+      direction: 'forward',
+      repeatCount: null
+    })!
+    const childId = useWorkspace.getState().createAnimationLoopSection({
+      name: '子循环节',
+      startFrameId: timeline.frames[1].id,
+      endFrameId: timeline.frames[3].id,
+      direction: 'forward',
+      repeatCount: null
+    })!
+    const independentId = useWorkspace.getState().createAnimationLoopSection({
+      name: '独立循环节',
+      startFrameId: timeline.frames[5].id,
+      endFrameId: timeline.frames[5].id,
+      direction: 'forward',
+      repeatCount: null
+    })!
+    const { container } = render(<ConnectedLayersPanel />)
+
+    const parent = container.querySelector<HTMLElement>(`[data-animation-loop-section-id="${parentId}"]`)!
+    const child = container.querySelector<HTMLElement>(`[data-animation-loop-section-id="${childId}"]`)!
+    const independent = container.querySelector<HTMLElement>(`[data-animation-loop-section-id="${independentId}"]`)!
+    expect(parent.style.gridRow).toBe('1 / span 2')
+    expect(child.style.gridRow).toBe('2 / span 1')
+    expect(independent.style.gridRow).toBe('1 / span 2')
+    expect(Number(child.style.zIndex)).toBeGreaterThan(Number(parent.style.zIndex))
+  })
+
+  it('keeps tag playback running when a clicked frame switches loop sections', () => {
+    const document = createDocument('timeline playback loop switch', 2, 2, 'rgba')
+    useWorkspace.getState().addSession(document)
+    for (let index = 0; index < 3; index += 1) useWorkspace.getState().duplicateAnimationFrame()
+    const timeline = ensureAnimationDocument(document)
+    useWorkspace.getState().createAnimationLoopSection({
+      name: 'First',
+      startFrameId: timeline.frames[0].id,
+      endFrameId: timeline.frames[1].id,
+      direction: 'forward',
+      repeatCount: null
+    })
+    const secondLoopId = useWorkspace.getState().createAnimationLoopSection({
+      name: 'Second',
+      startFrameId: timeline.frames[2].id,
+      endFrameId: timeline.frames[3].id,
+      direction: 'forward',
+      repeatCount: null
+    })!
+    useWorkspace.getState().setActiveAnimationFrame(timeline.frames[0].id)
+    useWorkspace.getState().setAnimationPlaybackMode('tag')
+    useWorkspace.getState().setAnimationPlaying(true)
+    const { container } = render(<ConnectedLayersPanel />)
+
+    fireEvent.click(container.querySelector(`[data-animation-frame-id="${timeline.frames[3].id}"]`)!)
+
+    expect(timeline.activeFrameId).toBe(timeline.frames[3].id)
+    expect(useWorkspace.getState().sessions[0]).toMatchObject({
+      animationPlaying: true,
+      animationPlaybackLoopSectionId: secondLoopId,
+      animationPlaybackLoopSectionRepeatIndefinitely: true
+    })
   })
 
   it('uses a shorter frame header without duration text at compact density', () => {
@@ -184,18 +635,18 @@ describe('LayersPanel animation', () => {
 
     rerender(<LayersPanel session={session} docked />)
     fireEvent.doubleClick(screen.getByRole('button', { name: '第 1 帧动画单元格' }))
-    expect(screen.getByRole('spinbutton', { name: '不透明度' })).toBeInTheDocument()
+    expect(screen.getByRole('slider', { name: '不透明度' })).toBeInTheDocument()
     fireEvent.keyDown(window, { key: 'Escape' })
-    expect(screen.queryByRole('spinbutton', { name: '不透明度数值' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('slider', { name: '不透明度' })).not.toBeInTheDocument()
 
     fireEvent.doubleClick(screen.getByRole('button', { name: '第 1 帧动画单元格' }))
-    const opacity = screen.getByRole('spinbutton', { name: '不透明度' })
+    const opacity = screen.getByRole('slider', { name: '不透明度' })
     expect(opacity.closest('.layer-opacity-control')).not.toBeNull()
-    expect(screen.getByRole('slider', { name: '不透明度' })).toBeInTheDocument()
     fireEvent.change(opacity, { target: { value: '45' } })
+    await waitFor(() => expect(screen.getByRole('slider', { name: '不透明度' })).toHaveValue('45'))
     fireEvent.keyDown(opacity, { key: 'Enter' })
     await waitFor(() => expect(timeline.cels[0].opacity).toBeCloseTo(0.45))
-    expect(screen.queryByRole('spinbutton', { name: '不透明度数值' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('slider', { name: '不透明度' })).not.toBeInTheDocument()
   })
 
   it('updates the active cel content without rerendering the full layer panel', () => {
@@ -229,6 +680,9 @@ describe('LayersPanel animation', () => {
     fireEvent.contextMenu(screen.getByRole('button', { name: '播放动画' }))
     fireEvent.click(screen.getByRole('menuitemradio', { name: '播放一次' }))
     expect(document.animation?.loop).toBe(false)
+    fireEvent.contextMenu(screen.getByRole('button', { name: '播放动画' }))
+    fireEvent.click(screen.getByRole('menuitemradio', { name: '播放标签并重复' }))
+    expect(session.animationPlaybackMode).toBe('tag')
 
     const panel = container.querySelector('.layers-panel') as HTMLElement
     fireEvent.wheel(panel, { ctrlKey: true, deltaY: -100 })
@@ -656,7 +1110,7 @@ describe('LayersPanel animation', () => {
     expect(cell.style.cursor).toBe('')
   })
 
-  it('pointer-drags a populated cel, fades it, and clears timeline selections when a layer row is chosen', () => {
+  it('pointer-drags a populated cel, fades it, and preserves a frame selection when a layer row is chosen', () => {
     const document = createDocument('animation cel pointer drag', 2, 1, 'rgba')
     const firstLayer = getActiveLayer(document)
     const secondLayer = createLayer('second', 2, 1, 'rgba')
@@ -690,6 +1144,13 @@ describe('LayersPanel animation', () => {
     rerender(<LayersPanel session={session} docked />)
     fireEvent.pointerDown(container.querySelector(`[data-layer-id="${firstLayer.id}"]`)!, { button: 0, clientX: 8, clientY: 48 })
     fireEvent.pointerUp(window, { clientX: 8, clientY: 48 })
+    expect(session.selectedAnimationFrameIds).toEqual([timeline.activeFrameId])
+    expect(session.selectedAnimationCellKeys).toEqual([])
+
+    useWorkspace.getState().selectAnimationCell(animationCelKey(firstLayer.id, timeline.activeFrameId))
+    rerender(<LayersPanel session={session} docked />)
+    fireEvent.pointerDown(container.querySelector(`[data-layer-id="${secondLayer.id}"]`)!, { button: 0, clientX: 8, clientY: 88 })
+    fireEvent.pointerUp(window, { clientX: 8, clientY: 88 })
     expect(session.selectedAnimationFrameIds).toEqual([])
     expect(session.selectedAnimationCellKeys).toEqual([])
   })
@@ -914,9 +1375,19 @@ describe('LayersPanel animation', () => {
     const { container, rerender } = render(<LayersPanel session={useWorkspace.getState().sessions[0]} docked />)
 
     fireEvent.click(container.querySelector<HTMLButtonElement>('.panel-actions button:last-child')!)
-    const modal = document.querySelector('.layer-settings-modal')
+    const modal = document.querySelector<HTMLElement>('.layer-settings-modal')
     expect(modal).not.toBeNull()
+    const densitySlider = modal!.querySelector<HTMLElement>('.layer-density-range .range-slider')!
+    const densityLabel = within(modal!).getByText('紧凑')
+    fireEvent.pointerEnter(densitySlider)
+    expect(screen.queryByRole('tooltip')).toBeNull()
+    fireEvent.pointerEnter(densityLabel.parentElement!)
+    expect(screen.getByRole('tooltip')).toHaveTextContent('隐藏次要信息，以最小行高显示更多图层与帧。')
+    fireEvent.pointerLeave(densityLabel.parentElement!)
+    expect(screen.queryByRole('tooltip')).toBeNull()
+    expect(modal!.querySelector('.layer-settings-pair')).toBeNull()
     fireEvent.click(screen.getByRole('checkbox', { name: '启用洋葱皮' }))
+    expect(modal!.querySelector('.layer-settings-pair')).not.toBeNull()
     fireEvent.submit(modal!)
 
     expect(JSON.parse(localStorage.getItem(ONION_SKIN_PREFERENCE_KEY) ?? '{}')).toMatchObject({ enabled: true, previousFrames: 1, nextFrames: 1 })
@@ -1115,6 +1586,28 @@ describe('LayersPanel properties', () => {
     expect(layer.clippingMask).toBeUndefined()
   })
 
+  it('groups layer type changes under Convert To and opens the Tilemap conversion dialog', () => {
+    const document = createDocument('layer conversion menu', 8, 8, 'rgba')
+    const layer = getActiveLayer(document)
+    layer.name = 'Source Pixels'
+    useWorkspace.getState().addSession(document)
+    const { container } = render(<LayersPanel session={useWorkspace.getState().sessions[0]} docked />)
+
+    fireEvent.contextMenu(container.querySelector(`[data-layer-id="${layer.id}"]`)!, { clientX: 20, clientY: 20 })
+    const contextMenu = container.querySelector<HTMLElement>('.layer-context-menu')!
+    expect(within(contextMenu).getByRole('button', { name: '转换为' })).toBeInTheDocument()
+    expect(within(contextMenu).queryByRole('menuitem', { name: '停用图层样式' })).not.toBeInTheDocument()
+    expect(within(contextMenu).queryByRole('menuitem', { name: '启用图层样式' })).not.toBeInTheDocument()
+    const convertMenu = within(contextMenu).getByRole('menu', { name: '转换为', hidden: true })
+    expect(within(convertMenu).getByRole('menuitem', { name: '转换为背景图层', hidden: true })).toBeEnabled()
+    expect(within(convertMenu).getByRole('menuitem', { name: '转换为普通图层', hidden: true })).toBeDisabled()
+
+    fireEvent.click(within(convertMenu).getByRole('menuitem', { name: '转换为瓦片图层', hidden: true }))
+
+    expect(screen.getByRole('dialog', { name: '转换为瓦片图层' })).toBeInTheDocument()
+    expect(screen.getByDisplayValue('Source Pixels')).toBeInTheDocument()
+  })
+
   it('opens layer styles for layers and groups from their context menu or status icon', () => {
     const document = createDocument('layer style menu', 2, 2, 'rgba')
     const layer = getActiveLayer(document)
@@ -1165,6 +1658,126 @@ describe('LayersPanel properties', () => {
     expect(dialog.querySelector('.layer-style-smart-darkness')).toBeInTheDocument()
     fireEvent.click(within(screen.getByRole('navigation', { name: '图层样式效果' })).getByRole('button', { name: '渐变叠加' }))
     expect(within(dialog).getByRole('button', { name: '渐变抖动' })).toBeInTheDocument()
+  })
+
+  it('opens batch properties on double-click without collapsing a multi-layer selection', () => {
+    const document = createDocument('double-click batch properties', 2, 2, 'rgba')
+    const bottom = getActiveLayer(document)
+    const top = createLayer('Top', 2, 2, 'rgba')
+    document.layers.push(top)
+    useWorkspace.getState().addSession(document)
+    useWorkspace.getState().selectLayerRows([bottom.id, top.id], [])
+    const session = useWorkspace.getState().sessions[0]
+    const { container } = render(<LayersPanel session={session} docked />)
+
+    fireEvent.doubleClick(container.querySelector(`[data-layer-id="${top.id}"]`)!)
+
+    expect(screen.getByRole('heading', { name: '多个图层属性' })).toBeInTheDocument()
+    expect(session.selectedLayerIds).toEqual([bottom.id, top.id])
+  })
+
+  it('opens layer styles for the current multi-selection and commits one batch action', () => {
+    const document = createDocument('batch layer style dialog', 2, 2, 'rgba')
+    const source = getActiveLayer(document)
+    const target = createLayer('Target', 2, 2, 'rgba')
+    const styles = createDefaultLayerStyles()
+    styles.stroke.enabled = true
+    styles.stroke.size = 4
+    source.layerStyles = styles
+    document.layers.push(target)
+    useWorkspace.getState().addSession(document)
+    useWorkspace.getState().selectLayerRows([source.id, target.id], [])
+    const session = useWorkspace.getState().sessions[0]
+    const { container } = render(<LayersPanel session={session} docked />)
+
+    fireEvent.contextMenu(container.querySelector(`[data-layer-id="${source.id}"]`)!, { clientX: 20, clientY: 20 })
+    fireEvent.click(screen.getByRole('menuitem', { name: '图层样式' }))
+    expect(screen.getByRole('heading', { name: '多个图层 图层样式' })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '应用' }))
+
+    expect(source.layerStyles?.stroke.size).toBe(4)
+    expect(target.layerStyles?.stroke).toMatchObject({ enabled: true, size: 4 })
+    useWorkspace.getState().undo()
+    expect(source.layerStyles?.stroke.size).toBe(4)
+    expect(target.layerStyles).toBeUndefined()
+  })
+
+  it('copies a layer style from the context menu and pastes or clears it across the selection', () => {
+    const document = createDocument('layer style menu actions', 2, 2, 'rgba')
+    const source = getActiveLayer(document)
+    const target = createLayer('Target', 2, 2, 'rgba')
+    const styles = createDefaultLayerStyles()
+    styles.shadow.enabled = true
+    source.layerStyles = styles
+    document.layers.push(target)
+    useWorkspace.getState().addSession(document)
+    const session = useWorkspace.getState().sessions[0]
+    const { container, rerender } = render(<LayersPanel session={session} docked />)
+
+    fireEvent.contextMenu(container.querySelector(`[data-layer-id="${source.id}"]`)!, { clientX: 20, clientY: 20 })
+    fireEvent.click(screen.getByRole('menuitem', { name: '复制图层样式' }))
+    rerender(<LayersPanel session={session} docked />)
+    fireEvent.contextMenu(container.querySelector(`[data-layer-id="${target.id}"]`)!, { clientX: 20, clientY: 20 })
+    fireEvent.click(screen.getByRole('menuitem', { name: '粘贴图层样式' }))
+    expect(target.layerStyles?.shadow.enabled).toBe(true)
+
+    useWorkspace.getState().selectLayerRows([source.id, target.id], [])
+    rerender(<LayersPanel session={session} docked />)
+    fireEvent.contextMenu(container.querySelector(`[data-layer-id="${target.id}"]`)!, { clientX: 20, clientY: 20 })
+    fireEvent.click(screen.getByRole('menuitem', { name: '清除图层样式' }))
+    expect(source.layerStyles).toBeUndefined()
+    expect(target.layerStyles).toBeUndefined()
+  })
+
+  it('toggles layer styles from the context menu without hiding the status icon', () => {
+    const document = createDocument('layer style visibility menu', 2, 2, 'rgba')
+    const layer = getActiveLayer(document)
+    const styles = createDefaultLayerStyles()
+    styles.stroke.enabled = true
+    styles.stroke.size = 4
+    layer.layerStyles = styles
+    useWorkspace.getState().addSession(document)
+    const session = useWorkspace.getState().sessions[0]
+    const { container, rerender } = render(<LayersPanel session={session} docked />)
+    const row = container.querySelector(`[data-layer-id="${layer.id}"]`)!
+
+    expect(row.querySelector('.layer-style-indicator')).toBeInTheDocument()
+    fireEvent.contextMenu(row, { clientX: 20, clientY: 20 })
+    fireEvent.click(screen.getByRole('menuitem', { name: '停用图层样式' }))
+    expect(layer.layerStyles).toMatchObject({ enabled: false, stroke: { enabled: true, size: 4 } })
+
+    rerender(<LayersPanel session={session} docked />)
+    expect(container.querySelector(`[data-layer-id="${layer.id}"] .layer-style-indicator`)).toBeInTheDocument()
+    fireEvent.contextMenu(container.querySelector(`[data-layer-id="${layer.id}"]`)!, { clientX: 20, clientY: 20 })
+    fireEvent.click(screen.getByRole('menuitem', { name: '启用图层样式' }))
+    expect(layer.layerStyles).toMatchObject({ enabled: true, stroke: { enabled: true, size: 4 } })
+  })
+
+  it('Alt-drags the layer style indicator to copy styles onto another layer', () => {
+    const document = createDocument('drag layer style', 2, 2, 'rgba')
+    const source = getActiveLayer(document)
+    const target = createLayer('Target', 2, 2, 'rgba')
+    const styles = createDefaultLayerStyles()
+    styles.colorOverlay.enabled = true
+    source.layerStyles = styles
+    document.layers.push(target)
+    useWorkspace.getState().addSession(document)
+    const session = useWorkspace.getState().sessions[0]
+    const { container } = render(<LayersPanel session={session} docked />)
+    const indicator = container.querySelector<HTMLElement>(`[data-layer-id="${source.id}"] .layer-style-indicator`)!
+    const targetRow = container.querySelector<HTMLElement>(`[data-layer-id="${target.id}"]`)!
+    const originalElementFromPoint = window.document.elementFromPoint
+    Object.defineProperty(window.document, 'elementFromPoint', { configurable: true, value: vi.fn(() => targetRow) })
+
+    try {
+      fireEvent.pointerDown(indicator, { button: 0, altKey: true, clientX: 10, clientY: 10 })
+      fireEvent.pointerMove(window, { clientX: 40, clientY: 40 })
+      expect(targetRow).toHaveClass('layer-style-drop-target')
+      fireEvent.pointerUp(window, { clientX: 40, clientY: 40 })
+      expect(target.layerStyles?.colorOverlay.enabled).toBe(true)
+    } finally {
+      Object.defineProperty(window.document, 'elementFromPoint', { configurable: true, value: originalElementFromPoint })
+    }
   })
 
   it('edits a single selected group without changing its implicit descendant selection', () => {
@@ -1224,7 +1837,7 @@ describe('LayersPanel properties', () => {
     render(<LayersPanel session={useWorkspace.getState().sessions[0]} docked />)
 
     fireEvent.doubleClick(screen.getByRole('button', { name: new RegExp(layer.name) }))
-    const opacity = screen.getByRole('spinbutton', { name: '不透明度' })
+    const opacity = screen.getByRole('slider', { name: '不透明度' })
     fireEvent.change(opacity, { target: { value: '37' } })
     fireEvent.keyDown(opacity, { key: 'Enter' })
 

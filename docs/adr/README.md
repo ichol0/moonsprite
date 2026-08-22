@@ -1,5 +1,7 @@
 # 架构决策记录
 
+中文 | [English](README.en.md)
+
 ADR 用于记录会长期影响实现的决定，避免后续只看到代码而不知道原因。
 
 ## 使用方式
@@ -23,5 +25,13 @@ ADR 用于记录会长期影响实现的决定，避免后续只看到代码而�
 - [0011：文档颜色模式与栅格格式分离](0011-document-color-modes.md)
 - [0012：非破坏性图层样式](0012-non-destructive-layer-styles.md)
 - [0013：可编辑背景图层](0013-background-layers.md)
+- [0014：进行中路径使用独立手势历史](0014-pending-canvas-gesture-history.md)
+- [0015：Tilemap 源数据与平铺视图分离](0015-tilemap-source-and-tiled-view.md)
+- [0016：自由瓦片源库与任意位置实例分离](0016-free-tile-source-and-instances.md)
+- [0017：Tilemap 图层共享项目瓦片集](0017-shared-tilemap-tilesets.md)
+- [0018：动画循环节使用稳定帧端点](0018-animation-loop-sections.md)
+- [0019：Lua 脚本使用快照与类型化事务边界](0019-lua-script-snapshot-transactions.md)
+- [0020：扩展包使用受限 ZIP 与原子安装边界](0020-extension-package-format.md)
+- [0021：关联图层使用稳定身份与共享栅格存储](0021-linked-layers.md)
 
 新增 ADR 时按编号递增；废弃旧决定时保留原文件并指向替代 ADR。

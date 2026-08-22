@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { ANIMATION_PLAYBACK_SHORTCUT_MIGRATION_KEY, DEFAULT_SHORTCUTS, GRID_SHORTCUT_MIGRATION_KEY, POLYGON_LASSO_SHORTCUT_MIGRATION_KEY, POPUP_PANEL_SHORTCUT_MIGRATION_KEY, REPLACE_COLOR_SHORTCUT_MIGRATION_KEY, SHORTCUTS_KEY, SHORTCUT_GROUPS, SHORTCUT_LABELS, deriveShortcutConflicts, loadShortcuts, normalizeShortcut, parseShortcutJson, saveShortcuts, shortcutHeldByKeyParts, shortcutKeyPart, shortcutMatchesEvent, shortcutReleasedByEvent, shortcutText } from './shortcuts'
+import { ANIMATION_PLAYBACK_SHORTCUT_MIGRATION_KEY, BRUSH_PANEL_SHORTCUT_MIGRATION_KEY, DEFAULT_SHORTCUTS, GRID_SHORTCUT_MIGRATION_KEY, POLYGON_LASSO_SHORTCUT_MIGRATION_KEY, POPUP_PANEL_SHORTCUT_MIGRATION_KEY, REPLACE_COLOR_SHORTCUT_MIGRATION_KEY, SHORTCUTS_KEY, SHORTCUT_GROUPS, SHORTCUT_LABELS, deriveShortcutConflicts, loadShortcuts, normalizeShortcut, parseShortcutJson, saveShortcuts, shortcutHeldByKeyParts, shortcutKeyPart, shortcutMatchesEvent, shortcutReleasedByEvent, shortcutText } from './shortcuts'
 
 describe('shortcut persistence boundary', () => {
   it('only accepts known shortcut ids and string values', () => {
@@ -74,10 +74,11 @@ describe('shortcut persistence boundary', () => {
       key: (index: number) => [...values.keys()][index] ?? null,
       get length() { return values.size }
     } as Storage
-    values.set(SHORTCUTS_KEY, JSON.stringify({ popupColorPanel: '', popupPalettePanel: '', popupLayersPanel: '', popupPreviewPanel: 'Alt+4' }))
+    values.set(SHORTCUTS_KEY, JSON.stringify({ popupColorPanel: '', popupPalettePanel: '', popupLayersPanel: '', popupPreviewPanel: 'Alt+4', popupTilesetPanel: '', popupBrushLibraryPanel: '' }))
 
-    expect(loadShortcuts(storage)).toMatchObject({ popupColorPanel: '1', popupPalettePanel: '2', popupLayersPanel: '3', popupPreviewPanel: 'Alt+4' })
+    expect(loadShortcuts(storage)).toMatchObject({ popupColorPanel: '1', popupPalettePanel: '2', popupLayersPanel: '3', popupPreviewPanel: 'Alt+4', popupTilesetPanel: '5', popupBrushLibraryPanel: '6' })
     expect(values.get(POPUP_PANEL_SHORTCUT_MIGRATION_KEY)).toBe('done')
+    expect(values.get(BRUSH_PANEL_SHORTCUT_MIGRATION_KEY)).toBe('done')
     saveShortcuts({ ...DEFAULT_SHORTCUTS, popupColorPanel: '' }, storage)
     expect(loadShortcuts(storage).popupColorPanel).toBe('')
   })
@@ -119,6 +120,8 @@ describe('shortcut persistence boundary', () => {
     expect(DEFAULT_SHORTCUTS.toggleCustomGrid).toBe("Ctrl+'")
     expect(DEFAULT_SHORTCUTS.toggleGrid).toBe("Ctrl+Shift+'")
     expect(DEFAULT_SHORTCUTS.toolRailLeft).toBe('')
+    expect(DEFAULT_SHORTCUTS.toolRailTop).toBe('')
+    expect(DEFAULT_SHORTCUTS.toolRailBottom).toBe('')
     expect(DEFAULT_SHORTCUTS.swapForegroundBackground).toBe('X')
     expect(DEFAULT_SHORTCUTS.addForegroundToPalette).toBe('Alt+S')
     expect(SHORTCUT_GROUPS.color).toContain('addForegroundToPalette')
@@ -128,13 +131,17 @@ describe('shortcut persistence boundary', () => {
     expect(SHORTCUT_GROUPS.file).toContain('exportSpriteSheet')
     expect(SHORTCUT_GROUPS.animation).toContain('toggleAnimationPlayback')
     expect(DEFAULT_SHORTCUTS.toggleAnimationPlayback).toBe('Enter')
+    expect(DEFAULT_SHORTCUTS.addLinkedAnimationFrame).toBe('Alt+M')
+    expect(SHORTCUT_GROUPS.animation).toContain('addLinkedAnimationFrame')
     expect(SHORTCUT_GROUPS.interface).toContain('toggleColorPanel')
-    expect(SHORTCUT_GROUPS.interface).toEqual(expect.arrayContaining(['popupColorPanel', 'popupPalettePanel', 'popupLayersPanel', 'popupPreviewPanel']))
-    expect(SHORTCUT_GROUPS.interface.slice(0, 4)).toEqual(['popupColorPanel', 'popupPalettePanel', 'popupLayersPanel', 'popupPreviewPanel'])
+    expect(SHORTCUT_GROUPS.interface).toEqual(expect.arrayContaining(['popupColorPanel', 'popupPalettePanel', 'popupLayersPanel', 'popupPreviewPanel', 'popupTilesetPanel', 'popupBrushLibraryPanel']))
+    expect(SHORTCUT_GROUPS.interface.slice(0, 6)).toEqual(['popupColorPanel', 'popupPalettePanel', 'popupLayersPanel', 'popupPreviewPanel', 'popupTilesetPanel', 'popupBrushLibraryPanel'])
     expect(DEFAULT_SHORTCUTS.popupColorPanel).toBe('1')
     expect(DEFAULT_SHORTCUTS.popupPalettePanel).toBe('2')
     expect(DEFAULT_SHORTCUTS.popupLayersPanel).toBe('3')
     expect(DEFAULT_SHORTCUTS.popupPreviewPanel).toBe('4')
+    expect(DEFAULT_SHORTCUTS.popupTilesetPanel).toBe('5')
+    expect(DEFAULT_SHORTCUTS.popupBrushLibraryPanel).toBe('6')
     expect(SHORTCUT_GROUPS.interface).toContain('toggleTimeline')
     expect(SHORTCUT_GROUPS.tools).toContain('tool.shape.rectangle')
     expect(DEFAULT_SHORTCUTS.toggleTimeline).toBe('')

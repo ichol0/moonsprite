@@ -12,12 +12,12 @@ const roadmapItems: Array<{ id: string; label: TranslationKey; category: Transla
   { id: 'clipping-mask', label: 'roadmap.item.clippingMask', category: 'roadmap.category.masksLayers', completed: true },
   { id: 'mask', label: 'roadmap.item.mask', category: 'roadmap.category.masksLayers', completed: true },
   { id: 'layer-style', label: 'roadmap.item.layerStyle', category: 'roadmap.category.masksLayers', completed: true },
-  { id: 'linked-layers', label: 'roadmap.item.linkedLayers', category: 'roadmap.category.masksLayers', completed: false },
+  { id: 'linked-layers', label: 'roadmap.item.linkedLayers', category: 'roadmap.category.masksLayers', completed: true },
   { id: 'dither-brush', label: 'roadmap.item.ditherBrush', category: 'roadmap.category.tools', completed: true },
   { id: 'text', label: 'roadmap.item.text', category: 'roadmap.category.tools', completed: true },
   { id: 'pressure', label: 'roadmap.item.pressure', category: 'roadmap.category.input', completed: true },
   { id: 'slice', label: 'roadmap.item.slice', category: 'roadmap.category.tools', completed: true },
-  { id: 'tile', label: 'roadmap.item.tile', category: 'roadmap.category.canvas', completed: false },
+  { id: 'tile', label: 'roadmap.item.tile', category: 'roadmap.category.canvas', completed: true },
   { id: 'gif-bead-export', label: 'roadmap.item.beadExport', category: 'roadmap.category.export', completed: false },
   { id: 'theme', label: 'roadmap.item.theme', category: 'roadmap.category.interface', completed: true },
   { id: 'extension-support', label: 'roadmap.item.extensionSupport', category: 'roadmap.category.ecosystem', completed: false },
@@ -25,7 +25,7 @@ const roadmapItems: Array<{ id: string; label: TranslationKey; category: Transla
   { id: 'timelapse-animation', label: 'roadmap.item.timelapseAnimation', category: 'roadmap.category.animation', completed: true },
   { id: 'custom-brush', label: 'roadmap.item.customBrush', category: 'roadmap.category.input', completed: true },
   { id: 'sprite-sheet', label: 'roadmap.item.spriteSheet', category: 'roadmap.category.export', completed: true },
-  { id: 'animation-tags', label: 'roadmap.item.animationTags', category: 'roadmap.category.animation', completed: false }
+  { id: 'animation-loop-sections', label: 'roadmap.item.animationLoopSections', category: 'roadmap.category.animation', completed: true }
 ]
 
 export function FutureRoadmapDialog({ onClose }: { onClose: () => void }) {

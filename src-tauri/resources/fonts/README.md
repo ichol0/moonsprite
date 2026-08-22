@@ -1,5 +1,7 @@
 # Bundled pixel fonts
 
+English | [中文](README.zh-CN.md)
+
 MoonSprite seeds these fonts into the executable-root `Font` directory on first use. They are bundled as unmodified font files under the SIL Open Font License 1.1.
 
 | Font | Bundled file | Upstream | Native pixel size |

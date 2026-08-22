@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import {
   DEFAULT_COLOR_EDITOR_MODES,
   DEFAULT_LAYER_DISPLAY_COLOR_PRESETS,
@@ -14,9 +14,12 @@ import {
   type CursorScale,
   type DocumentSizePreset,
   type EyedropperMagnifierStyle,
+  type MoveLayerClickFlashDuration,
+  MOVE_LAYER_CLICK_FLASH_DURATIONS,
   type QuickCommandId,
   type RelativeLuminanceScope,
   type RotationIndicatorPosition,
+  type SelectionPreviewColorMode,
   type ToolIconScale,
   type UiScale,
   type WheelZoomMode,
@@ -44,6 +47,7 @@ import { applyThemeToDocument, resolveTheme, type ThemeVisualDefaults } from '@/
 import { ThemePreferencesSection } from './ThemePreferencesSection'
 import { QUICK_COMMAND_METADATA } from '@/components/app/quick-command-registry'
 import { colorValueModeLabel } from '@/core/color-values'
+import type { StoredExtension } from '@shared/types'
 
 interface PreferencesDialogProps {
   initialSection?: PreferenceSection
@@ -51,7 +55,7 @@ interface PreferencesDialogProps {
   onPresetChange: (documentSizes: DocumentSizePreset[], exportScales: number[]) => void
 }
 
-export type PreferenceSection = 'general' | 'quickCommands' | 'appearance' | 'theme' | 'input' | 'tools' | 'files' | 'colorLayers' | 'presets' | 'reset'
+export type PreferenceSection = 'general' | 'quickCommands' | 'appearance' | 'theme' | 'input' | 'tools' | 'files' | 'colorLayers' | 'presets' | 'extensions' | 'reset'
 
 const PREFERENCE_SECTIONS: Array<[PreferenceSection, TranslationKey]> = [
   ['general', 'preferences.sections.general'],
@@ -63,6 +67,7 @@ const PREFERENCE_SECTIONS: Array<[PreferenceSection, TranslationKey]> = [
   ['files', 'preferences.sections.files'],
   ['colorLayers', 'preferences.sections.colors'],
   ['presets', 'preferences.sections.presets'],
+  ['extensions', 'preferences.sections.extensions'],
   ['reset', 'preferences.sections.reset']
 ]
 
@@ -74,10 +79,11 @@ const PREFERENCE_SEARCH_KEYS: Record<PreferenceSection, TranslationKey[]> = {
   appearance: ['preferences.groups.canvas', 'preferences.checkerSize', 'preferences.checkerColors', 'preferences.lightColor', 'preferences.darkColor', 'preferences.pixelGridColor', 'preferences.gridColor', 'preferences.sliceColor', 'preferences.textBoxColor', 'preferences.canvasResizeColor', 'preferences.luminanceScope'],
   theme: ['preferences.groups.theme', 'preferences.theme.available', 'preferences.theme.current'],
   input: ['preferences.groups.cursor', 'preferences.localCursor', 'preferences.cursorScale', 'preferences.groups.zoom', 'preferences.wheelZoom', 'preferences.wheelZoomMode', 'preferences.zoomMode', 'preferences.position'],
-  tools: ['preferences.groups.previews', 'preferences.brushPreview', 'preferences.drawingBrushPreview', 'preferences.selectionCrosshair', 'preferences.moveLayerContentPreview', 'preferences.moveLayerClickFlash', 'preferences.groups.drawing', 'preferences.shiftLinePreview', 'preferences.balancedLine', 'preferences.lineDirectionStep', 'preferences.lassoClosed', 'preferences.eyedropperPencil', 'preferences.groups.eyedropper', 'preferences.eyedropperMagnifier', 'preferences.eyedropperMagnifierStyle', 'preferences.eyedropperMagnifierDistortion'],
+  tools: ['preferences.groups.previews', 'preferences.brushPreview', 'preferences.drawingBrushPreview', 'preferences.selectionCrosshair', 'preferences.selectionPreviewColor', 'preferences.selectionPreviewColor.auto', 'preferences.selectionPreviewColor.custom', 'preferences.selectionPreviewCustomColor', 'preferences.selectionSizeVisible', 'preferences.moveLayerContentPreview', 'preferences.moveLayerClickFlash', 'preferences.moveLayerClickFlashDuration', 'preferences.groups.drawing', 'preferences.shiftLinePreview', 'preferences.balancedLine', 'preferences.lineDirectionStep', 'preferences.lassoClosed', 'preferences.eyedropperPencil', 'preferences.groups.eyedropper', 'preferences.eyedropperMagnifier', 'preferences.eyedropperMagnifierStyle', 'preferences.eyedropperMagnifierDistortion'],
   files: ['preferences.groups.locations', 'preferences.saveDirectory', 'preferences.exportDirectory', 'preferences.groups.formats', 'preferences.saveFormat', 'preferences.exportFormat', 'preferences.groups.recovery', 'preferences.recovery', 'preferences.recoveryRetentionDays', 'preferences.recoveryRetentionDaysHint'],
   colorLayers: ['preferences.colorModes', 'preferences.restoreDefaults'],
   presets: ['preferences.newDocumentPresets', 'preferences.addSize', 'preferences.exportScalePresets', 'preferences.addScale', 'preferences.layerColors', 'preferences.addColor', 'preferences.restoreDefaults'],
+  extensions: ['preferences.groups.extensions', 'preferences.extensions.add', 'preferences.extensions.openFolder', 'preferences.extensions.empty', 'preferences.extensions.entry', 'preferences.extensions.commands', 'preferences.extensions.panels', 'preferences.extensions.menus', 'preferences.extensions.enabled', 'preferences.extensions.disabled', 'preferences.extensions.enable', 'preferences.extensions.disable', 'preferences.extensions.uninstall'],
   reset: ['preferences.resetDescription', 'preferences.resetAll']
 }
 
@@ -114,6 +120,9 @@ export function PreferencesDialog({ initialSection = 'general', onClose, onPrese
   const [query, setQuery] = useState('')
   const [preferences, setPreferences] = useState(loadEditorPreferences)
   const [defaultDirectories, setDefaultDirectories] = useState({ saveDirectory: 'gallery', exportDirectory: 'exports' })
+  const [extensions, setExtensions] = useState<StoredExtension[]>([])
+  const [extensionsLoading, setExtensionsLoading] = useState(false)
+  const [extensionBusyId, setExtensionBusyId] = useState<string | null>(null)
   const [draggedPreferenceItem, setDraggedPreferenceItem] = useState<{ kind: PreferenceOrderKind; id: string } | null>(null)
   const preferencePointerDragRef = useRef<PreferencePointerDrag | null>(null)
   const update = <K extends keyof typeof preferences>(key: K, value: typeof preferences[K]): void => setPreferences((current) => ({ ...current, [key]: value }))
@@ -174,6 +183,24 @@ export function PreferencesDialog({ initialSection = 'general', onClose, onPrese
     }).catch(() => undefined)
     return () => { active = false }
   }, [])
+  const refreshExtensions = useCallback(async (): Promise<void> => {
+    if (typeof window.moonSprite?.listExtensions !== 'function') return
+    setExtensionsLoading(true)
+    try {
+      const listing = await window.moonSprite.listExtensions()
+      setExtensions(listing.extensions)
+    } catch (error) {
+      useWorkspace.getState().setMessage(error instanceof Error ? error.message : t('preferences.extensions.operationFailed'))
+    } finally {
+      setExtensionsLoading(false)
+    }
+  }, [t])
+  useEffect(() => {
+    void refreshExtensions()
+    const onExtensionsChanged = (): void => { void refreshExtensions() }
+    window.addEventListener('moonsprite:extensions-changed', onExtensionsChanged)
+    return () => window.removeEventListener('moonsprite:extensions-changed', onExtensionsChanged)
+  }, [refreshExtensions])
   useEffect(() => () => {
     setEditorPreferencesPreview(null)
     applyThemeToDocument(loadEditorPreferences().theme)
@@ -221,6 +248,59 @@ export function PreferencesDialog({ initialSection = 'general', onClose, onPrese
       if (!result.canceled && result.directoryPath) update(kind, result.directoryPath)
     } catch {
       useWorkspace.getState().setMessage(t('preferences.directorySelectFailed'))
+    }
+  }
+  const chooseExtension = async (): Promise<void> => {
+    try {
+      const extension = await window.moonSprite.chooseAndInstallExtension()
+      if (!extension) return
+      await refreshExtensions()
+      window.dispatchEvent(new Event('moonsprite:extensions-changed'))
+      useWorkspace.getState().setMessage(t('preferences.extensions.installSuccess', { name: extension.name }))
+    } catch (error) {
+      useWorkspace.getState().setMessage(error instanceof Error ? error.message : t('preferences.extensions.installFailed'))
+    }
+  }
+  const openExtensionFolder = async (): Promise<void> => {
+    try {
+      await window.moonSprite.openExtensionFolder()
+    } catch (error) {
+      useWorkspace.getState().setMessage(error instanceof Error ? error.message : t('preferences.extensions.operationFailed'))
+    }
+  }
+  const toggleExtension = async (extension: StoredExtension): Promise<void> => {
+    if (extensionBusyId) return
+    setExtensionBusyId(extension.id)
+    try {
+      const updated = await window.moonSprite.setExtensionEnabled(extension.id, !extension.enabled)
+      setExtensions((current) => current.map((item) => item.id === updated.id ? updated : item))
+      window.dispatchEvent(new Event('moonsprite:extensions-changed'))
+    } catch (error) {
+      useWorkspace.getState().setMessage(error instanceof Error ? error.message : t('preferences.extensions.operationFailed'))
+    } finally {
+      setExtensionBusyId(null)
+    }
+  }
+  const uninstallExtension = async (extension: StoredExtension): Promise<void> => {
+    const choice = await useWorkspace.getState().requestDialog({
+      title: t('preferences.extensions.uninstallTitle'),
+      message: t('preferences.extensions.uninstallMessage', { name: extension.name }),
+      detail: t('preferences.extensions.path', { path: extension.filePath }),
+      choices: [
+        { id: 'cancel', label: t('preferences.cancel'), tone: 'quiet' },
+        { id: 'uninstall', label: t('preferences.extensions.uninstall'), tone: 'danger' }
+      ]
+    })
+    if (choice !== 'uninstall' || extensionBusyId) return
+    setExtensionBusyId(extension.id)
+    try {
+      await window.moonSprite.uninstallExtension(extension.id)
+      await refreshExtensions()
+      window.dispatchEvent(new Event('moonsprite:extensions-changed'))
+    } catch (error) {
+      useWorkspace.getState().setMessage(error instanceof Error ? error.message : t('preferences.extensions.operationFailed'))
+    } finally {
+      setExtensionBusyId(null)
     }
   }
   const persist = (): void => {
@@ -309,8 +389,12 @@ export function PreferencesDialog({ initialSection = 'general', onClose, onPrese
           <FormField className="preference-field" label={t('preferences.brushPreview')}><ThemedSelect value={preferences.brushPreviewMode} groups={[{ label: t('preferences.brushPreviewGroup'), options: [{ value: 'none', label: t('preferences.brushPreview.none') }, { value: 'edge', label: t('preferences.brushPreview.edge') }, { value: 'full', label: t('preferences.brushPreview.full') }, { value: 'full-edge', label: t('preferences.brushPreview.fullEdge') }] }]} label={t('preferences.brushPreview')} onChange={(value) => update('brushPreviewMode', value as BrushPreviewMode)} /></FormField>
           {preferences.brushPreviewMode === 'full-edge' && toggle(t('preferences.drawingBrushPreview'), preferences.drawingBrushPreviewEnabled, (value) => update('drawingBrushPreviewEnabled', value))}
           {toggle(t('preferences.selectionCrosshair'), preferences.selectionCrosshair, (value) => update('selectionCrosshair', value))}
+          <FormField className="preference-field" label={t('preferences.selectionPreviewColor')}><ThemedSelect value={preferences.selectionPreviewColorMode} groups={[{ label: t('preferences.selectionPreviewColorGroup'), options: [{ value: 'auto', label: t('preferences.selectionPreviewColor.auto') }, { value: 'custom', label: t('preferences.selectionPreviewColor.custom') }] }]} label={t('preferences.selectionPreviewColor')} onChange={(value) => update('selectionPreviewColorMode', value as SelectionPreviewColorMode)} /></FormField>
+          {preferences.selectionPreviewColorMode === 'custom' && <FormField className="preference-field" label={t('preferences.selectionPreviewCustomColor')}><ColorValueControl color={preferences.selectionPreviewColor} density="regular" onChange={(selectionPreviewColor) => update('selectionPreviewColor', selectionPreviewColor)} label={t('preferences.selectionPreviewCustomColor')} roleLabel={t('preferences.selectionPreviewCustomColor')} fillWithColor inPalette={false} /></FormField>}
+          {toggle(t('preferences.selectionSizeVisible'), preferences.selectionSizeVisible, (value) => update('selectionSizeVisible', value))}
           {toggle(t('preferences.moveLayerContentPreview'), preferences.moveLayerContentPreviewEnabled, (value) => update('moveLayerContentPreviewEnabled', value), t('preferences.moveLayerContentPreviewHint'))}
           {toggle(t('preferences.moveLayerClickFlash'), preferences.moveLayerClickFlashEnabled, (value) => update('moveLayerClickFlashEnabled', value), t('preferences.moveLayerClickFlashHint'))}
+          <FormField className="preference-field" label={t('preferences.moveLayerClickFlashDuration')} tooltip={t('preferences.moveLayerClickFlashDurationHint')}><ThemedSelect value={String(preferences.moveLayerClickFlashDuration)} groups={[{ label: t('preferences.moveLayerClickFlashDurationGroup'), options: MOVE_LAYER_CLICK_FLASH_DURATIONS.map((duration) => ({ value: String(duration), label: t(duration === 80 ? 'preferences.moveLayerClickFlashDuration.fast' : duration === 180 ? 'preferences.moveLayerClickFlashDuration.long' : 'preferences.moveLayerClickFlashDuration.standard') })) }]} label={t('preferences.moveLayerClickFlashDuration')} disabled={!preferences.moveLayerClickFlashEnabled} onChange={(value) => update('moveLayerClickFlashDuration', Number(value) as MoveLayerClickFlashDuration)} /></FormField>
         </PreferenceGroup>
         <PreferenceGroup title={t('preferences.groups.drawing')}>
           {toggle(t('preferences.shiftLinePreview'), preferences.shiftLinePreviewEnabled, (value) => update('shiftLinePreviewEnabled', value))}
@@ -331,8 +415,8 @@ export function PreferencesDialog({ initialSection = 'general', onClose, onPrese
         <FormField className="preference-field preference-path-field" label={t('preferences.exportDirectory')} hint={preferences.exportDirectory ? t('preferences.directory.custom') : t('preferences.directory.default')}><div className="preference-path-control"><TextInput readOnly value={preferences.exportDirectory || defaultDirectories.exportDirectory} title={preferences.exportDirectory || defaultDirectories.exportDirectory} /><button type="button" className="icon-button" title={t('preferences.chooseDirectory')} aria-label={t('preferences.chooseExportDirectory')} onClick={() => void choosePreferenceDirectory('exportDirectory')}><PixelUtilityIcon kind="folderOpen" /></button><button type="button" className="icon-button" title={t('preferences.restoreDefaultDirectory')} aria-label={t('preferences.restoreDefaultExportDirectory')} disabled={!preferences.exportDirectory} onClick={() => update('exportDirectory', '')}><PixelUtilityIcon kind="restore" /></button></div></FormField>
         </PreferenceGroup>
         <PreferenceGroup title={t('preferences.groups.formats')}>
-        <FormField className="preference-field" label={t('preferences.saveFormat')}><ThemedSelect value={preferences.saveFormat} groups={[{ label: t('preferences.saveFormatGroup'), options: [{ value: 'moonsprite', label: '.moonsprite' }, { value: 'png', label: '.png' }, { value: 'jpeg', label: '.jpg / .jpeg' }, { value: 'webp', label: '.webp' }, { value: 'ase', label: '.ase' }, { value: 'aseprite', label: '.aseprite' }] }]} label={t('preferences.saveFormat')} onChange={(value) => update('saveFormat', value)} /></FormField>
-        <FormField className="preference-field" label={t('preferences.exportFormat')}><ThemedSelect value={preferences.exportFormat} groups={[{ label: t('preferences.exportFormatGroup'), options: [{ value: 'png', label: 'PNG' }, { value: 'jpeg', label: 'JPEG' }, { value: 'webp', label: 'WebP' }, { value: 'svg', label: 'SVG' }, { value: 'gif', label: 'GIF' }] }]} label={t('preferences.exportFormat')} onChange={(value) => update('exportFormat', value)} /></FormField>
+        <FormField className="preference-field" label={t('preferences.saveFormat')}><ThemedSelect value={preferences.saveFormat} groups={[{ label: t('preferences.saveFormatGroup'), options: [{ value: 'moonsprite', label: '.moonsprite' }, { value: 'png', label: '.png' }, { value: 'jpeg', label: '.jpg / .jpeg' }, { value: 'webp', label: '.webp' }, { value: 'psd', label: '.psd' }, { value: 'ase', label: '.ase' }, { value: 'aseprite', label: '.aseprite' }] }]} label={t('preferences.saveFormat')} onChange={(value) => update('saveFormat', value)} /></FormField>
+        <FormField className="preference-field" label={t('preferences.exportFormat')}><ThemedSelect value={preferences.exportFormat} groups={[{ label: t('preferences.exportFormatGroup'), options: [{ value: 'png', label: 'PNG' }, { value: 'jpeg', label: 'JPEG' }, { value: 'webp', label: 'WebP' }, { value: 'svg', label: 'SVG' }, { value: 'gif', label: 'GIF' }, { value: 'psd', label: 'PSD' }] }]} label={t('preferences.exportFormat')} onChange={(value) => update('exportFormat', value)} /></FormField>
         </PreferenceGroup>
         <PreferenceGroup title={t('preferences.groups.recovery')}>
         <FormField className="preference-field" label={t('preferences.recovery')}><ThemedSelect value={recoveryValue} groups={[{ label: t('preferences.recoveryGroup'), options: [{ value: 'off', label: t('preferences.recovery.off') }, { value: '0.5', label: t('preferences.recovery.seconds30') }, { value: '1', label: t('preferences.recovery.minutes1') }, { value: '2', label: t('preferences.recovery.minutes2') }, { value: '5', label: t('preferences.recovery.minutes5') }, { value: '10', label: t('preferences.recovery.minutes10') }] }]} label={t('preferences.recovery')} onChange={(value) => setPreferences((current) => value === 'off' ? { ...current, recovery: false } : { ...current, recovery: true, recoveryMinutes: Number(value) })} /></FormField>
@@ -345,6 +429,28 @@ export function PreferencesDialog({ initialSection = 'general', onClose, onPrese
         return <div className={`preference-color-mode-row reorderable-list-row ${draggedPreferenceItem?.kind === 'color-mode' && draggedPreferenceItem.id === item.mode ? 'dragging' : ''}`} data-preference-order-kind="color-mode" data-preference-order-id={item.mode} data-color-mode={item.mode} key={item.mode}><button type="button" className="color-mode-drag-handle reorderable-list-handle" aria-label={`${modeName} ${t('home.reorderHint')}`} title={t('home.reorderHint')} onPointerDown={(event) => beginPreferencePointerDrag(event, 'color-mode', item.mode)}><PixelUtilityIcon kind="move" /></button><span className="color-mode-name">{modeName}</span><PixelCheckbox className="color-mode-visibility" aria-label={item.enabled ? `${item.mode} enabled` : `${item.mode} disabled`} checked={item.enabled} disabled={item.enabled && enabledCount === 1} onChange={() => update('colorEditorModes', preferences.colorEditorModes.map((candidate) => candidate.mode === item.mode ? { ...candidate, enabled: !candidate.enabled } : candidate))} /></div>
       })}</div></section></div>}
       {section === 'presets' && <div className="preference-presets"><section><SettingsSectionHeader title={t('preferences.newDocumentPresets')} actions={<button type="button" onClick={() => update('documentSizePresets', [...preferences.documentSizePresets, { width: 64, height: 64 }])}><PixelUtilityIcon kind="plus" />{t('preferences.addSize')}</button>} /><div className="preference-preset-grid">{preferences.documentSizePresets.map((preset, index) => <div className="document-size-preset-row" key={index}><NumberInput density="compact" aria-label={t('preferences.presetWidthAria', { index: index + 1 })} min={1} max={16384} suffix="px" value={preset.width} onValueChange={(value) => updateDocumentSize(index, 'width', value)} /><span>x</span><NumberInput density="compact" aria-label={t('preferences.presetHeightAria', { index: index + 1 })} min={1} max={16384} suffix="px" value={preset.height} onValueChange={(value) => updateDocumentSize(index, 'height', value)} /><DeleteIconButton aria-label={t('preferences.deleteSizeAria', { width: preset.width, height: preset.height })} disabled={preferences.documentSizePresets.length === 1} onClick={() => update('documentSizePresets', preferences.documentSizePresets.filter((_, presetIndex) => presetIndex !== index))} /></div>)}</div></section><section><SettingsSectionHeader title={t('preferences.exportScalePresets')} actions={<button type="button" onClick={() => update('exportScalePresets', [...preferences.exportScalePresets, 100])}><PixelUtilityIcon kind="plus" />{t('preferences.addScale')}</button>} /><div className="preference-preset-grid export-scale-preset-grid">{preferences.exportScalePresets.map((scale, index) => <div className="export-scale-preset-row" key={index}><NumberInput density="compact" aria-label={t('preferences.exportScaleAria', { index: index + 1 })} min={1} max={6400} suffix="%" value={scale} onValueChange={(value) => update('exportScalePresets', preferences.exportScalePresets.map((currentScale, scaleIndex) => scaleIndex === index ? value : currentScale))} /><DeleteIconButton aria-label={t('preferences.deleteScaleAria', { scale })} disabled={preferences.exportScalePresets.length === 1} onClick={() => update('exportScalePresets', preferences.exportScalePresets.filter((_, scaleIndex) => scaleIndex !== index))} /></div>)}</div></section><section className="preference-layer-settings preference-checker-colors"><SettingsSectionHeader title={t('preferences.layerColors')} actions={<><button type="button" className="quiet-button" aria-label={t('preferences.restoreDefaults')} onClick={() => update('layerDisplayColorPresets', DEFAULT_LAYER_DISPLAY_COLOR_PRESETS.map((color) => ({ ...color })))}><PixelUtilityIcon kind="restore" /><span>{t('preferences.restoreDefaults')}</span></button><button type="button" className="quiet-button" disabled={preferences.layerDisplayColorPresets.length >= 12} onClick={() => update('layerDisplayColorPresets', [...preferences.layerDisplayColorPresets, { r: 117, g: 117, b: 117, a: 255 }])}><PixelUtilityIcon kind="plus" /><span>{t('preferences.addColor')}</span></button></>} /><div className="preference-layer-color-grid">{preferences.layerDisplayColorPresets.map((color, index) => <div className="preference-layer-color-row" key={index}><ColorValueControl color={color} density="regular" onChange={(value) => updateLayerColorPreset(index, value)} label={t('preferences.layerColorAria', { index: index + 1 })} storageKey="layer-preset" fillWithColor /><DeleteIconButton size="regular" aria-label={t('preferences.deleteLayerColorAria', { index: index + 1 })} disabled={preferences.layerDisplayColorPresets.length === 1} onClick={() => update('layerDisplayColorPresets', preferences.layerDisplayColorPresets.filter((_, presetIndex) => presetIndex !== index))} /></div>)}</div></section></div>}
+      {section === 'extensions' && <PreferenceGroup title={t('preferences.groups.extensions')} actions={<><button type="button" onClick={() => void chooseExtension()} disabled={extensionsLoading || extensionBusyId !== null}><PixelUtilityIcon kind="import" />{t('preferences.extensions.add')}</button><button type="button" onClick={() => void openExtensionFolder()}><PixelUtilityIcon kind="folderOpen" />{t('preferences.extensions.openFolder')}</button></>}>
+        {extensionsLoading && extensions.length === 0 ? <p className="preference-search-empty">{t('preferences.extensions.loading')}</p> : extensions.length === 0 ? <p className="preference-search-empty">{t('preferences.extensions.empty')}</p> : <div className="preference-extension-list">{extensions.map((extension) => <article className={`preference-extension-row${extension.enabled ? '' : ' disabled'}`} key={extension.id}>
+          <div className="preference-extension-info">
+            <header className="preference-extension-heading">
+              <div className="preference-extension-identity"><div className="preference-extension-title"><strong>{extension.name}</strong><span>{t('preferences.extensions.versionShort', { version: extension.version })}</span></div>{extension.author && <span className="preference-extension-author">{extension.author}</span>}</div>
+              <span className="preference-extension-state">{extension.enabled ? t('preferences.extensions.enabled') : t('preferences.extensions.disabled')}</span>
+            </header>
+            {extension.description && <p className="preference-extension-description">{extension.description}</p>}
+            <div className="preference-extension-stats">
+              <span title={extension.commands.map((command) => command.name).join(', ')}>{t('preferences.extensions.commandsShort', { count: extension.commands.length })}</span>
+              <span title={extension.panels.map((panel) => panel.name).join(', ')}>{t('preferences.extensions.panelsShort', { count: extension.panels.length })}</span>
+              <span title={[...extension.menuItems.map((item) => item.menu), ...extension.topMenus.map((menu) => menu.name)].join(', ')}>{t('preferences.extensions.menusShort', { count: extension.menuItems.length + extension.topMenus.length })}</span>
+            </div>
+            <dl className="preference-extension-details">
+              <div><dt>{t('preferences.extensions.idLabel')}</dt><dd title={extension.id}>{extension.id}</dd></div>
+              {extension.entry && <div><dt>{t('preferences.extensions.entryLabel')}</dt><dd title={extension.entry}>{extension.entry}</dd></div>}
+              <div className="preference-extension-location"><dt>{t('preferences.extensions.pathLabel')}</dt><dd title={extension.filePath}>{extension.filePath}</dd></div>
+            </dl>
+          </div>
+          <div className="preference-extension-actions"><PreferenceToggle className="preference-extension-toggle" label={t('preferences.extensions.enable')} checked={extension.enabled} disabled={extensionBusyId !== null} onChange={() => void toggleExtension(extension)} /><button type="button" className="danger-button" disabled={extensionBusyId !== null} onClick={() => void uninstallExtension(extension)}><PixelUtilityIcon kind="delete" />{t('preferences.extensions.uninstall')}</button></div>
+        </article>)}</div>}
+      </PreferenceGroup>}
       {section === 'reset' && <><p>{t('preferences.resetDescription')}</p><button className="danger-button" onClick={() => void resetAllSettings()}>{t('preferences.resetAll')}</button></>}
       </>}
     </main></div>

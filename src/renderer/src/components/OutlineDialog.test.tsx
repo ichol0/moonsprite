@@ -25,7 +25,7 @@ describe('OutlineDialog', () => {
     expect(within(settings).getByLabelText('允许描边的像素方向')).toBeInTheDocument()
     expect(within(screen.getByRole('group', { name: '位置' })).queryByRole('button', { name: '两侧' })).not.toBeInTheDocument()
 
-    const widthInput = screen.getByRole('spinbutton')
+    const widthInput = screen.getByRole('slider', { name: '宽度' })
     fireEvent.change(widthInput, { target: { value: '2' } })
     fireEvent.keyDown(widthInput, { key: 'Enter' })
 

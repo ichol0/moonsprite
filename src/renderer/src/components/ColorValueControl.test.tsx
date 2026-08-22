@@ -98,8 +98,36 @@ describe('ColorValueControl', () => {
     fireEvent.change(slider, { target: { value: '200' } })
     expect(currentSwatch.style.background).toBe(previousStyle)
 
+    slider.focus()
+    expect(slider).toHaveFocus()
     fireEvent.pointerUp(slider)
     expect(currentSwatch.style.background).not.toBe(previousStyle)
+    expect(slider).not.toHaveFocus()
+  })
+
+  it('separates live slider changes from commit and keeps the editor open while its host is busy', () => {
+    const onChange = vi.fn()
+    const onCommit = vi.fn()
+    const initial = { r: 41, g: 121, b: 255, a: 255 }
+    const { rerender } = render(<ColorValueControl color={initial} onChange={onChange} onCommit={onCommit} label="Color" preserveEditorOnDisable />)
+    fireEvent.click(screen.getByRole('button', { name: 'Color' }))
+    fireEvent.click(screen.getByRole('tab', { name: 'RGB' }))
+    const slider = screen.getByRole('slider', { name: /Color R/ })
+
+    fireEvent.change(slider, { target: { value: '200' } })
+    expect(onChange).toHaveBeenCalled()
+    expect(onCommit).not.toHaveBeenCalled()
+
+    fireEvent.pointerUp(slider)
+    expect(onCommit).toHaveBeenCalledTimes(1)
+    expect(onCommit).toHaveBeenLastCalledWith(expect.objectContaining({ r: 200 }))
+
+    rerender(<ColorValueControl color={initial} disabled onChange={onChange} onCommit={onCommit} label="Color" preserveEditorOnDisable />)
+    expect(screen.getByRole('dialog', { name: '颜色编辑' })).toBeInTheDocument()
+    expect(screen.getByRole('slider', { name: /Color R/ })).toBeDisabled()
+
+    rerender(<ColorValueControl color={initial} onChange={onChange} onCommit={onCommit} label="Color" preserveEditorOnDisable />)
+    expect(screen.getByRole('dialog', { name: '颜色编辑' })).toBeInTheDocument()
   })
 
   it('copies the confirmed color HEX and shows feedback on the clicked swatch', async () => {

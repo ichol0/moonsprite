@@ -42,7 +42,11 @@ export const EYEDROPPER_MAGNIFIER_STYLE_PREFERENCE_KEY = 'moonsprite.preference.
 export const EYEDROPPER_MAGNIFIER_DISTORTION_ENABLED_PREFERENCE_KEY = 'moonsprite.preference.eyedropper-magnifier-distortion-enabled'
 export const MOVE_LAYER_CONTENT_PREVIEW_ENABLED_PREFERENCE_KEY = 'moonsprite.preference.move-layer-content-preview-enabled'
 export const MOVE_LAYER_CLICK_FLASH_ENABLED_PREFERENCE_KEY = 'moonsprite.preference.move-layer-click-flash-enabled'
+export const MOVE_LAYER_CLICK_FLASH_DURATION_PREFERENCE_KEY = 'moonsprite.preference.move-layer-click-flash-duration'
 export const SELECTION_CROSSHAIR_PREFERENCE_KEY = 'moonsprite.preference.selection-crosshair'
+export const SELECTION_PREVIEW_COLOR_MODE_PREFERENCE_KEY = 'moonsprite.preference.selection-preview-color-mode'
+export const SELECTION_PREVIEW_COLOR_PREFERENCE_KEY = 'moonsprite.preference.selection-preview-color'
+export const SELECTION_SIZE_VISIBLE_PREFERENCE_KEY = 'moonsprite.preference.selection-size-visible'
 export const BALANCED_SHIFT_LINE_ENABLED_PREFERENCE_KEY = 'moonsprite.preference.balanced-shift-line-enabled'
 export const LINE_DIRECTION_STEP_PREFERENCE_KEY = 'moonsprite.preference.line-direction-step'
 export const LAYER_DISPLAY_COLOR_PRESETS_KEY = 'moonsprite.preference.layer-display-color-presets'
@@ -52,6 +56,7 @@ export const TIMELINE_HIDDEN_PREFERENCE_KEY = 'moonsprite.preference.timeline-hi
 export const SYMMETRY_AXIS_PREFERENCE_KEY = 'moonsprite.preference.symmetry-axis'
 export const TIMELAPSE_RECORDING_ENABLED_PREFERENCE_KEY = 'moonsprite.preference.timelapse-recording-enabled'
 export const QUICK_COMMAND_BAR_ENABLED_PREFERENCE_KEY = 'moonsprite.preference.quick-command-bar-enabled'
+export const QUICK_COMMAND_BAR_EXPANDED_PREFERENCE_KEY = 'moonsprite.preference.quick-command-bar-expanded'
 export const QUICK_COMMAND_BAR_TRANSLUCENT_PREFERENCE_KEY = 'moonsprite.preference.quick-command-bar-translucent'
 export const QUICK_COMMAND_PREFERENCES_KEY = 'moonsprite.preference.quick-command-items'
 export const UI_SCALE_PREFERENCE_KEY = 'moonsprite.preference.ui-scale'
@@ -63,10 +68,13 @@ export type RelativeLuminanceScope = 'canvas' | 'app'
 export type ZoomToolDragMode = 'smooth' | 'stepped'
 export type WheelZoomMode = 'smooth' | 'stepped'
 export type CursorScale = 1 | 1.25 | 1.5 | 2
+export type MoveLayerClickFlashDuration = 80 | 120 | 180
+export const MOVE_LAYER_CLICK_FLASH_DURATIONS: readonly MoveLayerClickFlashDuration[] = [80, 120, 180]
 export const UI_SCALE_VALUES = [0.75, 1, 1.5, 2] as const
 export type UiScale = typeof UI_SCALE_VALUES[number]
 export type ToolIconScale = 1 | 2
 export type BrushPreviewMode = 'none' | 'edge' | 'full' | 'full-edge'
+export type SelectionPreviewColorMode = 'auto' | 'custom'
 export type EyedropperMagnifierStyle = 'pixel' | 'line'
 export type CheckerSize = number
 
@@ -77,6 +85,9 @@ export const QUICK_COMMAND_IDS = [
   'canvasMirrorVertical',
   'invertSelection',
   'customGrid',
+  'tileRepeatX',
+  'tileRepeatY',
+  'tileRepeatBoth',
   'undo',
   'redo',
   'selectAll',
@@ -107,6 +118,9 @@ const DEFAULT_ENABLED_QUICK_COMMAND_IDS = new Set<QuickCommandId>([
   'canvasMirrorVertical',
   'invertSelection',
   'customGrid',
+  'tileRepeatX',
+  'tileRepeatY',
+  'tileRepeatBoth',
   'relativeLuminance'
 ])
 
@@ -130,7 +144,7 @@ export function parseQuickCommandPreferences(value: string | null): QuickCommand
       preferences.push({ id: id as QuickCommandId, enabled: (candidate as { enabled?: unknown }).enabled === true })
     }
     if (preferences.length === 0) return fallback()
-    for (const item of DEFAULT_QUICK_COMMAND_PREFERENCES) if (!seen.has(item.id)) preferences.push({ ...item, enabled: false })
+    for (const item of DEFAULT_QUICK_COMMAND_PREFERENCES) if (!seen.has(item.id)) preferences.push({ ...item })
     if (!preferences.some((item) => item.enabled)) preferences[0] = { ...preferences[0], enabled: true }
     return preferences
   } catch {
@@ -155,6 +169,7 @@ export const DEFAULT_GRID_COLOR: RgbaColor = { r: 0, g: 0, b: 255, a: 255 }
 export const DEFAULT_SLICE_COLOR: RgbaColor = { r: 0, g: 0, b: 255, a: 255 }
 export const DEFAULT_TEXT_BOX_COLOR: RgbaColor = { r: 0, g: 0, b: 255, a: 255 }
 export const DEFAULT_CANVAS_RESIZE_COLOR: RgbaColor = { r: 0, g: 0, b: 255, a: 255 }
+export const DEFAULT_SELECTION_PREVIEW_COLOR: RgbaColor = { r: 0, g: 0, b: 255, a: 255 }
 
 export function parseRotationIndicatorPosition(value: string | null): RotationIndicatorPosition {
   return value === 'canvas' ? 'canvas' : 'view'
@@ -169,7 +184,7 @@ export function parseRelativeLuminanceScope(value: string | null): RelativeLumin
 }
 
 export function parseZoomToolDragMode(value: string | null): ZoomToolDragMode {
-  return value === 'stepped' ? 'stepped' : 'smooth'
+  return value === 'smooth' ? 'smooth' : 'stepped'
 }
 
 export function parseWheelZoomMode(value: string | null): WheelZoomMode {
@@ -196,6 +211,10 @@ export function parseToolIconScale(value: string | null): ToolIconScale {
 
 export function parseBrushPreviewMode(value: string | null): BrushPreviewMode {
   return value === 'none' || value === 'edge' || value === 'full' || value === 'full-edge' ? value : 'full'
+}
+
+export function parseSelectionPreviewColorMode(value: string | null): SelectionPreviewColorMode {
+  return value === 'custom' ? 'custom' : 'auto'
 }
 
 export function parseEyedropperMagnifierStyle(value: string | null): EyedropperMagnifierStyle {
@@ -305,8 +324,8 @@ export const DEFAULT_SYMMETRY_AXIS_PREFERENCES: SymmetryAxisPreferences = {
   thickness: 1
 }
 
-export type SaveFormatPreference = 'moonsprite' | 'png' | 'jpeg' | 'webp' | 'ase' | 'aseprite'
-export type ExportFormatPreference = 'png' | 'jpeg' | 'webp' | 'svg' | 'gif'
+export type SaveFormatPreference = 'moonsprite' | 'png' | 'jpeg' | 'webp' | 'psd' | 'ase' | 'aseprite'
+export type ExportFormatPreference = 'png' | 'jpeg' | 'webp' | 'svg' | 'gif' | 'psd'
 
 export interface EditorPreferences {
   language: AppLocale
@@ -346,7 +365,11 @@ export interface EditorPreferences {
   eyedropperMagnifierDistortionEnabled: boolean
   moveLayerContentPreviewEnabled: boolean
   moveLayerClickFlashEnabled: boolean
+  moveLayerClickFlashDuration: MoveLayerClickFlashDuration
   selectionCrosshair: boolean
+  selectionPreviewColorMode: SelectionPreviewColorMode
+  selectionPreviewColor: RgbaColor
+  selectionSizeVisible: boolean
   balancedShiftLineEnabled: boolean
   lineDirectionStep: number
   layerDisplayColorPresets: RgbaColor[]
@@ -356,6 +379,7 @@ export interface EditorPreferences {
   symmetryAxis: SymmetryAxisPreferences
   timelapseRecordingEnabled: boolean
   quickCommandBarEnabled: boolean
+  quickCommandBarExpanded: boolean
   quickCommandBarTranslucent: boolean
   quickCommandPreferences: QuickCommandPreference[]
   theme: ThemePreferences
@@ -377,7 +401,7 @@ export const DEFAULT_EDITOR_PREFERENCES: EditorPreferences = {
   rotationIndicatorPosition: 'view',
   drawingBrushPreviewEnabled: true,
   relativeLuminanceScope: 'canvas',
-  zoomToolDragMode: 'smooth',
+  zoomToolDragMode: 'stepped',
   brushShiftLineEnabled: true,
   useLocalCursors: false,
   cursorScale: 1,
@@ -399,7 +423,11 @@ export const DEFAULT_EDITOR_PREFERENCES: EditorPreferences = {
   eyedropperMagnifierDistortionEnabled: true,
   moveLayerContentPreviewEnabled: true,
   moveLayerClickFlashEnabled: true,
+  moveLayerClickFlashDuration: 120,
   selectionCrosshair: false,
+  selectionPreviewColorMode: 'auto',
+  selectionPreviewColor: DEFAULT_SELECTION_PREVIEW_COLOR,
+  selectionSizeVisible: true,
   balancedShiftLineEnabled: true,
   lineDirectionStep: 1,
   layerDisplayColorPresets: DEFAULT_LAYER_DISPLAY_COLOR_PRESETS,
@@ -409,6 +437,7 @@ export const DEFAULT_EDITOR_PREFERENCES: EditorPreferences = {
   symmetryAxis: DEFAULT_SYMMETRY_AXIS_PREFERENCES,
   timelapseRecordingEnabled: false,
   quickCommandBarEnabled: true,
+  quickCommandBarExpanded: false,
   quickCommandBarTranslucent: true,
   quickCommandPreferences: DEFAULT_QUICK_COMMAND_PREFERENCES,
   theme: DEFAULT_THEME_PREFERENCES
@@ -614,6 +643,7 @@ export function imageExportKindForPreference(value: string | null): ImageExportK
   if (value === 'jpeg') return 'jpeg'
   if (value === 'webp') return 'webp'
   if (value === 'svg') return 'svg'
+  if (value === 'psd') return 'psd'
   if (value === 'png-rgba') return 'png-rgba'
   return 'png-auto'
 }
@@ -623,16 +653,17 @@ export function saveImageKindForPreference(value: string | null): SaveImageKind 
   if (value === 'ase' || value === 'aseprite') return value
   if (value === 'jpeg') return 'jpeg'
   if (value === 'webp') return 'webp'
+  if (value === 'psd') return 'psd'
   if (value === 'png') return 'png-auto'
   return null
 }
 
 function parseSaveFormat(value: string | null): SaveFormatPreference {
-  return value === 'png' || value === 'jpeg' || value === 'webp' || value === 'ase' || value === 'aseprite' ? value : 'moonsprite'
+  return value === 'png' || value === 'jpeg' || value === 'webp' || value === 'psd' || value === 'ase' || value === 'aseprite' ? value : 'moonsprite'
 }
 
 function parseExportFormat(value: string | null): ExportFormatPreference {
-  return value === 'jpeg' || value === 'webp' || value === 'svg' || value === 'gif' ? value : 'png'
+  return value === 'jpeg' || value === 'webp' || value === 'svg' || value === 'gif' || value === 'psd' ? value : 'png'
 }
 
 function parseDirectoryPreference(value: string | null): string {
@@ -649,6 +680,13 @@ export function parseRecoveryRetentionDays(value: string | null): number {
   if (!value?.trim()) return DEFAULT_EDITOR_PREFERENCES.recoveryRetentionDays
   const parsed = Number(value)
   return Number.isFinite(parsed) ? Math.max(1, Math.min(365, Math.round(parsed))) : DEFAULT_EDITOR_PREFERENCES.recoveryRetentionDays
+}
+
+export function parseMoveLayerClickFlashDuration(value: string | null): MoveLayerClickFlashDuration {
+  const parsed = Number(value)
+  return MOVE_LAYER_CLICK_FLASH_DURATIONS.includes(parsed as MoveLayerClickFlashDuration)
+    ? parsed as MoveLayerClickFlashDuration
+    : DEFAULT_EDITOR_PREFERENCES.moveLayerClickFlashDuration
 }
 
 export function loadEditorPreferences(storage?: Storage): EditorPreferences {
@@ -693,7 +731,11 @@ export function loadEditorPreferences(storage?: Storage): EditorPreferences {
     eyedropperMagnifierDistortionEnabled: get(EYEDROPPER_MAGNIFIER_DISTORTION_ENABLED_PREFERENCE_KEY) !== 'false',
     moveLayerContentPreviewEnabled: get(MOVE_LAYER_CONTENT_PREVIEW_ENABLED_PREFERENCE_KEY) !== 'false',
     moveLayerClickFlashEnabled: get(MOVE_LAYER_CLICK_FLASH_ENABLED_PREFERENCE_KEY) !== 'false',
+    moveLayerClickFlashDuration: parseMoveLayerClickFlashDuration(get(MOVE_LAYER_CLICK_FLASH_DURATION_PREFERENCE_KEY)),
     selectionCrosshair: get(SELECTION_CROSSHAIR_PREFERENCE_KEY) === 'true',
+    selectionPreviewColorMode: parseSelectionPreviewColorMode(get(SELECTION_PREVIEW_COLOR_MODE_PREFERENCE_KEY)),
+    selectionPreviewColor: parseHexColor(get(SELECTION_PREVIEW_COLOR_PREFERENCE_KEY), DEFAULT_SELECTION_PREVIEW_COLOR),
+    selectionSizeVisible: get(SELECTION_SIZE_VISIBLE_PREFERENCE_KEY) !== 'false',
     balancedShiftLineEnabled: get(BALANCED_SHIFT_LINE_ENABLED_PREFERENCE_KEY) !== 'false',
     lineDirectionStep: parseLineDirectionStep(get(LINE_DIRECTION_STEP_PREFERENCE_KEY)),
     layerDisplayColorPresets: parseLayerDisplayColorPresets(get(LAYER_DISPLAY_COLOR_PRESETS_KEY)),
@@ -703,6 +745,7 @@ export function loadEditorPreferences(storage?: Storage): EditorPreferences {
     symmetryAxis: theme.symmetryAxis,
     timelapseRecordingEnabled: get(TIMELAPSE_RECORDING_ENABLED_PREFERENCE_KEY) === 'true',
     quickCommandBarEnabled: get(QUICK_COMMAND_BAR_ENABLED_PREFERENCE_KEY) !== 'false',
+    quickCommandBarExpanded: get(QUICK_COMMAND_BAR_EXPANDED_PREFERENCE_KEY) === 'true',
     quickCommandBarTranslucent: get(QUICK_COMMAND_BAR_TRANSLUCENT_PREFERENCE_KEY) !== 'false',
     quickCommandPreferences: parseQuickCommandPreferences(get(QUICK_COMMAND_PREFERENCES_KEY)),
     theme: theme.theme
@@ -751,7 +794,11 @@ export function saveEditorPreferences(preferences: EditorPreferences, storage?: 
     [EYEDROPPER_MAGNIFIER_DISTORTION_ENABLED_PREFERENCE_KEY]: String(preferences.eyedropperMagnifierDistortionEnabled),
     [MOVE_LAYER_CONTENT_PREVIEW_ENABLED_PREFERENCE_KEY]: String(preferences.moveLayerContentPreviewEnabled),
     [MOVE_LAYER_CLICK_FLASH_ENABLED_PREFERENCE_KEY]: String(preferences.moveLayerClickFlashEnabled),
+    [MOVE_LAYER_CLICK_FLASH_DURATION_PREFERENCE_KEY]: String(parseMoveLayerClickFlashDuration(String(preferences.moveLayerClickFlashDuration))),
     [SELECTION_CROSSHAIR_PREFERENCE_KEY]: String(preferences.selectionCrosshair),
+    [SELECTION_PREVIEW_COLOR_MODE_PREFERENCE_KEY]: parseSelectionPreviewColorMode(preferences.selectionPreviewColorMode),
+    [SELECTION_PREVIEW_COLOR_PREFERENCE_KEY]: colorHex(preferences.selectionPreviewColor),
+    [SELECTION_SIZE_VISIBLE_PREFERENCE_KEY]: String(preferences.selectionSizeVisible),
     [BALANCED_SHIFT_LINE_ENABLED_PREFERENCE_KEY]: String(preferences.balancedShiftLineEnabled),
     [LINE_DIRECTION_STEP_PREFERENCE_KEY]: String(parseLineDirectionStep(String(preferences.lineDirectionStep))),
     [LAYER_DISPLAY_COLOR_PRESETS_KEY]: JSON.stringify(parseLayerDisplayColorPresets(JSON.stringify(preferences.layerDisplayColorPresets))),
@@ -761,6 +808,7 @@ export function saveEditorPreferences(preferences: EditorPreferences, storage?: 
     [SYMMETRY_AXIS_PREFERENCE_KEY]: JSON.stringify(parseSymmetryAxisPreferences(JSON.stringify(preferences.symmetryAxis))),
     [TIMELAPSE_RECORDING_ENABLED_PREFERENCE_KEY]: String(preferences.timelapseRecordingEnabled),
     [QUICK_COMMAND_BAR_ENABLED_PREFERENCE_KEY]: String(preferences.quickCommandBarEnabled),
+    [QUICK_COMMAND_BAR_EXPANDED_PREFERENCE_KEY]: String(preferences.quickCommandBarExpanded),
     [QUICK_COMMAND_BAR_TRANSLUCENT_PREFERENCE_KEY]: String(preferences.quickCommandBarTranslucent),
     [QUICK_COMMAND_PREFERENCES_KEY]: JSON.stringify(parseQuickCommandPreferences(JSON.stringify(preferences.quickCommandPreferences)))
   }

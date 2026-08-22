@@ -1,11 +1,11 @@
-import type { AnimationCel, AnimationCelSurface, AnimationTimeline, BlendMode, CanvasAnchor, ColorMode, ImageResizeInterpolation, IndexedLayer, LayerGroup, LayerMask, PaletteEntry, RasterLayer, RgbaColor, RgbaLayer, RuntimeRasterTiles, SelectionRect, SpriteDocument } from '@shared/types'
+import type { AnimationCel, AnimationCelSurface, AnimationTimeline, BlendMode, CanvasAnchor, ColorMode, FreeTileCelData, FreeTileSourceLayer, ImageResizeInterpolation, IndexedLayer, LayerGroup, LayerMask, PaletteEntry, RasterLayer, RgbaColor, RgbaLayer, RuntimeRasterTiles, SelectionRect, SpriteDocument, Tileset } from '@shared/types'
 import { blendWithMode, colorEquals, packColor, pixelIndex, readRgbaPixel, relativeLuminanceColor, TRANSPARENT, unpackColor, writeRgbaPixel } from './raster'
 import { translateCurrent as tr } from './localization'
 import { DEFAULT_PROJECT_DISPLAY_SETTINGS, DEFAULT_PROJECT_STATISTICS, DEFAULT_TIMELAPSE_SETTINGS } from './project-metadata'
 import { buildLayerPanelTree } from './layer-panel-layout'
 import { addPaletteIdToSlots, normalizePaletteColumns, normalizePaletteSlots, paletteOrderFromSlots, PALETTE_GRID_COLUMNS } from './palette-layout'
-import { detachRuntimeRaster, installRuntimeRaster, lazyRuntimeRasterForSurface, rasterStorageIdentity, readSurfacePackedLocal, runtimeRasterForSurface, runtimeRasterVisibleBounds, runtimeTileHasVisiblePixels } from './runtime-raster'
-import { applyLayerStylesAt, cloneLayerStyles, hasEnabledLayerStyles, layerStyleAffectedRect, layerStyleOutputBounds, mapLayerStyleColors, resolveLayerStyles, type LayerStyleGeometry } from './layer-styles'
+import { cachedRuntimeRasterVisibleBounds, detachRuntimeRaster, installRuntimeRaster, lazyRuntimeRasterForSurface, rasterStorageIdentity, readSurfacePackedLocal, runtimeRasterForSurface, runtimeRasterVisibleBounds, runtimeTileHasVisiblePixels } from './runtime-raster'
+import { applyLayerStylesAt, cloneLayerStyles, hasEnabledLayerStyles, layerStyleAffectedRect, layerStyleOutputBounds, layerStylesEqual, mapLayerStyleColors, MAX_LAYER_STYLE_SIZE, resolveLayerStyles, type LayerStyleGeometry } from './layer-styles'
 import { tileBackgroundSurfaceToCanvas } from './background-patterns'
 
 let sequence = 0
@@ -122,7 +122,7 @@ const activeCelMasksByLayer = (document: SpriteDocument): Map<string, LayerMask>
     .filter((entry): entry is readonly [string, LayerMask] => {
       const mask = entry[1]
       if (!mask) return false
-      return mask.visible !== false
+      return mask.visible !== false && layerMaskAffectsComposite(mask)
     }))
 }
 
@@ -132,7 +132,30 @@ const activeGroupMasksByGroup = (document: SpriteDocument): Map<string, LayerMas
   return new Map((timeline.groupMasks ?? [])
     .filter((entry) => entry.frameId === timeline.activeFrameId)
     .map((entry) => [entry.groupId, resolveAnimationMask(timeline, entry.mask)] as const)
-    .filter((entry): entry is readonly [string, LayerMask] => Boolean(entry[1] && entry[1].visible !== false)))
+    .filter((entry): entry is readonly [string, LayerMask] => Boolean(entry[1] && entry[1].visible !== false && layerMaskAffectsComposite(entry[1]))))
+}
+
+const layerMaskCompositeEffects = new WeakMap<LayerMask, { storage: object; contentRevision: number; affects: boolean }>()
+
+const layerMaskAffectsComposite = (mask: LayerMask): boolean => {
+  const storage = rasterStorageIdentity(mask)
+  const contentRevision = getRasterContentRevision(storage)
+  const cached = layerMaskCompositeEffects.get(mask)
+  if (cached && cached.storage === storage && cached.contentRevision === contentRevision) return cached.affects
+  const bounds = rasterContentBounds(mask)
+  let affects = false
+  if (bounds) {
+    for (let y = bounds.y; y < bounds.y + bounds.height && !affects; y += 1) {
+      for (let x = bounds.x; x < bounds.x + bounds.width; x += 1) {
+        if (maskCoverageFromColor(unpackColor(readSurfacePackedLocal(mask, x, y))) !== 255) {
+          affects = true
+          break
+        }
+      }
+    }
+  }
+  layerMaskCompositeEffects.set(mask, { storage, contentRevision, affects })
+  return affects
 }
 
 export function createLayer(name: string, width: number, height: number, mode: ColorMode): RasterLayer {
@@ -164,7 +187,7 @@ export function createDocument(name: string, width: number, height: number, colo
     ? { format: 'rgba' as const, width, height, offsetX: 0, offsetY: 0, pixels: layer.pixels }
     : { format: 'indexed' as const, width, height, offsetX: 0, offsetY: 0, pixels: layer.pixels }
   return {
-    schemaVersion: 12,
+    schemaVersion: 17,
     id: createId('doc'),
     name,
     width,
@@ -179,7 +202,8 @@ export function createDocument(name: string, width: number, height: number, colo
     paletteColumns: PALETTE_GRID_COLUMNS,
     nextColorId: 3,
     customBrushes: [],
-    animation: { frames: [{ id: frameId, duration: 100 }], cels: [{ id: createId('cel'), layerId: layer.id, frameId, opacity: layer.opacity, surface: initialSurface }], groupMasks: [], activeFrameId: frameId, loop: true },
+    tilesets: [],
+    animation: { frames: [{ id: frameId, duration: 100 }], cels: [{ id: createId('cel'), layerId: layer.id, frameId, opacity: layer.opacity, surface: initialSurface }], groupMasks: [], loopSections: [], activeFrameId: frameId, loop: true },
     displaySettings: { ...DEFAULT_PROJECT_DISPLAY_SETTINGS, grid: { ...DEFAULT_PROJECT_DISPLAY_SETTINGS.grid } },
     statistics: { ...DEFAULT_PROJECT_STATISTICS },
     timelapse: { ...DEFAULT_TIMELAPSE_SETTINGS, enabled: timelapseEnabled, snapshots: [] },
@@ -221,6 +245,7 @@ export function resizeDocumentAt(document: SpriteDocument, width: number, height
 /** Permanently discards every stored layer pixel outside the current canvas. */
 export function cropLayersToCanvas(document: SpriteDocument): void {
   for (const layer of [...document.layers, ...layerMasks(document)]) {
+    if (!isLayerMask(layer) && (layer.kind === 'tilemap' || layer.kind === 'free-tile')) continue
     const left = Math.max(0, layer.offsetX)
     const top = Math.max(0, layer.offsetY)
     const right = Math.min(document.width, layer.offsetX + layer.width)
@@ -291,6 +316,16 @@ export interface DocumentImageResizeSnapshot {
   width: number
   height: number
   surfaces: ImageResizeSurfaceSnapshot[]
+  freeTileCels: Array<{ freeTiles: FreeTileCelData; instances: FreeTileCelData['instances'] }>
+  freeTileTilesets: Array<{
+    tileset: Tileset
+    tileWidth: number
+    tileHeight: number
+    columns: number
+    rows: number
+    pixels: Uint8ClampedArray
+  }>
+  freeTileSources: Array<{ source: FreeTileSourceLayer; offsetX: number; offsetY: number }>
 }
 
 const documentImageResizeSurfaces = (document: SpriteDocument): ImageResizeSurface[] => {
@@ -320,28 +355,63 @@ const setSurfaceStorageOrigin = (surface: ImageResizeSurface, x: number, y: numb
   }
 }
 
-export const captureDocumentImageResizeSnapshot = (document: SpriteDocument): DocumentImageResizeSnapshot => ({
-  width: document.width,
-  height: document.height,
-  surfaces: documentImageResizeSurfaces(document).map((surface) => {
-    const origin = surfaceStorageOrigin(surface)
-    const runtime = lazyRuntimeRasterForSurface(surface)
-    return {
-      surface,
-      width: surface.width,
-      height: surface.height,
-      offsetX: surface.offsetX,
-      offsetY: surface.offsetY,
-      storageOriginX: origin.x,
-      storageOriginY: origin.y,
-      storage: runtime ? { kind: 'runtime', runtime } : { kind: 'pixels', pixels: surface.pixels }
-    }
-  })
-})
+export const captureDocumentImageResizeSnapshot = (document: SpriteDocument): DocumentImageResizeSnapshot => {
+  const freeTileLayers = document.layers.filter((layer) => layer.kind === 'free-tile')
+  const freeTileTilesetIds = new Set(freeTileLayers.flatMap((layer) => layer.kind === 'free-tile'
+    ? layer.freeTileSources?.map((source) => source.tilesetId) ?? (layer.freeTileTilesetId ? [layer.freeTileTilesetId] : [])
+    : []))
+  const seenFreeTiles = new Set<FreeTileCelData>()
+  return {
+    width: document.width,
+    height: document.height,
+    surfaces: documentImageResizeSurfaces(document).map((surface) => {
+      const origin = surfaceStorageOrigin(surface)
+      const runtime = lazyRuntimeRasterForSurface(surface)
+      return {
+        surface,
+        width: surface.width,
+        height: surface.height,
+        offsetX: surface.offsetX,
+        offsetY: surface.offsetY,
+        storageOriginX: origin.x,
+        storageOriginY: origin.y,
+        storage: runtime ? { kind: 'runtime', runtime } : { kind: 'pixels', pixels: surface.pixels }
+      }
+    }),
+    freeTileCels: (document.animation?.cels ?? []).flatMap((cel) => {
+      if (!cel.freeTiles || seenFreeTiles.has(cel.freeTiles)) return []
+      seenFreeTiles.add(cel.freeTiles)
+      return [{ freeTiles: cel.freeTiles, instances: cel.freeTiles.instances.map((instance) => ({ ...instance })) }]
+    }),
+    freeTileTilesets: (document.tilesets ?? []).flatMap((tileset) => freeTileTilesetIds.has(tileset.id) ? [{
+      tileset,
+      tileWidth: tileset.tileWidth,
+      tileHeight: tileset.tileHeight,
+      columns: tileset.columns,
+      rows: tileset.rows,
+      pixels: tileset.pixels
+    }] : []),
+    freeTileSources: freeTileLayers.flatMap((layer) => layer.kind === 'free-tile'
+      ? (layer.freeTileSources ?? []).map((source) => ({ source, offsetX: source.offsetX, offsetY: source.offsetY }))
+      : [])
+  }
+}
 
 export const restoreDocumentImageResizeSnapshot = (document: SpriteDocument, snapshot: DocumentImageResizeSnapshot): void => {
   document.width = snapshot.width
   document.height = snapshot.height
+  for (const state of snapshot.freeTileCels) state.freeTiles.instances = state.instances.map((instance) => ({ ...instance }))
+  for (const state of snapshot.freeTileTilesets) {
+    state.tileset.tileWidth = state.tileWidth
+    state.tileset.tileHeight = state.tileHeight
+    state.tileset.columns = state.columns
+    state.tileset.rows = state.rows
+    state.tileset.pixels = state.pixels
+  }
+  for (const state of snapshot.freeTileSources) {
+    state.source.offsetX = state.offsetX
+    state.source.offsetY = state.offsetY
+  }
   for (const state of snapshot.surfaces) {
     const surface = state.surface
     surface.width = state.width
@@ -366,7 +436,12 @@ export const documentImageResizeSnapshotBytes = (snapshot: DocumentImageResizeSn
       ? state.storage.runtime.data.byteLength + state.storage.runtime.tileOffsets.byteLength
       : state.storage.pixels.byteLength
   }
-  return bytes + snapshot.surfaces.length * 64 + 16
+  for (const state of snapshot.freeTileTilesets) if (!seen.has(state.pixels)) {
+    seen.add(state.pixels)
+    bytes += state.pixels.byteLength
+  }
+  bytes += snapshot.freeTileCels.reduce((sum, state) => sum + state.instances.length * 72, 0)
+  return bytes + snapshot.surfaces.length * 64 + snapshot.freeTileTilesets.length * 48 + snapshot.freeTileSources.length * 24 + snapshot.freeTileCels.length * 24 + 16
 }
 
 const writeRgbaResizePixel = (
@@ -868,17 +943,29 @@ export const cacheRasterContentBounds = (surface: RasterContentSurface, palette:
 }
 
 /** Returns local visible-pixel bounds and shares the result across layers, cels, thumbnails, and compositing. */
-export function rasterContentBounds(surface: RasterContentSurface, palette: readonly PaletteEntry[] = []): SelectionRect | null {
+export function cachedRasterContentBounds(surface: RasterContentSurface, palette: readonly PaletteEntry[] = []): SelectionRect | null | undefined {
   const opaquePaletteIds = surface.format === 'indexed'
     ? new Set(palette.filter((entry) => entry.color.a > 0).map((entry) => entry.id))
     : undefined
-  const runtimeBounds = runtimeRasterVisibleBounds(surface, opaquePaletteIds)
+  const runtimeBounds = cachedRuntimeRasterVisibleBounds(surface, opaquePaletteIds)
   if (runtimeBounds !== undefined) return runtimeBounds ? { ...runtimeBounds } : null
   const storage = rasterStorageIdentity(surface)
   const key = rasterContentBoundsCacheKey(surface, palette)
   const entries = rasterContentBoundsCache.get(storage) ?? new Map<string, SelectionRect | null>()
   const cached = entries.get(key)
   if (cached !== undefined || entries.has(key)) return cached ? { ...cached } : null
+  return undefined
+}
+
+/** Returns local visible-pixel bounds and shares the result across layers, cels, thumbnails, and compositing. */
+export function rasterContentBounds(surface: RasterContentSurface, palette: readonly PaletteEntry[] = []): SelectionRect | null {
+  const cached = cachedRasterContentBounds(surface, palette)
+  if (cached !== undefined) return cached
+  const opaquePaletteIds = surface.format === 'indexed'
+    ? new Set(palette.filter((entry) => entry.color.a > 0).map((entry) => entry.id))
+    : undefined
+  const runtimeBounds = runtimeRasterVisibleBounds(surface, opaquePaletteIds)
+  if (runtimeBounds !== undefined) return runtimeBounds ? { ...runtimeBounds } : null
   let minX = surface.width
   let minY = surface.height
   let maxX = -1
@@ -906,10 +993,18 @@ export function rasterContentBounds(surface: RasterContentSurface, palette: read
   return bounds ? { ...bounds } : null
 }
 
+export const markRasterSurfaceContentChanged = (surface: RasterLayer | AnimationCelSurface): void => {
+  const pixels = detachRuntimeRaster(surface)
+  markRasterStorageContentChanged(pixels)
+}
+
+export const markRasterStorageContentChanged = (storage: object): void => {
+  rasterContentRevisions.set(storage, getRasterContentRevision(storage) + 1)
+}
+
 export const markLayerContentChanged = (layer: RasterLayer): void => {
   sparseBlankLayers.delete(layer)
-  const pixels = detachRuntimeRaster(layer)
-  rasterContentRevisions.set(pixels, getRasterContentRevision(pixels) + 1)
+  markRasterSurfaceContentChanged(layer)
 }
 
 export const setLayerStorageOrigin = (layer: RasterLayer, origin: { x: number; y: number }): void => {
@@ -933,6 +1028,16 @@ export function readLayerColorAt(document: SpriteDocument, layer: RasterLayer, x
 export function layerContentBounds(document: SpriteDocument, layer: RasterLayer): SelectionRect | null {
   const localBounds = rasterContentBounds(layer, document.palette)
   return localBounds ? { ...localBounds, x: layer.offsetX + localBounds.x, y: layer.offsetY + localBounds.y } : null
+}
+
+/** Reads canvas-space content bounds only when decode, composition, or editing has already established them. */
+export function cachedLayerContentBounds(document: SpriteDocument, layer: RasterLayer): SelectionRect | null | undefined {
+  const localBounds = cachedRasterContentBounds(layer, document.palette)
+  return localBounds === undefined
+    ? undefined
+    : localBounds
+      ? { ...localBounds, x: layer.offsetX + localBounds.x, y: layer.offsetY + localBounds.y }
+      : null
 }
 
 const unionSelectionRects = (left: SelectionRect, right: SelectionRect): SelectionRect => {
@@ -1172,42 +1277,340 @@ const buildCompositeStack = (document: SpriteDocument): CompositeStackItem[] => 
 }
 
 export const normalCompositeLayers = (document: SpriteDocument): RasterLayer[] | null => {
-  if (document.layers.some((layer) => layer.clippingMask === true || hasEnabledLayerStyles(layer.layerStyles)) || activeCelMasksByLayer(document).size > 0) return null
-  if (document.groups.some((group) => group.blendMode !== 'normal' || group.opacity !== 1 || group.cumulativeBlend === true || group.clippingMask === true || hasEnabledLayerStyles(group.layerStyles)) || activeGroupMasksByGroup(document).size > 0) return null
-
-  const transparentSpecialLayers = new Set<RasterLayer>()
-  for (const layer of document.layers) {
-    if (!layer.visible || layer.opacity <= 0 || layer.blendMode === 'normal') continue
-    if (layerContentBounds(document, layer)) return null
-    transparentSpecialLayers.add(layer)
-  }
-
-  const flatten = (items: readonly CompositeStackItem[]): RasterLayer[] => {
+  const activeMasks = activeCelMasksByLayer(document)
+  const activeGroupMasks = activeGroupMasksByGroup(document)
+  const flatten = (items: readonly CompositeStackItem[]): RasterLayer[] | null => {
     const layers: RasterLayer[] = []
     for (const item of items) {
       if (item.kind === 'layer') {
-        if (item.layer.visible && item.layer.opacity > 0 && !transparentSpecialLayers.has(item.layer)) layers.push(item.layer)
+        if (!item.layer.visible || item.layer.opacity <= 0) continue
+        if (activeMasks.has(item.layer.id)) return null
+        if (item.layer.clippingMask === true || hasEnabledLayerStyles(item.layer.layerStyles)) return null
+        if (item.layer.blendMode !== 'normal') {
+          if (layerContentBounds(document, item.layer)) return null
+          continue
+        }
+        layers.push(item.layer)
         continue
       }
-      if (item.group.visible) layers.push(...flatten(item.children))
+      if (!item.group.visible || item.group.opacity <= 0) continue
+      const children = flatten(item.children)
+      if (!children) return null
+      if (children.length === 0) continue
+      if (activeGroupMasks.has(item.group.id)) return null
+      if (item.group.blendMode !== 'normal'
+        || item.group.opacity !== 1
+        || item.group.cumulativeBlend === true
+        || item.group.clippingMask === true
+        || hasEnabledLayerStyles(item.group.layerStyles)) return null
+      layers.push(...children)
     }
     return layers
   }
   return flatten(buildCompositeStack(document))
 }
 
+const opacityGroupCompositeStack = (document: SpriteDocument): CompositeStackItem[] | null => {
+  const activeMasks = activeCelMasksByLayer(document)
+  const activeGroupMasks = activeGroupMasksByGroup(document)
+  const prepare = (items: readonly CompositeStackItem[]): CompositeStackItem[] | null => {
+    const prepared: CompositeStackItem[] = []
+    for (const item of items) {
+      if (item.kind === 'layer') {
+        if (!item.layer.visible || item.layer.opacity <= 0) continue
+        if (activeMasks.has(item.layer.id)) return null
+        if (item.layer.clippingMask === true || hasEnabledLayerStyles(item.layer.layerStyles)) return null
+        if (item.layer.blendMode !== 'normal') {
+          if (layerContentBounds(document, item.layer)) return null
+          continue
+        }
+        prepared.push(item)
+        continue
+      }
+      if (!item.group.visible || item.group.opacity <= 0) continue
+      const children = prepare(item.children)
+      if (!children) return null
+      if (children.length === 0) continue
+      if (activeGroupMasks.has(item.group.id)) return null
+      if (item.group.cumulativeBlend === true
+        || item.group.clippingMask === true
+        || hasEnabledLayerStyles(item.group.layerStyles)) return null
+      prepared.push({ ...item, children })
+    }
+    return prepared
+  }
+  return prepare(buildCompositeStack(document))
+}
+
+interface BinaryDistanceField {
+  bounds: SelectionRect
+  distances: Uint16Array
+}
+
+interface BinaryStyleGeometryCache {
+  storage: object
+  contentRevision: number
+  colorMode: SpriteDocument['colorMode']
+  format: RasterLayer['format']
+  width: number
+  height: number
+  paletteAlphaKey: string
+  contentBounds: SelectionRect
+  alphaAt: ((x: number, y: number) => number) | null
+  shadowDistance: BinaryDistanceField | null
+  shadowRadius: number
+}
+
+const expandLocalRect = (rect: SelectionRect, amount: number): SelectionRect => ({
+  x: rect.x - amount,
+  y: rect.y - amount,
+  width: rect.width + amount * 2,
+  height: rect.height + amount * 2
+})
+
+const binaryAlphaReader = (document: SpriteDocument, layer: RasterLayer, contentBounds: SelectionRect): ((x: number, y: number) => number) | null => {
+  const indexedAlpha = layer.format === 'indexed'
+    ? new Map(document.palette.map((entry) => [entry.id, entry.color.a]))
+    : null
+  const alphaAt = (x: number, y: number): number => {
+    if (x < 0 || y < 0 || x >= layer.width || y >= layer.height) return 0
+    const packed = readSurfacePackedLocal(layer, x, y)
+    return layer.format === 'rgba' ? packed >>> 24 : (indexedAlpha!.get(packed) ?? 0)
+  }
+  for (let y = contentBounds.y; y < contentBounds.y + contentBounds.height; y += 1) {
+    for (let x = contentBounds.x; x < contentBounds.x + contentBounds.width; x += 1) {
+      const alpha = alphaAt(x, y)
+      if (alpha !== 0 && alpha !== 255) return null
+    }
+  }
+  return alphaAt
+}
+
+const binaryChebyshevDistanceField = (bounds: SelectionRect, seedAt: (x: number, y: number) => boolean): BinaryDistanceField => {
+  const distances = new Uint16Array(bounds.width * bounds.height)
+  distances.fill(0xffff)
+  for (let y = 0; y < bounds.height; y += 1) for (let x = 0; x < bounds.width; x += 1) {
+    if (seedAt(bounds.x + x, bounds.y + y)) distances[y * bounds.width + x] = 0
+  }
+  for (let y = 0; y < bounds.height; y += 1) for (let x = 0; x < bounds.width; x += 1) {
+    const index = y * bounds.width + x
+    let distance = distances[index]
+    if (x > 0) distance = Math.min(distance, distances[index - 1] + 1)
+    if (y > 0) {
+      const previousRow = index - bounds.width
+      distance = Math.min(distance, distances[previousRow] + 1)
+      if (x > 0) distance = Math.min(distance, distances[previousRow - 1] + 1)
+      if (x + 1 < bounds.width) distance = Math.min(distance, distances[previousRow + 1] + 1)
+    }
+    distances[index] = distance
+  }
+  for (let y = bounds.height - 1; y >= 0; y -= 1) for (let x = bounds.width - 1; x >= 0; x -= 1) {
+    const index = y * bounds.width + x
+    let distance = distances[index]
+    if (x + 1 < bounds.width) distance = Math.min(distance, distances[index + 1] + 1)
+    if (y + 1 < bounds.height) {
+      const nextRow = index + bounds.width
+      distance = Math.min(distance, distances[nextRow] + 1)
+      if (x > 0) distance = Math.min(distance, distances[nextRow - 1] + 1)
+      if (x + 1 < bounds.width) distance = Math.min(distance, distances[nextRow + 1] + 1)
+    }
+    distances[index] = distance
+  }
+  return { bounds, distances }
+}
+
+const distanceFieldAt = (field: BinaryDistanceField | null, x: number, y: number): number => {
+  if (!field) return 0xffff
+  const localX = x - field.bounds.x
+  const localY = y - field.bounds.y
+  if (localX < 0 || localY < 0 || localX >= field.bounds.width || localY >= field.bounds.height) return 0xffff
+  return field.distances[localY * field.bounds.width + localX]
+}
+
+const sameRect = (left: SelectionRect, right: SelectionRect): boolean => left.x === right.x
+  && left.y === right.y
+  && left.width === right.width
+  && left.height === right.height
+
 export class DocumentCompositeCache {
   private rowRanges = new WeakMap<object, Map<string, { contentRevision: number; ranges: Int32Array }>>()
   private visibleTiles = new WeakMap<object, Map<string, Map<number, boolean>>>()
   private normalLayerPlans = new WeakMap<SpriteDocument, { revision: number; frameId: string; layers: RasterLayer[] | null }>()
+  private styledLayerPlans = new WeakMap<SpriteDocument, { revision: number; frameId: string; layers: RasterLayer[] | null }>()
+  private opacityGroupPlans = new WeakMap<SpriteDocument, { revision: number; frameId: string; items: CompositeStackItem[] | null }>()
+  private styledLayers = new WeakMap<RasterLayer, {
+    storage: object
+    colorMode: SpriteDocument['colorMode']
+    contentRevision: number
+    paletteKey: string
+    styles: NonNullable<RasterLayer['layerStyles']>
+    localX: number
+    localY: number
+    layer: RasterLayer
+  }>()
+  private binaryStyleGeometry = new WeakMap<RasterLayer, BinaryStyleGeometryCache>()
+
+  private binaryStyleGeometryFor(document: SpriteDocument, layer: RasterLayer, contentBounds: SelectionRect, shadowBlur: number): BinaryStyleGeometryCache {
+    const storage = rasterStorageIdentity(layer)
+    const contentRevision = getLayerContentRevision(layer)
+    const paletteAlphaKey = layer.format === 'indexed'
+      ? document.palette.map((entry) => `${entry.id}:${entry.color.a}`).join(',')
+      : ''
+    let cached = this.binaryStyleGeometry.get(layer)
+    if (!cached
+      || cached.storage !== storage
+      || cached.contentRevision !== contentRevision
+      || cached.colorMode !== document.colorMode
+      || cached.format !== layer.format
+      || cached.width !== layer.width
+      || cached.height !== layer.height
+      || cached.paletteAlphaKey !== paletteAlphaKey
+      || !sameRect(cached.contentBounds, contentBounds)) {
+      cached = {
+        storage,
+        contentRevision,
+        colorMode: document.colorMode,
+        format: layer.format,
+        width: layer.width,
+        height: layer.height,
+        paletteAlphaKey,
+        contentBounds: { ...contentBounds },
+        alphaAt: binaryAlphaReader(document, layer, contentBounds),
+        shadowDistance: null,
+        shadowRadius: 0
+      }
+      this.binaryStyleGeometry.set(layer, cached)
+    }
+    if (cached.alphaAt && shadowBlur > cached.shadowRadius) {
+      const nextRadius = Math.min(MAX_LAYER_STYLE_SIZE, Math.max(shadowBlur, cached.shadowRadius > 0 ? cached.shadowRadius * 2 : Math.max(8, shadowBlur * 2)))
+      cached.shadowDistance = binaryChebyshevDistanceField(expandLocalRect(contentBounds, nextRadius), (x, y) => cached!.alphaAt!(x, y) === 255)
+      cached.shadowRadius = nextRadius
+    }
+    return cached
+  }
 
   normalLayersFor(document: SpriteDocument, revision: number): RasterLayer[] | null {
     const frameId = document.animation?.activeFrameId ?? 'static'
     const cached = this.normalLayerPlans.get(document)
-    if (cached && cached.revision === revision && cached.frameId === frameId) return cached.layers
+    if (cached && cached.revision === revision && cached.frameId === frameId) {
+      for (const layer of document.layers) if (hasEnabledLayerStyles(layer.layerStyles)) this.styledLayer(document, layer)
+      return cached.layers
+    }
     const layers = normalCompositeLayers(document)
     this.normalLayerPlans.set(document, { revision, frameId, layers })
     return layers
+  }
+
+  renderLayersFor(document: SpriteDocument, revision: number): RasterLayer[] | null {
+    const normal = this.normalLayersFor(document, revision)
+    if (normal) return normal
+    const frameId = document.animation?.activeFrameId ?? 'static'
+    const cached = this.styledLayerPlans.get(document)
+    if (cached && cached.revision === revision && cached.frameId === frameId) return cached.layers
+    const unsupportedGroup = document.groups.some((group) => isGroupEffectivelyVisible(document, group) && (group.blendMode !== 'normal'
+      || group.opacity !== 1
+      || group.cumulativeBlend === true
+      || group.clippingMask === true
+      || hasEnabledLayerStyles(group.layerStyles)))
+    const unsupportedLayer = document.layers.some((layer) => isLayerEffectivelyVisible(document, layer) && layer.opacity > 0 && (layer.clippingMask === true || layer.blendMode !== 'normal'))
+    const hasMasks = activeCelMasksByLayer(document).size > 0 || activeGroupMasksByGroup(document).size > 0
+    if (unsupportedGroup || unsupportedLayer || hasMasks) {
+      this.styledLayerPlans.set(document, { revision, frameId, layers: null })
+      return null
+    }
+    const preparedLayers = document.layers.map((layer) => hasEnabledLayerStyles(layer.layerStyles)
+      ? this.styledLayer(document, layer)
+      : layer)
+    const layers = normalCompositeLayers({ ...document, layers: preparedLayers })
+    this.styledLayerPlans.set(document, { revision, frameId, layers })
+    return layers
+  }
+
+  opacityGroupStackFor(document: SpriteDocument, revision: number): CompositeStackItem[] | null {
+    const frameId = document.animation?.activeFrameId ?? 'static'
+    const cached = this.opacityGroupPlans.get(document)
+    if (cached && cached.revision === revision && cached.frameId === frameId) return cached.items
+    const items = opacityGroupCompositeStack(document)
+    this.opacityGroupPlans.set(document, { revision, frameId, items })
+    return items
+  }
+
+  private styledLayer(document: SpriteDocument, sourceLayer: RasterLayer): RasterLayer {
+    const styles = resolveLayerStyles(sourceLayer.layerStyles)
+    const paletteKey = sourceLayer.format === 'indexed'
+      ? document.palette.map((entry) => `${entry.id}:${entry.color.r}:${entry.color.g}:${entry.color.b}:${entry.color.a}`).join(',')
+      : ''
+    const storage = rasterStorageIdentity(sourceLayer)
+    const contentRevision = getLayerContentRevision(sourceLayer)
+    const cached = this.styledLayers.get(sourceLayer)
+    if (cached
+      && cached.storage === storage
+      && cached.contentRevision === contentRevision
+      && cached.colorMode === document.colorMode
+      && cached.paletteKey === paletteKey
+      && layerStylesEqual(cached.styles, styles)) {
+      cached.layer.offsetX = sourceLayer.offsetX + cached.localX
+      cached.layer.offsetY = sourceLayer.offsetY + cached.localY
+      cached.layer.opacity = sourceLayer.opacity
+      cached.layer.visible = sourceLayer.visible
+      return cached.layer
+    }
+    const localBounds = rasterContentBounds(sourceLayer, document.palette)
+    const resolvedStyles = mapLayerStyleColors(styles, (color) => resolveLayerCanvasColor(document, sourceLayer, color))
+    const outputBounds = layerStyleOutputBounds(localBounds, resolvedStyles)
+    const localX = outputBounds?.x ?? 0
+    const localY = outputBounds?.y ?? 0
+    const width = Math.max(1, outputBounds?.width ?? 1)
+    const height = Math.max(1, outputBounds?.height ?? 1)
+    const pixels = new Uint8ClampedArray(width * height * 4)
+    const palette = sourceLayer.format === 'indexed' ? new Map(document.palette.map((entry) => [entry.id, entry.color])) : null
+    const readSource = (x: number, y: number): RgbaColor => {
+      if (x < 0 || y < 0 || x >= sourceLayer.width || y >= sourceLayer.height) return TRANSPARENT
+      const packed = readSurfacePackedLocal(sourceLayer, x, y)
+      return sourceLayer.format === 'rgba' ? unpackColor(packed) : (palette!.get(packed) ?? TRANSPARENT)
+    }
+    const binaryGeometry = localBounds ? this.binaryStyleGeometryFor(
+      document,
+      sourceLayer,
+      localBounds,
+      resolvedStyles.shadow.enabled ? resolvedStyles.shadow.blur : 0
+    ) : null
+    const binaryAlphaAt = binaryGeometry?.alphaAt ?? null
+    const shadowDistance = resolvedStyles.shadow.enabled ? binaryGeometry?.shadowDistance ?? null : null
+    const geometry = { x: 0, y: 0, width: sourceLayer.width, height: sourceLayer.height }
+    const rendersOutsideSource = resolvedStyles.shadow.enabled
+      || (resolvedStyles.stroke.enabled && resolvedStyles.stroke.position !== 'inside')
+    for (let y = 0; y < height; y += 1) for (let x = 0; x < width; x += 1) {
+      const sourceX = localX + x
+      const sourceY = localY + y
+      if (!rendersOutsideSource && binaryAlphaAt?.(sourceX, sourceY) === 0) continue
+      const shadowDistanceAtPixel = distanceFieldAt(shadowDistance, sourceX - resolvedStyles.shadow.offsetX, sourceY - resolvedStyles.shadow.offsetY)
+      writeRgbaPixel(pixels, y * width + x, applyLayerStylesAt(
+        geometry,
+        resolvedStyles,
+        sourceX,
+        sourceY,
+        readSource(sourceX, sourceY),
+        readSource,
+        (color) => resolveLayerCanvasColor(document, sourceLayer, color),
+        binaryAlphaAt ? {
+          shadow: shadowDistance ? (shadowDistanceAtPixel <= resolvedStyles.shadow.blur ? 1 - shadowDistanceAtPixel / (resolvedStyles.shadow.blur + 1) : 0) : undefined
+        } : undefined
+      ))
+    }
+    const layer: RasterLayer = cached?.layer ?? { ...sourceLayer, format: 'rgba', pixels }
+    Object.assign(layer, {
+      ...sourceLayer,
+      format: 'rgba' as const,
+      width,
+      height,
+      offsetX: sourceLayer.offsetX + localX,
+      offsetY: sourceLayer.offsetY + localY,
+      pixels,
+      layerStyles: undefined
+    })
+    this.styledLayers.set(sourceLayer, { storage, colorMode: document.colorMode, contentRevision, paletteKey, styles: cloneLayerStyles(styles)!, localX, localY, layer })
+    return layer
   }
 
   normalLayerRegion(document: SpriteDocument, layers: readonly RasterLayer[], startX: number, startY: number, width: number, height: number, revision: number): Uint8ClampedArray {
@@ -1312,6 +1715,8 @@ const compositeNormalLayers = (document: SpriteDocument, layers: readonly Raster
   const paletteById = new Map(document.palette.map((entry) => [entry.id, entry.color]))
   for (const layer of layers) {
     const runtime = lazyRuntimeRasterForSurface(layer)
+    const rgbaPixels = !runtime && layer.format === 'rgba' ? layer.pixels : null
+    const indexedPixels = !runtime && layer.format === 'indexed' ? layer.pixels : null
     const runtimeOpaqueIds = layer.format === 'indexed' ? new Set(document.palette.filter((entry) => entry.color.a > 0).map((entry) => entry.id)) : undefined
     const layerLeft = Math.max(startX, layer.offsetX)
     const top = Math.max(startY, layer.offsetY)
@@ -1349,26 +1754,34 @@ const compositeNormalLayers = (document: SpriteDocument, layers: readonly Raster
         let sourceG: number
         let sourceB: number
         let sourceA: number
-        let packed: number
-        if (runtime) {
+        if (rgbaPixels) {
+          const sourceOffset = sourceIndex * 4
+          sourceR = rgbaPixels[sourceOffset]
+          sourceG = rgbaPixels[sourceOffset + 1]
+          sourceB = rgbaPixels[sourceOffset + 2]
+          sourceA = rgbaPixels[sourceOffset + 3]
+        } else {
+          let packed: number
+          if (runtime) {
           const localX = documentX - layer.offsetX
           const localY = documentY - layer.offsetY
           const tileWidth = Math.min(runtime.tileSize, runtime.width - tileX * runtime.tileSize)
           const dataOffset = runtime.tileOffsets[tileY * Math.ceil(runtime.width / runtime.tileSize) + tileX] - 1
             + (((localY - tileY * runtime.tileSize) * tileWidth + localX - tileX * runtime.tileSize) * 4)
           packed = (runtime.data[dataOffset] | (runtime.data[dataOffset + 1] << 8) | (runtime.data[dataOffset + 2] << 16) | (runtime.data[dataOffset + 3] << 24)) >>> 0
-        } else packed = readSurfacePackedLocal(layer, sourceIndex % layer.width, Math.floor(sourceIndex / layer.width))
-        if (layer.format === 'rgba') {
-          sourceR = packed & 0xff
-          sourceG = (packed >>> 8) & 0xff
-          sourceB = (packed >>> 16) & 0xff
-          sourceA = (packed >>> 24) & 0xff
-        } else {
-          const source = paletteById.get(packed) ?? TRANSPARENT
-          sourceR = source.r
-          sourceG = source.g
-          sourceB = source.b
-          sourceA = source.a
+          } else packed = indexedPixels?.[sourceIndex] ?? readSurfacePackedLocal(layer, sourceIndex % layer.width, Math.floor(sourceIndex / layer.width))
+          if (layer.format === 'rgba') {
+            sourceR = packed & 0xff
+            sourceG = (packed >>> 8) & 0xff
+            sourceB = (packed >>> 16) & 0xff
+            sourceA = (packed >>> 24) & 0xff
+          } else {
+            const source = paletteById.get(packed) ?? TRANSPARENT
+            sourceR = source.r
+            sourceG = source.g
+            sourceB = source.b
+            sourceA = source.a
+          }
         }
         if (sourceA === 0) continue
         const bottomA = output[outputOffset + 3]
@@ -1391,6 +1804,98 @@ const compositeNormalLayers = (document: SpriteDocument, layers: readonly Raster
       }
     }
   }
+  return output
+}
+
+const compositeNormalBufferInto = (output: Uint8ClampedArray<ArrayBufferLike>, source: Uint8ClampedArray<ArrayBufferLike>, opacity: number): void => {
+  for (let offset = 0; offset < source.length; offset += 4) {
+    const sourceA = source[offset + 3]
+    if (sourceA === 0) continue
+    const bottomA = output[offset + 3]
+    if (opacity === 1 && (bottomA === 0 || sourceA === 255)) {
+      output[offset] = source[offset]
+      output[offset + 1] = source[offset + 1]
+      output[offset + 2] = source[offset + 2]
+      output[offset + 3] = sourceA
+      continue
+    }
+    const topAlpha = sourceA / 255 * opacity
+    const bottomAlpha = bottomA / 255
+    const outputAlpha = topAlpha + bottomAlpha * (1 - topAlpha)
+    if (outputAlpha <= 0) continue
+    output[offset] = Math.round((source[offset] * topAlpha + output[offset] * bottomAlpha * (1 - topAlpha)) / outputAlpha)
+    output[offset + 1] = Math.round((source[offset + 1] * topAlpha + output[offset + 1] * bottomAlpha * (1 - topAlpha)) / outputAlpha)
+    output[offset + 2] = Math.round((source[offset + 2] * topAlpha + output[offset + 2] * bottomAlpha * (1 - topAlpha)) / outputAlpha)
+    output[offset + 3] = Math.round(outputAlpha * 255)
+  }
+}
+
+const compositeBufferWithModeInto = (
+  output: Uint8ClampedArray<ArrayBufferLike>,
+  source: Uint8ClampedArray<ArrayBufferLike>,
+  opacity: number,
+  blendMode: BlendMode
+): void => {
+  if (blendMode === 'normal') {
+    compositeNormalBufferInto(output, source, opacity)
+    return
+  }
+  for (let offset = 0; offset < source.length; offset += 4) {
+    const sourceA = source[offset + 3]
+    if (sourceA === 0) continue
+    const bottomA = output[offset + 3]
+    if (opacity === 1 && bottomA === 0) {
+      output[offset] = source[offset]
+      output[offset + 1] = source[offset + 1]
+      output[offset + 2] = source[offset + 2]
+      output[offset + 3] = sourceA
+      continue
+    }
+    const blended = blendWithMode(
+      { r: output[offset], g: output[offset + 1], b: output[offset + 2], a: bottomA },
+      { r: source[offset], g: source[offset + 1], b: source[offset + 2], a: sourceA },
+      opacity,
+      blendMode
+    )
+    output[offset] = blended.r
+    output[offset + 1] = blended.g
+    output[offset + 2] = blended.b
+    output[offset + 3] = blended.a
+  }
+}
+
+const compositeOpacityGroupStack = (
+  document: SpriteDocument,
+  items: readonly CompositeStackItem[],
+  startX: number,
+  startY: number,
+  width: number,
+  height: number,
+  cache?: DocumentCompositeCache,
+  revision = 0,
+  output: Uint8ClampedArray<ArrayBufferLike> = new Uint8ClampedArray(width * height * 4),
+  dirtyRect?: SelectionRect
+): Uint8ClampedArray => {
+  let layerBatch: RasterLayer[] = []
+  const flushLayers = (): void => {
+    if (layerBatch.length === 0) return
+    compositeNormalLayers(document, layerBatch, startX, startY, width, height, cache, revision, output, dirtyRect)
+    layerBatch = []
+  }
+  for (const item of items) {
+    if (item.kind === 'layer') {
+      layerBatch.push(item.layer)
+      continue
+    }
+    flushLayers()
+    if (item.group.opacity === 1 && item.group.blendMode === 'normal') {
+      compositeOpacityGroupStack(document, item.children, startX, startY, width, height, cache, revision, output, dirtyRect)
+      continue
+    }
+    const groupOutput = compositeOpacityGroupStack(document, item.children, startX, startY, width, height, cache, revision, undefined, dirtyRect)
+    compositeBufferWithModeInto(output, groupOutput, item.group.opacity, item.group.blendMode)
+  }
+  flushLayers()
   return output
 }
 
@@ -1434,8 +1939,10 @@ export function compositeRegion(document: SpriteDocument, startX: number, startY
       return output
     }
   }
-  const normalLayers = cache ? cache.normalLayersFor(document, revision) : normalCompositeLayers(document)
+  const normalLayers = cache ? cache.renderLayersFor(document, revision) : normalCompositeLayers(document)
   if (normalLayers) return compositeNormalLayers(document, normalLayers, startX, startY, width, height, cache, revision, undefined, dirtyRect)
+  const opacityGroupStack = cache ? cache.opacityGroupStackFor(document, revision) : opacityGroupCompositeStack(document)
+  if (opacityGroupStack) return compositeOpacityGroupStack(document, opacityGroupStack, startX, startY, width, height, cache, revision, undefined, dirtyRect)
   const sample = createCompositePointSampler(document)
   for (let y = 0; y < height; y += 1) for (let x = 0; x < width; x += 1) {
     writeRgbaPixel(output, y * width + x, sample(startX + x, startY + y))
@@ -1725,3 +2232,16 @@ export function compositePixelWithLayerColor(document: SpriteDocument, index: nu
   return createCompositeSampler(document, layerId, replacement)(index)
 }
 export const compositeDocument = (document: SpriteDocument): Uint8ClampedArray => compositeRegion(document, 0, 0, document.width, document.height)
+
+/** Returns the canvas-clipped bounds of the final visible composite. */
+export function documentVisibleContentBounds(document: SpriteDocument): SelectionRect | null {
+  const surface: AnimationCelSurface = {
+    format: 'rgba',
+    width: document.width,
+    height: document.height,
+    offsetX: 0,
+    offsetY: 0,
+    pixels: compositeDocument(document)
+  }
+  return rasterContentBounds(surface)
+}

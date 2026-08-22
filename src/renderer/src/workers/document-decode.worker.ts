@@ -4,22 +4,22 @@ import { setRuntimeAppLocale, type AppLocale } from '@/core/localization'
 import { decodeProject } from '@/core/project-format'
 import { compositeDocument } from '@/core/document'
 import { canPrepareInitialDocumentComposite } from '@/core/initial-document-composite'
-import { prepareRuntimeRasterDocumentForTransfer, prepareRuntimeRasterMetadata } from '@/core/runtime-raster'
+import { prepareRuntimeRasterDocumentForTransfer, prepareRuntimeRasterMetadata, rehydrateRuntimeRasterDocument } from '@/core/runtime-raster'
 
-interface DecodeWorkerRequest {
+export interface DecodeWorkerRequest {
   id: number
   data: Uint8Array
   filePath: string
   locale: AppLocale
   prepareInitialComposite?: boolean
   reportProgress?: boolean
-  returnDocument?: boolean
 }
 
-interface DecodeWorkerResponse {
+export interface DecodeWorkerResponse {
   id: number
   document?: SpriteDocument
   initialComposite?: Uint8ClampedArray
+  initialCompositePending?: boolean
   completed?: boolean
   error?: string
   progress?: number
@@ -50,19 +50,45 @@ const collectTransferables = (root: unknown): Transferable[] => {
   return [...buffers]
 }
 
-const scope = globalThis as unknown as {
-  onmessage: ((event: MessageEvent<DecodeWorkerRequest>) => void) | null
-  postMessage: (message: DecodeWorkerResponse, transfer: Transferable[]) => void
+const createInitialCompositeSnapshot = (document: SpriteDocument): SpriteDocument => {
+  const animation = document.animation
+    ? {
+        ...document.animation,
+        cels: document.animation.cels.map((cel) => ({
+          id: cel.id,
+          layerId: cel.layerId,
+          frameId: cel.frameId,
+          ...(cel.linkedCelId !== undefined ? { linkedCelId: cel.linkedCelId } : {}),
+          ...(cel.opacity !== undefined ? { opacity: cel.opacity } : {}),
+          ...(cel.mask ? { mask: cel.mask } : {})
+        }))
+      }
+    : undefined
+  return structuredClone({
+    ...document,
+    customBrushes: [],
+    tilesets: [],
+    slices: [],
+    timelapse: document.timelapse ? { ...document.timelapse, snapshots: [] } : undefined,
+    animation
+  })
 }
 
-scope.onmessage = (event): void => {
-  const { id, data, filePath, locale, prepareInitialComposite = true, reportProgress = false, returnDocument = true } = event.data
+type DecodeWorkerPostMessage = (message: DecodeWorkerResponse, transfer: Transferable[]) => void
+type DeferDecodeWork = (work: () => void) => void
+
+export const processDocumentDecodeRequest = (
+  request: DecodeWorkerRequest,
+  postMessage: DecodeWorkerPostMessage,
+  defer: DeferDecodeWork = (work) => { globalThis.setTimeout(work, 0) }
+): void => {
+  const { id, data, filePath, locale, prepareInitialComposite = true, reportProgress = false } = request
   setRuntimeAppLocale(locale)
   try {
     const suffix = fileExtension(filePath)
     const fileName = fileNameFromPath(filePath)
     const reportDecodeProgress = (progress: number): void => {
-      if (reportProgress) scope.postMessage({ id, progress: prepareInitialComposite ? progress * 0.85 : progress }, [])
+      if (reportProgress) postMessage({ id, progress: prepareInitialComposite ? progress * 0.9 : progress }, [])
     }
     const document = suffix === 'moonsprite'
       ? decodeProject(data, reportDecodeProgress)
@@ -70,20 +96,46 @@ scope.onmessage = (event): void => {
     document.filePath = suffix === 'moonsprite' ? filePath : null
     document.sourceFilePath = filePath
     document.name = fileName
-    if (prepareInitialComposite && reportProgress) scope.postMessage({ id, progress: 0.86 }, [])
-    const initialComposite = prepareInitialComposite && canPrepareInitialDocumentComposite(document.width, document.height)
-      ? compositeDocument(document)
-      : undefined
-    if (reportProgress) scope.postMessage({ id, progress: 1 }, [])
-    const response = returnDocument
-      ? { id, document, initialComposite }
-      : { id, initialComposite, completed: true }
-    if (returnDocument) {
-      prepareRuntimeRasterMetadata(document)
-      prepareRuntimeRasterDocumentForTransfer(document)
+
+    const shouldPrepareInitialComposite = prepareInitialComposite && canPrepareInitialDocumentComposite(document.width, document.height)
+    prepareRuntimeRasterMetadata(document)
+    prepareRuntimeRasterDocumentForTransfer(document)
+
+    let compositeSnapshot: SpriteDocument | null = null
+    if (shouldPrepareInitialComposite) {
+      try {
+        compositeSnapshot = createInitialCompositeSnapshot(document)
+        rehydrateRuntimeRasterDocument(compositeSnapshot)
+      } catch {
+        compositeSnapshot = null
+      }
     }
-    scope.postMessage(response, collectTransferables(response))
+
+    if (reportProgress) postMessage({ id, progress: 1 }, [])
+    const response = { id, document, ...(compositeSnapshot ? { initialCompositePending: true } : {}) }
+    postMessage(response, collectTransferables(response))
+    if (!compositeSnapshot) return
+    const snapshot = compositeSnapshot
+
+    defer(() => {
+      try {
+        const initialComposite = compositeDocument(snapshot)
+        const compositeResponse = { id, initialComposite, completed: true }
+        postMessage(compositeResponse, collectTransferables(compositeResponse))
+      } catch (error) {
+        postMessage({ id, completed: true, error: error instanceof Error ? error.message : String(error) }, [])
+      }
+    })
   } catch (error) {
-    scope.postMessage({ id, error: error instanceof Error ? error.message : String(error) }, [])
+    postMessage({ id, error: error instanceof Error ? error.message : String(error) }, [])
   }
+}
+
+const scope = globalThis as unknown as {
+  onmessage: ((event: MessageEvent<DecodeWorkerRequest>) => void) | null
+  postMessage: (message: DecodeWorkerResponse, transfer: Transferable[]) => void
+}
+
+scope.onmessage = (event): void => {
+  processDocumentDecodeRequest(event.data, (message, transfer) => scope.postMessage(message, transfer))
 }

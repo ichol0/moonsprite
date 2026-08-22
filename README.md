@@ -1,22 +1,37 @@
 # MoonSprite
 
+中文 | [English](README.en.md)
+
 MoonSprite 是面向 Windows 的原创源码可见像素画工作台，使用 Tauri 2、React、TypeScript、Zustand 和 Canvas 构建。项目与 Aseprite 无隶属关系，也不使用其源码、品牌或视觉资产。
 
-当前界面渠道标识为 `DEV`；构建系统继续使用合法的内部 SemVer `0.1.0`。
+当前开发通道为 `DEV.6`，内部版本为 `0.1.0-dev.6`。
 
 ## 当前能力
 
-- 多项目标签、复制视图、首页最近项目、画廊和异常恢复。
-- 画笔、橡皮擦、选区、移动、形状、油漆桶、吸管、抓手、缩放和旋转视图工具。
-- RGBA 与索引颜色、前景色与背景色、多种调色盘和自定义色板。
-- 基础、灰度图、程序纹理和项目内自定义笔刷。
-- 图层、嵌套文件夹、可见性、锁定、不透明度、混合模式、合并和拖放排序。
-- 框选、套索、魔棒、选区组合、移动、复制、翻转、缩放和旋转变换。
-- 工作区、栏目停靠、悬浮窗口、布局实时保存和复位。
-- `.moonsprite` 工程读写、Aseprite 工程导入与导出，以及常用图片格式导入导出。
-- 系统剪贴板图片复制粘贴、恢复草稿、文件关联和 Windows 缩略图。
+- 像素绘制：铅笔、橡皮擦、图案笔刷、抖动模板、形状、渐变、油漆桶、魔棒、吸色、智能闭合与对称绘制。
+- 选区与变换：矩形、椭圆、套索、多边形选区，以及移动、复制、翻转、缩放、旋转和多图层、多帧编辑。
+- 颜色与笔刷：RGBA 与索引颜色、前景色与背景色、自定义调色板、同步颜色、图案笔刷库和本地笔刷文件夹。
+- 图层与动画：普通图层、背景图层、图层组、文本、蒙版、图层样式、多帧时间轴、洋葱皮和动画循环节。
+- 瓦片工作流：可共享瓦片集的瓦片图层，以及允许重叠实例、同步编辑源瓦片的自由瓦片图层。
+- 工作区：多项目标签、栏目停靠与悬浮、工作区保存、首页项目分类、异常恢复和多主题界面。
+- 文件与导出：`.moonsprite` 工程、Aseprite 工程导入导出、常用图片与 GIF、PSD 工程导出、切片、精灵表和缩时视频。
+- Windows 集成：系统剪贴板、文件关联、资源管理器缩略图和恢复草稿。
+- 自动化：受限 Lua 5.4 脚本、Aseprite 兼容 API 子集、MoonSprite `mse.*` API 和可运行 `.msext` 扩展。
 
 详细行为以 [产品行为契约](docs/product/behavior.md) 和 [交互契约](docs/README.md#交互契约) 为准。
+
+## 脚本与扩展
+
+普通 Lua 脚本放入程序运行目录的 `scripts/` 文件夹后，会显示在“文件 > 脚本”中。脚本运行在受限 Lua 5.4 沙箱内，可以读取当前文档状态，并通过事务执行可撤销的画布操作；不能直接访问文件、网络、进程或任意本地模块。
+
+`.msext` 是 MoonSprite 的扩展包格式。扩展可声明 Lua 命令、把命令插入现有菜单、新增顶层菜单，并提供由 MoonSprite 渲染的浮动栏目。扩展不能注入任意 React、DOM、CSS、JavaScript 或原生代码。扩展可在“首选项 > 扩展”中安装、启用、禁用和卸载，也支持双击或拖入 `.msext` 文件安装。
+
+- [Lua 脚本与扩展入门](docs/scripting/README.md)
+- [MSE API 参考](docs/scripting/mse-api.md)
+- [LuaLS 类型定义](docs/scripting/mse-api.lua)
+- [扩展包格式与安全边界](docs/adr/0020-extension-package-format.md)
+
+`app.*` 用于兼容已实现的 Aseprite API 子集，`mse.*` 是 MoonSprite 专属 API。脚本应使用能力探测确认端点是否已实现，不能把文档中列出的规划接口视为当前可用能力。
 
 ## 开发环境
 
@@ -30,26 +45,29 @@ pnpm install --frozen-lockfile
 pnpm dev
 ```
 
-常用检查：
+连续开发只检查本次修改的文件：
 
 ```powershell
-pnpm typecheck
-pnpm test
-cargo fmt --check --manifest-path src-tauri/Cargo.toml
-cargo check --manifest-path src-tauri/Cargo.toml
-pnpm build
+pnpm check:dev -- <本次修改的文件...>
 ```
 
-`pnpm package` 会在 `release/` 生成 NSIS 安装包和便携版。该目录不进入 Git，且只有明确需要交付安装包时才执行打包。
+受保护架构边界、发布与打包使用独立门禁，具体流程见 [AI 与开发自动工作流](docs/agent-workflow.md)。`pnpm package` 会在 `release/` 生成 NSIS 安装包和便携版；该目录不进入 Git，且只有明确需要交付安装包时才执行打包。
 
-## 项目资源目录
+## 运行时目录
 
-- `gallery/`：运行时画廊工程。
-- `brushes/`：用户 PNG 与灰度图笔刷。
-- `workspaces/`：工作区布局文件。
-- `src-tauri/resources/`：随应用发布的内置资源。
+发行版会在 MoonSprite 可执行文件旁创建或使用以下目录：
 
-运行时用户目录不会提交到仓库。内置示例工程位于 `src-tauri/resources/示例.moonsprite`。
+- `gallery/`：首页画廊与默认工程保存位置。
+- `exports/`：图片、动画、视频和调色板的默认导出位置。
+- `brushes/`：用户图案笔刷与笔刷文件夹。
+- `palettes/`：用户调色板。
+- `BackgroundPresets/`：背景图层预设。
+- `workspaces/`：工作区布局。
+- `scripts/`：用户 Lua 脚本。
+- `extensions/`：已安装扩展及启用状态。
+- `Font/`：用户字体。
+
+这些运行时目录不提交到仓库。源码仓库自身的 `scripts/` 保存开发与检查工具，不是发行版的用户脚本目录。内置资源位于 `src-tauri/resources/`，其中包含默认背景预设和示例工程。
 
 ## 许可
 
@@ -63,5 +81,6 @@ pnpm build
 - [文档索引](docs/README.md)
 - [贡献指南](CONTRIBUTING.md)
 - [变更记录](CHANGELOG.md)
+- [产品行为契约](docs/product/behavior.md)
 - [文件格式](docs/file-format.md)
 - [发布检查表](docs/release/release-checklist.md)

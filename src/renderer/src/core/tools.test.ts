@@ -48,6 +48,73 @@ describe('pixel tools', () => {
     expect(readLayerColorAt(document, layer, 43, 39).a).toBe(0)
   })
 
+  it.each(['x', 'y', 'both'] as const)('wraps a brush footprint across the enabled %s tile-repeat seams', (mode) => {
+    const document = createDocument(`repeat ${mode}`, 4, 4, 'rgba')
+    const layer = getActiveLayer(document)
+    const edit = beginPixelEdit(layer.id)
+
+    paintBrush(document, layer, edit, 0, 0, 3, blue, 'square', null, 'solid', 1, null, undefined, 0, 'paint', undefined, undefined, undefined, undefined, 1, undefined, false, undefined, mode)
+
+    const expectedXs = mode === 'x' || mode === 'both' ? [0, 1, 3] : [0, 1]
+    const expectedYs = mode === 'y' || mode === 'both' ? [0, 1, 3] : [0, 1]
+    const expected = expectedYs.flatMap((y) => expectedXs.map((x) => `${x}:${y}`)).sort()
+    const painted: string[] = []
+    for (let y = 0; y < document.height; y += 1) for (let x = 0; x < document.width; x += 1) {
+      if (readLayerColorAt(document, layer, x, y).a > 0) painted.push(`${x}:${y}`)
+    }
+    expect(painted.sort()).toEqual(expected)
+
+    const invalidation = brushStrokeInvalidationRects({ x: 0, y: 0 }, { x: 0, y: 0 }, 3, null, document.width, document.height, undefined, undefined, mode)
+    for (const coordinate of expected) {
+      const [x, y] = coordinate.split(':').map(Number)
+      expect(invalidation.some((rect) => x >= rect.x && x < rect.x + rect.width && y >= rect.y && y < rect.y + rect.height)).toBe(true)
+    }
+  })
+
+  it('expands a sparse layer to both repeated edges and undoes the seam stroke as one edit', () => {
+    const document = createDocument('repeat sparse layer', 8, 8, 'rgba')
+    const layer = createSparseLayer('Sparse', 'rgba')
+    document.layers = [layer]
+    document.activeLayerId = layer.id
+    const edit = beginPixelEdit(layer.id)
+
+    paintBrush(document, layer, edit, 0, 0, 3, blue, 'square', null, 'solid', 1, null, undefined, 0, 'paint', undefined, undefined, undefined, undefined, 1, undefined, false, undefined, 'both')
+
+    expect(readLayerColorAt(document, layer, 7, 7)).toEqual(blue)
+    expect(readLayerColorAt(document, layer, 0, 0)).toEqual(blue)
+    const history = new HistoryStack()
+    history.push(commitPixelEdit(document, edit, 'repeat seam brush')!)
+    history.undo()
+    expect(history.canUndo).toBe(false)
+    expect(readLayerColorAt(document, layer, 7, 7).a).toBe(0)
+    expect(readLayerColorAt(document, layer, 0, 0).a).toBe(0)
+  })
+
+  it('deduplicates translucent coverage when a repeated brush spans multiple periods', () => {
+    const document = createDocument('repeat translucent brush', 4, 1, 'rgba')
+    const layer = getActiveLayer(document)
+    const edit = beginPixelEdit(layer.id)
+    const translucent = { r: 255, g: 48, b: 48, a: 128 }
+
+    paintBrush(document, layer, edit, 0, 0, 9, translucent, 'square', null, 'solid', 1, null, undefined, 0, 'paint', undefined, undefined, undefined, undefined, 1, undefined, false, undefined, 'x')
+
+    expect(edit.before.size).toBe(4)
+    for (let x = 0; x < document.width; x += 1) expect(readLayerColorAt(document, layer, x, 0).a).toBe(128)
+  })
+
+  it('checks a selection after wrapping brush pixels into local document coordinates', () => {
+    const document = createDocument('repeat selected brush', 4, 1, 'rgba')
+    const layer = getActiveLayer(document)
+    const edit = beginPixelEdit(layer.id)
+    const selection = { x: 3, y: 0, width: 1, height: 1 }
+
+    paintBrush(document, layer, edit, 0, 0, 3, blue, 'square', selection, 'solid', 1, null, undefined, 0, 'paint', undefined, undefined, undefined, undefined, 1, undefined, false, undefined, 'x')
+
+    expect(edit.before.size).toBe(1)
+    expect(readLayerColorAt(document, layer, 3, 0)).toEqual(blue)
+    expect(readLayerColorAt(document, layer, 0, 0).a).toBe(0)
+  })
+
   it('keeps grayscale paint and erase semantics on the solid-stamp fast path', () => {
     const document = createDocument('grayscale solid stamp', 4, 4, 'grayscale')
     const layer = getActiveLayer(document)
@@ -251,6 +318,25 @@ describe('pixel tools', () => {
     expect(readLayerColor(document, layer, 0)).toEqual({ ...blue, a: 127 })
   })
 
+  it('uses imported image alpha as eraser strength', () => {
+    const document = createDocument('rgba image eraser', 1, 1, 'rgba')
+    const layer = getActiveLayer(document)
+    writeLayerColor(document, layer, 0, blue)
+    const brush = {
+      id: 'rgba-eraser.png',
+      name: 'RGBA eraser',
+      width: 1,
+      height: 1,
+      coverage: new Uint8Array([128]),
+      colors: new Uint32Array([packColor({ r: 255, g: 255, b: 255, a: 128 })]),
+      intrinsicSize: true
+    }
+
+    paintBrush(document, layer, beginPixelEdit(layer.id), 0, 0, 1, { r: 0, g: 0, b: 0, a: 0 }, 'square', null, 'solid', 1, brush)
+
+    expect(readLayerColor(document, layer, 0)).toEqual({ ...blue, a: 127 })
+  })
+
   it('captures every non-transparent selection pixel and its original color', () => {
     const document = createDocument('capture colored selection', 3, 1, 'rgba')
     const layer = getActiveLayer(document)
@@ -324,6 +410,20 @@ describe('pixel tools', () => {
     }
   })
 
+  it('uses procedural bucket sizes as canvas pixels instead of a hidden brush size', () => {
+    const filledAlpha = (scale: number, brushSize: number): number[] => {
+      const document = createDocument(`procedural fill ${scale} ${brushSize}`, 48, 24, 'rgba')
+      const layer = getActiveLayer(document)
+      const brush = createProceduralBrush('procedural:fibers', { seed: 103, scale, detail: 35, variation: 28, angle: 90 })
+      floodFill(document, layer, 0, 0, blue, null, false, brush, brushSize, undefined, 'solid', 1, 0, 'paint')
+      return Array.from({ length: document.width * document.height }, (_, index) => readLayerColor(document, layer, index).a)
+    }
+
+    const fine = filledAlpha(5, 1)
+    expect(filledAlpha(5, 128)).toEqual(fine)
+    expect(filledAlpha(18, 1)).not.toEqual(fine)
+  })
+
   it('embeds normalized procedural settings in the generated brush', () => {
     const brush = createProceduralBrush('procedural:fibers', { scale: 999, detail: -10, variation: 130, angle: 220, seed: 12000 })
     expect(brush.proceduralSettings).toEqual({ scale: 32, detail: 0, variation: 100, angle: 180, seed: 9999 })
@@ -386,6 +486,32 @@ describe('pixel tools', () => {
     ])
   })
 
+  it('replaces paint-mode image brush pixels in path order and skips transparent source pixels', () => {
+    const document = createDocument('image brush overwrite', 4, 1, 'rgba')
+    const layer = getActiveLayer(document)
+    const base = { r: 40, g: 180, b: 80, a: 255 }
+    const translucentRed = { r: 255, g: 0, b: 0, a: 128 }
+    const translucentBlue = { r: 0, g: 0, b: 255, a: 128 }
+    const transparent = { r: 0, g: 0, b: 0, a: 0 }
+    for (let index = 0; index < 4; index += 1) writeLayerColor(document, layer, index, base)
+    const brush = {
+      id: 'overwrite.png',
+      name: 'Overwrite',
+      width: 3,
+      height: 1,
+      coverage: new Uint8Array([0, 128, 128]),
+      colors: new Uint32Array([packColor(transparent), packColor(translucentRed), packColor(translucentBlue)]),
+      intrinsicSize: true
+    }
+
+    paintLine(document, layer, beginPixelEdit(layer.id), 1, 0, 2, 0, 1, red, null, 'square', 'solid', 1, brush, undefined, 0, 'paint')
+
+    expect(readLayerColorAt(document, layer, 0, 0)).toEqual(base)
+    expect(readLayerColorAt(document, layer, 1, 0)).toEqual(translucentRed)
+    expect(readLayerColorAt(document, layer, 2, 0)).toEqual(translucentRed)
+    expect(readLayerColorAt(document, layer, 3, 0)).toEqual(translucentBlue)
+  })
+
   it('uses each dynamic point size for raster and balanced stamp spacing', () => {
     const paintDynamicLine = (algorithm: 'raster' | 'balanced') => {
       const document = createDocument(`dynamic ${algorithm}`, 80, 21, 'rgba')
@@ -435,6 +561,30 @@ describe('pixel tools', () => {
     paintLine(document, layer, divider, 2, 0, 2, 3, 1, blue)
     const fill = floodFill(document, layer, 0, 0, { r: 255, g: 0, b: 0, a: 255 })!
     expect(fill.before.size).toBe(8)
+  })
+
+  it('virtually closes line-art gaps and fills through the virtual bridge', () => {
+    const createGappedOutline = () => {
+      const document = createDocument('smart closure fill', 10, 10, 'rgba')
+      const layer = getActiveLayer(document)
+      for (let y = 2; y <= 7; y += 1) for (let x = 2; x <= 7; x += 1) {
+        if (x !== 2 && x !== 7 && y !== 2 && y !== 7) continue
+        if (y === 2 && (x === 4 || x === 5)) continue
+        writeLayerColor(document, layer, y * document.width + x, blue)
+      }
+      return { document, layer }
+    }
+
+    const leaking = createGappedOutline()
+    floodFill(leaking.document, leaking.layer, 4, 4, red)
+    expect(readLayerColorAt(leaking.document, leaking.layer, 0, 0)).toEqual(red)
+
+    const closed = createGappedOutline()
+    floodFill(closed.document, closed.layer, 4, 4, red, null, true, null, 1, undefined, 'solid', 1, 0, 'paint', 0, 2)
+    expect(readLayerColorAt(closed.document, closed.layer, 4, 4)).toEqual(red)
+    expect(readLayerColorAt(closed.document, closed.layer, 0, 0).a).toBe(0)
+    expect(readLayerColorAt(closed.document, closed.layer, 4, 2)).toEqual(red)
+    expect(readLayerColorAt(closed.document, closed.layer, 3, 2)).toEqual(blue)
   })
 
   it('fills colors within tolerance while preserving contiguous boundaries', () => {
@@ -498,6 +648,35 @@ describe('pixel tools', () => {
     expect(readLayerColorAt(document, layer, 511, 511).a).toBe(0)
     entry.redo()
     expect(readLayerColorAt(document, layer, 511, 511)).toEqual(red)
+  })
+
+  it('keeps a large enclosed bucket fill dirty region exact across undo and redo', () => {
+    const document = createDocument('large enclosed fill', 514, 514, 'rgba')
+    const layer = getActiveLayer(document)
+    for (let x = 0; x < 514; x += 1) {
+      writeLayerColor(document, layer, x, red)
+      writeLayerColor(document, layer, 513 * layer.width + x, red)
+    }
+    for (let y = 1; y < 513; y += 1) {
+      writeLayerColor(document, layer, y * layer.width, red)
+      writeLayerColor(document, layer, y * layer.width + 513, red)
+    }
+
+    const edit = floodFill(document, layer, 257, 257, blue)!
+
+    expect(edit.before.size).toBe(0)
+    expect(edit.runs).toHaveLength(512)
+    expect(edit.dirtyRect).toEqual({ x: 1, y: 1, width: 512, height: 512 })
+    const entry = commitPixelEdit(document, edit, 'large enclosed fill')!
+    expect(entry.invalidation).toEqual({
+      kind: 'region',
+      frameId: document.animation?.activeFrameId,
+      rect: { x: 1, y: 1, width: 512, height: 512 }
+    })
+    entry.undo()
+    expect(readLayerColorAt(document, layer, 257, 257).a).toBe(0)
+    entry.redo()
+    expect(readLayerColorAt(document, layer, 257, 257)).toEqual(blue)
   })
 
   it('fills a selected region using canvas coordinates on an offset layer', () => {
@@ -613,6 +792,22 @@ describe('pixel tools', () => {
     expect(readLayerColorAt(document, layer, 4, 3).a).toBe(0)
   })
 
+  it('limits full-canvas clearing to the active layer content bounds', () => {
+    const document = createDocument('bounded clear', 4000, 4000, 'rgba')
+    const layer = getActiveLayer(document)
+    writeLayerColor(document, layer, 1200 * layer.width + 1400, blue)
+    writeLayerColor(document, layer, 1204 * layer.width + 1406, red)
+
+    const edit = clearSelection(document, { x: 0, y: 0, width: 4000, height: 4000 })!
+
+    expect(edit.before.size).toBe(2)
+    expect(edit.dirtyRect).toEqual({ x: 1400, y: 1200, width: 7, height: 5 })
+    const entry = commitPixelEdit(document, edit, 'bounded clear')!
+    entry.undo()
+    expect(readLayerColorAt(document, layer, 1400, 1200)).toEqual(blue)
+    expect(readLayerColorAt(document, layer, 1406, 1204)).toEqual(red)
+  })
+
   it('flood fills transparent canvas pixels outside a cropped layer bitmap', () => {
     const document = createDocument('cropped fill', 4, 3, 'indexed')
     const layer = getActiveLayer(document)
@@ -660,6 +855,66 @@ describe('pixel tools', () => {
     expect(readLayerColorAt(document, layer, 0, 0)).toEqual(blue)
     expect(readLayerColorAt(document, layer, 2, 1)).toEqual(blue)
     expect(readLayerColorAt(document, layer, 1, 0).a).toBe(0)
+  })
+
+  it('stores large masked selection fills as dense history without changing unselected pixels', () => {
+    const document = createDocument('dense foreground fill', 512, 512, 'rgba')
+    const layer = getActiveLayer(document)
+    layer.pixels.fill(255)
+    const mask = new Uint8Array(512 * 512).fill(1)
+    mask[1] = 0
+    const selection = { x: 0, y: 0, width: 512, height: 512, mask }
+
+    const edit = fillSelectionOrCanvas(document, layer, blue, selection)!
+
+    expect(edit.before.size).toBe(0)
+    expect(edit.denseRegion?.count).toBe(512 * 512 - 1)
+    expect(edit.dirtyRect).toEqual({ x: 0, y: 0, width: 512, height: 512 })
+    expect(readLayerColorAt(document, layer, 0, 0)).toEqual(blue)
+    expect(readLayerColorAt(document, layer, 1, 0)).toEqual({ r: 255, g: 255, b: 255, a: 255 })
+    const entry = commitPixelEdit(document, edit, 'dense selection fill')!
+    entry.undo()
+    expect(readLayerColorAt(document, layer, 0, 0)).toEqual({ r: 255, g: 255, b: 255, a: 255 })
+    expect(readLayerColorAt(document, layer, 1, 0)).toEqual({ r: 255, g: 255, b: 255, a: 255 })
+    entry.redo()
+    expect(readLayerColorAt(document, layer, 0, 0)).toEqual(blue)
+    expect(readLayerColorAt(document, layer, 1, 0)).toEqual({ r: 255, g: 255, b: 255, a: 255 })
+  })
+
+  it('keeps sparse large selection fills on the compact point path', () => {
+    const document = createDocument('sparse foreground fill', 512, 512, 'rgba')
+    const layer = getActiveLayer(document)
+    const mask = new Uint8Array(512 * 512)
+    mask[0] = 1
+    mask[mask.length - 1] = 1
+
+    const edit = fillSelectionOrCanvas(document, layer, blue, { x: 0, y: 0, width: 512, height: 512, mask })!
+
+    expect(edit.denseRegion).toBeUndefined()
+    expect(edit.before.size).toBe(2)
+    expect(edit.dirtyRect).toEqual({ x: 0, y: 0, width: 512, height: 512 })
+  })
+
+  it('preserves indexed and grayscale fill semantics on the dense path', () => {
+    const indexedDocument = createDocument('dense indexed fill', 512, 512, 'indexed')
+    const indexedLayer = getActiveLayer(indexedDocument)
+    const indexedEdit = fillSelectionOrCanvas(indexedDocument, indexedLayer, blue)!
+    expect(indexedEdit.denseRegion?.count).toBe(512 * 512)
+    expect(readLayerColorAt(indexedDocument, indexedLayer, 511, 511)).toEqual(blue)
+    const indexedEntry = commitPixelEdit(indexedDocument, indexedEdit, 'dense indexed fill')!
+    indexedEntry.undo()
+    expect(readLayerColorAt(indexedDocument, indexedLayer, 511, 511).a).toBe(0)
+    indexedEntry.redo()
+    expect(readLayerColorAt(indexedDocument, indexedLayer, 511, 511)).toEqual(blue)
+
+    const grayscaleDocument = createDocument('dense grayscale fill', 512, 512, 'grayscale')
+    const grayscaleLayer = getActiveLayer(grayscaleDocument)
+    const grayscaleEdit = fillSelectionOrCanvas(grayscaleDocument, grayscaleLayer, blue)!
+    expect(grayscaleEdit.denseRegion?.count).toBe(512 * 512)
+    const grayscale = readLayerColorAt(grayscaleDocument, grayscaleLayer, 511, 511)
+    expect(grayscale.r).toBe(grayscale.g)
+    expect(grayscale.g).toBe(grayscale.b)
+    expect(grayscale.a).toBe(255)
   })
 
   it('fills an indexed canvas without changing its color mode', () => {
@@ -856,6 +1111,48 @@ describe('pixel tools', () => {
     expect(readLayerColor(document, layer, 2).a).toBe(0)
     expect(readLayerColor(document, layer, 3)).toEqual(blue)
     expect(selectionTranslationPreviewEdit(document, second)?.before.size).toBe(2)
+  })
+
+  it.each([
+    ['x', 4, 2, { x: 3, y: 1 }, { x: 4, y: 1 }, { x: 0, y: 1 }],
+    ['y', 3, 4, { x: 1, y: 3 }, { x: 1, y: 4 }, { x: 1, y: 0 }],
+    ['both', 4, 4, { x: 3, y: 3 }, { x: 4, y: 4 }, { x: 0, y: 0 }]
+  ] as const)('wraps a deferred selection translation across the %s tile-repeat boundary', (mode, width, height, sourcePoint, targetPoint, destinationPoint) => {
+    const document = createDocument(`repeat ${mode} translation`, width, height, 'rgba')
+    const layer = getActiveLayer(document)
+    writeLayerColor(document, layer, sourcePoint.y * layer.width + sourcePoint.x, blue)
+    const selection = { ...sourcePoint, width: 1, height: 1 }
+    const source = captureSelectionTransform(document, selection, layer, { cacheOpaqueOffsets: false })!
+
+    const edit = applySelectionTranslationCommit(document, source, { ...selection, ...targetPoint }, false, layer, mode)!
+    const entry = commitPixelEdit(document, edit, 'repeat move')!
+
+    expect(readLayerColorAt(document, layer, sourcePoint.x, sourcePoint.y).a).toBe(0)
+    expect(readLayerColorAt(document, layer, destinationPoint.x, destinationPoint.y)).toEqual(blue)
+    entry.undo()
+    expect(readLayerColorAt(document, layer, sourcePoint.x, sourcePoint.y)).toEqual(blue)
+    expect(readLayerColorAt(document, layer, destinationPoint.x, destinationPoint.y).a).toBe(0)
+    entry.redo()
+    expect(readLayerColorAt(document, layer, destinationPoint.x, destinationPoint.y)).toEqual(blue)
+  })
+
+  it('keeps the source while previewing and committing a copied tile-repeat translation', () => {
+    const document = createDocument('repeat copy translation', 4, 1, 'rgba')
+    const layer = getActiveLayer(document)
+    writeLayerColor(document, layer, 3, blue)
+    const selection = { x: 3, y: 0, width: 1, height: 1 }
+    const source = captureSelectionTransform(document, selection, layer)!
+
+    const preview = applySelectionTranslationPreview(document, source, { ...selection, x: 4 }, true, null, layer, undefined, 'x')
+    const entry = commitPixelEdit(document, selectionTranslationPreviewEdit(document, preview)!, 'repeat copy')!
+
+    expect(readLayerColorAt(document, layer, 3, 0)).toEqual(blue)
+    expect(readLayerColorAt(document, layer, 0, 0)).toEqual(blue)
+    entry.undo()
+    expect(readLayerColorAt(document, layer, 3, 0)).toEqual(blue)
+    expect(readLayerColorAt(document, layer, 0, 0).a).toBe(0)
+    entry.redo()
+    expect(readLayerColorAt(document, layer, 0, 0)).toEqual(blue)
   })
 
   it('stores large translation history in typed point arrays', () => {
@@ -1317,7 +1614,46 @@ describe('pixel tools', () => {
     expect(edit.before.size).toBe(centeredCracks.length)
   })
 
-  it('uses grayscale image brush values as a one-color dithered stamp and skips black pixels', () => {
+  it('uses the same absolute dither mask for brush preview data and committed pixels', () => {
+    const document = createDocument('dither brush', 4, 4, 'rgba')
+    const layer = getActiveLayer(document)
+    const edit = beginPixelEdit(layer.id)
+    const dither = { enabled: true, template: 'bayer-2' as const, stage: 2 }
+    const previewMask = brushMaskOffsets(4, 'square', 'solid', 1, 0, 0, null, undefined, 0, 'paint', 0, 0, dither)
+
+    paintBrush(document, layer, edit, 2, 2, 4, blue, 'square', null, 'solid', 1, null, undefined, 0, 'paint', undefined, undefined, undefined, undefined, 1, undefined, false, undefined, 'off', dither)
+
+    const previewPixels = previewMask.map((point) => `${point.x}:${point.y}`).sort()
+    const paintedPixels: string[] = []
+    for (let y = 0; y < document.height; y += 1) for (let x = 0; x < document.width; x += 1) {
+      if (readLayerColorAt(document, layer, x, y).a > 0) paintedPixels.push(`${x}:${y}`)
+    }
+    expect(previewPixels).toHaveLength(8)
+    expect(paintedPixels.sort()).toEqual(previewPixels)
+  })
+
+  it('uses six density stages for directional brush dithering', () => {
+    for (const template of ['diagonal', 'diagonal-reverse', 'horizontal', 'vertical'] as const) {
+      const stageSizes = Array.from({ length: 6 }, (_, index) => brushMaskOffsets(
+        6,
+        'square',
+        'solid',
+        1,
+        0,
+        0,
+        null,
+        undefined,
+        0,
+        'paint',
+        0,
+        0,
+        { enabled: true, template, stage: index + 1 }
+      ).length)
+      expect(stageSizes).toEqual([6, 12, 18, 24, 30, 36])
+    }
+  })
+
+  it('keeps legacy coverage-mask brushes as one-color dithered stamps', () => {
     const document = createDocument('gray brush', 4, 4, 'rgba')
     const layer = getActiveLayer(document)
     const edit = beginPixelEdit(layer.id)
@@ -1415,7 +1751,7 @@ describe('pixel tools', () => {
     expect(new Set(mask.map((point) => point.coverage))).toEqual(new Set([128, 255]))
   })
 
-  it('keeps local grayscale image brushes hard-edged when procedural antialiasing is enabled', () => {
+  it('keeps legacy coverage-mask brushes hard-edged when procedural antialiasing is enabled', () => {
     const local = { id: 'local.png', name: 'local', width: 4, height: 1, coverage: new Uint8Array([127, 128, 140, 255]) }
     const settings = { mode: 'threshold' as const, threshold: 128, blackPoint: 0, whitePoint: 255, invert: false }
     const mask = brushMaskOffsets(4, 'square', 'solid', 1, 0, 0, local, settings, 100)
@@ -2035,6 +2371,24 @@ describe('pixel tools', () => {
     expect(selectionContains(selection, 0, 0)).toBe(true)
     expect(selectionContains(selection, 1, 0)).toBe(true)
     expect(selectionContains(selection, 2, 0)).toBe(false)
+  })
+
+  it('uses the same virtual gap boundary for smart-closure magic-wand selections', () => {
+    const document = createDocument('smart closure wand', 10, 10, 'rgba')
+    const layer = getActiveLayer(document)
+    for (let y = 2; y <= 7; y += 1) for (let x = 2; x <= 7; x += 1) {
+      if (x !== 2 && x !== 7 && y !== 2 && y !== 7) continue
+      if (y === 2 && (x === 4 || x === 5)) continue
+      writeLayerColor(document, layer, y * document.width + x, blue)
+    }
+
+    const leaking = magicWandSelection(document, layer, 4, 4)
+    const closed = magicWandSelection(document, layer, 4, 4, 0, true, 2)
+
+    expect(selectionContains(leaking, 0, 0)).toBe(true)
+    expect(selectionContains(closed, 4, 4)).toBe(true)
+    expect(selectionContains(closed, 0, 0)).toBe(false)
+    expect(selectionContains(closed, 4, 2)).toBe(true)
   })
 
   it('supports magic-wand tolerance and non-contiguous matching', () => {

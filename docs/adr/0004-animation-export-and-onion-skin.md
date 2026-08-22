@@ -1,5 +1,7 @@
 # ADR-0004: Animation Export And Onion Skin
 
+[中文](0004-animation-export-and-onion-skin.zh-CN.md) | English
+
 ## Status
 
 Accepted

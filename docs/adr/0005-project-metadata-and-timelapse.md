@@ -1,5 +1,7 @@
 # ADR-0005: Project Metadata And Timelapse Snapshots
 
+[中文](0005-project-metadata-and-timelapse.zh-CN.md) | English
+
 ## Status
 
 Accepted

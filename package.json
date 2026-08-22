@@ -1,6 +1,6 @@
 {
   "name": "moonsprite",
-  "version": "0.1.0-dev.5",
+  "version": "0.1.0-dev.6",
   "description": "An original, source-available pixel art workstation for Windows.",
   "author": "MoonSprite contributors",
   "license": "SEE LICENSE IN LICENSE",
@@ -20,6 +20,7 @@
     "check:dev": "node scripts/run-validation.mjs dev",
     "check:release": "node scripts/run-validation.mjs release",
     "check:boundaries": "node scripts/check-module-boundaries.mjs",
+    "check:architecture": "node scripts/architecture-contract.mjs",
     "check:version": "node scripts/check-version-contract.mjs",
     "check:performance": "node scripts/run-performance-audit.mjs",
     "check:release-performance": "node scripts/run-performance-audit.mjs --release",
@@ -35,7 +36,7 @@
     "bench:selection": "vitest bench src/renderer/src/core/selection-performance.bench.ts --run",
     "bench:document": "vitest bench src/renderer/src/core/document-performance.bench.ts --run",
     "check:performance-scope": "node scripts/performance-scope.mjs",
-    "check:maintenance": "node --test scripts/canvas-performance-options.test.mjs scripts/changelog-policy.test.mjs scripts/dev-validation-policy.test.mjs scripts/performance-acceptance.test.mjs scripts/performance-analysis.test.mjs scripts/performance-build-contract.test.mjs scripts/performance-scope-rules.test.mjs scripts/validation-scope.test.mjs scripts/version-contract.test.mjs && node scripts/check-maintenance-contract.mjs && node scripts/check-version-contract.mjs && node scripts/check-changelog-update.mjs",
+    "check:maintenance": "node --test scripts/architecture-contract.test.mjs scripts/canvas-performance-options.test.mjs scripts/changelog-policy.test.mjs scripts/dev-validation-policy.test.mjs scripts/performance-acceptance.test.mjs scripts/performance-analysis.test.mjs scripts/performance-build-contract.test.mjs scripts/performance-scope-rules.test.mjs scripts/validation-scope.test.mjs scripts/version-contract.test.mjs && node scripts/architecture-contract.mjs && node scripts/check-maintenance-contract.mjs && node scripts/check-version-contract.mjs && node scripts/check-changelog-update.mjs",
     "package": "tauri build && pnpm package:prepare && pnpm package:size",
     "package:prepare": "node scripts/prepare-release.mjs",
     "package:size": "node scripts/check-package-size.mjs",
@@ -44,7 +45,10 @@
     "website:build": "pnpm --dir website build",
     "website:capture": "node website/scripts/capture-product.mjs"
   },
-  "dependencies": {},
+  "dependencies": {
+    "ag-psd": "31.0.2",
+    "gifuct-js": "2.1.2"
+  },
   "devDependencies": {
     "@tauri-apps/api": "2.11.1",
     "@tauri-apps/cli": "2.11.4",

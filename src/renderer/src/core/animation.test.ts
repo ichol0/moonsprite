@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { activateAnimationFrame, addBlankAnimationFrame, animationCelAt, animationCelContentSelection, animationCelHasContent, animationCelKey, animationCelOffsetsForKeys, connectAnimationCels, createAnimationCelLookup, createDefaultAnimationTimeline, deleteAnimationFrame, disconnectAnimationCels, duplicateAnimationFrame, ensureAnimationDocument, nextAnimationFrameId, normalizeAnimationTimeline, resizeAnimationCelsAt, setAnimationCelOffsets, setAnimationCelOffsetsForKeys, syncActiveAnimationFrame, syncActiveAnimationLayer, syncActiveAnimationLayers } from './animation'
+import { activateAnimationFrame, addBlankAnimationFrame, animationCelAt, animationCelContentSelection, animationCelHasContent, animationCelKey, animationCelOffsetsForKeys, connectAnimationCels, createAnimationCelLookup, createDefaultAnimationTimeline, deleteAnimationFrame, disconnectAnimationCels, duplicateAnimationFrame, ensureAnimationDocument, linkAnimationFrameCels, nextAnimationFrameId, normalizeAnimationTimeline, resizeAnimationCelsAt, resolveAnimationCel, setAnimationCelOffsets, setAnimationCelOffsetsForKeys, syncActiveAnimationFrame, syncActiveAnimationLayer, syncActiveAnimationLayers } from './animation'
 import { animationMaskAt, compositeDocument, createDocument, createLayer, createLayerMask, ensureLayerCoversCanvas, getActiveLayer, resizeDocumentAt, writeLayerColor } from './document'
 import { beginPixelEdit, commitPixelEdit, HistoryStack, recordPixel } from './history'
 
@@ -48,6 +48,20 @@ describe('animation timeline boundary', () => {
     expect(second.linkedCelId).toBeUndefined()
   })
 
+  it('leaves a new target frame unlinked when the source cel is transparent', () => {
+    const document = createDocument('linked empty cel', 1, 1, 'rgba')
+    const firstFrame = ensureAnimationDocument(document).activeFrameId
+    const secondFrame = addBlankAnimationFrame(document)
+    const timeline = ensureAnimationDocument(document)
+    const first = animationCelAt(timeline, document.activeLayerId, firstFrame)!
+    const second = animationCelAt(timeline, document.activeLayerId, secondFrame)!
+
+    expect(linkAnimationFrameCels(document, firstFrame, secondFrame, [document.activeLayerId])).toBe(false)
+    expect(second.linkedCelId).toBeUndefined()
+    expect(resolveAnimationCel(timeline, second)).toBe(second)
+    expect(second.surface).not.toBe(first.surface)
+  })
+
   it('keeps cel opacity independent per frame when activating frames', () => {
     const document = createDocument('cel opacity', 1, 1, 'rgba')
     const first = ensureAnimationDocument(document)
@@ -64,7 +78,7 @@ describe('animation timeline boundary', () => {
     expect(document.layers[0].opacity).toBeCloseTo(0.8)
   })
   it('creates a one-frame timeline for new or legacy projects', () => {
-    expect(createDefaultAnimationTimeline()).toEqual({ frames: [{ id: 'frame-1', duration: 100 }], cels: [], groupMasks: [], activeFrameId: 'frame-1', loop: true })
+    expect(createDefaultAnimationTimeline()).toEqual({ frames: [{ id: 'frame-1', duration: 100 }], cels: [], groupMasks: [], loopSections: [], activeFrameId: 'frame-1', loop: true })
     expect(normalizeAnimationTimeline(undefined)).toEqual(createDefaultAnimationTimeline())
   })
 

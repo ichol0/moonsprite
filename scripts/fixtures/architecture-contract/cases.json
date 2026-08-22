@@ -1,0 +1,90 @@
+{
+  "valid": {
+    "src/renderer/src/components/Panel.tsx": "export const Panel = ({ store }) => <button onClick={() => store.renameLayer('layer-1', 'Name')} />\n",
+    "src/renderer/src/core/a.ts": "import type { B } from './b'\nexport const value = 1\n",
+    "src/renderer/src/core/b.ts": "export interface B { value: number }\n",
+    "src/renderer/src/core/example-render-keys.ts": "export const key = (layer: { pixels: Uint8Array }) => String(getRasterContentRevision(layer.pixels))\n",
+    "src/renderer/src/store/recovery-service.ts": "export const save = async () => { try { await write() } catch (error) { reportRecoveryError(error) } }\n",
+    "scripts/check-clean-boundary.mjs": "export const roots = ['src/renderer/src/core']\n"
+  },
+  "invalid": [
+    {
+      "name": "component document mutation",
+      "files": {
+        "src/renderer/src/components/Panel.tsx": "export const Panel = ({ store }) => { store.mutateActive((active) => { active.document.dirty = true }) ; return null }\n"
+      },
+      "expected": { "component-domain-write": 2 }
+    },
+    {
+      "name": "component session and history mutation",
+      "files": {
+        "src/renderer/src/components/Canvas.tsx": "export const Canvas = ({ store, session, entry }) => { session.selection = null; store.pushHistory(entry); return null }\n"
+      },
+      "expected": { "component-domain-write": 2 }
+    },
+    {
+      "name": "history project snapshot",
+      "files": {
+        "src/renderer/src/store/layer-history.ts": "export const capture = (document) => encodeProject(document)\nexport const restore = (data) => decodeProject(data)\n"
+      },
+      "expected": { "history-project-snapshot": 2 }
+    },
+    {
+      "name": "secondary project decode",
+      "files": {
+        "src/renderer/src/core/document-files.ts": "export const prepareAgain = () => decodeDocumentFileInWorker(source, path, undefined, true, document, frameId)\n"
+      },
+      "expected": { "project-open-secondary-decode": 1 }
+    },
+    {
+      "name": "synchronous async preparation",
+      "files": {
+        "src/renderer/src/core/project-format.ts": "export async function encodeProjectAsync(document) {\n  const files = createProjectArchiveFiles(document)\n  return await sendToWorker(files)\n}\n"
+      },
+      "expected": { "async-project-main-thread-preparation": 1 }
+    },
+    {
+      "name": "silent recovery failure",
+      "files": {
+        "src/renderer/src/store/recovery-service.ts": "export const save = async () => { try { await write() } catch { /* keep autosave quiet */ } }\nexport const cleanup = () => remove().catch(() => { /* ignore */ })\n"
+      },
+      "expected": { "recovery-error-swallow": 2 }
+    },
+    {
+      "name": "core runtime cycle",
+      "files": {
+        "src/renderer/src/core/a.ts": "import { b } from './b'\nexport const a = b\n",
+        "src/renderer/src/core/b.ts": "import { a } from './a'\nexport const b = a\n"
+      },
+      "expected": { "core-runtime-cycle": 2 }
+    },
+    {
+      "name": "module boundary violation",
+      "files": {
+        "src/renderer/src/core/platform-leak.ts": "import { invoke } from '@tauri-apps/api/core'\nexport const run = invoke\n"
+      },
+      "expected": { "module-boundary-debt": 1 }
+    },
+    {
+      "name": "permanent boundary allowlist",
+      "files": {
+        "scripts/check-example-boundary.mjs": "const LEGACY_IMPORTS = new Set(['src/renderer/src/App.tsx'])\nexport const skip = (file) => file === 'src/renderer/src/core/example.ts'\n"
+      },
+      "expected": { "permanent-boundary-allowlist": 3 }
+    },
+    {
+      "name": "workspace root commands",
+      "files": {
+        "src/renderer/src/store/workspace-contract.ts": "interface WorkspaceState {\n  addLayer(): void\n  saveActive(): Promise<void>\n}\n"
+      },
+      "expected": { "workspace-root-command": 2 }
+    },
+    {
+      "name": "render key pixel serialization",
+      "files": {
+        "src/renderer/src/core/example-render-keys.ts": "export const key = (layer) => layer.pixels.join(',')\n"
+      },
+      "expected": { "render-key-pixel-serialization": 1 }
+    }
+  ]
+}

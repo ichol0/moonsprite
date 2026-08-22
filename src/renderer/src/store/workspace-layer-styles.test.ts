@@ -1,12 +1,13 @@
 import { beforeEach, describe, expect, it } from 'vitest'
-import { compositeRegion, createDocument, createLayerMask, getActiveLayer, writeLayerColor } from '@/core/document'
+import type { LayerGroup } from '@shared/types'
+import { compositeRegion, createDocument, createLayer, createLayerMask, getActiveLayer, writeLayerColor } from '@/core/document'
 import { ensureAnimationDocument } from '@/core/animation'
 import { createDefaultLayerStyles } from '@/core/layer-styles'
 import { useWorkspace } from './workspace'
 
 beforeEach(() => {
   localStorage.clear()
-  useWorkspace.setState({ sessions: [], activeId: null, message: null, saveProgress: null, dialog: null })
+  useWorkspace.setState({ sessions: [], activeId: null, layerStyleClipboard: null, message: null, saveProgress: null, dialog: null })
 })
 
 describe('layer style workspace history', () => {
@@ -54,7 +55,7 @@ describe('layer style workspace history', () => {
     const document = createDocument('group styles', 4, 4, 'rgba')
     const layer = getActiveLayer(document)
     layer.groupId = 'group'
-    const group = { id: 'group', name: 'Group', parentGroupId: null, visible: true, locked: false, opacity: 1, blendMode: 'normal' as const }
+    const group: LayerGroup = { id: 'group', name: 'Group', parentGroupId: null, visible: true, locked: false, opacity: 1, blendMode: 'normal' }
     document.groups.push(group)
     useWorkspace.getState().addSession(document)
     const styles = createDefaultLayerStyles()
@@ -66,6 +67,73 @@ describe('layer style workspace history', () => {
     expect(document.groups[0].layerStyles).toBeUndefined()
     useWorkspace.getState().redo()
     expect(document.groups[0].layerStyles?.innerGlow.enabled).toBe(true)
+  })
+
+  it('deep-copies, pastes, and clears styles across multiple targets as single undo steps', () => {
+    const document = createDocument('batch layer styles', 4, 4, 'rgba')
+    const source = getActiveLayer(document)
+    const target = createLayer('Target', 4, 4, 'rgba')
+    const group: LayerGroup = { id: 'group', name: 'Group', parentGroupId: null, visible: true, locked: false, opacity: 1, blendMode: 'normal' }
+    document.layers.push(target)
+    document.groups.push(group)
+    const styles = createDefaultLayerStyles()
+    styles.stroke.enabled = true
+    styles.stroke.size = 3
+    source.layerStyles = styles
+    useWorkspace.getState().addSession(document)
+
+    expect(useWorkspace.getState().copyLayerStyles('layer', source.id)).toBe(true)
+    source.layerStyles.stroke.size = 9
+    expect(useWorkspace.getState().layerStyleClipboard?.stroke.size).toBe(3)
+
+    const targets = [{ kind: 'layer' as const, id: target.id }, { kind: 'group' as const, id: group.id }]
+    expect(useWorkspace.getState().pasteLayerStyles(targets)).toBe(true)
+    expect(target.layerStyles?.stroke).toMatchObject({ enabled: true, size: 3 })
+    expect(group.layerStyles?.stroke).toMatchObject({ enabled: true, size: 3 })
+    expect(useWorkspace.getState().sessions[0].history.latestUndoEntry?.label).toBe('粘贴图层样式')
+
+    useWorkspace.getState().undo()
+    expect(target.layerStyles).toBeUndefined()
+    expect(group.layerStyles).toBeUndefined()
+    useWorkspace.getState().redo()
+    expect(target.layerStyles?.stroke.size).toBe(3)
+    expect(group.layerStyles?.stroke.size).toBe(3)
+
+    expect(useWorkspace.getState().clearLayerStyles(targets)).toBe(true)
+    expect(target.layerStyles).toBeUndefined()
+    expect(group.layerStyles).toBeUndefined()
+    expect(useWorkspace.getState().sessions[0].history.latestUndoEntry?.label).toBe('清除图层样式')
+    useWorkspace.getState().undo()
+    expect(target.layerStyles?.stroke.size).toBe(3)
+    expect(group.layerStyles?.stroke.size).toBe(3)
+  })
+
+  it('toggles configured styles for multiple owners without losing effect settings', () => {
+    const document = createDocument('toggle layer styles', 3, 1, 'rgba')
+    const source = getActiveLayer(document)
+    const target = createLayer('Target', 3, 1, 'rgba')
+    const sourceStyles = createDefaultLayerStyles()
+    sourceStyles.stroke.enabled = true
+    sourceStyles.stroke.size = 3
+    const targetStyles = createDefaultLayerStyles()
+    targetStyles.shadow.enabled = true
+    targetStyles.shadow.offsetX = 4
+    source.layerStyles = sourceStyles
+    target.layerStyles = targetStyles
+    document.layers.push(target)
+    useWorkspace.getState().addSession(document)
+    const targets = [{ kind: 'layer' as const, id: source.id }, { kind: 'layer' as const, id: target.id }]
+
+    expect(useWorkspace.getState().setLayerStylesEnabled(targets, false)).toBe(true)
+    expect(source.layerStyles).toMatchObject({ enabled: false, stroke: { enabled: true, size: 3 } })
+    expect(target.layerStyles).toMatchObject({ enabled: false, shadow: { enabled: true, offsetX: 4 } })
+
+    useWorkspace.getState().undo()
+    expect(source.layerStyles).toMatchObject({ enabled: true, stroke: { enabled: true, size: 3 } })
+    expect(target.layerStyles).toMatchObject({ enabled: true, shadow: { enabled: true, offsetX: 4 } })
+    useWorkspace.getState().redo()
+    expect(source.layerStyles?.enabled).toBe(false)
+    expect(target.layerStyles?.enabled).toBe(false)
   })
 
   it('rasterizes enabled styles across the layer surface and keeps the visible result undoable', () => {
