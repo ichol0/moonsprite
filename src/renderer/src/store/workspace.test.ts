@@ -2716,12 +2716,14 @@ describe('selection clipboard', () => {
     useWorkspace.getState().addSession(document)
 
     await useWorkspace.getState().pasteSelection()
-    expect(readLayerColor(document, layer, 0)).toEqual(red)
+    const target = useWorkspace.getState().sessions[0].pendingPaste?.target
+    if (!target) throw new Error('missing floating paste')
+    expect(readLayerColorAt(document, layer, target.x, target.y)).toEqual(red)
     expect(useWorkspace.getState().sessions[0].history.canUndo).toBe(false)
 
     useWorkspace.getState().cancelFloatingPaste()
 
-    expect(readLayerColor(document, layer, 0)).toEqual(transparent)
+    expect(readLayerColorAt(document, layer, target.x, target.y)).toEqual(transparent)
     expect(useWorkspace.getState().sessions[0].pendingPaste).toBeNull()
     expect(useWorkspace.getState().sessions[0].history.canUndo).toBe(false)
   })
@@ -2787,6 +2789,26 @@ describe('selection clipboard', () => {
     expect(useWorkspace.getState().sessions[0].selection?.mask).toEqual(Uint8Array.from([0, 1]))
     expect(readLayerColor(document, layer, 1).a).toBe(0)
     expect(readLayerColor(document, layer, 2)).toEqual(blue)
+  })
+
+  it('reuses the visible-area position for repeated external pastes', async () => {
+    const color = Uint8Array.from([17, 29, 41, 255])
+    installApi({ readClipboardImage: vi.fn(async () => ({ width: 1, height: 1, data: color })) })
+    const document = createDocument('repeat external paste', 100, 100, 'rgba')
+    useWorkspace.getState().addSession(document)
+    useWorkspace.getState().setViewportSize({ width: 20, height: 20 })
+    useWorkspace.getState().setView({ zoom: 1, panX: 20, panY: 10 })
+
+    await useWorkspace.getState().pasteSelection()
+    const firstTarget = useWorkspace.getState().sessions[0].pendingPaste?.target
+    if (!firstTarget) throw new Error('missing first floating paste')
+    const first = { ...firstTarget, mask: firstTarget.mask?.slice() }
+    useWorkspace.getState().cancelFloatingPaste()
+
+    await useWorkspace.getState().pasteSelection()
+
+    expect(first).toMatchObject({ x: 30, y: 40 })
+    expect(useWorkspace.getState().sessions[0].pendingPaste?.target).toEqual(first)
   })
 
   it('keeps a large pasted image deferred until confirmation', async () => {

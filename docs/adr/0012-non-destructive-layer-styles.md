@@ -1,5 +1,7 @@
 # ADR-0012: Non-Destructive Layer Styles
 
+[中文](0012-non-destructive-layer-styles.zh-CN.md) | English
+
 ## Status
 
 Accepted

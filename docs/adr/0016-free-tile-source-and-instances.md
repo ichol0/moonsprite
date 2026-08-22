@@ -1,5 +1,7 @@
 # 0016：自由瓦片源库与任意位置实例分离
 
+中文 | [English](0016-free-tile-source-and-instances.en.md)
+
 ## 状态
 
 接受

@@ -8,6 +8,7 @@ import { loadEditorPreferences, saveEditorPreferences } from '@/core/file-prefer
 import { readProjectGalleryMetadataAsync } from '@/core/project-gallery'
 import { encodeProjectPreview } from '@/core/project-format'
 import { createRasterImagePreview, rasterImageMimeType } from '@/core/raster-image'
+import { latestRelease } from '@/core/latest-release'
 import { clearRecentProjects, getGalleryPins, getRecentProjects, recordRecentProject, removeGalleryPin, removeRecentProject, reorderRecentProjects, toggleGalleryPin, toggleRecentProjectPinned, type RecentProject } from '@/core/home-history'
 import { createFolderHomeSection, findFolderHomeSection, getHomeSections, saveHomeSections, type HomeSectionDefinition } from '@/core/home-sections'
 import { useWorkspace } from '@/store/workspace'
@@ -34,6 +35,7 @@ interface HomeWorkspaceProps {
   onOpen(): void
   onOpenProject(filePath: string, keepHomeOpen?: boolean): Promise<boolean>
   onRestoreRecovery(id: string): Promise<boolean>
+  onOpenLatestRelease?(): void
 }
 
 type HomeProjectLayout = 'small' | 'medium' | 'large'
@@ -127,6 +129,12 @@ const formatTime = (value: number, locale: AppLocale): string => {
   if (!Number.isFinite(value) || value <= 0 || Number.isNaN(new Date(value).getTime())) return translate(locale, 'home.unknownTime')
   return new Intl.DateTimeFormat(locale, { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }).format(new Date(value))
 }
+
+const formatReleaseDate = (value: string, locale: AppLocale): string => new Intl.DateTimeFormat(locale, {
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit'
+}).format(new Date(`${value}T00:00:00`))
 
 const formatProjectType = (filePath: string): string => {
   const extension = filePath.match(/\.([^./\\]+)$/)?.[1]
@@ -405,7 +413,7 @@ function HomeSectionTabs({ entries, activeId, ariaLabel, moreLabel, onSelect }: 
   </div>
 }
 
-export function HomeWorkspace({ onNew, onOpen, onOpenProject, onRestoreRecovery }: HomeWorkspaceProps) {
+export function HomeWorkspace({ onNew, onOpen, onOpenProject, onRestoreRecovery, onOpenLatestRelease }: HomeWorkspaceProps) {
   const { locale, t } = useI18n()
   const [homeSections, setHomeSections] = useState(getHomeSections)
   const [section, setSection] = useState(() => loadHomeSection(getHomeSections()))
@@ -875,7 +883,12 @@ export function HomeWorkspace({ onNew, onOpen, onOpenProject, onRestoreRecovery 
         <aside className="start-actions" aria-label={t('home.actionsAria')}>
           <button className="start-action primary-button" type="button" onClick={onNew}><Plus size={20} /><span><strong>{t('home.newSprite')}</strong><small>{t('home.newSpriteDetail')}</small></span></button>
           <button className="start-action quiet-button" type="button" onClick={onOpen}><PixelUtilityIcon kind="folderOpen" /><span><strong>{t('home.openSprite')}</strong><small>{t('home.openSpriteDetail')}</small></span></button>
-          <div className="start-action-note"><PixelUtilityIcon kind="image" /><span>{t('home.supportedFormats')}</span></div>
+          <section className="start-screen-news" aria-label={t('home.news')}>
+            <button className="start-screen-news-item" type="button" onClick={() => onOpenLatestRelease?.()} aria-label={t('home.newsOpenAria', { version: latestRelease.version })}>
+              <span className="start-screen-news-title"><strong>{t('home.newsReleaseTitle', { version: latestRelease.version })}</strong><time dateTime={latestRelease.publishedAt}>{formatReleaseDate(latestRelease.publishedAt, locale)}</time></span>
+              <p>{t(latestRelease.homeSummary)}</p>
+            </button>
+          </section>
         </aside>
         <section className="recent-files-panel" aria-label={sectionName(activeSection)}>
           <header className="recent-files-header">

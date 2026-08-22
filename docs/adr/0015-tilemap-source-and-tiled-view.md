@@ -1,5 +1,7 @@
 # 0015：Tilemap 源数据与平铺视图分离
 
+中文 | [English](0015-tilemap-source-and-tiled-view.en.md)
+
 ## 状态
 
 接受

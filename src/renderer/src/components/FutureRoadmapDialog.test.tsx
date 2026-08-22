@@ -9,8 +9,8 @@ describe('FutureRoadmapDialog', () => {
     render(<FutureRoadmapDialog onClose={vi.fn()} />)
     const items = screen.getAllByRole('listitem')
     expect(items).toHaveLength(21)
-    expect(items.slice(0, 18).every((item) => item.classList.contains('completed'))).toBe(true)
-    expect(items.slice(18).every((item) => !item.classList.contains('completed'))).toBe(true)
+    expect(items.slice(0, 19).every((item) => item.classList.contains('completed'))).toBe(true)
+    expect(items.slice(19).every((item) => !item.classList.contains('completed'))).toBe(true)
     expect(screen.getByText('动画循环节').closest('li')).toHaveClass('completed')
   })
 

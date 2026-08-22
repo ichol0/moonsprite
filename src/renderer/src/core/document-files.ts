@@ -7,6 +7,7 @@ import { currentAppLocale } from './localization'
 import { registerInitialDocumentComposite, registerPendingInitialDocumentComposite } from './initial-document-composite'
 import { rehydrateRuntimeRasterDocument } from './runtime-raster'
 import { exportAnimationGif } from './gif'
+import { decodeGifAnimation } from './gif-import'
 import { compositeDocument } from './document'
 import { encodeBmp } from './bmp'
 
@@ -333,7 +334,9 @@ export async function decodeDocumentFileAsync(data: Uint8Array, filePath: string
   }
   const fileName = fileNameFromPath(filePath)
   const mimeType = suffix === 'jpg' || suffix === 'jpeg' ? 'image/jpeg' : `image/${suffix}`
-  const document = await decodeBrowserRasterImage(data, fileName.replace(/\.(jpe?g|webp|bmp|gif)$/i, ''), mimeType)
+  const document = suffix === 'gif'
+    ? decodeGifAnimation(data, fileName.replace(/\.gif$/i, ''))
+    : await decodeBrowserRasterImage(data, fileName.replace(/\.(jpe?g|webp|bmp)$/i, ''), mimeType)
   onProgress?.(1)
   document.filePath = null
   document.sourceFilePath = filePath

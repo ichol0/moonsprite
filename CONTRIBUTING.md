@@ -1,5 +1,7 @@
 # 参与 MoonSprite 开发
 
+中文 | [English](CONTRIBUTING.en.md)
+
 MoonSprite 是原创实现。禁止提交复制自 Aseprite 或其他项目的源码、图标、主题和受保护资源。
 
 ## 贡献许可

@@ -1,5 +1,7 @@
 # ADR-0011: Document Color Modes And Raster Formats
 
+[中文](0011-document-color-modes.zh-CN.md) | English
+
 ## Status
 
 Accepted

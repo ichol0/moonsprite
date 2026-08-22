@@ -1,5 +1,7 @@
 # 坐标与渲染契约
 
+中文 | [English](coordinates-rendering.en.md)
+
 ## 坐标空间
 
 - 屏幕坐标：窗口指针事件的 CSS 像素。

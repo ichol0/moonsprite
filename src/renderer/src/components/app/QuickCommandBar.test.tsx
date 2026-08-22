@@ -46,6 +46,29 @@ describe('QuickCommandBar', () => {
     expect(grid).toHaveAttribute('aria-pressed', 'true')
   })
 
+  it('restores the last expanded or collapsed state for newly opened sessions', () => {
+    const firstRender = render(<QuickCommandBar documentId={documentId} shortcutFor={() => ''} onToggleMirror={vi.fn()} onOpenPreferences={vi.fn()} />)
+    fireEvent.click(screen.getByRole('button', { name: '展开快捷指令栏' }))
+    expect(loadEditorPreferences().quickCommandBarExpanded).toBe(true)
+
+    firstRender.unmount()
+    useWorkspace.setState({ sessions: [], activeId: null })
+    const reopened = createDocument('reopened expanded commands', 4, 4, 'rgba')
+    useWorkspace.getState().addSession(reopened)
+    const reopenedRender = render(<QuickCommandBar documentId={reopened.id} shortcutFor={() => ''} onToggleMirror={vi.fn()} onOpenPreferences={vi.fn()} />)
+    expect(screen.getByRole('button', { name: '折叠快捷指令栏' })).toHaveAttribute('aria-expanded', 'true')
+
+    fireEvent.click(screen.getByRole('button', { name: '折叠快捷指令栏' }))
+    expect(loadEditorPreferences().quickCommandBarExpanded).toBe(false)
+
+    reopenedRender.unmount()
+    useWorkspace.setState({ sessions: [], activeId: null })
+    const reopenedCollapsed = createDocument('reopened collapsed commands', 4, 4, 'rgba')
+    useWorkspace.getState().addSession(reopenedCollapsed)
+    render(<QuickCommandBar documentId={reopenedCollapsed.id} shortcutFor={() => ''} onToggleMirror={vi.fn()} onOpenPreferences={vi.fn()} />)
+    expect(screen.getByRole('button', { name: '展开快捷指令栏' })).toHaveAttribute('aria-expanded', 'false')
+  })
+
   it('enables selection commands when a canvas selection exists', () => {
     useWorkspace.getState().setSelection({ x: 0, y: 0, width: 2, height: 2 })
     render(<QuickCommandBar documentId={documentId} shortcutFor={() => ''} onToggleMirror={vi.fn()} onOpenPreferences={vi.fn()} />)

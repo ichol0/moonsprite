@@ -13,6 +13,7 @@ export interface SelectionClipboard {
 
 export interface LayerClipboard {
   name: string
+  linkedContentId?: string
   kind?: 'text' | 'tilemap' | 'free-tile'
   tilemapTilesetId?: string
   freeTileSources?: FreeTileSourceLayer[]

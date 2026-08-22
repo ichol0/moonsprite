@@ -56,6 +56,7 @@ export const TIMELINE_HIDDEN_PREFERENCE_KEY = 'moonsprite.preference.timeline-hi
 export const SYMMETRY_AXIS_PREFERENCE_KEY = 'moonsprite.preference.symmetry-axis'
 export const TIMELAPSE_RECORDING_ENABLED_PREFERENCE_KEY = 'moonsprite.preference.timelapse-recording-enabled'
 export const QUICK_COMMAND_BAR_ENABLED_PREFERENCE_KEY = 'moonsprite.preference.quick-command-bar-enabled'
+export const QUICK_COMMAND_BAR_EXPANDED_PREFERENCE_KEY = 'moonsprite.preference.quick-command-bar-expanded'
 export const QUICK_COMMAND_BAR_TRANSLUCENT_PREFERENCE_KEY = 'moonsprite.preference.quick-command-bar-translucent'
 export const QUICK_COMMAND_PREFERENCES_KEY = 'moonsprite.preference.quick-command-items'
 export const UI_SCALE_PREFERENCE_KEY = 'moonsprite.preference.ui-scale'
@@ -378,6 +379,7 @@ export interface EditorPreferences {
   symmetryAxis: SymmetryAxisPreferences
   timelapseRecordingEnabled: boolean
   quickCommandBarEnabled: boolean
+  quickCommandBarExpanded: boolean
   quickCommandBarTranslucent: boolean
   quickCommandPreferences: QuickCommandPreference[]
   theme: ThemePreferences
@@ -435,6 +437,7 @@ export const DEFAULT_EDITOR_PREFERENCES: EditorPreferences = {
   symmetryAxis: DEFAULT_SYMMETRY_AXIS_PREFERENCES,
   timelapseRecordingEnabled: false,
   quickCommandBarEnabled: true,
+  quickCommandBarExpanded: false,
   quickCommandBarTranslucent: true,
   quickCommandPreferences: DEFAULT_QUICK_COMMAND_PREFERENCES,
   theme: DEFAULT_THEME_PREFERENCES
@@ -742,6 +745,7 @@ export function loadEditorPreferences(storage?: Storage): EditorPreferences {
     symmetryAxis: theme.symmetryAxis,
     timelapseRecordingEnabled: get(TIMELAPSE_RECORDING_ENABLED_PREFERENCE_KEY) === 'true',
     quickCommandBarEnabled: get(QUICK_COMMAND_BAR_ENABLED_PREFERENCE_KEY) !== 'false',
+    quickCommandBarExpanded: get(QUICK_COMMAND_BAR_EXPANDED_PREFERENCE_KEY) === 'true',
     quickCommandBarTranslucent: get(QUICK_COMMAND_BAR_TRANSLUCENT_PREFERENCE_KEY) !== 'false',
     quickCommandPreferences: parseQuickCommandPreferences(get(QUICK_COMMAND_PREFERENCES_KEY)),
     theme: theme.theme
@@ -804,6 +808,7 @@ export function saveEditorPreferences(preferences: EditorPreferences, storage?: 
     [SYMMETRY_AXIS_PREFERENCE_KEY]: JSON.stringify(parseSymmetryAxisPreferences(JSON.stringify(preferences.symmetryAxis))),
     [TIMELAPSE_RECORDING_ENABLED_PREFERENCE_KEY]: String(preferences.timelapseRecordingEnabled),
     [QUICK_COMMAND_BAR_ENABLED_PREFERENCE_KEY]: String(preferences.quickCommandBarEnabled),
+    [QUICK_COMMAND_BAR_EXPANDED_PREFERENCE_KEY]: String(preferences.quickCommandBarExpanded),
     [QUICK_COMMAND_BAR_TRANSLUCENT_PREFERENCE_KEY]: String(preferences.quickCommandBarTranslucent),
     [QUICK_COMMAND_PREFERENCES_KEY]: JSON.stringify(parseQuickCommandPreferences(JSON.stringify(preferences.quickCommandPreferences)))
   }

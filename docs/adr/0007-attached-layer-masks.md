@@ -1,5 +1,7 @@
 # ADR-0007: Per-Frame Editable Layer and Group Masks
 
+[中文](0007-attached-layer-masks.zh-CN.md) | English
+
 ## Status
 
 Accepted

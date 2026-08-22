@@ -1,10 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { strFromU8, unzipSync, zipSync, type Zippable } from 'fflate'
-import { activateAnimationFrame, addBlankAnimationFrame, connectAnimationCels, duplicateAnimationFrame, ensureAnimationDocument, refreshActiveAnimationFrame, resizeAnimationCelsAt, syncActiveAnimationFrame } from './animation'
-import { animationMaskAt, createDocument, createLayer, createLayerMask, getActiveLayer, getLayerStorageOrigin, readLayerColorAt, resizeDocumentAt, writeLayerColor } from './document'
+import { activateAnimationFrame, addBlankAnimationFrame, cloneAnimationCelsForLayer, connectAnimationCels, duplicateAnimationFrame, ensureAnimationDocument, refreshActiveAnimationFrame, resizeAnimationCelsAt, syncActiveAnimationFrame, syncActiveAnimationLayer } from './animation'
+import { animationMaskAt, createDocument, createLayer, createLayerMask, duplicateLayer, getActiveLayer, getLayerStorageOrigin, readLayerColorAt, resizeDocumentAt, writeLayerColor } from './document'
 import { applySelectionTranslationPreview, captureSelectionTransform, restoreSelectionTranslationPreview } from './tools'
 import { acceptProjectSaveBaseline, compactProjectRasterStorage, decodeProject, encodeProject, encodeProjectAsync, encodeProjectSaveAsync, encodeProjectWorkerPayload, PROJECT_SCHEMA_VERSION, migrateProjectManifest, readProjectGalleryMetadata, registerProjectSaveBaseline, type ProjectEncodeWorkerPayload } from './project-format'
-import { runtimeRasterForSurface, surfacePixelsMaterialized } from './runtime-raster'
+import { rasterStorageIdentity, runtimeRasterForSurface, surfacePixelsMaterialized } from './runtime-raster'
 import { createDefaultLayerStyles } from './layer-styles'
 import { createSolidTileset, createTilemapCelData, createTilesetFromRgba, deleteTilesetTile, renderTilemapSurface, writeTilesetTilePixels } from './tilemap'
 import { freeTileSourceRefs, renderFreeTileSurface } from './free-tile'
@@ -33,6 +33,7 @@ const zipCompressionMethods = (data: Uint8Array): Map<string, number> => {
 
 interface TestRasterManifestEntry {
   dataFile: string
+  linkedContentId?: string
   dataEncoding?: string
   layerStyles?: unknown
   width?: number
@@ -65,11 +66,11 @@ interface TestProjectManifest {
   schemaVersion: number
   document: {
     schemaVersion: number
-    layers: Array<TestRasterManifestEntry & { kind?: 'text' | 'tilemap' | 'free-tile'; tilemapTilesetId?: string; freeTileTilesetId?: string; freeTileSources?: Array<{ id: string; tilesetId: string }> }>
+    layers: Array<TestRasterManifestEntry & { id: string; kind?: 'text' | 'tilemap' | 'free-tile'; tilemapTilesetId?: string; freeTileTilesetId?: string; freeTileSources?: Array<{ id: string; tilesetId: string }> }>
     groups?: Array<{ layerStyles?: unknown }>
     tilesets?: Array<{ id: string; dataFile: string; tileSlots?: Array<string | null> }>
     animation: {
-      cels: Array<TestRasterManifestEntry & { tilemap?: { cells: Array<{ index: number; tilesetId: string; tileId: string }> }; freeTiles?: { instances: Array<{ id: string; sourceId?: string; tileId?: string; x: number; y: number; rotation?: number; flipHorizontal?: boolean; flipVertical?: boolean }> } }>
+      cels: Array<TestRasterManifestEntry & { id: string; layerId: string; frameId: string; tilemap?: { cells: Array<{ index: number; tilesetId: string; tileId: string }> }; freeTiles?: { instances: Array<{ id: string; sourceId?: string; tileId?: string; x: number; y: number; rotation?: number; flipHorizontal?: boolean; flipVertical?: boolean }> } }>
       loopSections?: Array<{ id: string; name: string; startFrameId: string; endFrameId: string; direction: 'forward' | 'reverse'; repeatCount: number | null }>
     }
   }
@@ -90,6 +91,84 @@ describe('project manifest migration boundary', () => {
     expect(migrateProjectManifest(manifest)).toMatchObject({ ...manifest, document: { ...manifest.document, animation: { activeFrameId: 'frame-1' } } })
   })
 
+  it('opens v16 projects saved before linked layers were introduced', () => {
+    const files = unzipSync(encodeProject(createDocument('v16 project', 8, 6, 'rgba')))
+    const manifest = readTestManifest(files)
+    manifest.schemaVersion = 16
+    manifest.document.schemaVersion = 16
+    files['manifest.json'] = new TextEncoder().encode(JSON.stringify(manifest))
+
+    expect(decodeProject(zipSync(files))).toMatchObject({
+      name: 'v16 project',
+      width: 8,
+      height: 6,
+      schemaVersion: PROJECT_SCHEMA_VERSION
+    })
+  })
+
+  it('round-trips linked layer frame content while preserving independent placement', () => {
+    const document = createDocument('linked layer project', 4, 1, 'rgba')
+    const source = getActiveLayer(document)
+    writeLayerColor(document, source, 0, { r: 255, g: 0, b: 0, a: 255 })
+    syncActiveAnimationLayer(document, source.id)
+    const secondFrameId = addBlankAnimationFrame(document)
+    activateAnimationFrame(document, secondFrameId)
+    writeLayerColor(document, source, 0, { r: 0, g: 80, b: 255, a: 255 })
+    syncActiveAnimationLayer(document, source.id)
+    source.linkedContentId = 'layer-link-roundtrip'
+    const linked = duplicateLayer(document, source.id)
+    cloneAnimationCelsForLayer(document, source.id, linked)
+    linked.offsetX = 3
+    syncActiveAnimationLayer(document, linked.id)
+
+    const files = unzipSync(encodeProject(document))
+    const manifest = readTestManifest(files)
+    const sourceMetadata = manifest.document.layers.find((layer) => layer.id === source.id)!
+    const linkedMetadata = manifest.document.layers.find((layer) => layer.id === linked.id)!
+    expect(sourceMetadata.linkedContentId).toBe('layer-link-roundtrip')
+    expect(linkedMetadata.linkedContentId).toBe(sourceMetadata.linkedContentId)
+    expect(linkedMetadata.dataFile).toBe(sourceMetadata.dataFile)
+    for (const frame of ensureAnimationDocument(document).frames) {
+      const sourceCel = manifest.document.animation.cels.find((cel) => cel.layerId === source.id && cel.frameId === frame.id)!
+      const linkedCel = manifest.document.animation.cels.find((cel) => cel.layerId === linked.id && cel.frameId === frame.id)!
+      expect(linkedCel.dataFile).toBe(sourceCel.dataFile)
+    }
+
+    const reopened = decodeProject(zipSync(files))
+    const reopenedSource = reopened.layers.find((layer) => layer.id === source.id)!
+    const reopenedLinked = reopened.layers.find((layer) => layer.id === linked.id)!
+    expect(reopenedSource.linkedContentId).toBe('layer-link-roundtrip')
+    expect(reopenedLinked.linkedContentId).toBe(reopenedSource.linkedContentId)
+    expect(reopenedSource.offsetX).toBe(0)
+    expect(reopenedLinked.offsetX).toBe(3)
+    expect(rasterStorageIdentity(reopenedLinked)).toBe(rasterStorageIdentity(reopenedSource))
+    const reopenedTimeline = ensureAnimationDocument(reopened)
+    for (const frame of reopenedTimeline.frames) {
+      const sourceCel = reopenedTimeline.cels.find((cel) => cel.layerId === source.id && cel.frameId === frame.id)!
+      const linkedCel = reopenedTimeline.cels.find((cel) => cel.layerId === linked.id && cel.frameId === frame.id)!
+      expect(rasterStorageIdentity(linkedCel.surface!)).toBe(rasterStorageIdentity(sourceCel.surface!))
+    }
+  })
+
+  it('rejects linked layer groups whose manifest points members at different raster storage', () => {
+    const document = createDocument('corrupt linked layer project', 2, 1, 'rgba')
+    const source = getActiveLayer(document)
+    source.linkedContentId = 'layer-link-corrupt'
+    const linked = duplicateLayer(document, source.id)
+    cloneAnimationCelsForLayer(document, source.id, linked)
+    const files = unzipSync(encodeProject(document))
+    const manifest = readTestManifest(files)
+    const linkedMetadata = manifest.document.layers.find((layer) => layer.id === linked.id)!
+    const linkedCel = manifest.document.animation.cels.find((cel) => cel.layerId === linked.id)!
+    const corruptDataFile = 'cels/corrupt-linked-storage.rgba'
+    files[corruptDataFile] = files[linkedCel.dataFile].slice()
+    linkedMetadata.dataFile = corruptDataFile
+    linkedCel.dataFile = corruptDataFile
+    files['manifest.json'] = new TextEncoder().encode(JSON.stringify(manifest))
+
+    expect(() => decodeProject(zipSync(files))).toThrow()
+  })
+
   it('round-trips document slices and normalizes invalid persisted entries', () => {
     const document = createDocument('slice project', 16, 12, 'rgba')
     document.slices = [
@@ -103,7 +182,7 @@ describe('project manifest migration boundary', () => {
     ])
   })
 
-  it('round-trips named animation loop sections in the v16 manifest', () => {
+  it('round-trips named animation loop sections in the current manifest', () => {
     const document = createDocument('loop section project', 2, 2, 'rgba')
     const secondFrameId = addBlankAnimationFrame(document)
     const timeline = ensureAnimationDocument(document)
@@ -572,6 +651,22 @@ describe('project manifest migration boundary', () => {
     })
 
     expect(migrated.document.animation.loopSections).toEqual([])
+  })
+
+  it('does not trust linked-layer metadata from v16 projects', () => {
+    const migrated = migrateProjectManifest({
+      app: 'MoonSprite',
+      schemaVersion: 16,
+      document: {
+        schemaVersion: 16,
+        width: 1,
+        height: 1,
+        layers: [{ id: 'layer-1', name: 'Layer', linkedContentId: 'future-link', dataFile: 'layers/layer-1.rgba' }],
+        animation: { frames: [], cels: [] }
+      }
+    })
+
+    expect(migrated.document.layers[0].linkedContentId).toBeUndefined()
   })
 
   it('migrates v4 raster resources as raw data', () => {

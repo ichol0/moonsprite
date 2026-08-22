@@ -403,6 +403,7 @@ export interface WorkspaceLayerCommands {
   previewTextCel(layerId: string, frameId: string, data: TextCelData, x?: number, y?: number): TextCelPreview | null
   restoreTextCelPreview(layerId: string, frameId: string, preview: TextCelPreview): void
   rasterizeLayer(layerId: string): void
+  createLinkedLayer(layerId: string): string | null
   duplicateActiveLayer(): void
   duplicateLayers(layerIds: string[]): string[]
   duplicateSelectedLayerRows(): { layerIds: string[]; groupIds: string[] }

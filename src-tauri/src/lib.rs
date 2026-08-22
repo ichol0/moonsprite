@@ -13,6 +13,7 @@ mod platform_background_presets;
 mod platform_brushes;
 mod platform_clipboard;
 mod platform_dialogs;
+mod platform_extensions;
 mod platform_files;
 mod platform_fonts;
 mod platform_gallery;
@@ -20,6 +21,7 @@ mod platform_palette;
 mod platform_paths;
 mod platform_recovery;
 mod platform_resources;
+mod platform_scripts;
 mod platform_storage;
 mod platform_workspaces;
 use close_coordinator::CloseCoordinator;
@@ -51,6 +53,7 @@ fn supported_file_paths(arguments: impl IntoIterator<Item = OsString>) -> Vec<St
                                 | "webp"
                                 | "bmp"
                                 | "gif"
+                                | "msext"
                         )
                     })
         })
@@ -101,9 +104,7 @@ fn primary_pointer_is_pressed() -> bool {
 }
 
 #[tauri::command]
-fn start_window_drag_if_primary_pressed(
-    window: tauri::WebviewWindow,
-) -> Result<bool, String> {
+fn start_window_drag_if_primary_pressed(window: tauri::WebviewWindow) -> Result<bool, String> {
     if !primary_pointer_is_pressed() {
         return Ok(false);
     }
@@ -134,6 +135,7 @@ pub fn run() {
             ..AppState::default()
         })
         .manage(platform_recovery::RecoveryState::default())
+        .manage(platform_scripts::LuaScriptRuntime::default())
         .setup(|app| {
             if let Some(window) = app.get_webview_window("main") {
                 let icon = tauri::image::Image::from_bytes(include_bytes!("../icons/32x32.png"))?;
@@ -144,6 +146,7 @@ pub fn run() {
             let _ = platform_gallery::ensure_builtin_example(app.handle().clone());
             let _ = platform_paths::export_directory();
             let _ = platform_background_presets::ensure_background_preset_folder();
+            let _ = platform_extensions::ensure_extension_folder();
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -157,6 +160,12 @@ pub fn run() {
             platform_dialogs::save_theme_file,
             platform_dialogs::default_file_directories,
             platform_dialogs::choose_directory,
+            platform_extensions::list_extensions,
+            platform_extensions::install_extension,
+            platform_extensions::choose_and_install_extension,
+            platform_extensions::set_extension_enabled,
+            platform_extensions::uninstall_extension,
+            platform_extensions::open_extension_folder,
             platform_files::file_exists,
             platform_files::read_binary,
             platform_files::read_project_preview,
@@ -204,6 +213,11 @@ pub fn run() {
             platform_gallery::ensure_builtin_example,
             platform_gallery::open_project_in_folder,
             platform_gallery::open_external_url,
+            platform_scripts::list_lua_scripts,
+            platform_scripts::open_lua_script_folder,
+            platform_scripts::run_lua_script,
+            platform_scripts::dispatch_lua_script_dialog,
+            platform_scripts::close_lua_script_session,
             start_window_drag_if_primary_pressed,
             cancel_close,
             approve_close,

@@ -22,6 +22,7 @@ import { cloneBrushDynamicsSettings, normalizeBrushDynamicsSettings } from '@/co
 import { applyProjectLayerPanelState, loadLocalLayerPanelState, normalizeProjectLayerPanelState } from '@/core/layer-panel-state'
 import { ensureTilemapTilesetOwnership } from '@/core/tilemap-document'
 import { ensureFreeTileTilesetOwnership } from '@/core/free-tile-document'
+import { loadEditorPreferences } from '@/core/file-preferences'
 
 const defaultColor: RgbaColor = { r: 41, g: 121, b: 255, a: 255 }
 const defaultSecondary: RgbaColor = { r: 241, g: 244, b: 248, a: 255 }
@@ -220,6 +221,7 @@ export const sessionFromDocument = (document: SpriteDocument): DocumentSession =
   document.timelapse = normalizeTimelapseSettings(document.timelapse, document.timelapse?.snapshots ?? [])
   const layerPanelState = loadLocalLayerPanelState(document) ?? normalizeProjectLayerPanelState(document, document.layerPanelState)
   const settings = loadToolSettings()
+  const editorPreferences = loadEditorPreferences()
   const fallbackProfile = normalizePersistedBrushProfile(settings, defaultToolSettings)
   const persistedProfiles = settings.brushProfiles ?? Object.fromEntries(BRUSH_TOOLS.map((tool) => [tool, fallbackProfile])) as Record<BrushTool, PersistedBrushProfile>
   const brushProfiles = Object.fromEntries(BRUSH_TOOLS.map((tool) => [
@@ -321,7 +323,7 @@ export const sessionFromDocument = (document: SpriteDocument): DocumentSession =
       showSelectionPivot: false,
       tileRepeatMode: 'off',
       quickCommandBarPositionX: 0.5,
-      quickCommandBarExpanded: false,
+      quickCommandBarExpanded: editorPreferences.quickCommandBarExpanded,
       grid: { ...document.displaySettings.grid }
     },
     viewportSize: { width: 0, height: 0 },

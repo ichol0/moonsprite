@@ -187,7 +187,7 @@ export function createDocument(name: string, width: number, height: number, colo
     ? { format: 'rgba' as const, width, height, offsetX: 0, offsetY: 0, pixels: layer.pixels }
     : { format: 'indexed' as const, width, height, offsetX: 0, offsetY: 0, pixels: layer.pixels }
   return {
-    schemaVersion: 16,
+    schemaVersion: 17,
     id: createId('doc'),
     name,
     width,

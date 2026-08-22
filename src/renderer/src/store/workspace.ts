@@ -3,7 +3,7 @@ import type { AnimationCel, AnimationCelSurface, AnimationLoopSection, Backgroun
 import { checkResourceLimit } from '@/core/resource-policy'
 import { beginPixelEdit, commitPixelEdit, HistoryStack, recordPixel, revertPixelEdit, type ContentInvalidationHint, type HistoryEntry, type PixelEdit } from '@/core/history'
 import { animationMaskAt, animationMaskSlotAt, cachedLayerContentBounds, captureDocumentImageResizeSnapshot, compositeRegion, convertDocumentColorMode, createDocument, createId, createLayer, createSparseLayer, createLayerMask as createAttachedLayerMask, documentImageResizeSnapshotBytes, documentVisibleContentBounds, duplicateLayer, expandLayerStyleInvalidationRect, findLayerMask, findOrAddPaletteColor, getDescendantGroupIds, getGroup, getGroupLockingAncestor, getLayerIdsInGroup, getLayer, getActiveLayer, getLayerLockingGroup, isGroupEffectivelyLocked, isLayerEffectivelyLocked, isLayerEffectivelyVisible, isLayerMask, layerContentBounds, markRasterStorageContentChanged, normalCompositeLayers, paletteColorIdForCanvas, readLayerColor, readLayerColorAt, resolveAnimationMask, resizeDocumentAt, resizeDocumentImage, restoreDocumentImageResizeSnapshot, writeLayerColor } from '@/core/document'
-import { activateAnimationFrame, addBlankAnimationFrame, animationCelContentSelection, animationCelHasContent, animationCelKey, animationGroupMaskAt, animationLayerAtFrame, cloneAnimationCel, cloneAnimationCelSurface, cloneAnimationCelsForLayer, cloneAnimationGroupMask, cloneDocumentForAnimationFrame, connectAnimationCels, deleteAnimationFrame, disconnectAnimationCels, duplicateAnimationFrame, ensureAnimationDocument, linkAnimationFrameCels, mapAnimationCelBlock, nextAnimationFrameId, parseAnimationCelKey, refreshActiveAnimationFrame, removeAnimationCelsForLayers, resolveAnimationCel, resizeAnimationCelsAt, restoreAnimationCels, setAnimationFrameDuration, setAnimationLoop, syncActiveAnimationFrame, syncActiveAnimationLayer } from '@/core/animation'
+import { activateAnimationFrame, addBlankAnimationFrame, animationCelContentSelection, animationCelHasContent, animationCelKey, animationGroupMaskAt, animationLayerAtFrame, cloneAnimationCel, cloneAnimationCelSurface, cloneAnimationCelsForLayer, cloneAnimationGroupMask, cloneDocumentForAnimationFrame, connectAnimationCels, deleteAnimationFrame, detachLinkedLayerContent, disconnectAnimationCels, duplicateAnimationFrame, ensureAnimationDocument, linkAnimationFrameCels, mapAnimationCelBlock, nextAnimationFrameId, parseAnimationCelKey, refreshActiveAnimationFrame, removeAnimationCelsForLayers, resolveAnimationCel, resizeAnimationCelsAt, restoreAnimationCels, setAnimationFrameDuration, setAnimationLoop, syncActiveAnimationFrame, syncActiveAnimationLayer, synchronizeLinkedLayerContents, synchronizeLinkedLayerGroupContents } from '@/core/animation'
 import { advanceAnimationLoopSectionPlayback, animationLoopSectionAtFrame, animationLoopSectionStartFrameId, cloneAnimationLoopSections, normalizeAnimationLoopSections } from '@/core/animation-loop-sections'
 import { flushViewPreview } from '@/core/view-preview-lifecycle'
 import { consumePendingCanvasGestureHistory } from '@/core/canvas-input'
@@ -34,12 +34,14 @@ import { cloneProceduralSettings, defaultToolSettings, loadToolSettings, normali
 import { normalizeGapClosingThreshold } from '@/core/contiguous-region'
 import { normalizeBrushDitherSettings } from '@/core/gradient-color'
 import { readStoredString } from '@/core/storage'
+import { loadColorRolePreferences, persistColorRolePreferences } from '@/core/color-role-preferences'
 import { persistProjectLayerPanelState } from '@/core/layer-panel-state'
 import { defaultSymmetryCenter, type SymmetryAxes, type SymmetryCenter } from '@/core/symmetry'
 import { brushPressureFromDynamics, migrateBrushPressureSettings, normalizeBrushPressureSettings, patchBrushDynamicsGradientDither, patchBrushDynamicsMapping, type BrushDynamicsEffect, type BrushDynamicsMapping, type BrushPressureSettings } from '@/core/pressure'
 import { cloneTextCelData, convertTextSurface, normalizeTextCelData, rasterizeText, translateTextCelData } from '@/core/text-raster'
 import { cloneLayerStyles, hasConfiguredLayerStyles, hasEnabledLayerStyles, layerStyleOutputBounds, layerStylesEqual, layerStylesHistoryBytes } from '@/core/layer-styles'
 import { renderBackgroundPatternIndexed, renderBackgroundPatternRgba, renderBackgroundTileIndexed, renderBackgroundTileRgba, type BackgroundPatternTile } from '@/core/background-patterns'
+import { isLinkableRasterLayer, linkedLayerMembers, shareLinkedRasterContent } from '@/core/linked-layers'
 import { activeTilemapCelTarget, applyTilemapDocumentEdit, applyTilemapSelectionCellMove, applyTilemapTilesetDocumentEdit, applyTilesetTileReferences, captureTilesetTileReferences, convertTilemapPixelEdit, rerenderTilesetReferences, rerenderTilesetTileReferences } from '@/core/tilemap-document'
 import { appendBlankTilesetTile, cloneTilemapCelData, cloneTileset, compactTilesetTileSlots, createBlankTileset, createTilemapCelData, deleteTilesetTiles as deleteTilesetTilesData, MAX_TILE_SIZE, renderTilemapSurface, reorderTilesetTiles as reorderTilesetTilesData, setTilesetTileSlots as setTilesetTileSlotsData, sliceRasterSurfaceToTilemap, tileRepeatFitZoom, tilemapCellBounds, tilemapCellIndexAtPoint, tilemapCellTranslationForSelection, tilemapEditBytes, tilemapTilesetEditBytes, tilemapTilesetEditHasChanges, wrapSelectionMaskForTileRepeat, writeTilesetTilePixels, type TilemapDrawingMode, type TilemapEdit, type TilemapTilesetEdit } from '@/core/tilemap'
 import { cloneFreeTileCelData, createFreeTileCelData, freeTileCelDataEqual, freeTileInstanceBounds, freeTileSourceForInstance, renderFreeTileSurface, type FreeTileDrawingMode } from '@/core/free-tile'
@@ -68,6 +70,31 @@ export type { ColorReplacementPreview, ColorReplacementTarget, FreeTileInstanceP
 
 function activeSession(state: WorkspaceState): DocumentSession | null {
   return state.sessions.find((session) => session.document.id === state.activeId) ?? null
+}
+
+const distinctLinkedLayerTargets = (document: SpriteDocument, layerIds: readonly string[]): string[] => {
+  const seenLinks = new Set<string>()
+  return [...new Set(layerIds)].filter((layerId) => {
+    const layer = document.layers.find((candidate) => candidate.id === layerId)
+    if (!layer?.linkedContentId) return Boolean(layer)
+    if (seenLinks.has(layer.linkedContentId)) return false
+    seenLinks.add(layer.linkedContentId)
+    return true
+  })
+}
+
+const shareLinkedLayerPreviewContents = (document: SpriteDocument, layerIds: readonly string[]): void => {
+  for (const layerId of distinctLinkedLayerTargets(document, layerIds)) {
+    const source = document.layers.find((candidate) => candidate.id === layerId)
+    if (!source?.linkedContentId) continue
+    for (const member of linkedLayerMembers(document, source.linkedContentId)) shareLinkedRasterContent(member, source)
+  }
+}
+
+const commitLinkedLayerAdjustmentContents = (document: SpriteDocument, layerIds: readonly string[]): void => {
+  for (const layerId of distinctLinkedLayerTargets(document, layerIds)) {
+    if (document.layers.find((candidate) => candidate.id === layerId)?.linkedContentId) syncActiveAnimationLayer(document, layerId)
+  }
 }
 
 const tilemapEditCellIndexForSelection = (session: DocumentSession, selection: SelectionMask): number | undefined => {
@@ -732,6 +759,23 @@ const unionRects = (left: SelectionRect, right: SelectionRect): SelectionRect =>
   const toX = Math.max(left.x + left.width, right.x + right.width)
   const toY = Math.max(left.y + left.height, right.y + right.height)
   return { x, y, width: toX - x, height: toY - y }
+}
+
+const layerStylePreviewInvalidationRect = (
+  document: SpriteDocument,
+  targets: readonly LayerPropertyTarget[]
+): SelectionRect | null => {
+  let rect: SelectionRect | null = null
+  for (const target of targets) {
+    if (target.kind !== 'layer') return null
+    const layer = document.layers.find((candidate) => candidate.id === target.id)
+    if (!layer) return null
+    const bounds = layerContentBounds(document, layer)
+    if (!bounds) continue
+    const expanded = expandLayerStyleInvalidationRect(document, bounds, [layer.id])
+    rect = rect ? unionRects(rect, expanded) : expanded
+  }
+  return rect
 }
 
 const layerReorderInvalidation = (
@@ -1486,6 +1530,7 @@ function layerClipboardFromDocument(document: SpriteDocument, layer: RasterLayer
   })
   return {
     name: layer.name,
+    linkedContentId: layer.linkedContentId,
     kind: layer.kind,
     tilemapTilesetId: layer.tilemapTilesetId,
     freeTileSources: layer.freeTileSources?.map(cloneFreeTileSourceLayer),
@@ -1546,11 +1591,13 @@ function applyLayerClipboardAnimationCel(
   cel.mask = layerMaskFromClipboard(source.mask, cel.id)
 }
 
+const initialColorRoles = loadColorRolePreferences()
+
 export const useWorkspace = create<WorkspaceState>((set, get) => ({
   sessions: [],
   activeId: null,
-  sharedPrimaryColor: { r: 41, g: 121, b: 255, a: 255 },
-  sharedSecondaryColor: { r: 241, g: 244, b: 248, a: 255 },
+  sharedPrimaryColor: { ...initialColorRoles.primary },
+  sharedSecondaryColor: { ...initialColorRoles.secondary },
   layerStyleClipboard: null,
   message: null,
   saveProgress: null,
@@ -1666,6 +1713,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
         const scaleY = height / sourceHeight
         resizeDocumentImage(session.document, width, height, interpolation)
         resizeFreeTileDocumentImage(session.document, freeTileResize, interpolation)
+        synchronizeLinkedLayerContents(session.document)
         if (beforeSelection) {
           const nextX = Math.floor(beforeSelection.x * scaleX)
           const nextY = Math.floor(beforeSelection.y * scaleY)
@@ -1695,8 +1743,8 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
         session.history.push({
           label: tr('imageResize.title'),
           bytes: documentImageResizeSnapshotBytes(before) + documentImageResizeSnapshotBytes(after) + (beforeSelection?.mask?.byteLength ?? 0) + (afterSelection?.mask?.byteLength ?? 0),
-          undo: () => { restoreDocumentImageResizeSnapshot(session.document, before); session.selection = beforeSelection ? { ...beforeSelection } : null },
-          redo: () => { restoreDocumentImageResizeSnapshot(session.document, after); session.selection = afterSelection ? { ...afterSelection } : null },
+          undo: () => { restoreDocumentImageResizeSnapshot(session.document, before); synchronizeLinkedLayerContents(session.document); session.selection = beforeSelection ? { ...beforeSelection } : null },
+          redo: () => { restoreDocumentImageResizeSnapshot(session.document, after); synchronizeLinkedLayerContents(session.document); session.selection = afterSelection ? { ...afterSelection } : null },
           requiresAnimationSync: false
         })
       }, 'content')
@@ -2094,6 +2142,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
         ? session.selectedPaletteIds.includes(matching.id) ? session.selectedPaletteIds : [matching.id]
         : []
     }
+    persistColorRolePreferences(color, state.sharedSecondaryColor)
     set({ sharedPrimaryColor: { ...color }, sessions: [...state.sessions] })
   },
   setSecondaryColor(color) {
@@ -2118,6 +2167,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
         : session.document.palette.find((entry) => session.document.paletteOrder.includes(entry.id) && colorEquals(entry.color, color))
       session.paletteSecondarySelectionId = matching?.id ?? null
     }
+    persistColorRolePreferences(state.sharedPrimaryColor, color)
     set({ sharedSecondaryColor: { ...color }, sessions: [...state.sessions] })
   },
   replaceColor(target, sourceColor, replacementColor) {
@@ -2232,7 +2282,10 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       session.secondaryColor = { ...entry.color }
     }, false)
     const session = activeSession(get())
-    if (session) set({ sharedSecondaryColor: { ...session.secondaryColor } })
+    if (session) {
+      persistColorRolePreferences(get().sharedPrimaryColor, session.secondaryColor)
+      set({ sharedSecondaryColor: { ...session.secondaryColor } })
+    }
   },
   swapPrimarySecondaryColors() {
     const state = get()
@@ -2250,6 +2303,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
         ? session.selectedPaletteIds.includes(matching.id) ? session.selectedPaletteIds : [matching.id]
         : []
     }
+    persistColorRolePreferences(secondary, primary)
     set({ sharedPrimaryColor: secondary, sharedSecondaryColor: primary, sessions: [...state.sessions] })
   },
   setView(view) {
@@ -5166,6 +5220,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
         if (!layer || layer.kind || hasConfiguredLayerStyles(layer.layerStyles)) return
         syncActiveAnimationFrame(document)
         const before = captureLayerContentSnapshot(document, layerId)
+        detachLinkedLayerContent(document, layerId)
         const beforeTileSelection = { tilesetId: session.selectedTilesetId, tileId: session.selectedTileId, secondaryTileId: session.secondaryTileId, mode: session.tilemapMode }
         const timeline = ensureAnimationDocument(document)
         const frameCels = timeline.frames.flatMap((frame) => {
@@ -5196,6 +5251,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
         layer.name = layerName
         layer.kind = 'tilemap'
         layer.tilemapTilesetId = tileset.id
+        delete layer.linkedContentId
         delete layer.background
         delete layer.layerStyles
         refreshActiveAnimationFrame(document)
@@ -5293,6 +5349,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       const layer = document.layers.find((candidate) => candidate.id === layerId)
       if (!layer || layer.kind || Boolean(layer.background) === enabled) return
       const before = layer.background ? { ...layer.background } : undefined
+      const beforeLinkedContentId = layer.linkedContentId
       const after = enabled ? { mode: 'canvas' as const } : undefined
       const preservedSelection = {
         activeLayerId: document.activeLayerId,
@@ -5305,9 +5362,20 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       session.selectedLayerIds = preservedSelection.selectedLayerIds
       session.selectedGroupId = preservedSelection.selectedGroupId
       session.selectedGroupIds = preservedSelection.selectedGroupIds
-      const apply = (value: typeof before): void => {
-        if (value) layer.background = { ...value }
-        else delete layer.background
+      const apply = (value: typeof before, linkedContentId?: string): void => {
+        if (value) {
+          detachLinkedLayerContent(document, layer.id)
+          layer.background = { ...value }
+          return
+        }
+        delete layer.background
+        if (!linkedContentId) {
+          delete layer.linkedContentId
+          return
+        }
+        layer.linkedContentId = linkedContentId
+        const authority = linkedLayerMembers(document, linkedContentId).find((candidate) => candidate.id !== layer.id) ?? layer
+        synchronizeLinkedLayerGroupContents(document, linkedContentId, authority.id)
       }
       const applyMovePreservingActiveLayer = (operation: (() => void) | undefined): void => {
         if (!operation) return
@@ -5320,7 +5388,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
         label: tr(enabled ? 'workspace.history.convertToBackgroundLayer' : 'workspace.history.convertToRasterLayer'),
         bytes: 24 + (moveHistory?.bytes ?? 0),
         undo: () => {
-          apply(before)
+          apply(before, beforeLinkedContentId)
           applyMovePreservingActiveLayer(moveHistory?.undo)
         },
         redo: () => {
@@ -5599,6 +5667,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       const wasFreeTileLayer = layer.kind === 'free-tile'
       syncActiveAnimationFrame(document)
       const before = captureLayerContentSnapshot(document, layerId)
+      detachLinkedLayerContent(document, layerId)
       const timeline = ensureAnimationDocument(document)
       const rasterizedTilesets = removableOwnedTilesets(document, new Set([layerId]))
       if (hasEnabledLayerStyles(layer.layerStyles)) {
@@ -5652,6 +5721,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
         delete cel.freeTiles
       }
       delete layer.kind
+      delete layer.linkedContentId
       delete layer.tilemapTilesetId
       delete layer.freeTileTilesetId
       delete layer.layerStyles
@@ -5663,6 +5733,69 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       shouldHideTilesetPanel = wasFreeTileLayer && !documentUsesTilesetPanel(document)
     })
     if (shouldHideTilesetPanel) requestTilesetPanelVisibility(false)
+  },
+
+  createLinkedLayer(layerId) {
+    let createdId: string | null = null
+    get().mutateActive((session) => {
+      const document = session.document
+      const source = document.layers.find((candidate) => candidate.id === layerId)
+      if (!isLinkableRasterLayer(source)) return
+      syncActiveAnimationFrame(document)
+      const previousActiveId = document.activeLayerId
+      const previousSelection = [...session.selectedLayerIds]
+      const previousGroupId = session.selectedGroupId
+      const previousGroupIds = [...session.selectedGroupIds]
+      const previousLinkedContentId = source.linkedContentId
+      const linkedContentId = previousLinkedContentId ?? createId('layer-link')
+      source.linkedContentId = linkedContentId
+      const copy = duplicateLayer(document, source.id)
+      copy.name = `${source.name} ${tr('layers.linkedCopySuffix')}`
+      cloneAnimationCelsForLayer(document, source.id, copy)
+      synchronizeLinkedLayerGroupContents(document, linkedContentId, source.id)
+      const index = document.layers.indexOf(copy)
+      const animationCels = ensureAnimationDocument(document).cels
+        .filter((cel) => cel.layerId === copy.id)
+        .map(cloneAnimationCel)
+      createdId = copy.id
+      document.activeLayerId = copy.id
+      session.selectedLayerIds = [copy.id]
+      session.selectedGroupId = null
+      session.selectedGroupIds = []
+      const restorePreviousSelection = (): void => {
+        document.activeLayerId = previousActiveId
+        session.selectedLayerIds = previousSelection
+        session.selectedGroupId = previousGroupId
+        session.selectedGroupIds = previousGroupIds
+      }
+      session.history.push({
+        label: tr('workspace.history.createLinkedLayer'),
+        bytes: layerHistoryBytes(copy) + animationCels.reduce((sum, cel) => sum + (cel.surface?.pixels.byteLength ?? 0), 0) + 64,
+        undo: () => {
+          document.layers = document.layers.filter((candidate) => candidate.id !== copy.id)
+          removeAnimationCelsForLayers(document, [copy.id])
+          if (previousLinkedContentId) source.linkedContentId = previousLinkedContentId
+          else delete source.linkedContentId
+          restorePreviousSelection()
+          refreshActiveAnimationFrame(document)
+        },
+        redo: () => {
+          source.linkedContentId = linkedContentId
+          copy.linkedContentId = linkedContentId
+          if (!document.layers.some((candidate) => candidate.id === copy.id)) document.layers.splice(Math.min(index, document.layers.length), 0, copy)
+          restoreAnimationCels(document, animationCels)
+          synchronizeLinkedLayerGroupContents(document, linkedContentId, source.id)
+          document.activeLayerId = copy.id
+          session.selectedLayerIds = [copy.id]
+          session.selectedGroupId = null
+          session.selectedGroupIds = []
+        },
+        invalidation: { kind: 'full' },
+        affectedLayerIds: [source.id, copy.id],
+        requiresAnimationSync: false
+      })
+    })
+    return createdId
   },
 
   duplicateActiveLayer() {
@@ -6903,6 +7036,8 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     const operationProbe = window.__moonSpriteCanvasProbe
     const previewStartedAt = operationProbe?.recordOperationStage ? performance.now() : 0
     get().mutateActive((session) => {
+      const targets = changes.map((change) => change.target)
+      const beforeBounds = layerStylePreviewInvalidationRect(session.document, targets)
       let changed = false
       for (const change of changes) {
         const owner = layerStyleOwnerForTarget(session.document, change.target)
@@ -6911,11 +7046,14 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
         changed = true
       }
       if (!changed) return
+      const afterBounds = layerStylePreviewInvalidationRect(session.document, targets)
       const fromRevision = session.contentRevision
       session.revision += 1
       session.contentRevision += 1
       session.layersPanelRevision += 1
-      session.contentInvalidation = { kind: 'full', fromRevision, revision: session.contentRevision }
+      session.contentInvalidation = beforeBounds && afterBounds
+        ? { kind: 'region', rect: unionRects(beforeBounds, afterBounds), fromRevision, revision: session.contentRevision }
+        : { kind: 'full', fromRevision, revision: session.contentRevision }
     }, false)
     operationProbe?.recordOperationStage?.('layer-style.preview-mutation', performance.now() - previewStartedAt, { targets: changes.length })
   },
@@ -7017,9 +7155,9 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       const labels: Record<ColorAdjustment['kind'], string> = {
         'color-balance': tr('adjustment.title.colorBalance'), 'brightness-contrast': tr('adjustment.title.brightnessContrast'), 'hue-saturation': tr('adjustment.title.hueSaturation'), curves: tr('adjustment.title.curves')
       }
-      const targetIds = session.selection
+      const targetIds = distinctLinkedLayerTargets(session.document, session.selection
         ? [getActiveLayer(session.document).id]
-        : [...new Set(session.selectedLayerIds.length > 0 ? session.selectedLayerIds : [session.document.activeLayerId])]
+        : session.selectedLayerIds.length > 0 ? session.selectedLayerIds : [session.document.activeLayerId])
       session.history.beginCompound()
       for (const layerId of targetIds) {
         const layer = session.document.layers.find((candidate) => candidate.id === layerId)
@@ -7045,6 +7183,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
         if (!layer.kind && !isLayerEffectivelyLocked(session.document, layer)) applyColorAdjustmentDirect(session.document, layer, adjustment, targetSelection, layerSnapshot.pixels)
         else restorePreparedAdjustmentSnapshotLayer(session, layerSnapshot)
       }
+      shareLinkedLayerPreviewContents(session.document, baseline.layers.map((layer) => layer.layerId))
       session.revision += 1
       session.contentRevision += 1
     }, false)
@@ -7052,6 +7191,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
   restoreActiveDocumentSnapshot(snapshot) {
     get().mutateActive((session) => {
       restoreAdjustmentSnapshot(session, snapshot)
+      shareLinkedLayerPreviewContents(session.document, snapshot.layers.map((layer) => layer.layerId))
       session.revision += 1
       session.contentRevision += 1
     }, false)
@@ -7066,15 +7206,17 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
         if (!layer.kind && !isLayerEffectivelyLocked(session.document, layer)) applyColorAdjustmentDirect(session.document, layer, adjustment, session.selection, layerSnapshot.pixels)
         else restorePreparedAdjustmentSnapshotLayer(session, layerSnapshot)
       }
+      shareLinkedLayerPreviewContents(session.document, before.layers.map((layer) => layer.layerId))
       const after = captureAdjustmentSnapshot(session, before.layers.map((layer) => layer.layerId))
+      commitLinkedLayerAdjustmentContents(session.document, before.layers.map((layer) => layer.layerId))
       const labels: Record<ColorAdjustment['kind'], string> = {
         'color-balance': tr('adjustment.title.colorBalance'), 'brightness-contrast': tr('adjustment.title.brightnessContrast'), 'hue-saturation': tr('adjustment.title.hueSaturation'), curves: tr('adjustment.title.curves')
       }
       session.history.push({
         label: labels[adjustment.kind],
         bytes: before.layers.reduce((bytes, layer) => bytes + layer.pixels.byteLength, 0) + after.layers.reduce((bytes, layer) => bytes + layer.pixels.byteLength, 0) + (before.palette.length + after.palette.length) * 24,
-        undo: () => { restoreAdjustmentSnapshot(session, before); session.revision += 1; session.contentRevision += 1 },
-        redo: () => { restoreAdjustmentSnapshot(session, after); session.revision += 1; session.contentRevision += 1 }
+        undo: () => { restoreAdjustmentSnapshot(session, before); commitLinkedLayerAdjustmentContents(session.document, before.layers.map((layer) => layer.layerId)); session.revision += 1; session.contentRevision += 1 },
+        redo: () => { restoreAdjustmentSnapshot(session, after); commitLinkedLayerAdjustmentContents(session.document, after.layers.map((layer) => layer.layerId)); session.revision += 1; session.contentRevision += 1 }
       })
     })
   },
@@ -7262,8 +7404,21 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
         layerStyles: cloneLayerStyles(group.layerStyles),
         cumulativeBlend: group.cumulativeBlend === true
       }})
+      const sameSourceDocument = clipboard.sourceDocumentId === document.id
+      const linkedContentIdMap = new Map<string, string>()
+      const pastedLinkedContentId = (source: LayerClipboard): string | undefined => {
+        if (!source.linkedContentId || source.kind || source.background) return undefined
+        if (sameSourceDocument) return source.linkedContentId
+        const existing = linkedContentIdMap.get(source.linkedContentId)
+        if (existing) return existing
+        const id = createId('layer-link')
+        linkedContentIdMap.set(source.linkedContentId, id)
+        return id
+      }
       const layers = clipboard.layers.map((source) => {
         const layer = createLayer(`${source.name} ${tr('canvas.history.copySuffix')}`, source.width, source.height, document.colorMode)
+        const linkedContentId = pastedLinkedContentId(source)
+        if (linkedContentId) layer.linkedContentId = linkedContentId
         layer.kind = source.kind
         if (source.kind === 'tilemap' && source.tilemapTilesetId) layer.tilemapTilesetId = tilesetIdMap.get(source.tilemapTilesetId)
         if (source.kind === 'free-tile' && source.freeTileSources) {
@@ -7320,8 +7475,19 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       layers.forEach((layer, layerIndex) => {
         for (const cel of clipboard.layers[layerIndex].animationCels ?? []) applyLayerClipboardAnimationCel(document, layer, cel, tilesetIdMap, freeTileSourceIdMaps.get(layer.id))
       })
-      refreshActiveAnimationFrame(document)
       const pastedIds = layers.map((layer) => layer.id)
+      const pastedIdSet = new Set(pastedIds)
+      const synchronizePastedLinkedLayers = (): void => {
+        for (const linkedContentId of new Set(layers.flatMap((layer) => layer.linkedContentId ? [layer.linkedContentId] : []))) {
+          const existing = sameSourceDocument
+            ? document.layers.find((candidate) => candidate.linkedContentId === linkedContentId && !pastedIdSet.has(candidate.id))
+            : null
+          const preferred = existing ?? layers.find((candidate) => candidate.linkedContentId === linkedContentId)
+          synchronizeLinkedLayerGroupContents(document, linkedContentId, preferred?.id)
+        }
+      }
+      synchronizePastedLinkedLayers()
+      refreshActiveAnimationFrame(document)
       const pastedGroupIds = new Set(groups.map((group) => group.id))
       const appendedFrameIds = new Set(appendedFrames.map((frame) => frame.id))
       const animationCels = ensureAnimationDocument(document).cels
@@ -7363,6 +7529,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
           const missingLayers = layers.filter((layer) => !document.layers.some((candidate) => candidate.id === layer.id))
           if (missingLayers.length > 0) document.layers.splice(Math.min(index, document.layers.length), 0, ...missingLayers)
           restoreAnimationCels(document, animationCels)
+          synchronizePastedLinkedLayers()
           document.activeLayerId = layers.at(-1)!.id
           session.collapsedGroupIds = [...new Set([...previousCollapsedGroupIds, ...pastedCollapsedGroupIds])]
           applyLayerRowSelection(session, pastedIds, groups.map((group) => group.id), { kind: 'layer', id: layers.at(-1)!.id })

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { createDocument } from './document'
+import { createDocument, createLayer } from './document'
+import { ensureAnimationDocument } from './animation'
 import { appCoordinatorRenderKey, appMenuRenderKey, documentTabsRenderKey, statusBarRenderKey, toolOptionsRenderKey, toolRailRenderKey } from '@/components/app/app-render-keys'
 import { sessionFromDocument } from '@/store/workspace-session'
 
@@ -136,5 +137,28 @@ describe('app render keys', () => {
     session.tool = 'fill'
     session.fillKind = 'gradient'
     expect(appCoordinatorRenderKey(state)).not.toBe(eyedropperKey)
+  })
+
+  it('tracks script target identity without subscribing to pixel revisions', () => {
+    const session = createSession()
+    const state = { activeId: session.document.id, sessions: [session], dialog: null, saveProgress: null }
+    const initial = appCoordinatorRenderKey(state)
+
+    const generated = createLayer('Generated', 4, 4, 'rgba')
+    session.document.layers.push(generated)
+    session.document.activeLayerId = generated.id
+    expect(appCoordinatorRenderKey(state)).not.toBe(initial)
+
+    const withGeneratedLayer = appCoordinatorRenderKey(state)
+    session.document.layers = session.document.layers.filter((layer) => layer.id !== generated.id)
+    session.document.activeLayerId = session.document.layers[0]!.id
+    expect(appCoordinatorRenderKey(state)).not.toBe(withGeneratedLayer)
+
+    const timeline = ensureAnimationDocument(session.document)
+    const beforeFrameChange = appCoordinatorRenderKey(state)
+    const nextFrame = { id: 'frame-script-target', duration: 100 }
+    timeline.frames.push(nextFrame)
+    timeline.activeFrameId = nextFrame.id
+    expect(appCoordinatorRenderKey(state)).not.toBe(beforeFrameChange)
   })
 })

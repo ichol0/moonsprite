@@ -52,6 +52,27 @@ describe('HomeWorkspace', () => {
     expect(screen.getByText('未经允许请勿分发')).toBeInTheDocument()
   })
 
+  it('shows the latest packaged release news and opens its full update', () => {
+    const onOpenLatestRelease = vi.fn()
+    installApi({})
+
+    render(<HomeWorkspace onNew={vi.fn()} onOpen={vi.fn()} onOpenProject={vi.fn(async () => true)} onRestoreRecovery={vi.fn(async () => true)} onOpenLatestRelease={onOpenLatestRelease} />)
+
+    expect(screen.getByRole('region', { name: '新闻' })).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: '新闻' })).not.toBeInTheDocument()
+    expect(screen.getByText('DEV.6 已发布')).toBeInTheDocument()
+    expect(screen.getByText('2026/08/23')).toBeInTheDocument()
+    expect(screen.getByText('本次更新新增自由瓦片、动画循环节、Lua 脚本、扩展和关联图层，并完善多帧编辑与文件兼容。')).toBeInTheDocument()
+    expect(screen.queryByText(/支持：MoonSprite/)).not.toBeInTheDocument()
+    expect(screen.queryByText('最新发布')).not.toBeInTheDocument()
+    expect(screen.queryByText('查看完整更新')).not.toBeInTheDocument()
+    const newsButton = screen.getByRole('button', { name: '查看 DEV.6 更新内容' })
+    expect(newsButton.querySelector('.start-screen-news-title time')).toBeInTheDocument()
+    expect(newsButton.querySelector('svg')).not.toBeInTheDocument()
+    fireEvent.click(newsButton)
+    expect(onOpenLatestRelease).toHaveBeenCalledOnce()
+  })
+
   it('shows descriptions for the homepage shortcut buttons', async () => {
     installApi({})
 

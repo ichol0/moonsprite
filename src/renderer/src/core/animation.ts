@@ -7,6 +7,7 @@ import { tileBackgroundSurfaceToCanvas } from './background-patterns'
 import { cloneTilemapCelData, cloneTileset, normalizeTilemapCelData, renderTilemapSurface, resizeTilemapCelDataToCanvas } from './tilemap'
 import { cloneFreeTileCelData, createFreeTileCelData, freeTileSourceRefs, freeTileSourceForInstance, normalizeFreeTileCelData, renderFreeTileSurface } from './free-tile'
 import { normalizeAnimationLoopSections, reconcileAnimationLoopSectionsAfterFrameDeletion, reconcileAnimationLoopSectionsAfterFrameInsertion } from './animation-loop-sections'
+import { linkedLayerGroups, linkedLayerMembers, normalizeLinkedLayerMetadata, shareLinkedRasterContent } from './linked-layers'
 
 export const DEFAULT_FRAME_DURATION = 100
 export const MAX_ANIMATION_FRAME_DURATION = 60_000
@@ -482,11 +483,12 @@ export const resizeAnimationCelsAt = (
   const activeSourceIds = new Set(timeline.cels
     .filter((cel) => cel.frameId === timeline.activeFrameId)
     .map((cel) => (lookup.resolve(cel) ?? cel).id))
-  const resized = new Set<string>()
+  const resized = new Set<object | string>()
   for (const cel of timeline.cels) {
     const source = lookup.resolve(cel) ?? cel
-    if (resized.has(source.id)) continue
-    resized.add(source.id)
+    const storage = source.surface ? rasterStorageIdentity(source.surface) : source.id
+    if (resized.has(storage)) continue
+    resized.add(storage)
     const activeSource = activeSourceIds.has(source.id)
     if (source.tilemap) {
       const layer = document.layers.find((candidate) => candidate.id === source.layerId)
@@ -562,6 +564,7 @@ export const resizeAnimationCelsAt = (
     if (trimOutside) cropAnimationCelSurface(source.surface, document.width, document.height)
   }
   normalizeAnimationCelLinks(timeline)
+  synchronizeLinkedLayerContentsForTimeline(document, timeline)
   applyFrameSurfaces(document, timeline)
 }
 
@@ -649,6 +652,7 @@ const syncFrameSurfaces = (document: SpriteDocument, timeline: AnimationTimeline
       }
     }
   }
+  synchronizeLinkedLayerContentsForTimeline(document, timeline, document.activeLayerId, timeline.activeFrameId)
 }
 
 const applyFrameSurfaces = (document: SpriteDocument, timeline: AnimationTimeline): void => {
@@ -695,6 +699,126 @@ const normalizeAnimationCelLinks = (timeline: AnimationTimeline): void => {
   }
 }
 
+const synchronizeLinkedLayerGroupContentsForTimeline = (
+  document: SpriteDocument,
+  timeline: AnimationTimeline,
+  linkedContentId: string,
+  preferredLayerId?: string,
+  preferredFrameId?: string
+): void => {
+  const members = linkedLayerMembers(document, linkedContentId)
+  if (members.length < 2) return
+  const lookup = createAnimationCelLookup(timeline)
+  const parent = new Map<string, string>()
+  const nodes = new Map<string, AnimationCel>()
+  const find = (id: string): string => {
+    const current = parent.get(id) ?? id
+    if (current === id) return id
+    const root = find(current)
+    parent.set(id, root)
+    return root
+  }
+  const union = (left: string, right: string): void => {
+    const leftRoot = find(left)
+    const rightRoot = find(right)
+    if (leftRoot !== rightRoot) parent.set(rightRoot, leftRoot)
+  }
+  for (const frame of timeline.frames) {
+    const sources = members.flatMap((layer) => {
+      const source = lookup.resolve(lookup.at(layer.id, frame.id))
+      if (!source?.surface) return []
+      nodes.set(source.id, source)
+      parent.set(source.id, parent.get(source.id) ?? source.id)
+      return [source]
+    })
+    for (let index = 1; index < sources.length; index += 1) union(sources[0].id, sources[index].id)
+  }
+  if (nodes.size < 2) return
+  const components = new Map<string, AnimationCel[]>()
+  for (const node of nodes.values()) {
+    const root = find(node.id)
+    const component = components.get(root) ?? []
+    component.push(node)
+    components.set(root, component)
+  }
+  const preferredFrame = preferredFrameId ?? timeline.activeFrameId
+  const preferredSource = preferredLayerId ? lookup.resolve(lookup.at(preferredLayerId, preferredFrame)) : null
+  const activeSource = lookup.resolve(lookup.at(document.activeLayerId, timeline.activeFrameId))
+  for (const component of components.values()) {
+    const preferred = preferredSource && component.some((candidate) => candidate.id === preferredSource.id) ? preferredSource : null
+    const active = activeSource && component.some((candidate) => candidate.id === activeSource.id) ? activeSource : null
+    const source = preferred ?? active ?? component[0]
+    if (!source.surface) continue
+    for (const candidate of component) if (candidate.surface) shareLinkedRasterContent(candidate.surface, source.surface)
+  }
+}
+
+const synchronizeLinkedLayerContentsForTimeline = (
+  document: SpriteDocument,
+  timeline: AnimationTimeline,
+  preferredLayerId?: string,
+  preferredFrameId?: string
+): void => {
+  for (const linkedContentId of linkedLayerGroups(document).keys()) {
+    synchronizeLinkedLayerGroupContentsForTimeline(document, timeline, linkedContentId, preferredLayerId, preferredFrameId)
+  }
+}
+
+const applyLinkedLayerGroupActiveSurfaces = (document: SpriteDocument, timeline: AnimationTimeline, linkedContentId: string): void => {
+  const lookup = createAnimationCelLookup(timeline)
+  for (const layer of linkedLayerMembers(document, linkedContentId)) {
+    const cel = lookup.at(layer.id, timeline.activeFrameId)
+    const source = lookup.resolve(cel)
+    if (source?.surface) applySurfaceToLayer(layer, source.surface, cel?.opacity)
+  }
+}
+
+export const synchronizeLinkedLayerGroupContents = (
+  document: SpriteDocument,
+  linkedContentId: string,
+  preferredLayerId?: string,
+  preferredFrameId?: string
+): void => {
+  const timeline = ensureAnimationDocument(document, preferredLayerId, preferredFrameId)
+  synchronizeLinkedLayerGroupContentsForTimeline(document, timeline, linkedContentId, preferredLayerId, preferredFrameId)
+  applyLinkedLayerGroupActiveSurfaces(document, timeline, linkedContentId)
+}
+
+export const synchronizeLinkedLayerContents = (
+  document: SpriteDocument,
+  preferredLayerId?: string,
+  preferredFrameId?: string
+): void => {
+  if (linkedLayerGroups(document).size === 0) return
+  const timeline = ensureAnimationDocument(document, preferredLayerId, preferredFrameId)
+  synchronizeLinkedLayerContentsForTimeline(document, timeline, preferredLayerId, preferredFrameId)
+  applyFrameSurfaces(document, timeline)
+}
+
+export const detachLinkedLayerContent = (document: SpriteDocument, layerId: string): void => {
+  const layer = document.layers.find((candidate) => candidate.id === layerId)
+  if (!layer?.linkedContentId) return
+  const timeline = ensureAnimationDocument(document, layerId, document.animation?.activeFrameId)
+  const lookup = createAnimationCelLookup(timeline)
+  const clonedBySourceId = new Map<string, AnimationCelSurface>()
+  for (const cel of timeline.cels) {
+    if (cel.layerId !== layerId) continue
+    const source = lookup.resolve(cel) ?? cel
+    if (source.layerId !== layerId || !source.surface) continue
+    let surface = clonedBySourceId.get(source.id)
+    if (!surface) {
+      surface = cloneAnimationCelSurface(source.surface)
+      clonedBySourceId.set(source.id, surface)
+      source.surface = surface
+    }
+    if (cel === source) cel.surface = surface
+  }
+  delete layer.linkedContentId
+  const active = lookup.at(layerId, timeline.activeFrameId)
+  const activeSource = lookup.resolve(active) ?? active
+  if (activeSource?.surface) applySurfaceToLayer(layer, activeSource.surface, active?.opacity)
+}
+
 const normalizeAnimationMaskLinks = (timeline: AnimationTimeline): void => {
   const masks = [...timeline.cels.flatMap((cel) => cel.mask ? [cel.mask] : []), ...(timeline.groupMasks ?? []).map((entry) => entry.mask)]
   const byId = new Map(masks.map((mask) => [mask.id, mask]))
@@ -712,9 +836,14 @@ const normalizeAnimationMaskLinks = (timeline: AnimationTimeline): void => {
 }
 
 /** 为旧工程或新图层补齐每个帧槽位，并让活动帧引用当前图层像素。 */
-export const ensureAnimationDocument = (document: SpriteDocument): AnimationTimeline => {
+export const ensureAnimationDocument = (
+  document: SpriteDocument,
+  preferredLinkedLayerId?: string,
+  preferredLinkedFrameId?: string
+): AnimationTimeline => {
   const timeline = document.animation ?? createDefaultAnimationTimeline()
   document.animation = timeline
+  normalizeLinkedLayerMetadata(document)
   timeline.loopSections ??= []
   const frameIds = new Set(timeline.frames.map((frame) => frame.id))
   const layers = new Map(document.layers.map((layer) => [layer.id, layer]))
@@ -763,6 +892,7 @@ export const ensureAnimationDocument = (document: SpriteDocument): AnimationTime
     }
   }
   normalizeAnimationCelLinks(timeline)
+  synchronizeLinkedLayerContentsForTimeline(document, timeline, preferredLinkedLayerId, preferredLinkedFrameId)
   normalizeAnimationMaskLinks(timeline)
   return timeline
 }
@@ -881,6 +1011,7 @@ export const disconnectAnimationCels = (document: SpriteDocument, celIds: readon
 export const syncActiveAnimationFrame = (document: SpriteDocument): void => {
   const timeline = ensureAnimationDocument(document)
   syncFrameSurfaces(document, timeline)
+  applyFrameSurfaces(document, timeline)
 }
 
 const syncAnimationLayerSurface = (timeline: AnimationTimeline, lookup: AnimationCelLookup, layer: RasterLayer): boolean => {
@@ -909,6 +1040,8 @@ export const syncActiveAnimationLayers = (document: SpriteDocument): void => {
     return
   }
   for (const layer of document.layers) syncAnimationLayerSurface(timeline, lookup, layer)
+  synchronizeLinkedLayerContentsForTimeline(document, timeline, document.activeLayerId, timeline.activeFrameId)
+  applyFrameSurfaces(document, timeline)
 }
 
 /** Keeps a pixel edit on one active layer out of the full layer-by-frame normalization path. */
@@ -923,6 +1056,10 @@ export const syncActiveAnimationLayer = (document: SpriteDocument, layerId: stri
   }
   const lookup = cel.linkedCelId ? createAnimationCelLookup(timeline) : { at: () => cel, resolve: () => cel }
   syncAnimationLayerSurface(timeline, lookup, layer)
+  if (layer.linkedContentId) {
+    synchronizeLinkedLayerGroupContentsForTimeline(document, timeline, layer.linkedContentId, layer.id, timeline.activeFrameId)
+    applyLinkedLayerGroupActiveSurfaces(document, timeline, layer.linkedContentId)
+  }
 }
 
 export const refreshActiveAnimationFrame = (document: SpriteDocument): void => {
@@ -1093,8 +1230,10 @@ export const cloneAnimationCelsForLayer = (document: SpriteDocument, sourceLayer
       mask: animationMaskAt(timeline, sourceLayerId, frame.id) ? cloneLayerMaskForCel(animationMaskAt(timeline, sourceLayerId, frame.id)!, celId, `mask-${celId}`) : undefined
     })
   }
+  if (targetLayer.linkedContentId) synchronizeLinkedLayerGroupContentsForTimeline(document, timeline, targetLayer.linkedContentId, sourceLayerId, timeline.activeFrameId)
   const active = animationCelAt(timeline, targetLayer.id, timeline.activeFrameId)
-  if (active?.surface) applySurfaceToLayer(targetLayer, active.surface, active.opacity)
+  const activeSource = resolveAnimationCel(timeline, active)
+  if (activeSource?.surface) applySurfaceToLayer(targetLayer, activeSource.surface, active?.opacity)
 }
 
 export const removeAnimationCelsForLayers = (document: SpriteDocument, layerIds: readonly string[]): AnimationCel[] => {
@@ -1111,6 +1250,14 @@ export const restoreAnimationCels = (document: SpriteDocument, cels: readonly An
   timeline.cels = timeline.cels.filter((cel) => !incomingSlots.has(`${cel.layerId}:${cel.frameId}`))
   for (const cel of cels) {
     timeline.cels.push(cloneAnimationCel(cel))
+  }
+  normalizeAnimationCelLinks(timeline)
+  const synchronized = new Set<string>()
+  for (const cel of cels) {
+    const layer = document.layers.find((candidate) => candidate.id === cel.layerId)
+    if (!layer?.linkedContentId || synchronized.has(layer.linkedContentId)) continue
+    synchronized.add(layer.linkedContentId)
+    synchronizeLinkedLayerGroupContentsForTimeline(document, timeline, layer.linkedContentId, layer.id, cel.frameId)
   }
   refreshActiveAnimationFrame(document)
 }
@@ -1153,6 +1300,11 @@ export const syncAnimationLayerAtFrame = (document: SpriteDocument, layer: Raste
   const source = lookup.resolve(cel) ?? cel
   source.surface = source.surface ? updateSurfaceFromLayer(source.surface, layer) : surfaceFromLayer(layer)
   if (cel !== source) cel.surface = source.surface
+  const documentLayer = document.layers.find((candidate) => candidate.id === layer.id)
+  if (documentLayer?.linkedContentId) {
+    synchronizeLinkedLayerGroupContentsForTimeline(document, timeline, documentLayer.linkedContentId, layer.id, frameId)
+    if (timeline.activeFrameId === frameId) applyLinkedLayerGroupActiveSurfaces(document, timeline, documentLayer.linkedContentId)
+  }
   return true
 }
 

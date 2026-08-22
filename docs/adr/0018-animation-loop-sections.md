@@ -1,5 +1,7 @@
 # 0018：动画循环节使用稳定帧端点
 
+中文 | [English](0018-animation-loop-sections.en.md)
+
 ## 状态
 
 接受

@@ -15,7 +15,7 @@
         "title": "MoonSprite DEV.6",
         "width": 1440,
         "height": 900,
-        "visible": true,
+        "visible": false,
         "resizable": true,
         "decorations": false,
         "dragDropEnabled": true,
@@ -50,6 +50,13 @@
         "description": "MoonSprite pixel art project",
         "role": "Editor",
         "mimeType": "application/x-moonsprite"
+      },
+      {
+        "ext": ["msext"],
+        "name": "MoonSprite Extension",
+        "description": "MoonSprite extension package",
+        "role": "Editor",
+        "mimeType": "application/x-msext"
       }
     ],
     "windows": {

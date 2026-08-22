@@ -1,12 +1,13 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { CheckCircle2, ExternalLink, GitFork } from 'lucide-react'
-import type { ColorMode, ImageResizeInterpolation, StoredWorkspace, TextCelData, ToolRailSide, WorkspaceLayout } from '@shared/types'
+import type { ColorMode, ImageResizeInterpolation, LuaScriptDialogAction, LuaScriptEntry, StoredExtension, StoredWorkspace, TextCelData, ToolRailSide, WorkspaceLayout } from '@shared/types'
 import type { AdjustmentKind } from '@/core/adjustments'
 import { compositePixelWithLayerColor, getActiveLayer, isLayerEffectivelyVisible, readLayerColorAt } from '@/core/document'
 import { blendOver, packColor, unpackColor } from '@/core/raster'
 import type { PanelDock, WorkspacePanelId } from '@/components/WorkspacePanels'
 import { AppMenuBar } from '@/components/app/AppMenuBar'
+import { ExtensionPanelHost } from '@/components/extensions/ExtensionPanelHost'
 import { AppWindowTitleBar } from '@/components/app/AppWindowTitleBar'
 import { DocumentTabs, type DocumentTabDockDebugState } from '@/components/app/DocumentTabs'
 import { EditorStatusBar } from '@/components/app/EditorStatusBar'
@@ -36,6 +37,8 @@ import { FutureRoadmapDialog } from '@/components/FutureRoadmapDialog'
 import { LatestReleaseDialog } from '@/components/LatestReleaseDialog'
 import { GridSettingsDialog } from '@/components/GridSettingsDialog'
 import { ProjectInfoDialog } from '@/components/ProjectInfoDialog'
+import { LuaScriptResultDialog, type LuaScriptReport } from '@/components/LuaScriptResultDialog'
+import { LuaScriptDialogs } from '@/components/LuaScriptDialog'
 import { TimelapseDialog } from '@/components/TimelapseDialog'
 import { TextToolDialog } from '@/components/TextToolDialog'
 import { WorkspaceManagerDialog } from '@/components/WorkspaceManagerDialog'
@@ -52,6 +55,8 @@ import { formatBytes } from '@/core/resource-policy'
 import { adjacentFormInput } from '@/core/form-focus'
 import { saveProgress } from '@/core/save-progress'
 import { publishBrushLibraryImportPaths } from '@/core/brush-library-events'
+import { isExtensionPackagePath } from '@/core/extension-packages'
+import { listExtensionPanelContributions, listExtensionTopMenuContributions, reconcileExtensionPanelVisibility, saveExtensionPanelVisibility } from '@/core/extension-contributions'
 import { startDocumentDropService } from '@/platform/document-drop-service'
 import { APP_CHANNEL_LABEL } from '@/core/app-meta'
 import moonspriteLogo from '@/assets/moonsprite-logo.svg'
@@ -63,12 +68,14 @@ import { applyThemeToDocument } from '@/core/theme'
 import { DEFAULT_SHORTCUTS, deriveShortcutConflicts, keyboardEventKey, loadShortcuts, normalizeShortcut, saveShortcuts as persistShortcuts, shortcutReleasedByEvent, shortcutText } from '@/core/shortcuts'
 import { beginPaletteSamplingShortcut, endPaletteSamplingShortcut } from '@/core/palette-sampling-shortcut'
 import { readStoredString, writeStoredString } from '@/core/storage'
+import { flushColorRolePreferences } from '@/core/color-role-preferences'
 import type { FloatingPosition } from '@/core/panel-preferences'
 import { applyCursorPreferences } from '@/platform/cursor-theme'
 import { applyAppWindowLayout, initializeAppWindow, readAppWindowLayout, showAppWindow } from '@/platform/app-window'
 import { applyToolIconScale, applyUiScale } from '@/platform/ui-scale'
 import { ACTIVE_WORKSPACE_STORAGE_KEY, BOTTOM_DOCK_HEIGHT_RATIO_STORAGE_KEY, BOTTOM_DOCK_HEIGHT_STORAGE_KEY, COLOR_SQUARE_ANCHOR_STORAGE_KEY, COLOR_SQUARE_DOCK_STORAGE_KEY, constrainBottomDockHeight, constrainInspectorWidth, constrainLeftDockWidth, DEFAULT_BOTTOM_DOCK_HEIGHT_RATIO, DEFAULT_INSPECTOR_WIDTH_RATIO, DEFAULT_LEFT_DOCK_WIDTH_RATIO, DEFAULT_PANEL_DOCKS, dockSizeRatio, FLOATING_PANEL_STORAGE_KEYS, INSPECTOR_LAYOUT_STORAGE_KEY, INSPECTOR_WIDTH_RATIO_STORAGE_KEY, INSPECTOR_WIDTH_STORAGE_KEY, LEFT_DOCK_WIDTH_RATIO_STORAGE_KEY, LEFT_DOCK_WIDTH_STORAGE_KEY, PANEL_DOCKS_STORAGE_KEY, resolveDockSizeRatio, TOOL_RAIL_SIDE_STORAGE_KEY, loadBottomDockHeight, loadInspectorWidth, loadLeftDockWidth, loadMainWindowState, loadPanelDocks, loadPanelVisibility, loadToolRailSide, normalizeWorkspaceLayout, readLayoutStorage, saveMainWindowState, savePanelDocks, savePanelVisibility, toolRailDockTargetAtPointer, workspaceDockSizesForParent, workspacePanelDockPresence, writeLayoutStorage } from '@/core/workspace-layout-preferences'
 import { type ExportOptions, type SaveAsOptions, type TextCelPreview, type TextLayerDraftTarget, useWorkspace } from '@/store/workspace'
+import { closeLuaScriptClientSession, dispatchLuaScriptDialogForActiveDocument, luaScriptTargetIsActive, runLuaScriptForActiveDocument, type LuaScriptClientSession } from '@/store/lua-script-service'
 import { useI18n } from '@/components/I18nProvider'
 import './styles.css'
 
@@ -203,6 +210,14 @@ export default function App() {
   const [latestReleaseOpen, setLatestReleaseOpen] = useState(false)
   const [gridSettingsOpen, setGridSettingsOpen] = useState(false)
   const [projectInfoOpen, setProjectInfoOpen] = useState(false)
+  const [luaScriptRunning, setLuaScriptRunning] = useState(false)
+  const [luaScriptReport, setLuaScriptReport] = useState<LuaScriptReport | null>(null)
+  const [luaScriptSession, setLuaScriptSession] = useState<LuaScriptClientSession | null>(null)
+  const [luaScripts, setLuaScripts] = useState<LuaScriptEntry[]>([])
+  const [luaScriptsLoading, setLuaScriptsLoading] = useState(true)
+  const [luaScriptsLoadFailed, setLuaScriptsLoadFailed] = useState(false)
+  const [extensions, setExtensions] = useState<StoredExtension[]>([])
+  const [extensionPanelVisibility, setExtensionPanelVisibility] = useState<Record<string, boolean>>({})
   const [timelapseOpen, setTimelapseOpen] = useState(false)
   const [exportOpen, setExportOpen] = useState(false)
   const [saveAsOpen, setSaveAsOpen] = useState(false)
@@ -282,9 +297,73 @@ export default function App() {
   const preferredInspectorWidthRef = useRef(inspectorWidth)
   const inspectorWidthRatioRef = useRef(dockSizeRatio(inspectorWidth, initialDockParentSize.width, DEFAULT_INSPECTOR_WIDTH_RATIO))
   const closeInProgress = useRef(false)
+  const luaScriptSessionRef = useRef<LuaScriptClientSession | null>(null)
+  const luaScriptRunningRef = useRef(false)
   const session = workspace.sessions.find((item) => item.document.id === workspace.activeId) ?? null
   const floatingDocumentIds = useMemo(() => floatingDocuments.map((item) => item.documentId), [floatingDocuments])
   const hiddenDocumentIds = useMemo(() => [...new Set([...paneOnlyDocumentIds, ...floatingDocumentIds])], [floatingDocumentIds, paneOnlyDocumentIds])
+
+  const refreshLuaScripts = useCallback(async (): Promise<void> => {
+    setLuaScriptsLoading(true)
+    setLuaScriptsLoadFailed(false)
+    try {
+      const listing = await window.moonSprite.listLuaScripts()
+      setLuaScripts(listing.scripts)
+    } catch {
+      setLuaScripts([])
+      setLuaScriptsLoadFailed(true)
+    } finally {
+      setLuaScriptsLoading(false)
+    }
+  }, [])
+
+  const refreshExtensions = useCallback(async (): Promise<void> => {
+    try {
+      const listing = await window.moonSprite.listExtensions()
+      setExtensions(listing.extensions)
+      setExtensionPanelVisibility((current) => reconcileExtensionPanelVisibility(listing.extensions, current))
+    } catch {
+      setExtensions([])
+      setExtensionPanelVisibility({})
+    }
+  }, [])
+
+  useEffect(() => { void refreshLuaScripts(); void refreshExtensions() }, [refreshExtensions, refreshLuaScripts])
+  useEffect(() => { if (openMenu === 'file') void refreshLuaScripts() }, [openMenu, refreshLuaScripts])
+  useEffect(() => {
+    if (!openMenu?.startsWith('extension-menu:')) return
+    if (listExtensionTopMenuContributions(extensions).some((contribution) => contribution.openMenuId === openMenu)) return
+    setOpenMenu(null)
+  }, [extensions, openMenu])
+  useEffect(() => {
+    const onExtensionsChanged = (): void => { void refreshLuaScripts(); void refreshExtensions() }
+    window.addEventListener('moonsprite:extensions-changed', onExtensionsChanged)
+    return () => window.removeEventListener('moonsprite:extensions-changed', onExtensionsChanged)
+  }, [refreshExtensions, refreshLuaScripts])
+  const extensionPanelContributions = useMemo(() => listExtensionPanelContributions(extensions), [extensions])
+  const setExtensionPanelVisible = useCallback((key: string, visible: boolean): void => {
+    setExtensionPanelVisibility((current) => ({ ...current, [key]: visible }))
+    saveExtensionPanelVisibility(key, visible)
+  }, [])
+  const toggleExtensionPanel = useCallback((key: string): void => {
+    setExtensionPanelVisibility((current) => {
+      const visible = !current[key]
+      saveExtensionPanelVisibility(key, visible)
+      return { ...current, [key]: visible }
+    })
+  }, [])
+  useEffect(() => { luaScriptSessionRef.current = luaScriptSession }, [luaScriptSession])
+  useEffect(() => () => {
+    const current = luaScriptSessionRef.current
+    if (current) void closeLuaScriptClientSession(window.moonSprite, current).catch(() => undefined)
+  }, [])
+  useEffect(() => {
+    if (!luaScriptSession) return
+    if (luaScriptTargetIsActive(luaScriptSession)) return
+    void closeLuaScriptClientSession(window.moonSprite, luaScriptSession).catch(() => undefined)
+    luaScriptSessionRef.current = null
+    setLuaScriptSession(null)
+  }, [coordinatorRenderKey, luaScriptSession])
 
   useEffect(() => setPopupPanelId(null), [homeOpen, session?.document.id])
 
@@ -864,6 +943,93 @@ export default function App() {
     if (current.sessions.some((item) => !beforeIds.has(item.document.id))) setHomeOpen(false)
   }
 
+  const runLuaScript = async (scriptId: string): Promise<void> => {
+    if (luaScriptRunningRef.current || luaScriptSessionRef.current) return
+    luaScriptRunningRef.current = true
+    setLuaScriptRunning(true)
+    setLuaScriptReport(null)
+    useWorkspace.getState().setMessage(t('script.running'))
+    try {
+      const outcome = await runLuaScriptForActiveDocument(window.moonSprite, scriptId)
+      const { summary } = outcome
+      luaScriptSessionRef.current = outcome.session
+      setLuaScriptSession(outcome.session)
+      useWorkspace.getState().setMessage(outcome.session && summary.changedPixelCount === 0
+        ? t('script.dialogReady', { name: summary.fileName })
+        : summary.changedPixelCount > 0
+        ? t('script.completed', { name: summary.fileName, pixels: summary.changedPixelCount, transactions: summary.transactionCount })
+        : t('script.completedNoChanges', { name: summary.fileName }))
+      if (summary.output.length > 0) setLuaScriptReport({ kind: 'success', summary })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : t('script.failed')
+      useWorkspace.getState().setMessage(t('script.failed'))
+      setLuaScriptReport({ kind: 'error', error: message })
+    } finally {
+      luaScriptRunningRef.current = false
+      setLuaScriptRunning(false)
+    }
+  }
+
+  const dispatchLuaScriptDialog = async (action: LuaScriptDialogAction): Promise<void> => {
+    const current = luaScriptSessionRef.current
+    if (!current || luaScriptRunningRef.current) return
+    if (!luaScriptTargetIsActive(current)) {
+      luaScriptSessionRef.current = null
+      setLuaScriptSession(null)
+      void closeLuaScriptClientSession(window.moonSprite, current).catch(() => undefined)
+      return
+    }
+    luaScriptRunningRef.current = true
+    setLuaScriptRunning(true)
+    setLuaScriptReport(null)
+    try {
+      const outcome = await dispatchLuaScriptDialogForActiveDocument(window.moonSprite, current, action)
+      const { summary } = outcome
+      luaScriptSessionRef.current = outcome.session
+      setLuaScriptSession(outcome.session)
+      useWorkspace.getState().setMessage(outcome.session && summary.changedPixelCount === 0
+        ? t('script.dialogReady', { name: summary.fileName })
+        : summary.changedPixelCount > 0
+        ? t('script.completed', { name: summary.fileName, pixels: summary.changedPixelCount, transactions: summary.transactionCount })
+        : t('script.completedNoChanges', { name: summary.fileName }))
+      if (summary.output.length > 0) setLuaScriptReport({ kind: 'success', summary })
+    } catch (error) {
+      await closeLuaScriptClientSession(window.moonSprite, current).catch(() => undefined)
+      const targetStillActive = luaScriptTargetIsActive(current)
+      if (luaScriptSessionRef.current?.sessionId === current.sessionId) {
+        luaScriptSessionRef.current = null
+        setLuaScriptSession(null)
+      }
+      if (!targetStillActive) return
+      const message = error instanceof Error ? error.message : t('script.failed')
+      useWorkspace.getState().setMessage(t('script.failed'))
+      setLuaScriptReport({ kind: 'error', error: message })
+    } finally {
+      luaScriptRunningRef.current = false
+      setLuaScriptRunning(false)
+    }
+  }
+
+  const openLuaScriptFolder = async (): Promise<void> => {
+    try {
+      await window.moonSprite.openLuaScriptFolder()
+    } catch (error) {
+      useWorkspace.getState().setMessage(error instanceof Error ? error.message : t('script.folderOpenFailed'))
+    }
+  }
+
+  const installExtensionPackage = async (filePath: string): Promise<boolean> => {
+    try {
+      const extension = await window.moonSprite.installExtension(filePath)
+      window.dispatchEvent(new Event('moonsprite:extensions-changed'))
+      useWorkspace.getState().setMessage(t('preferences.extensions.installSuccess', { name: extension.name }))
+      return true
+    } catch (error) {
+      useWorkspace.getState().setMessage(error instanceof Error ? error.message : t('preferences.extensions.installFailed'))
+      return false
+    }
+  }
+
   const openGalleryProject = async (filePath: string, keepHomeOpen = false): Promise<boolean> => {
     const beforeIds = new Set(useWorkspace.getState().sessions.map((item) => item.document.id))
     const opened = await useWorkspace.getState().openPath(filePath, keepHomeOpen ? undefined : { onBeforeSession: () => setHomeOpen(false) })
@@ -920,6 +1086,10 @@ export default function App() {
     void window.moonSprite.takeStartupFiles().then(async (paths) => {
       let opened = false
       for (const path of paths) {
+        if (isExtensionPackagePath(path)) {
+          await installExtensionPackage(path)
+          continue
+        }
         if (await useWorkspace.getState().openPath(path)) opened = true
       }
       if (active && opened) setHomeOpen(false)
@@ -1023,6 +1193,7 @@ export default function App() {
       if (closeInProgress.current) return
       if (useWorkspace.getState().dialog) { window.moonSprite.cancelClose(); return }
       closeInProgress.current = true
+      flushColorRolePreferences()
       try { await persistMainWindowState() } catch { /* Closing must continue if geometry persistence fails. */ }
       const dirty = useWorkspace.getState().sessions.filter((item) => item.document.dirty)
       for (const item of dirty) {
@@ -1042,7 +1213,22 @@ export default function App() {
     return startDocumentDropService({
       openPath: (path) => useWorkspace.getState().openPath(path),
       pathForFile: (file) => window.moonSprite.pathForFile(file),
-      claimPaths: (paths, position) => {
+      claimPaths: async (paths, position) => {
+        const extensionPaths = paths.filter(isExtensionPackagePath)
+        const otherPaths = paths.filter((path) => !isExtensionPackagePath(path))
+        if (extensionPaths.length > 0) {
+          for (const path of extensionPaths) await installExtensionPackage(path)
+          if (otherPaths.length === 0) return true
+          const target = position ? document.elementFromPoint(position.x, position.y) : null
+          if (target?.closest('[data-brush-library-dropzone]')) {
+            publishBrushLibraryImportPaths(otherPaths)
+            return true
+          }
+          for (const path of otherPaths) {
+            if (await useWorkspace.getState().openPath(path)) setHomeOpen(false)
+          }
+          return true
+        }
         if (!position) return false
         const target = document.elementFromPoint(position.x, position.y)
         if (!target?.closest('[data-brush-library-dropzone]')) return false
@@ -1207,6 +1393,11 @@ export default function App() {
         else if (gridSettingsOpen) setGridSettingsOpen(false)
         else if (timelapseOpen) setTimelapseOpen(false)
         else if (projectInfoOpen) setProjectInfoOpen(false)
+        else if (luaScriptReport) setLuaScriptReport(null)
+        else if (luaScriptSession?.dialogs.length) {
+          const dialog = luaScriptSession.dialogs.at(-1)!
+          void dispatchLuaScriptDialog({ dialogId: dialog.id, controlId: null, event: 'close', values: Object.fromEntries(dialog.controls.flatMap((control) => control.dataKey ? [[control.dataKey, control.value]] : [])) })
+        }
         else if (exportOpen) setExportOpen(false)
         else if (saveAsOpen) setSaveAsOpen(false)
         else if (workspaceSaveOpen) setWorkspaceSaveOpen(false)
@@ -1557,7 +1748,7 @@ export default function App() {
     window.addEventListener('keyup', keyup, true)
     window.addEventListener('blur', blur)
     return () => { window.removeEventListener('keydown', keydown, true); window.removeEventListener('keyup', keyup, true); window.removeEventListener('blur', blur) }
-  }, [adjustmentOpen, advancedMode, aboutOpen, blockedShortcuts, canvasResizeOpen, colorReplacementOpen, componentLibraryOpen, cycleAdvancedMode, exportOpen, gridSettingsOpen, homeOpen, imageResizeOpen, latestReleaseOpen, loadSavedWorkspaces, newOpen, openMenu, openPreferences, openSaveAs, outlineOpen, panelVisibility, popupPanelId, preferencesOpen, projectInfoOpen, roadmapOpen, runtimePreferences.timelineHidden, saveAsOpen, shortcutOpen, timelapseOpen, toggleMirrorView, togglePopupPanel, toggleTimelineVisibility, updatePanelVisibility, updateToolRailSide, workspace, workspaceManagerOpen, workspaceSaveOpen, session?.brushSize, session?.document.id, session?.moveKind, session?.selectedFreeTileInstanceId, session?.selectedSliceId, session?.selectedSliceIds, session?.selection, session?.textBoxTransform, session?.tool, shortcuts])
+  }, [adjustmentOpen, advancedMode, aboutOpen, blockedShortcuts, canvasResizeOpen, colorReplacementOpen, componentLibraryOpen, cycleAdvancedMode, exportOpen, gridSettingsOpen, homeOpen, imageResizeOpen, latestReleaseOpen, loadSavedWorkspaces, luaScriptReport, luaScriptSession, newOpen, openMenu, openPreferences, openSaveAs, outlineOpen, panelVisibility, popupPanelId, preferencesOpen, projectInfoOpen, roadmapOpen, runtimePreferences.timelineHidden, saveAsOpen, shortcutOpen, timelapseOpen, toggleMirrorView, togglePopupPanel, toggleTimelineVisibility, updatePanelVisibility, updateToolRailSide, workspace, workspaceManagerOpen, workspaceSaveOpen, session?.brushSize, session?.document.id, session?.moveKind, session?.selectedFreeTileInstanceId, session?.selectedSliceId, session?.selectedSliceIds, session?.selection, session?.textBoxTransform, session?.tool, shortcuts])
 
   useEffect(() => {
     const keydown = (event: KeyboardEvent): void => {
@@ -1822,6 +2013,12 @@ export default function App() {
       sliceOutlinesVisible={runtimePreferences.sliceOutlinesVisible}
       toolRailSide={toolRailSide}
       advancedModeActive={advancedMode !== null}
+      luaScriptRunning={luaScriptRunning || Boolean(luaScriptSession)}
+      luaScripts={luaScripts}
+      luaScriptsLoading={luaScriptsLoading}
+      luaScriptsLoadFailed={luaScriptsLoadFailed}
+      extensions={extensions}
+      extensionPanelVisibility={extensionPanelVisibility}
       recentFiles={recentFiles}
       onHome={() => setHomeOpen(true)}
       onNew={() => setNewOpen(true)}
@@ -1832,6 +2029,9 @@ export default function App() {
       onExportAllFrames={() => openExport('frames')}
       onOpenTimelapse={() => setTimelapseOpen(true)}
       onOpenProjectInfo={() => setProjectInfoOpen(true)}
+      onRunLuaScript={(scriptId) => { void runLuaScript(scriptId) }}
+      onOpenLuaScriptFolder={() => { void openLuaScriptFolder() }}
+      onToggleExtensionPanel={toggleExtensionPanel}
       onOpenProjectFolder={openProjectFolder}
       onOpenOutline={() => setOutlineOpen(true)}
       onOpenColorReplacement={() => setColorReplacementOpen(true)}
@@ -1900,12 +2100,20 @@ export default function App() {
       onOpenCommandSettings={openQuickCommandSettings}
       shortcutFor={shortcutFor}
       onToggleMirror={toggleMirrorView}
-    /> : <Suspense fallback={<div aria-hidden="true" />}><LazyHomeWorkspace onNew={() => setNewOpen(true)} onOpen={() => void openFilesAndShowDocument()} onOpenProject={openGalleryProject} onRestoreRecovery={restoreRecoveryAndShowDocument} /></Suspense>}
+    /> : <Suspense fallback={<div aria-hidden="true" />}><LazyHomeWorkspace onNew={() => setNewOpen(true)} onOpen={() => void openFilesAndShowDocument()} onOpenProject={openGalleryProject} onRestoreRecovery={restoreRecoveryAndShowDocument} onOpenLatestRelease={() => setLatestReleaseOpen(true)} /></Suspense>}
 
     {floatingDocuments.map((item, stackIndex) => {
       const floatingSession = workspace.sessions.find((candidate) => candidate.document.id === item.documentId)
       return floatingSession ? <FloatingDocumentWindow key={item.documentId} session={floatingSession} initialPosition={item.initialPosition} pinned={item.pinned} stackIndex={stackIndex} onActivate={activateFloatingDocument} onPinnedChange={setFloatingDocumentPinned} onReturnToTabs={returnFloatingDocumentToTabs} onCloseDocument={closeFloatingDocument} shortcutFor={shortcutFor} onToggleMirror={toggleMirrorView} onOpenPreferences={openQuickCommandPreferences} onOpenCommandSettings={openQuickCommandSettings} /> : null
     })}
+    <ExtensionPanelHost
+      contributions={extensionPanelContributions}
+      visibility={extensionPanelVisibility}
+      documentAvailable={Boolean(session)}
+      commandRunning={luaScriptRunning || Boolean(luaScriptSession)}
+      onVisibilityChange={setExtensionPanelVisible}
+      onRunCommand={(scriptId) => { void runLuaScript(scriptId) }}
+    />
 
     <EditorStatusBar homeOpen={homeOpen} resourceLabel={resourceLabel} />
     <OpenProgressOverlay />
@@ -1974,6 +2182,8 @@ export default function App() {
     {latestReleaseOpen && <LatestReleaseDialog onClose={() => setLatestReleaseOpen(false)} />}
     {session && gridSettingsOpen && <GridSettingsDialog value={session.view.grid} onApply={(grid) => workspace.setView({ grid })} onClose={() => setGridSettingsOpen(false)} />}
     {session && projectInfoOpen && <ProjectInfoDialog document={session.document} onClose={() => setProjectInfoOpen(false)} />}
+    {luaScriptSession && <LuaScriptDialogs busy={luaScriptRunning} dialogs={luaScriptSession.dialogs} sessionId={luaScriptSession.sessionId} onAction={(action) => { void dispatchLuaScriptDialog(action) }} />}
+    {luaScriptReport && <LuaScriptResultDialog report={luaScriptReport} onClose={() => setLuaScriptReport(null)} />}
     {session && timelapseOpen && <TimelapseDialog settings={session.document.timelapse!} onChange={(settings) => workspace.setTimelapseSettings(settings)} onClear={() => workspace.clearTimelapse()} onExport={(format, options) => workspace.exportTimelapse(format, options)} onClose={() => setTimelapseOpen(false)} />}
     {textToolRequest && <TextToolDialog editing={Boolean(textToolRequest.layerId && !textLayerDraftRef.current)} initial={textToolInitial} box={textToolBox} onChange={changeTextTool} onPreview={previewTextTool} onClose={() => {
       const draft = textLayerDraftRef.current

@@ -1,7 +1,7 @@
 import { inflateSync, strFromU8, strToU8, unzipSync, zipSync, type Zippable } from 'fflate'
 import { BLEND_MODES, type AnimationCelSurface, type AnimationFrame, type AnimationLoopSection, type BackgroundLayerSettings, type BlendMode, type ColorMode, type FreeTileCelData, type FreeTileInstance, type FreeTileSourceLayer, type LayerGroup, type LayerMask, type LayerStyles, type PaletteEntry, type ProjectBrush, type RasterFormat, type RasterLayer, type RgbaColor, type RuntimeRasterTiles, type SpriteDocument, type TextCelData, type TilemapCelData, type TilemapCell, type Tileset, type TimelapseSettings } from '@shared/types'
 import { compositeDocument, createCompositePointSampler, createId, createNormalCompositePointSampler, getLayerStorageOrigin, getRasterContentRevision, paletteColorIdForCanvas, remapIndexedDocumentToVisiblePalette, setLayerStorageOrigin } from './document'
-import { createDefaultAnimationTimeline, ensureAnimationDocument, normalizeAnimationTimeline, refreshActiveAnimationFrame, syncActiveAnimationLayers } from './animation'
+import { createAnimationCelLookup, createDefaultAnimationTimeline, ensureAnimationDocument, normalizeAnimationTimeline, refreshActiveAnimationFrame, syncActiveAnimationLayers } from './animation'
 import { normalizeOutlineSettings } from './outline-settings'
 import { normalizeProjectDisplaySettings, normalizeProjectStatistics, normalizeTimelapseSettings } from './project-metadata'
 import { MAX_TIMELAPSE_SNAPSHOTS } from './timelapse'
@@ -21,6 +21,7 @@ import { ensureFreeTileTilesetOwnership, freeTileSourcesForLayer } from './free-
 interface ManifestLayer {
   id: string
   name: string
+  linkedContentId?: string
   displayColor?: RgbaColor
   description?: string
   kind?: 'text' | 'tilemap' | 'free-tile'
@@ -141,7 +142,8 @@ interface ManifestTimelapse extends Omit<TimelapseSettings, 'snapshots'> {
 
 type RasterDataEncoding = 'raw' | 'sparse-tiles-v1'
 
-export const PROJECT_SCHEMA_VERSION = 16
+export const PROJECT_SCHEMA_VERSION = 17
+const LINKED_LAYERS_PROJECT_SCHEMA_VERSION = 17
 const LOOP_SECTIONS_PROJECT_SCHEMA_VERSION = 16
 const FREE_TILE_SOURCE_PROJECT_SCHEMA_VERSION = 15
 const FREE_TILE_PROJECT_SCHEMA_VERSION = 14
@@ -646,21 +648,22 @@ const createProjectArchiveFiles = (
   syncActiveAnimationLayers(document)
   const files: Record<string, Uint8Array> = {}
   const resources: ProjectArchiveResource[] = []
-  const dataFileByPixels = new Map<object, { dataFile: string; dataEncoding: RasterDataEncoding; width: number; height: number; offsetX: number; offsetY: number }>()
+  const dataFileByPixels = new Map<object, { dataFile: string; dataEncoding: RasterDataEncoding; width: number; height: number }>()
   const revisionFor = (key: string, resource: object): number | null => revisionOverrides?.get(key) ?? getRasterContentRevision(resource)
   const encodePixels = (key: string, preferredFile: string, surface: RasterLayer | AnimationCelSurface): { dataFile: string; dataEncoding: RasterDataEncoding; width: number; height: number; offsetX: number; offsetY: number } => {
     const storage = rasterStorageIdentity(surface)
     const existing = dataFileByPixels.get(storage)
     const revision = revisionFor(key, storage)
     if (existing) {
-      resources.push({ key, path: existing.dataFile, revision, raster: { width: existing.width, height: existing.height, offsetX: existing.offsetX, offsetY: existing.offsetY, dataEncoding: existing.dataEncoding } })
-      return existing
+      const result = { ...existing, offsetX: surface.offsetX, offsetY: surface.offsetY }
+      resources.push({ key, path: existing.dataFile, revision, raster: { width: result.width, height: result.height, offsetX: result.offsetX, offsetY: result.offsetY, dataEncoding: result.dataEncoding } })
+      return result
     }
     const previous = baseline?.resources.get(key)
     if (baseline?.schemaVersion === PROJECT_SCHEMA_VERSION && previous?.raster && previous.revision === revision && rasterGeometryMatchesSurface(previous.raster, surface)) {
       const result = { dataFile: previous.path, ...previous.raster }
       resources.push({ key, path: previous.path, revision, raster: previous.raster })
-      dataFileByPixels.set(storage, result)
+      dataFileByPixels.set(storage, { dataFile: result.dataFile, dataEncoding: result.dataEncoding, width: result.width, height: result.height })
       return result
     }
     const runtime = runtimeRasterForSurface(surface)
@@ -672,7 +675,7 @@ const createProjectArchiveFiles = (
     const raster = { width: surface.width, height: surface.height, offsetX: surface.offsetX, offsetY: surface.offsetY, dataEncoding: encoded.encoding }
     resources.push({ key, path: dataFile, revision, raster })
     const result = { dataFile, ...raster }
-    dataFileByPixels.set(storage, result)
+    dataFileByPixels.set(storage, { dataFile: result.dataFile, dataEncoding: result.dataEncoding, width: result.width, height: result.height })
     return result
   }
   const encodeMask = (key: string, mask: LayerMask): ManifestMask => {
@@ -686,6 +689,7 @@ const createProjectArchiveFiles = (
     return {
       id: layer.id,
       name: layer.name,
+      ...(layer.linkedContentId ? { linkedContentId: layer.linkedContentId } : {}),
       ...(layer.displayColor ? { displayColor: layer.displayColor } : {}),
       ...(layer.description ? { description: layer.description } : {}),
       ...(layer.kind === 'text' || layer.kind === 'tilemap' || layer.kind === 'free-tile' ? { kind: layer.kind } : {}),
@@ -1088,7 +1092,7 @@ export function migrateProjectManifest(input: unknown): ProjectManifest {
   const candidate = input as { app?: unknown; schemaVersion?: unknown; document?: Record<string, unknown> }
   if (candidate.app !== 'MoonSprite' || !candidate.document) throw new Error(tr('core.project.unsupportedVersion'))
   const version = Number(candidate.schemaVersion)
-  if (![1, 2, 3, LEGACY_PROJECT_SCHEMA_VERSION, SPARSE_RASTER_PROJECT_SCHEMA_VERSION, SLICES_PROJECT_SCHEMA_VERSION, EDITABLE_TEXT_PROJECT_SCHEMA_VERSION, STYLED_TEXT_PROJECT_SCHEMA_VERSION, TEXT_BOX_PROJECT_SCHEMA_VERSION, DOCUMENT_COLOR_MODE_PROJECT_SCHEMA_VERSION, LAYER_STYLES_PROJECT_SCHEMA_VERSION, BACKGROUND_LAYER_PROJECT_SCHEMA_VERSION, TILEMAP_PROJECT_SCHEMA_VERSION, FREE_TILE_PROJECT_SCHEMA_VERSION, FREE_TILE_SOURCE_PROJECT_SCHEMA_VERSION, PROJECT_SCHEMA_VERSION].includes(version) || candidate.document.schemaVersion !== candidate.schemaVersion) throw new Error(tr('core.project.unsupportedVersion'))
+  if (![1, 2, 3, LEGACY_PROJECT_SCHEMA_VERSION, SPARSE_RASTER_PROJECT_SCHEMA_VERSION, SLICES_PROJECT_SCHEMA_VERSION, EDITABLE_TEXT_PROJECT_SCHEMA_VERSION, STYLED_TEXT_PROJECT_SCHEMA_VERSION, TEXT_BOX_PROJECT_SCHEMA_VERSION, DOCUMENT_COLOR_MODE_PROJECT_SCHEMA_VERSION, LAYER_STYLES_PROJECT_SCHEMA_VERSION, BACKGROUND_LAYER_PROJECT_SCHEMA_VERSION, TILEMAP_PROJECT_SCHEMA_VERSION, FREE_TILE_PROJECT_SCHEMA_VERSION, FREE_TILE_SOURCE_PROJECT_SCHEMA_VERSION, LOOP_SECTIONS_PROJECT_SCHEMA_VERSION, PROJECT_SCHEMA_VERSION].includes(version) || candidate.document.schemaVersion !== candidate.schemaVersion) throw new Error(tr('core.project.unsupportedVersion'))
   if (version >= SPARSE_RASTER_PROJECT_SCHEMA_VERSION) {
     const layers = Array.isArray(candidate.document.layers) ? candidate.document.layers : []
     const animation = candidate.document.animation && typeof candidate.document.animation === 'object' ? candidate.document.animation as { cels?: unknown } : null
@@ -1107,6 +1111,7 @@ export function migrateProjectManifest(input: unknown): ProjectManifest {
     ? candidate.document.layers.map((layer) => {
         if (!layer || typeof layer !== 'object') return layer
         const next: Record<string, unknown> = { ...(layer as Record<string, unknown>), ...(legacy ? { dataEncoding: 'raw' as const } : {}) }
+        if (version < LINKED_LAYERS_PROJECT_SCHEMA_VERSION) delete next.linkedContentId
         const layerStyles = version >= LAYER_STYLES_PROJECT_SCHEMA_VERSION ? normalizeLayerStyles(next.layerStyles) : undefined
         if (layerStyles) next.layerStyles = layerStyles
         else delete next.layerStyles
@@ -1601,9 +1606,13 @@ export function decodeProject(input: Uint8Array, onProgress?: (value: number) =>
     const decoded = decodePixels(activeCelSource?.dataFile ?? metadata.dataFile, activeCelSource?.dataEncoding ?? metadata.dataEncoding, rasterFormat, width, height)
     const layerStyles = normalizeLayerStyles(metadata.layerStyles)
     const background = normalizeBackgroundLayerSettings(metadata.background)
+    if (metadata.linkedContentId !== undefined && (typeof metadata.linkedContentId !== 'string' || !metadata.linkedContentId.trim() || metadata.kind || background)) {
+      throw new Error(tr('core.project.layerCorrupt', { name: metadata.name }))
+    }
     const common = {
       id: metadata.id,
       name: metadata.name,
+      ...(typeof metadata.linkedContentId === 'string' ? { linkedContentId: metadata.linkedContentId } : {}),
       description: typeof metadata.description === 'string' ? metadata.description : '',
       visible: metadata.visible !== false,
       locked: metadata.locked === true,
@@ -1814,6 +1823,34 @@ export function decodeProject(input: Uint8Array, onProgress?: (value: number) =>
         cel.surface.offsetY,
         document.colorMode === 'indexed' ? (color) => paletteColorIdForCanvas(document, color) : undefined
       )
+    }
+  }
+  const linkedGroups = new Map<string, RasterLayer[]>()
+  for (const layer of document.layers) {
+    if (!layer.linkedContentId) continue
+    if (layer.kind || layer.background) throw new Error(tr('core.project.layerCorrupt', { name: layer.name }))
+    const members = linkedGroups.get(layer.linkedContentId) ?? []
+    members.push(layer)
+    linkedGroups.set(layer.linkedContentId, members)
+  }
+  const celLookup = createAnimationCelLookup(animation)
+  for (const members of linkedGroups.values()) {
+    if (members.length < 2) continue
+    const first = members[0]
+    const firstStorage = rasterStorageIdentity(first)
+    if (members.some((layer) => layer.format !== first.format || layer.width !== first.width || layer.height !== first.height || rasterStorageIdentity(layer) !== firstStorage)) {
+      throw new Error(tr('core.project.layerCorrupt', { name: first.name }))
+    }
+    for (const frame of animation.frames) {
+      const surfaces = members.map((layer) => celLookup.resolve(celLookup.at(layer.id, frame.id))?.surface)
+      const firstSurface = surfaces[0]
+      if (!firstSurface || surfaces.some((surface) => !surface
+        || surface.format !== firstSurface.format
+        || surface.width !== firstSurface.width
+        || surface.height !== firstSurface.height
+        || rasterStorageIdentity(surface) !== rasterStorageIdentity(firstSurface))) {
+        throw new Error(tr('core.project.layerCorrupt', { name: first.name }))
+      }
     }
   }
   rgbaPixelsByFile.clear()

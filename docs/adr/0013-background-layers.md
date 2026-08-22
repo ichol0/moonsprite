@@ -1,5 +1,7 @@
 # ADR-0013: Editable Background Layers
 
+[中文](0013-background-layers.zh-CN.md) | English
+
 ## Status
 
 Accepted

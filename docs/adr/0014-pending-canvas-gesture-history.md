@@ -1,5 +1,7 @@
 # ADR 0014：进行中路径使用独立手势历史
 
+中文 | [English](0014-pending-canvas-gesture-history.en.md)
+
 - 状态：接受
 - 日期：2026-08-17
 

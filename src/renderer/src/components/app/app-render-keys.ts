@@ -28,9 +28,17 @@ export const documentTabsRenderKey = (state: DocumentTabsState): string => [
 export const appCoordinatorRenderKey = (state: AppCoordinatorState): string => {
   const session = state.sessions.find((item) => item.document.id === state.activeId)
   const preview = session?.canvasResizePreview
+  // The coordinator owns low-frequency surfaces such as persistent script dialogs.
+  // Keep their target identity in the key without subscribing to pixel revisions.
+  const layerStructure = session?.document.layers
+    .map((layer) => `${layer.id}:${layer.kind ?? 'raster'}`)
+    .join(',') ?? ''
   return [
     state.activeId ?? '',
     state.sessions.map((item) => item.document.id).join(','),
+    session?.document.activeLayerId ?? '',
+    session?.document.animation?.activeFrameId ?? '',
+    layerStructure,
     session?.document.width ?? 0,
     session?.document.height ?? 0,
     session?.tool ?? '',

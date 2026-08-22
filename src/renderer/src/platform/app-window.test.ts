@@ -102,6 +102,18 @@ describe('app window platform adapter', () => {
     expect(removeResized).toHaveBeenCalledTimes(1)
   })
 
+  it('restores saved geometry before revealing the native window', async () => {
+    const appWindow = createWindow()
+    mocks.getCurrentWindow.mockReturnValue(appWindow)
+
+    await initializeAppWindow({ x: 80, y: 60, width: 1180, height: 760, maximized: false }, vi.fn())
+
+    expect(appWindow.setSize).toHaveBeenCalledWith(expect.objectContaining({ width: 1180, height: 760 }))
+    expect(appWindow.setPosition).toHaveBeenCalledWith(expect.objectContaining({ x: 80, y: 60 }))
+    expect(appWindow.setSize.mock.invocationCallOrder[0]).toBeLessThan(appWindow.show.mock.invocationCallOrder[0])
+    expect(appWindow.setPosition.mock.invocationCallOrder[0]).toBeLessThan(appWindow.show.mock.invocationCallOrder[0])
+  })
+
   it('routes guarded titlebar dragging through the native command', async () => {
     mocks.getCurrentWindow.mockReturnValue(createWindow())
 

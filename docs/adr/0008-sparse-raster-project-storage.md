@@ -1,5 +1,7 @@
 # ADR-0008: Sparse Raster Project Storage
 
+[中文](0008-sparse-raster-project-storage.zh-CN.md) | English
+
 ## Status
 
 Accepted

@@ -1,5 +1,7 @@
 # 发布检查表
 
+中文 | [English](release-checklist.en.md)
+
 只有明确要求发布 `dev.X` 或交付安装包时才执行本流程。连续开发中的普通代码修改不自动进入发布门禁或打包。
 
 ## 发布前
@@ -10,6 +12,7 @@
 - [ ] 发布归档只移动“未发布”条目到 `docs/changelog/<版本>.md`，条目正文保持完整，并重新建立空的“未发布”区。
 - [ ] 根目录与 `docs/changelog/README.md` 的版本索引均已链接新归档。
 - [ ] “帮助 > 更新日志”的版本号和摘要已更新为本次归档内容，不继续展示上一 DEV 的摘要。
+- [ ] 首页“新闻”的版本号、发布日期和摘要已同步为本次归档，并可打开与“帮助 > 更新日志”相同的完整更新内容。
 - [ ] 内部 SemVer 在 `package.json`、Cargo 和 Tauri 配置中一致。
 - [ ] 当前应用显示版本、最近已打包版本和归档索引符合 `docs/release/development-cycle.md`；`pnpm check:version -- --release` 通过。
 - [ ] 项目文件格式变更包含迁移、兼容测试和 ADR。

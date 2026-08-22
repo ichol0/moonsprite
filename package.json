@@ -46,7 +46,8 @@
     "website:capture": "node website/scripts/capture-product.mjs"
   },
   "dependencies": {
-    "ag-psd": "31.0.2"
+    "ag-psd": "31.0.2",
+    "gifuct-js": "2.1.2"
   },
   "devDependencies": {
     "@tauri-apps/api": "2.11.1",

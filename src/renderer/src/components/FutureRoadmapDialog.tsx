@@ -12,7 +12,7 @@ const roadmapItems: Array<{ id: string; label: TranslationKey; category: Transla
   { id: 'clipping-mask', label: 'roadmap.item.clippingMask', category: 'roadmap.category.masksLayers', completed: true },
   { id: 'mask', label: 'roadmap.item.mask', category: 'roadmap.category.masksLayers', completed: true },
   { id: 'layer-style', label: 'roadmap.item.layerStyle', category: 'roadmap.category.masksLayers', completed: true },
-  { id: 'linked-layers', label: 'roadmap.item.linkedLayers', category: 'roadmap.category.masksLayers', completed: false },
+  { id: 'linked-layers', label: 'roadmap.item.linkedLayers', category: 'roadmap.category.masksLayers', completed: true },
   { id: 'dither-brush', label: 'roadmap.item.ditherBrush', category: 'roadmap.category.tools', completed: true },
   { id: 'text', label: 'roadmap.item.text', category: 'roadmap.category.tools', completed: true },
   { id: 'pressure', label: 'roadmap.item.pressure', category: 'roadmap.category.input', completed: true },

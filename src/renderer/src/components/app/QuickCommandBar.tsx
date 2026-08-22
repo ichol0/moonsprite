@@ -2,7 +2,7 @@ import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState, type C
 import { PixelUtilityIcon } from '@/components/PixelUtilityIcon'
 import { Tooltip } from '@/components/Tooltip'
 import { useI18n } from '@/components/I18nProvider'
-import { loadEditorPreferences, type QuickCommandId, type QuickCommandPreference } from '@/core/file-preferences'
+import { loadEditorPreferences, saveEditorPreferences, type QuickCommandId, type QuickCommandPreference } from '@/core/file-preferences'
 import { useWorkspace } from '@/store/workspace'
 import { QUICK_COMMAND_METADATA, type QuickCommandMetadata, type QuickCommandSettingsTarget } from './quick-command-registry'
 
@@ -138,7 +138,13 @@ export const QuickCommandBar = memo(function QuickCommandBar({ documentId, short
     const state = useWorkspace.getState()
     const wasActive = activeId === documentId
     if (!wasActive) state.setActive(documentId)
-    state.setViewForDocument(documentId, { quickCommandBarExpanded: wasActive ? !expanded : true })
+    const nextExpanded = wasActive ? !expanded : true
+    state.setViewForDocument(documentId, { quickCommandBarExpanded: nextExpanded })
+    const currentPreferences = loadEditorPreferences()
+    if (currentPreferences.quickCommandBarExpanded !== nextExpanded) {
+      saveEditorPreferences({ ...currentPreferences, quickCommandBarExpanded: nextExpanded })
+      window.dispatchEvent(new Event('moonsprite:preferences-changed'))
+    }
   }
   const startMoving = (event: ReactPointerEvent<HTMLButtonElement>): void => {
     if (event.button !== 0) return

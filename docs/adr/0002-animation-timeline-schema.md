@@ -1,5 +1,7 @@
 # 0002：动画时间轴与静态图层数据分离
 
+中文 | [English](0002-animation-timeline-schema.en.md)
+
 状态：接受
 
 ## 背景

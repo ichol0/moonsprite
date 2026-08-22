@@ -105,6 +105,76 @@ export interface BackgroundPresetListing {
   directoryPath: string
   presets: StoredBackgroundPreset[]
 }
+
+export interface LuaScriptEntry {
+  id: string
+  name: string
+  filePath: string
+  extensionId?: string
+  extensionName?: string
+  extensionCommandId?: string
+  extensionDescription?: string
+}
+
+export interface LuaScriptListing {
+  directoryPath: string
+  scripts: LuaScriptEntry[]
+}
+
+export interface StoredExtension {
+  id: string
+  name: string
+  version: string
+  description: string
+  author: string
+  apiVersion?: string
+  entry?: string
+  commands: StoredExtensionCommand[]
+  panels: StoredExtensionPanel[]
+  menuItems: StoredExtensionMenuItem[]
+  topMenus: StoredExtensionTopMenu[]
+  filePath: string
+  enabled: boolean
+}
+
+export interface StoredExtensionCommand {
+  id: string
+  name: string
+  description: string
+  entry: string
+}
+
+export interface StoredExtensionPanel {
+  id: string
+  name: string
+  description: string
+  defaultVisible: boolean
+  commands: string[]
+}
+
+export type ExtensionBuiltInMenuId = 'file' | 'edit' | 'select' | 'canvas' | 'layer' | 'window' | 'help'
+export type ExtensionMenuItemPosition = 'start' | 'end'
+export type ExtensionTopMenuPosition = ExtensionMenuItemPosition | `before:${ExtensionBuiltInMenuId}` | `after:${ExtensionBuiltInMenuId}`
+
+export interface StoredExtensionMenuItem {
+  id: string
+  menu: ExtensionBuiltInMenuId
+  position: ExtensionMenuItemPosition
+  commands: string[]
+}
+
+export interface StoredExtensionTopMenu {
+  id: string
+  name: string
+  description: string
+  position: ExtensionTopMenuPosition
+  commands: string[]
+}
+
+export interface ExtensionListing {
+  directoryPath: string
+  extensions: StoredExtension[]
+}
 export type ShapeKind = 'rectangle' | 'ellipse' | 'rectangle-outline' | 'ellipse-outline' | 'freeform' | 'polygon'
 export type LineKind = 'line' | 'curve'
 export interface ShapeRatio { width: number; height: number }
@@ -364,6 +434,8 @@ export interface BackgroundLayerSettings {
 export interface RgbaLayer {
   id: string
   name: string
+  /** Stable group whose ordinary raster layers share editable pixel content. */
+  linkedContentId?: string
   /** Optional visual marker shown in the layer panel. */
   displayColor?: RgbaColor
   /** Optional user-facing note shown when hovering the layer row. */
@@ -401,6 +473,8 @@ export interface RgbaLayer {
 export interface IndexedLayer {
   id: string
   name: string
+  /** Stable group whose ordinary raster layers share editable pixel content. */
+  linkedContentId?: string
   /** Optional visual marker shown in the layer panel. */
   displayColor?: RgbaColor
   /** Optional user-facing note shown when hovering the layer row. */
@@ -593,7 +667,7 @@ export interface DocumentSlice {
 }
 
 export interface SpriteDocument {
-  schemaVersion: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16
+  schemaVersion: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 17
   id: string
   name: string
   width: number
@@ -827,6 +901,125 @@ export interface BinaryReadProgress {
   totalBytes: number
 }
 
+export interface LuaScriptExecutionContext {
+  documentId: string
+  documentName: string
+  documentWidth: number
+  documentHeight: number
+  documentFilePath: string
+  colorMode: ColorMode
+  layerId: string
+  layerName: string
+  layerWidth: number
+  layerHeight: number
+  layerOffsetX: number
+  layerOffsetY: number
+  layerOpacity: number
+  layerVisible: boolean
+  layerLocked: boolean
+  layerFormat: RasterLayer['format']
+  frameNumber: number
+  pixels: number[]
+  selection: {
+    x: number
+    y: number
+    width: number
+    height: number
+    mask: number[] | null
+  } | null
+  transparentColor: number
+  foreground: number
+  background: number
+}
+
+export type LuaScriptDialogValue = string | number | boolean | RgbaColor | null
+export type LuaScriptDialogEvent = 'change' | 'release' | 'click' | 'close'
+export type LuaScriptDialogControlKind = 'button' | 'check' | 'color' | 'combobox' | 'entry' | 'label' | 'number' | 'radio' | 'separator' | 'slider'
+
+export interface LuaScriptDialogControl {
+  id: string
+  dataKey: string | null
+  kind: LuaScriptDialogControlKind
+  label: string
+  text: string
+  value: LuaScriptDialogValue
+  min: number | null
+  max: number | null
+  step: number | null
+  decimals: number | null
+  options: string[]
+  enabled: boolean
+  visible: boolean
+}
+
+export interface LuaScriptDialog {
+  id: string
+  title: string
+  controls: LuaScriptDialogControl[]
+}
+
+export interface LuaScriptDialogAction {
+  dialogId: string
+  controlId: string | null
+  event: LuaScriptDialogEvent
+  values: Record<string, LuaScriptDialogValue>
+}
+
+export interface LuaScriptPixelChange {
+  index: number
+  before: number
+  after: number
+}
+
+export interface LuaScriptBatch {
+  label: string
+  changes: LuaScriptPixelChange[]
+  surfaceChange: {
+    before: LuaScriptSurfaceSnapshot
+    after: LuaScriptSurfaceSnapshot
+  } | null
+}
+
+export interface LuaScriptSurfaceSnapshot {
+  format: RasterLayer['format']
+  width: number
+  height: number
+  offsetX: number
+  offsetY: number
+  pixels: number[]
+}
+
+export interface LuaScriptCreatedLayer {
+  id: string
+  name: string
+  opacity: number
+  visible: boolean
+  locked: boolean
+  frameNumber: number
+  surface: LuaScriptSurfaceSnapshot
+}
+
+export interface LuaScriptCreatedDocument {
+  name: string
+  width: number
+  height: number
+  colorMode: ColorMode
+  layers: LuaScriptCreatedLayer[]
+}
+
+export interface LuaScriptRunResult {
+  sessionId: string | null
+  filePath: string
+  fileName: string
+  output: string[]
+  batches: LuaScriptBatch[]
+  createdLayers: LuaScriptCreatedLayer[]
+  createdDocuments: LuaScriptCreatedDocument[]
+  dialogs: LuaScriptDialog[]
+  finished: boolean
+  elapsedMs: number
+}
+
 export interface MoonSpriteApi {
   openFiles(): Promise<OpenDialogResult>
   openBrushImages(): Promise<OpenDialogResult>
@@ -884,6 +1077,17 @@ export interface MoonSpriteApi {
   ensureBuiltinExample(): Promise<string | null>
   openProjectInFolder(filePath: string): Promise<void>
   openExternalUrl(url: string): Promise<void>
+  listLuaScripts(): Promise<LuaScriptListing>
+  openLuaScriptFolder(): Promise<void>
+  runLuaScript(scriptId: string, context: LuaScriptExecutionContext): Promise<LuaScriptRunResult>
+  dispatchLuaScriptDialog(sessionId: string, action: LuaScriptDialogAction, context: LuaScriptExecutionContext): Promise<LuaScriptRunResult>
+  closeLuaScriptSession(sessionId: string): Promise<void>
+  listExtensions(): Promise<ExtensionListing>
+  installExtension(filePath: string): Promise<StoredExtension>
+  chooseAndInstallExtension(): Promise<StoredExtension | null>
+  setExtensionEnabled(id: string, enabled: boolean): Promise<StoredExtension>
+  uninstallExtension(id: string): Promise<void>
+  openExtensionFolder(): Promise<void>
   getResourceInfo(): Promise<ResourceInfo>
   confirmUnsaved(name: string): Promise<'save' | 'discard' | 'cancel'>
   pathForFile(file: unknown): string

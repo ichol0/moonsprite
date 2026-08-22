@@ -1,5 +1,7 @@
 # MoonSprite UI 设计规范
 
+中文 | [English](ui-design-system.en.md)
+
 本文定义 MoonSprite 桌面像素编辑器的界面基础、组件规格和实现约束。组件库与生产界面必须共同使用这里的规格，不得分别维护仅用于展示的仿制样式。
 
 ## 设计原则

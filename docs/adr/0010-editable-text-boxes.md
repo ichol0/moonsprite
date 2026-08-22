@@ -1,5 +1,7 @@
 # ADR-0010: Editable Text Boxes
 
+[中文](0010-editable-text-boxes.zh-CN.md) | English
+
 ## Status
 
 Accepted

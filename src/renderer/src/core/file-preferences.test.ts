@@ -17,6 +17,7 @@ import {
   NEW_DOCUMENT_SIZE_PRESETS_KEY,
   PIXEL_GRID_COLOR_PREFERENCE_KEY,
   QUICK_COMMAND_BAR_ENABLED_PREFERENCE_KEY,
+  QUICK_COMMAND_BAR_EXPANDED_PREFERENCE_KEY,
   QUICK_COMMAND_BAR_TRANSLUCENT_PREFERENCE_KEY,
   QUICK_COMMAND_PREFERENCES_KEY,
   RECOVERY_MINUTES_PREFERENCE_KEY,
@@ -244,6 +245,7 @@ describe('editor preferences persistence boundary', () => {
     expect(defaults.symmetryAxis).toEqual({ locked: false, color: { r: 0, g: 0, b: 255, a: 255 }, thickness: 1 })
     expect(defaults.timelapseRecordingEnabled).toBe(false)
     expect(defaults.quickCommandBarEnabled).toBe(true)
+    expect(defaults.quickCommandBarExpanded).toBe(false)
     expect(defaults.quickCommandBarTranslucent).toBe(true)
     expect(defaults.quickCommandPreferences.filter((item) => item.enabled).map((item) => item.id)).toEqual(['selectionFlipHorizontal', 'selectionFlipVertical', 'canvasMirrorHorizontal', 'canvasMirrorVertical', 'invertSelection', 'customGrid', 'tileRepeatX', 'tileRepeatY', 'tileRepeatBoth', 'relativeLuminance'])
 
@@ -316,11 +318,13 @@ describe('editor preferences persistence boundary', () => {
     expect(storage.get(MOVE_LAYER_CLICK_FLASH_DURATION_PREFERENCE_KEY)).toBe('80')
     expect(loadEditorPreferences(adapter).moveLayerClickFlashDuration).toBe(80)
     const reorderedQuickCommands = [...loadEditorPreferences(adapter).quickCommandPreferences].reverse().map((item, index) => ({ ...item, enabled: index < 3 }))
-    saveEditorPreferences({ ...loadEditorPreferences(adapter), quickCommandBarEnabled: false, quickCommandBarTranslucent: false, quickCommandPreferences: reorderedQuickCommands }, adapter)
+    saveEditorPreferences({ ...loadEditorPreferences(adapter), quickCommandBarEnabled: false, quickCommandBarExpanded: true, quickCommandBarTranslucent: false, quickCommandPreferences: reorderedQuickCommands }, adapter)
     expect(storage.get(QUICK_COMMAND_BAR_ENABLED_PREFERENCE_KEY)).toBe('false')
+    expect(storage.get(QUICK_COMMAND_BAR_EXPANDED_PREFERENCE_KEY)).toBe('true')
     expect(storage.get(QUICK_COMMAND_BAR_TRANSLUCENT_PREFERENCE_KEY)).toBe('false')
     expect(storage.has(QUICK_COMMAND_PREFERENCES_KEY)).toBe(true)
     expect(loadEditorPreferences(adapter).quickCommandBarEnabled).toBe(false)
+    expect(loadEditorPreferences(adapter).quickCommandBarExpanded).toBe(true)
     expect(loadEditorPreferences(adapter).quickCommandBarTranslucent).toBe(false)
     expect(loadEditorPreferences(adapter).quickCommandPreferences).toEqual(reorderedQuickCommands)
     saveEditorPreferences({ ...loadEditorPreferences(adapter), eyedropperMagnifierStyle: 'line' }, adapter)

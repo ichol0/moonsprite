@@ -1,5 +1,7 @@
 # ADR 0001：把可验证规则集中到 core
 
+中文 | [English](0001-core-boundaries.en.md)
+
 ## 状态
 
 已接受。

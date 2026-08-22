@@ -131,6 +131,7 @@ export const documentStructureDeltaBytes = (before: DocumentStructureSnapshot, a
 
 interface LayerDefinitionSnapshot {
   name: string
+  linkedContentId?: string
   kind?: RasterLayer['kind']
   tilemapTilesetId?: string
   freeTileSources?: FreeTileSourceLayer[]
@@ -159,6 +160,7 @@ export const captureLayerContentSnapshot = (document: SpriteDocument, layerId: s
     layerId,
     definition: {
       name: layer.name,
+      linkedContentId: layer.linkedContentId,
       kind: layer.kind,
       tilemapTilesetId: layer.tilemapTilesetId,
       freeTileSources: layer.freeTileSources?.map((source) => ({ ...source, displayColor: source.displayColor ? { ...source.displayColor } : undefined })),
@@ -179,6 +181,8 @@ export const restoreLayerContentSnapshot = (document: SpriteDocument, snapshot: 
   const layer = document.layers.find((candidate) => candidate.id === snapshot.layerId)
   if (!layer) return
   layer.name = snapshot.definition.name
+  if (snapshot.definition.linkedContentId) layer.linkedContentId = snapshot.definition.linkedContentId
+  else delete layer.linkedContentId
   if (snapshot.definition.kind) layer.kind = snapshot.definition.kind
   else delete layer.kind
   if (snapshot.definition.tilemapTilesetId) layer.tilemapTilesetId = snapshot.definition.tilemapTilesetId

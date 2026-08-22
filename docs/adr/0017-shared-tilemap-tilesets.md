@@ -1,5 +1,7 @@
 # 0017：Tilemap 图层共享项目瓦片集
 
+中文 | [English](0017-shared-tilemap-tilesets.en.md)
+
 ## 状态
 
 接受

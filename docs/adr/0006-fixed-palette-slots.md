@@ -1,5 +1,7 @@
 # ADR-0006: Adaptive Palette Slots
 
+[中文](0006-fixed-palette-slots.zh-CN.md) | English
+
 ## Status
 
 Accepted

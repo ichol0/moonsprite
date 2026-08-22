@@ -1,0 +1,86 @@
+# Lua 脚本
+
+中文 | [English](README.en.md)
+
+MoonSprite 的脚本运行在受限的 Lua 5.4 沙箱中。普通脚本文件放在程序根目录的 `scripts` 文件夹内，用户可以从“文件 > 脚本”打开。`.msext` 扩展可以把命令插入现有菜单、新增顶层菜单，或通过“窗口 > 栏目”提供浮动栏目；这些入口复用完全相同的运行时。脚本不能直接读写文件、启动进程、访问网络或加载任意 Lua 包。
+
+## 可运行扩展
+
+扩展包是 ZIP 容器，根目录的 `manifest.json` 可以声明多个 Lua 命令和由 MoonSprite 渲染的栏目：
+
+```json
+{
+  "schemaVersion": 1,
+  "id": "com.example.sample",
+  "name": "Sample Extension",
+  "version": "1.0.0",
+  "description": "Example extension contributions.",
+  "commands": [
+    {
+      "id": "paint-center",
+      "name": "Paint Center Pixel",
+      "description": "Writes one undoable test pixel.",
+      "entry": "commands/paint-center.lua"
+    }
+  ],
+  "panels": [
+    {
+      "id": "smoke-tools",
+      "name": "Smoke Tools",
+      "description": "Commands contributed by this extension.",
+      "defaultVisible": true,
+      "commands": ["paint-center"]
+    }
+  ],
+  "menuItems": [
+    {
+      "id": "file-paint",
+      "menu": "file",
+      "position": "end",
+      "commands": ["paint-center"]
+    }
+  ],
+  "topMenus": [
+    {
+      "id": "sample-tools",
+      "name": "Sample Tools",
+      "position": "before:help",
+      "commands": ["paint-center"]
+    }
+  ]
+}
+```
+
+安装后，扩展必须处于启用状态才会贡献菜单命令和栏目。`commands[]` 只声明可运行命令，内部标识为 `extension:<extensionId>:<commandId>`；`menuItems[]` 决定命令插入哪个内置菜单的开头或末尾，`topMenus[]` 声明新的顶层菜单及其相对位置，`panels[]` 声明可从“窗口 > 栏目”切换的浮动栏目。所有命令 ID 引用区分大小写。
+
+点击菜单项或栏目按钮时，命令会像普通 Lua 脚本一样获得当前文档、图层、帧和选区快照；像素修改、事务、对话框、撤销和失败回滚全部沿用现有脚本规则。停用、卸载或入口文件不再通过安全校验时，命令与栏目都会消失，也不能通过 Renderer 传入路径强行执行。
+
+MoonSprite 不提供固定的顶层“扩展”菜单。为兼容早期扩展，根清单仍可提供单个 `entry`，它使用 `extension:<id>` 标识并显示在“文件 > 脚本”；没有被任何菜单或栏目引用的具名命令也会回退到该列表。新扩展应优先声明具名 `commands[]` 和明确的 UI 贡献。扩展 UI 是声明式的：扩展不能注入 React、DOM、CSS、JavaScript 或原生控件，也不能通过 `require` 加载包内或系统文件。
+
+命令执行画布写入时应显式使用事务，以便一次命令形成一次撤销：
+
+```lua
+app.transaction("Extension paint", function()
+  app.activeImage:putPixel(0, 0, app.pixelColor.rgba(41, 121, 255, 255))
+end)
+```
+
+## 两套命名空间
+
+- `app.*` 是 Aseprite 兼容 API。它用于迁移已有脚本，当前只实现项目明确列出的兼容子集。
+- `mse.*` 是 MoonSprite 专属 API。它不会伪装成 Aseprite API，也不会暴露内部 `SpriteDocument` 或 Renderer 状态。
+
+完整的 MSE API 外形、端点状态和错误约定见 [mse-api.md](mse-api.md)。编辑器类型提示见 [mse-api.lua](mse-api.lua)，可以将它加入 VS Code 的 LuaLS 工作区库路径。
+
+## 当前可用接口
+
+首版只开放安全的只读查询：
+
+```lua
+local document = mse.document.info()
+local selection = mse.selection.info()
+```
+
+脚本可以用 `mse.apiVersion`、`mse.status` 和 `mse.capabilities` 判断运行时版本与端点状态，也可以用 `mse.isSupported("document.info")` 做能力探测。规划中的端点已经出现在能力表中，但调用时会返回明确错误，不会静默成功。
+
+可运行示例见 [examples/intro.lua](examples/intro.lua)。
