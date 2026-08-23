@@ -3,6 +3,7 @@ import { access, mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { chromium } from 'playwright'
+import { allowsTauriIpc } from './csp-policy.mjs'
 
 const executable = join(process.cwd(), 'src-tauri', 'target', 'release', 'moonsprite.exe')
 const startupProject = join(process.cwd(), 'src-tauri', 'resources', '示例.moonsprite')
@@ -62,7 +63,7 @@ try {
     return {
       restored: [...restored],
       hasMemory: memory.totalBytes > 0 && memory.freeBytes > 0,
-      allowsTauriIpc: policy.includes('http://ipc.localhost')
+      allowsTauriIpc: allowsTauriIpc(policy)
     }
   }, temporaryFile)
   if (result.restored.join(',') !== '77,111,111,110' || !result.hasMemory || !result.allowsTauriIpc) throw new Error('Tauri IPC bridge or renderer policy is invalid.')
