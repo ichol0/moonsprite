@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { ToolId } from '@shared/types'
 import { paletteSamplingShortcutActive } from '@/core/palette-sampling-shortcut'
-import { loadShortcuts, modifierShortcutHeld } from '@/core/shortcuts'
+import { loadShortcutBindings, modifierShortcutHeldByBindings, shortcutBindingsFor } from '@/core/shortcuts'
+import { useQuickToolShortcut } from '@/components/useQuickToolShortcut'
 
 type ModifierState = Pick<KeyboardEvent, 'ctrlKey' | 'metaKey' | 'altKey' | 'shiftKey'>
 
@@ -22,23 +23,26 @@ const modifierState = (event: ModifierState): ModifierState => ({
 export const panelColorSamplingActive = (
   tool: ToolId,
   modifiers: ModifierState,
-  temporaryEyedropperShortcut: string,
-  paletteSamplingActive = false
+  quickEyedropperShortcuts: readonly string[],
+  paletteSamplingActive = false,
+  heldQuickEyedropperActive = false
 ): boolean => tool === 'eyedropper'
   || paletteSamplingActive
-  || modifierShortcutHeld(modifiers, temporaryEyedropperShortcut)
+  || heldQuickEyedropperActive
+  || modifierShortcutHeldByBindings(modifiers, quickEyedropperShortcuts)
 
 export function usePanelColorSampling(tool: ToolId): {
   active: boolean
   activeForEvent: (event: ModifierState) => boolean
 } {
-  const [shortcuts, setShortcuts] = useState(loadShortcuts)
+  const [shortcuts, setShortcuts] = useState(loadShortcutBindings)
   const [modifiers, setModifiers] = useState<ModifierState>(EMPTY_MODIFIERS)
+  const quickToolMatch = useQuickToolShortcut(shortcuts)
 
   useEffect(() => {
     const updateModifiers = (event: KeyboardEvent): void => setModifiers(modifierState(event))
     const clearModifiers = (): void => setModifiers(EMPTY_MODIFIERS)
-    const refreshShortcuts = (): void => setShortcuts(loadShortcuts())
+    const refreshShortcuts = (): void => setShortcuts(loadShortcutBindings())
     const visibilityChange = (): void => { if (document.hidden) clearModifiers() }
     window.addEventListener('keydown', updateModifiers)
     window.addEventListener('keyup', updateModifiers)
@@ -54,16 +58,18 @@ export function usePanelColorSampling(tool: ToolId): {
     }
   }, [])
 
-  const temporaryEyedropperShortcut = shortcuts.temporaryEyedropper ?? ''
+  const quickEyedropperShortcuts = shortcutBindingsFor(shortcuts, 'tool.eyedropper.quick')
+  const heldQuickEyedropperActive = quickToolMatch?.target.tool === 'eyedropper'
   const activeForEvent = useCallback((event: ModifierState): boolean => panelColorSamplingActive(
     tool,
     event,
-    temporaryEyedropperShortcut,
-    paletteSamplingShortcutActive()
-  ), [temporaryEyedropperShortcut, tool])
+    quickEyedropperShortcuts,
+    paletteSamplingShortcutActive(),
+    heldQuickEyedropperActive
+  ), [heldQuickEyedropperActive, quickEyedropperShortcuts, tool])
 
   return {
-    active: panelColorSamplingActive(tool, modifiers, temporaryEyedropperShortcut, paletteSamplingShortcutActive()),
+    active: panelColorSamplingActive(tool, modifiers, quickEyedropperShortcuts, paletteSamplingShortcutActive(), heldQuickEyedropperActive),
     activeForEvent
   }
 }

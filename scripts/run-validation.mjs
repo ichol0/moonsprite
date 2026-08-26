@@ -1,5 +1,6 @@
 import { existsSync } from 'node:fs'
 import { execFileSync, spawnSync } from 'node:child_process'
+import { performance } from 'node:perf_hooks'
 import { evaluateDevValidationRequest } from './dev-validation-policy.mjs'
 import { classifyValidationScope, getRendererCodeFiles } from './validation-scope.mjs'
 
@@ -7,7 +8,7 @@ const requestedMode = process.argv[2]
 const modeAliases = { fast: 'dev', integration: 'release' }
 const mode = modeAliases[requestedMode] ?? requestedMode
 if (!['dev', 'release'].includes(mode)) {
-  console.error('用法：node scripts/run-validation.mjs <dev|release> [--desktop] [--risk=high] [-- <文件...>]')
+  console.error('用法：node scripts/run-validation.mjs <dev|release> [--desktop] [--strict] [--risk=high] [-- <文件...>]')
   process.exit(1)
 }
 
@@ -24,6 +25,7 @@ const workingTreeFiles = () => [...new Set([
 ].filter((file) => !normalize(file).startsWith('resource/')))]
 
 const highRisk = options.has('--risk=high')
+const strict = options.has('--strict')
 const invalidRiskOptions = [...options].filter((option) => option.startsWith('--risk=') && option !== '--risk=high')
 if (invalidRiskOptions.length > 0) {
   console.error(`不支持的风险参数：${invalidRiskOptions.join(', ')}。当前仅支持 --risk=high。`)
@@ -31,11 +33,12 @@ if (invalidRiskOptions.length > 0) {
 }
 
 const devPolicy = mode === 'dev'
-  ? evaluateDevValidationRequest(requestedFiles, { highRisk })
+  ? evaluateDevValidationRequest(requestedFiles, { highRisk, strict })
   : null
 if (devPolicy?.errors.length) {
   for (const error of devPolicy.errors) console.error(error)
   console.error('示例：pnpm check:dev -- src/renderer/src/components/Toolbar.tsx')
+  console.error('严格类型检查：pnpm check:dev -- --strict src/renderer/src/components/Toolbar.tsx')
   console.error('高风险示例：pnpm check:dev -- --risk=high src/renderer/src/core/selection.ts src/renderer/src/core/selection.test.ts')
   process.exit(1)
 }
@@ -49,7 +52,10 @@ const scope = classifyValidationScope(files, {
 })
 const run = (command, commandArgs, runOptions = {}) => {
   console.log(`\n> ${command} ${commandArgs.join(' ')}`)
+  const startedAt = performance.now()
   const result = spawnSync(command, commandArgs, { stdio: 'inherit', shell: false, ...runOptions })
+  const elapsed = ((performance.now() - startedAt) / 1000).toFixed(2)
+  console.log(`耗时：${elapsed}s`)
   if (result.error) throw result.error
   if (result.status !== 0) process.exit(result.status ?? 1)
 }
@@ -63,6 +69,10 @@ const runPnpm = (commandArgs) => {
 }
 
 const webCodeFiles = scope.files.filter((file) => /^(src\/(renderer|shared)\/.*|vite\.config\.ts|vitest\.config\.ts|tsconfig.*\.json|package\.json|pnpm-lock\.yaml)$/.test(file) && /\.(ts|tsx|json|yaml)$/.test(file))
+const rendererOnlyTypecheck = mode === 'dev'
+  && scope.web
+  && scope.files.length > 0
+  && scope.files.every((file) => file.startsWith('src/renderer/'))
 const explicitVitestFiles = scope.files.filter((file) => /^src\/.*\.(test|spec)\.[cm]?[jt]sx?$/.test(file))
 const nodeTestFiles = scope.files.filter((file) => /^scripts\/.*\.test\.mjs$/.test(file))
 const versionFilesChanged = scope.files.some((file) => new Set([
@@ -75,7 +85,11 @@ const versionFilesChanged = scope.files.some((file) => new Set([
 const rendererCodeFiles = getRendererCodeFiles(scope.files).filter((file) => existsSync(file))
 
 console.log(`验证模式：${mode === 'dev' ? 'dev.X 开发' : 'dev.X 发布'}`)
-if (mode === 'dev') console.log(`风险：${highRisk ? '高风险（要求定向测试）' : '普通'}`)
+if (mode === 'dev') {
+  console.log(`风险：${highRisk ? '高风险（要求定向测试）' : '普通'}`)
+  const typecheckLabel = !devPolicy.runTypecheck ? '否' : rendererOnlyTypecheck ? '仅 web 项目' : '完整项目'
+  console.log(`开发档位：${devPolicy.tier}，类型检查：${typecheckLabel}`)
+}
 console.log(`范围：web=${scope.web}, rust=${scope.rust}, thumbnail=${scope.thumbnail}, desktop=${scope.desktop}`)
 
 if (mode === 'release') {
@@ -94,7 +108,13 @@ if (mode === 'dev' && nodeTestFiles.length > 0) {
 if (mode === 'dev' && versionFilesChanged) runPnpm(['check:version'])
 
 if (scope.web) {
-  if (mode === 'release' || webCodeFiles.length > 0) runPnpm(['typecheck'])
+  if (mode === 'release' || (webCodeFiles.length > 0 && devPolicy?.runTypecheck)) {
+    if (rendererOnlyTypecheck) {
+      runPnpm(['exec', 'tsc', '--noEmit', '-p', 'tsconfig.web.json'])
+    } else {
+      runPnpm(['typecheck'])
+    }
+  }
   if (mode === 'release') {
     runPnpm(['test'])
     runPnpm(['build:web'])

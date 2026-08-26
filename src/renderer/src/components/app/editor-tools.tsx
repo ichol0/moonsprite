@@ -1,4 +1,4 @@
-import type { FillKind, LineKind, MoveKind, SelectionKind, SelectionMode, ShapeKind, ToolId } from '@shared/types'
+import type { FillKind, GradientType, LineKind, MoveKind, SelectionKind, SelectionMode, ShapeKind, ToolId } from '@shared/types'
 import type { CSSProperties } from 'react'
 import type { ShortcutId } from '@/core/shortcuts'
 import { DEFAULT_APP_LOCALE, type AppLocale } from '@/core/localization'
@@ -34,6 +34,8 @@ import shapePolygonIcon from '@/assets/tool-icons/shape-polygon.svg'
 import shapeLineIcon from '@/assets/tool-icons/shape-line.svg'
 import shapeCurveIcon from '@/assets/tool-icons/shape-curve.svg'
 import toolGradientIcon from '@/assets/tool-icons/tool-gradient-6-6.svg'
+import gradientLinearIcon from '@/assets/tool-icons/gradient-linear.svg'
+import gradientRadialIcon from '@/assets/tool-icons/gradient-radial.svg'
 import toolGradientNormalIcon from '@/assets/tool-icons/tool-gradient-normal.svg'
 import toolPencilNormalIcon from '@/assets/tool-icons/tool-pencil-normal.svg'
 import toolAirbrushNormalIcon from '@/assets/tool-icons/tool-airbrush-normal.svg'
@@ -124,8 +126,8 @@ const SHAPE_KIND_BASE: Array<{
   shortcutId: ShortcutId
   icon: string
 }> = [
-  { id: 'rectangle-outline', shortcutId: 'tool.shape', icon: shapeRectangleIcon }, { id: 'rectangle', shortcutId: 'tool.shape', icon: shapeRectangleFillIcon }, { id: 'ellipse-outline', shortcutId: 'tool.shape', icon: shapeEllipseIcon }, { id: 'ellipse', shortcutId: 'tool.shape', icon: shapeEllipseFillIcon },
-  { id: 'freeform', shortcutId: 'tool.shape', icon: shapeFreeformIcon }, { id: 'polygon', shortcutId: 'tool.shape', icon: shapePolygonIcon }
+  { id: 'rectangle-outline', shortcutId: 'tool.shape.rectangleOutline', icon: shapeRectangleIcon }, { id: 'rectangle', shortcutId: 'tool.shape.rectangle', icon: shapeRectangleFillIcon }, { id: 'ellipse-outline', shortcutId: 'tool.shape.ellipseOutline', icon: shapeEllipseIcon }, { id: 'ellipse', shortcutId: 'tool.shape.ellipse', icon: shapeEllipseFillIcon },
+  { id: 'freeform', shortcutId: 'tool.shape.freeform', icon: shapeFreeformIcon }, { id: 'polygon', shortcutId: 'tool.shape.polygon', icon: shapePolygonIcon }
 ]
 export const shapeKindDefinitions = (locale: AppLocale) => SHAPE_KIND_BASE.map((item) => ({ ...item, ...shapeToolCopyByLocale[locale][item.id] }))
 
@@ -142,6 +144,10 @@ const FILL_KIND_BASE: Array<{ id: FillKind; shortcutId: ShortcutId; icon: string
 
 export const fillKindDefinitions = (locale: AppLocale) => FILL_KIND_BASE.map((item) => ({ ...item, ...fillToolCopyByLocale[locale][item.id] }))
 export const FILL_KIND_ICONS = Object.fromEntries(FILL_KIND_BASE.map((item) => [item.id, item.icon])) as Record<FillKind, string>
+export const GRADIENT_TYPE_ICONS: Record<GradientType, string> = {
+  linear: gradientLinearIcon,
+  radial: gradientRadialIcon
+}
 export const SHAPE_KIND_DEFINITIONS = shapeKindDefinitions(DEFAULT_APP_LOCALE)
 
 export interface ActiveToolPresentation {
@@ -201,6 +207,7 @@ export const ALL_EDITOR_TOOL_ICONS = [...new Set([
   ...SHAPE_KIND_BASE.map((item) => item.icon),
   ...LINE_KIND_BASE.map((item) => item.icon),
   ...FILL_KIND_BASE.map((item) => item.icon),
+  ...Object.values(GRADIENT_TYPE_ICONS),
   ...NORMAL_EDITOR_TOOL_ICON_BY_SOURCE.values()
 ])]
 

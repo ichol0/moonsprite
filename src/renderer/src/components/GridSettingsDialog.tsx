@@ -21,13 +21,13 @@ export function GridSettingsDialog({ value, onApply, onClose }: GridSettingsDial
   }
 
   return <div className="modal-backdrop" role="presentation" onPointerDown={(event) => { if (event.target === event.currentTarget) onClose() }}>
-    <ModalShell as="form" storageKey="grid-settings" defaultWidth={360} defaultHeight={220} fitContentKey="grid-settings-fields" minWidth={320} minHeight={210} maxWidth={480} maxHeight={360} className="grid-settings-modal" onSubmit={(event) => { event.preventDefault(); onApply(normalizeGridSettings(draft)); onClose() }} aria-labelledby="grid-settings-title">
+    <ModalShell as="form" storageKey="grid-settings-v2" defaultWidth={360} defaultHeight={240} fitContentKey="grid-settings-fields-v2" minWidth={320} minHeight={230} maxWidth={480} maxHeight={360} className="grid-settings-modal" onSubmit={(event) => { event.preventDefault(); onApply(normalizeGridSettings(draft)); onClose() }} aria-labelledby="grid-settings-title">
       <DialogHeader title={t('gridSettings.title')} titleId="grid-settings-title" closeLabel={t('common.close')} onClose={onClose} />
       <div className="modal-body grid-settings-body">
-        <FormField layout="inline" label={t('gridSettings.x')}><NumberInput live autoFocus value={draft.x} step={1} suffix="px" onFocus={(event) => event.currentTarget.select()} onValueChange={(next) => update('x', next)} /></FormField>
-        <FormField layout="inline" label={t('gridSettings.y')}><NumberInput live value={draft.y} step={1} suffix="px" onValueChange={(next) => update('y', next)} /></FormField>
-        <FormField layout="inline" label={t('gridSettings.width')}><NumberInput live value={draft.width} min={1} step={1} suffix="px" onValueChange={(next) => update('width', next)} /></FormField>
-        <FormField layout="inline" label={t('gridSettings.height')}><NumberInput live value={draft.height} min={1} step={1} suffix="px" onValueChange={(next) => update('height', next)} /></FormField>
+        <FormField label={t('gridSettings.x')}><NumberInput live autoFocus value={draft.x} step={1} suffix="px" onFocus={(event) => event.currentTarget.select()} onValueChange={(next) => update('x', next)} /></FormField>
+        <FormField label={t('gridSettings.y')}><NumberInput live value={draft.y} step={1} suffix="px" onValueChange={(next) => update('y', next)} /></FormField>
+        <FormField label={t('gridSettings.width')}><NumberInput live value={draft.width} min={1} step={1} suffix="px" onValueChange={(next) => update('width', next)} /></FormField>
+        <FormField label={t('gridSettings.height')}><NumberInput live value={draft.height} min={1} step={1} suffix="px" onValueChange={(next) => update('height', next)} /></FormField>
       </div>
       <footer><button type="button" className="quiet-button" onClick={onClose}>{t('common.cancel')}</button><button type="submit" className="primary-button">{t('common.done')}</button></footer>
     </ModalShell>

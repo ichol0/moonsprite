@@ -1,6 +1,6 @@
 import { Channel, invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
-import type { BinaryReadProgress, ClipboardImage, ClipboardImageSize, ExtensionListing, MoonSpriteApi, ProjectPreview, RgbaColor, SaveDialogFormat, StoredBrush, StoredBrushFolder, StoredExtension, StoredPalette, StoredWorkspace } from '@shared/types'
+import type { BinaryReadProgress, ClipboardImage, ClipboardImageSize, ExtensionListing, MoonSpriteApi, ProjectPreview, RgbaColor, SaveDialogFormat, ScaledPngWriteOptions, ScaledPngWriteResult, StoredBackgroundPreset, StoredBrush, StoredBrushFolder, StoredExtension, StoredPalette, StoredWorkspace } from '@shared/types'
 import { builtInPalettes } from '@/core/built-in-palettes'
 import { brushFolderContains, remapBrushFolderId } from '@/core/brush-folder-tree'
 import { loadEditorPreferences } from '@/core/file-preferences'
@@ -12,6 +12,7 @@ const dialogLanguage = (): string => loadEditorPreferences().language
 
 const browserRecoveries = new Map<string, { name: string; data: Uint8Array; updatedAt: string }>()
 const browserBrushes = new Map<string, { stored: StoredBrush; data: Uint8Array }>()
+const browserBackgroundPresets = new Map<string, { stored: StoredBackgroundPreset; data: Uint8Array }>()
 let browserBrushOrder: string[] = []
 const browserBrushFolders = new Map<string, StoredBrushFolder>()
 const browserPalettes = new Map<string, StoredPalette>(builtInPalettes.map((palette) => [palette.id, {
@@ -22,8 +23,8 @@ const browserPalettes = new Map<string, StoredPalette>(builtInPalettes.map((pale
 }]))
 const browserWorkspaces = new Map<string, StoredWorkspace>([['builtin-default', {
   id: 'builtin-default', name: tr('app.workspace.default'), filePath: '', updatedAt: '', builtIn: true,
-  layout: { panelDocks: { color: 'left', palette: 'left', layers: 'bottom', preview: 'bottom', tileset: 'right', brushes: 'right' }, panelVisibility: { color: true, palette: true, layers: true, preview: true, tileset: false, brushes: true }, inspectorWidth: 300, leftDockWidth: 280, bottomDockHeight: 220, inspectorWidthRatio: 0.20833333333333334, leftDockWidthRatio: 0.19444444444444445, bottomDockHeightRatio: 0.275, toolRailSide: 'right', previewOpen: true, inspectorLayout: '{"order":["palette","color","layers","brushes","tileset","preview"],"verticalWeights":{"color":330,"palette":620,"layers":560,"preview":220,"tileset":280,"brushes":240},"bottomWeights":{"color":280,"palette":280,"layers":720,"preview":280,"tileset":360,"brushes":320}}', colorSquareDock: 'left', colorSquareAnchor: 'end', floatingPanels: { color: null, palette: null, layers: null, preview: null, tileset: null, brushes: null }, mainWindow: null },
-  initialLayout: { panelDocks: { color: 'left', palette: 'left', layers: 'bottom', preview: 'bottom', tileset: 'right', brushes: 'right' }, panelVisibility: { color: true, palette: true, layers: true, preview: true, tileset: false, brushes: true }, inspectorWidth: 300, leftDockWidth: 280, bottomDockHeight: 220, inspectorWidthRatio: 0.20833333333333334, leftDockWidthRatio: 0.19444444444444445, bottomDockHeightRatio: 0.275, toolRailSide: 'right', previewOpen: true, inspectorLayout: '{"order":["palette","color","layers","brushes","tileset","preview"],"verticalWeights":{"color":330,"palette":620,"layers":560,"preview":220,"tileset":280,"brushes":240},"bottomWeights":{"color":280,"palette":280,"layers":720,"preview":280,"tileset":360,"brushes":320}}', colorSquareDock: 'left', colorSquareAnchor: 'end', floatingPanels: { color: null, palette: null, layers: null, preview: null, tileset: null, brushes: null }, mainWindow: null }
+  layout: { panelDocks: { color: 'left', palette: 'left', layers: 'bottom', freeTileInstances: 'bottom', history: 'right', preview: 'bottom', tileset: 'right', brushes: 'right' }, panelVisibility: { color: true, palette: true, layers: true, freeTileInstances: false, history: true, preview: true, tileset: false, brushes: true }, inspectorWidth: 300, leftDockWidth: 280, bottomDockHeight: 220, inspectorWidthRatio: 0.20833333333333334, leftDockWidthRatio: 0.19444444444444445, bottomDockHeightRatio: 0.275, toolRailSide: 'right', previewOpen: true, inspectorLayout: '{"order":["palette","color","layers","freeTileInstances","history","brushes","tileset","preview"],"verticalWeights":{"color":330,"palette":620,"layers":560,"freeTileInstances":180,"history":220,"preview":220,"tileset":280,"brushes":240},"bottomWeights":{"color":280,"palette":280,"layers":720,"freeTileInstances":300,"history":320,"preview":280,"tileset":360,"brushes":320}}', colorSquareDock: 'left', colorSquareAnchor: 'end', floatingPanels: { color: null, palette: null, layers: null, freeTileInstances: null, history: null, preview: null, tileset: null, brushes: null }, mainWindow: null },
+  initialLayout: { panelDocks: { color: 'left', palette: 'left', layers: 'bottom', freeTileInstances: 'bottom', history: 'right', preview: 'bottom', tileset: 'right', brushes: 'right' }, panelVisibility: { color: true, palette: true, layers: true, freeTileInstances: false, history: true, preview: true, tileset: false, brushes: true }, inspectorWidth: 300, leftDockWidth: 280, bottomDockHeight: 220, inspectorWidthRatio: 0.20833333333333334, leftDockWidthRatio: 0.19444444444444445, bottomDockHeightRatio: 0.275, toolRailSide: 'right', previewOpen: true, inspectorLayout: '{"order":["palette","color","layers","freeTileInstances","history","brushes","tileset","preview"],"verticalWeights":{"color":330,"palette":620,"layers":560,"freeTileInstances":180,"history":220,"preview":220,"tileset":280,"brushes":240},"bottomWeights":{"color":280,"palette":280,"layers":720,"freeTileInstances":300,"history":320,"preview":280,"tileset":360,"brushes":320}}', colorSquareDock: 'left', colorSquareAnchor: 'end', floatingPanels: { color: null, palette: null, layers: null, freeTileInstances: null, history: null, preview: null, tileset: null, brushes: null }, mainWindow: null }
 } as StoredWorkspace]])
 
 const readTauriResourceInfo = createResourceInfoReader(async () => {
@@ -36,6 +37,14 @@ const browserPaletteId = (name: string): string => {
   let id = base
   let suffix = 2
   while (browserPalettes.has(id)) id = `${base}-${suffix++}`
+  return id
+}
+
+const browserBackgroundPresetId = (name: string): string => {
+  const base = name.trim() || tr('backgroundPreset.selectionName')
+  let id = `${base}.png`
+  let suffix = 2
+  while (browserBackgroundPresets.has(id)) id = `${base} ${suffix++}.png`
   return id
 }
 
@@ -60,6 +69,8 @@ const createBrowserApi = (): MoonSpriteApi => ({
   readBinary: async (filePath) => {
     const brush = [...browserBrushes.values()].find((item) => item.stored.filePath === filePath)
     if (brush) return brush.data.slice()
+    const backgroundPreset = [...browserBackgroundPresets.values()].find((item) => item.stored.filePath === filePath)
+    if (backgroundPreset) return backgroundPreset.data.slice()
     throw new Error(tr('platform.browser.readUnsupported'))
   },
   readProjectPreview: async () => { throw new Error(tr('platform.browser.readUnsupported')) },
@@ -178,7 +189,13 @@ const createBrowserApi = (): MoonSpriteApi => ({
   importFont: async () => null,
   importSystemFont: async () => { throw new Error(tr('platform.browser.readUnsupported')) },
   deleteFont: async () => {},
-  listBackgroundPresets: async () => ({ directoryPath: 'BackgroundPresets', presets: [] }),
+  listBackgroundPresets: async () => ({ directoryPath: 'BackgroundPresets', presets: [...browserBackgroundPresets.values()].map((item) => ({ ...item.stored })) }),
+  saveBackgroundPreset: async (name, data) => {
+    const id = browserBackgroundPresetId(name)
+    const stored: StoredBackgroundPreset = { id, name: name.trim() || tr('backgroundPreset.selectionName'), filePath: `BackgroundPresets/${id}`, builtIn: false }
+    browserBackgroundPresets.set(id, { stored, data: data.slice() })
+    return { ...stored }
+  },
   openBackgroundPresetFolder: async () => {},
   listRecoveries: async (retentionDays) => {
     const cutoff = Date.now() - Math.max(1, Math.min(365, Math.round(retentionDays))) * 86_400_000
@@ -247,6 +264,53 @@ const writeBinaryAtomic = (filePath: string, data: Uint8Array): Promise<void> =>
   { headers: { 'x-moonsprite-file-path': encodeURIComponent(filePath) } }
 )
 
+const SCALED_PNG_PROGRESS_EVENT = 'moonsprite:scaled-png-progress'
+let scaledPngOperationSequence = 0
+
+const encodeHeaderBytes = (bytes: Uint8Array): string => {
+  let value = ''
+  for (const byte of bytes) value += byte.toString(16).padStart(2, '0')
+  return value
+}
+
+const writeScaledPngAtomic = async (filePath: string, source: Uint8Array, options: ScaledPngWriteOptions, onProgress?: (value: number) => void, onCancelReady?: (cancel: () => void) => void): Promise<ScaledPngWriteResult> => {
+  const operationId = `scaled-png-${Date.now()}-${scaledPngOperationSequence++}`
+  let cancellationRequested = false
+  const cancel = (): void => {
+    if (cancellationRequested) return
+    cancellationRequested = true
+    void invoke('cancel_scaled_png_export', { operationId })
+  }
+  const removeProgressListener = onProgress
+    ? await listen<{ operationId: string; value: number }>(SCALED_PNG_PROGRESS_EVENT, (event) => {
+        if (event.payload.operationId !== operationId) return
+        onProgress(Math.max(0, Math.min(100, event.payload.value)))
+      })
+    : null
+  onCancelReady?.(cancel)
+  try {
+    return await invoke(
+      'write_scaled_png_atomic',
+      source,
+      { headers: {
+        'x-moonsprite-file-path': encodeURIComponent(filePath),
+        'x-moonsprite-source-width': String(options.sourceWidth),
+        'x-moonsprite-source-height': String(options.sourceHeight),
+        'x-moonsprite-output-width': String(options.outputWidth),
+        'x-moonsprite-output-height': String(options.outputHeight),
+        'x-moonsprite-force-rgba': options.forceRgba ? '1' : '0',
+        'x-moonsprite-source-format': options.sourceFormat ?? 'rgba',
+        ...(options.sourceFormat === 'indexed' && options.palette
+          ? { 'x-moonsprite-source-palette': encodeHeaderBytes(options.palette) }
+          : {}),
+        'x-moonsprite-operation-id': operationId
+      } }
+    )
+  } finally {
+    removeProgressListener?.()
+  }
+}
+
 const writeProjectIncremental = (filePath: string, sourcePath: string, data: Uint8Array): Promise<void> => invoke(
   'write_project_incremental',
   data,
@@ -285,6 +349,7 @@ export const createTauriApi = (): MoonSpriteApi => ({
     colorMode: preview.colorMode
   }),
   writeBinaryAtomic,
+  writeScaledPngAtomic,
   writeProjectIncremental,
   writeClipboardImage: (image) => invoke('write_clipboard_image', { width: image.width, height: image.height, data: Array.from(image.data) }),
   readClipboardText: () => invoke<string | null>('read_clipboard_text'),
@@ -313,6 +378,7 @@ export const createTauriApi = (): MoonSpriteApi => ({
   importSystemFont: (id) => invoke('import_system_font', { id }),
   deleteFont: (id) => invoke('delete_font', { id }),
   listBackgroundPresets: () => invoke('list_background_presets'),
+  saveBackgroundPreset: (name, data) => invoke('save_background_preset', { name, data: Array.from(data) }),
   openBackgroundPresetFolder: () => invoke('open_background_preset_folder'),
   listRecoveries: (retentionDays) => invoke('list_recoveries', { retentionDays }),
   readRecovery: (id) => invokeBytes('read_recovery', { id }),

@@ -11,6 +11,7 @@ export interface ViewGeometryState {
 
 export interface ViewportPoint { x: number; y: number }
 export interface ViewportBounds { left: number; top: number; right: number; bottom: number }
+export interface CanvasViewContentBounds { x: number; y: number; width: number; height: number }
 
 const ROTATION_INDICATOR_MAX_FOOTPRINT = 204
 const ROTATION_INDICATOR_CLEARANCE_RATIO = 4 / 3
@@ -127,28 +128,47 @@ const displayRelative = (point: ViewportPoint, view: Pick<ViewGeometryState, 'ro
   return rotateRelative(mirrored, view.rotation)
 }
 
-export function clampCanvasViewPan<T extends ViewGeometryState>(viewportWidth: number, viewportHeight: number, documentWidth: number, documentHeight: number, view: T, position: RotationIndicatorPosition): T {
+export function clampCanvasViewPan<T extends ViewGeometryState>(viewportWidth: number, viewportHeight: number, documentWidth: number, documentHeight: number, view: T, position: RotationIndicatorPosition, additionalBounds?: CanvasViewContentBounds | null): T {
   if (![viewportWidth, viewportHeight, documentWidth, documentHeight, view.zoom, view.panX, view.panY, view.rotation].every(Number.isFinite)) return view
   if (viewportWidth <= 0 || viewportHeight <= 0 || documentWidth <= 0 || documentHeight <= 0 || view.zoom <= 0) return view
+  const validAdditionalBounds = additionalBounds
+    && [additionalBounds.x, additionalBounds.y, additionalBounds.width, additionalBounds.height].every(Number.isFinite)
+    && additionalBounds.width > 0
+    && additionalBounds.height > 0
+    ? additionalBounds
+    : null
+  const contentLeft = validAdditionalBounds ? Math.min(0, validAdditionalBounds.x) : 0
+  const contentTop = validAdditionalBounds ? Math.min(0, validAdditionalBounds.y) : 0
+  const contentRight = validAdditionalBounds ? Math.max(documentWidth, validAdditionalBounds.x + validAdditionalBounds.width) : documentWidth
+  const contentBottom = validAdditionalBounds ? Math.max(documentHeight, validAdditionalBounds.y + validAdditionalBounds.height) : documentHeight
+  const contentCenterOffset = {
+    x: ((contentLeft + contentRight) / 2 - documentWidth / 2) * view.zoom,
+    y: ((contentTop + contentBottom) / 2 - documentHeight / 2) * view.zoom
+  }
   const radians = view.rotation * Math.PI / 180
   const cosine = Math.abs(Math.cos(radians))
   const sine = Math.abs(Math.sin(radians))
-  const scaledWidth = documentWidth * view.zoom
-  const scaledHeight = documentHeight * view.zoom
+  const scaledWidth = (contentRight - contentLeft) * view.zoom
+  const scaledHeight = (contentBottom - contentTop) * view.zoom
   const displayedWidth = scaledWidth * cosine + scaledHeight * sine
   const displayedHeight = scaledWidth * sine + scaledHeight * cosine
-  const displayedPan = position === 'canvas' ? { x: view.panX, y: view.panY } : displayRelative({ x: view.panX, y: view.panY }, view)
+  const displayedContentCenter = position === 'canvas'
+    ? (() => {
+        const relativeCenter = displayRelative(contentCenterOffset, view)
+        return { x: view.panX + relativeCenter.x, y: view.panY + relativeCenter.y }
+      })()
+    : displayRelative({ x: view.panX + contentCenterOffset.x, y: view.panY + contentCenterOffset.y }, view)
   const axisOverscroll = (viewportSize: number, displayedSize: number): number => Math.min(viewportSize, displayedSize) / 2
   const overscrollX = axisOverscroll(viewportWidth, displayedWidth)
   const overscrollY = axisOverscroll(viewportHeight, displayedHeight)
   const limitX = Math.abs(viewportWidth - displayedWidth) / 2 + overscrollX
   const limitY = Math.abs(viewportHeight - displayedHeight) / 2 + overscrollY
-  const clampedPan = {
-    x: Math.min(limitX, Math.max(-limitX, displayedPan.x)),
-    y: Math.min(limitY, Math.max(-limitY, displayedPan.y))
+  const clampedContentCenter = {
+    x: Math.min(limitX, Math.max(-limitX, displayedContentCenter.x)),
+    y: Math.min(limitY, Math.max(-limitY, displayedContentCenter.y))
   }
-  if (clampedPan.x === displayedPan.x && clampedPan.y === displayedPan.y) return view
-  const delta = viewPanDeltaFromScreen(clampedPan.x - displayedPan.x, clampedPan.y - displayedPan.y, view.rotation, position, Boolean(view.mirrored), Boolean(view.mirroredVertical))
+  if (clampedContentCenter.x === displayedContentCenter.x && clampedContentCenter.y === displayedContentCenter.y) return view
+  const delta = viewPanDeltaFromScreen(clampedContentCenter.x - displayedContentCenter.x, clampedContentCenter.y - displayedContentCenter.y, view.rotation, position, Boolean(view.mirrored), Boolean(view.mirroredVertical))
   return { ...view, panX: view.panX + delta.x, panY: view.panY + delta.y }
 }
 

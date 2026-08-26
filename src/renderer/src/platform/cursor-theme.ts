@@ -1,5 +1,6 @@
 import type { CursorScale } from '@/core/file-preferences'
 import { translateCurrent as tr } from '@/core/localization'
+import { getCurrentWindow } from '@tauri-apps/api/window'
 import cursorDefault from '@/assets/pixel-icons/01-Slice-1.png'
 import cursorBlack from '@/assets/pixel-icons/02-Slice-2.png'
 import cursorWhite from '@/assets/pixel-icons/03-Slice-3.png'
@@ -31,7 +32,7 @@ import cursorShearHorizontal from '@/assets/pixel-icons/cursor-selection-shear-h
 import cursorShearVertical from '@/assets/pixel-icons/cursor-selection-shear-vertical.png'
 import cursorShearNesw from '@/assets/pixel-icons/cursor-selection-shear-nesw.png'
 import cursorShearNwse from '@/assets/pixel-icons/cursor-selection-shear-nwse.png'
-import { normalizeDisplayScaleFactor, observeDisplayScaleFactor } from './display-scale'
+import { isTauriRuntime, normalizeDisplayScaleFactor, observeDisplayScaleFactor } from './display-scale'
 
 export interface CursorDefinition {
   variable: string
@@ -102,6 +103,48 @@ export type CursorPreferenceSource = 'system' | 'moonsprite'
 export const cursorPreferenceSource = (variable: string, useLocalCursors: boolean): CursorPreferenceSource => {
   const definition = cursorDefinitions.find((item) => item.variable === variable)
   return useLocalCursors && !definition?.builtinSource && !canvasPixelCursorVariables.has(variable) ? 'system' : 'moonsprite'
+}
+
+export interface CursorOverlayDescriptor {
+  source: string
+  size: number
+  hotspotX: number
+  hotspotY: number
+}
+
+const CURSOR_ASSET_SIZE = 32
+const cursorVariablePattern = /^var\((--cursor-[^)]+)\)$/
+
+export function cursorOverlayDescriptor(cursorValue: string, useLocalCursors: boolean, scale: CursorScale, interfaceScale = 1): CursorOverlayDescriptor | null {
+  const variable = cursorVariablePattern.exec(cursorValue.trim())?.[1]
+  if (!variable) return null
+  const definition = cursorDefinitions.find((item) => item.variable === variable)
+  if (!definition) return null
+  const normalizedInterfaceScale = Number.isFinite(interfaceScale) && interfaceScale > 0 ? interfaceScale : 1
+  const normalizedScale = (Number.isFinite(scale) && scale > 0 ? scale : 1) / normalizedInterfaceScale
+  return {
+    source: useLocalCursors ? definition.builtinSource ?? definition.source : definition.source,
+    size: CURSOR_ASSET_SIZE * normalizedScale,
+    hotspotX: definition.hotspot[0] * normalizedScale,
+    hotspotY: definition.hotspot[1] * normalizedScale
+  }
+}
+
+let requestedNativeCursorVisibility = true
+let appliedNativeCursorVisibility: boolean | null = null
+let nativeCursorVisibilityQueue = Promise.resolve()
+
+export function setNativeCursorVisible(visible: boolean): Promise<void> {
+  requestedNativeCursorVisibility = visible
+  if (!isTauriRuntime()) return Promise.resolve()
+  const requested = visible
+  const operation = nativeCursorVisibilityQueue.catch(() => undefined).then(async () => {
+    if (requestedNativeCursorVisibility !== requested || appliedNativeCursorVisibility === requested) return
+    await getCurrentWindow().setCursorVisible(requested)
+    appliedNativeCursorVisibility = requested
+  })
+  nativeCursorVisibilityQueue = operation
+  return operation
 }
 
 const scaledCursorCache = new Map<string, Promise<string>>()

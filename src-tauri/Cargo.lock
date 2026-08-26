@@ -2206,10 +2206,11 @@ dependencies = [
 
 [[package]]
 name = "moonsprite"
-version = "0.1.0-dev.6"
+version = "1.0.0-beta.1"
 dependencies = [
  "arboard",
  "mlua",
+ "png 0.18.1",
  "rfd",
  "serde",
  "serde_json",

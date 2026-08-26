@@ -1,8 +1,9 @@
 import { Fragment, memo, useEffect, useMemo, useRef, useState, type ComponentProps, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from 'react'
 import { createPortal } from 'react-dom'
-import { Palette, Square } from 'lucide-react'
 import { useWorkspace, type DocumentSession } from '@/store/workspace'
 import { ColorPanel } from '@/components/panels/ColorPanel'
+import { FreeTileInstancesPanel } from '@/components/panels/FreeTileInstancesPanel'
+import { HistoryPanel } from '@/components/panels/HistoryPanel'
 import { LayersPanel } from '@/components/panels/LayersPanel'
 import { PalettePanel } from '@/components/panels/PalettePanel'
 import { PreviewPanel } from '@/components/panels/PreviewPanel'
@@ -12,6 +13,8 @@ import { useBrushLibrary } from '@/components/app/useBrushLibrary'
 import { PixelUtilityIcon } from '@/components/PixelUtilityIcon'
 import type { DockDragProps } from '@/components/workspace-panel-types'
 import { readStoredString, removeStoredValue, saveFloatingPosition, writeStoredString } from '@/core/panel-preferences'
+import { activeFreeTileCelTarget } from '@/core/free-tile-document'
+import { loadFreeTileInstancePanelLayout, type FreeTileInstancePanelLayout } from '@/core/layer-panel-preferences'
 import { bottomPanelFlex, COLOR_SQUARE_ANCHOR_STORAGE_KEY, COLOR_SQUARE_DOCK_STORAGE_KEY, DEFAULT_BOTTOM_WIDTHS, DEFAULT_INSPECTOR_ORDER, DEFAULT_INSPECTOR_SIZES, INSPECTOR_LAYOUT_STORAGE_KEY, MINIMUM_BOTTOM_WIDTHS, MINIMUM_INSPECTOR_SIZES, loadInspectorLayout, moveInspectorPanel, proportionalPanelFlex, type WorkspacePanelId } from '@/core/panel-layout'
 import { FLOATING_PANEL_STORAGE_KEYS } from '@/core/workspace-layout-preferences'
 import { brushPanelRenderKey, colorPanelRenderKey, layersPanelRenderKey, palettePanelRenderKey, previewPanelRenderKey, tilesetPanelRenderKey } from '@/core/panel-render-keys'
@@ -51,6 +54,10 @@ const MemoPalettePanel = memo(function MemoPalettePanel({ renderKey: _renderKey,
 
 const MemoLayersPanel = memo(function MemoLayersPanel({ renderKey: _renderKey, ...props }: PanelRenderProps<ComponentProps<typeof LayersPanel>>) {
   return <LayersPanel {...props} />
+}, samePanelRender)
+
+const MemoFreeTileInstancesPanel = memo(function MemoFreeTileInstancesPanel({ renderKey: _renderKey, ...props }: PanelRenderProps<ComponentProps<typeof FreeTileInstancesPanel>>) {
+  return <FreeTileInstancesPanel {...props} />
 }, samePanelRender)
 
 const MemoPreviewPanel = memo(function MemoPreviewPanel({ renderKey: _renderKey, ...props }: PanelRenderProps<ComponentProps<typeof PreviewPanel>>) {
@@ -100,7 +107,7 @@ export function InspectorPanels({ session, panelVisibility, onClosePreview, pane
 }) {
   const { t } = useI18n()
   const brushLibrary = useBrushLibrary(session)
-  const panelLabels: Record<WorkspacePanelId, string> = { color: t('panel.color'), palette: t('panel.palette'), layers: t('panel.layers'), preview: t('panel.preview'), tileset: t('panel.tileset'), brushes: t('panel.brushes') }
+  const panelLabels: Record<WorkspacePanelId, string> = { color: t('panel.color'), palette: t('panel.palette'), layers: t('panel.layers'), freeTileInstances: t('panel.freeTileInstances'), history: t('panel.history'), preview: t('panel.preview'), tileset: t('panel.tileset'), brushes: t('panel.brushes') }
   const panelDockLabels: Record<PanelDock, string> = { left: t('panel.dock.left'), right: t('panel.dock.right'), bottom: t('panel.dock.bottom'), floating: t('panel.dock.floating') }
   const panelStateKey = useWorkspace((state) => {
     const current = state.sessions.find((item) => item.document.id === session.document.id) ?? session
@@ -128,6 +135,7 @@ export function InspectorPanels({ session, panelVisibility, onClosePreview, pane
   const [dockDropTarget, setDockDropTarget] = useState<InspectorDockTarget | null>(null)
   const [panelContextMenu, setPanelContextMenu] = useState<{ id: WorkspacePanelId; x: number; y: number; bounds: { left: number; top: number; width: number; height: number } } | null>(null)
   const [previewRelativeLuminanceOverride, setPreviewRelativeLuminanceOverride] = useState<boolean | null>(null)
+  const [freeTileInstancePanelLayout, setFreeTileInstancePanelLayout] = useState<FreeTileInstancePanelLayout>(loadFreeTileInstancePanelLayout)
   const verticalWeightsRef = useRef(verticalWeights)
   const bottomWeightsRef = useRef(bottomWeights)
   const orderRef = useRef(order)
@@ -139,6 +147,12 @@ export function InspectorPanels({ session, panelVisibility, onClosePreview, pane
   const bottomResizeRef = useRef<{ leading: WorkspacePanelId; trailing: WorkspacePanelId; startX: number; startWidths: Record<WorkspacePanelId, number> } | null>(null)
   const previewRelativeLuminance = previewRelativeLuminanceOverride ?? (session.view.relativeLuminance && relativeLuminanceInPreview)
   const dockDragRef = useRef<{ id: WorkspacePanelId; startX: number; startY: number; detach: (clientX: number, clientY: number, continueDrag?: boolean) => void; moved: boolean } | null>(null)
+  const instancePanelAutoOpenRef = useRef<{ key: string; count: number; layout: FreeTileInstancePanelLayout } | null>(null)
+  const activeFreeTileTarget = freeTileInstancePanelLayout === 'separate' ? activeFreeTileCelTarget(session.document) : null
+  const activeFreeTileInstanceCount = activeFreeTileTarget?.freeTiles.instances.length ?? 0
+  const activeFreeTileInstanceKey = activeFreeTileTarget
+    ? `${session.document.id}:${activeFreeTileTarget.layer.id}:${activeFreeTileTarget.cel.frameId}`
+    : `${session.document.id}:none`
   verticalWeightsRef.current = verticalWeights
   bottomWeightsRef.current = bottomWeights
   orderRef.current = order
@@ -175,6 +189,28 @@ export function InspectorPanels({ session, panelVisibility, onClosePreview, pane
   }, [panelContextMenu])
 
   useEffect(() => setPreviewRelativeLuminanceOverride(null), [session.document.id])
+
+  useEffect(() => {
+    const refresh = (): void => setFreeTileInstancePanelLayout(loadFreeTileInstancePanelLayout())
+    window.addEventListener('moonsprite:preferences-changed', refresh)
+    return () => window.removeEventListener('moonsprite:preferences-changed', refresh)
+  }, [])
+
+  useEffect(() => {
+    const previous = instancePanelAutoOpenRef.current
+    instancePanelAutoOpenRef.current = { key: activeFreeTileInstanceKey, count: activeFreeTileInstanceCount, layout: freeTileInstancePanelLayout }
+    if (freeTileInstancePanelLayout !== 'separate' || activeFreeTileInstanceCount === 0) {
+      if (panelVisibility.freeTileInstances) onPanelVisibilityChange('freeTileInstances', false)
+      if (popupPanelId === 'freeTileInstances') onPopupPanelClose?.()
+      return
+    }
+    const shouldOpen = !previous
+      || previous.layout !== 'separate'
+      || previous.key !== activeFreeTileInstanceKey
+      || previous.count === 0
+      || activeFreeTileInstanceCount > previous.count
+    if (shouldOpen && !panelVisibility.freeTileInstances) onPanelVisibilityChange('freeTileInstances', true)
+  }, [activeFreeTileInstanceCount, activeFreeTileInstanceKey, freeTileInstancePanelLayout, onPanelVisibilityChange, onPopupPanelClose, panelVisibility.freeTileInstances, popupPanelId])
 
   const openPanelContextMenu = (id: WorkspacePanelId, event: ReactMouseEvent<HTMLElement>): void => {
     const header = (event.target as HTMLElement).closest('header')
@@ -219,6 +255,18 @@ export function InspectorPanels({ session, panelVisibility, onClosePreview, pane
       notifyWorkspaceLayoutChanged()
     } catch { /* Ignore unavailable renderer storage. */ }
   }
+  useEffect(() => {
+    if (freeTileInstancePanelLayout !== 'separate' || activeFreeTileInstanceCount === 0 || !panelVisibility.freeTileInstances) return
+    const layersDock = dockFor('layers')
+    if (layersDock === 'left' || layersDock === 'right' || layersDock === 'bottom') {
+      if (dockFor('freeTileInstances') !== layersDock) onPanelDockChange('freeTileInstances', layersDock)
+    }
+    const nextOrder = moveInspectorPanel(orderRef.current, 'freeTileInstances', 'layers', true)
+    if (samePanelOrder(nextOrder, orderRef.current)) return
+    orderRef.current = nextOrder
+    setOrder(nextOrder)
+    persistLayout(nextOrder, verticalWeightsRef.current, bottomWeightsRef.current)
+  }, [activeFreeTileInstanceCount, activeFreeTileInstanceKey, freeTileInstancePanelLayout, onPanelDockChange, order, panelDocks, panelVisibility.freeTileInstances])
   const setSquareDock = (dock: FixedPanelDock | null, anchor: SquareAnchor = colorSquareAnchor): void => {
     setColorSquareDock(dock)
     if (dock) {
@@ -414,7 +462,11 @@ export function InspectorPanels({ session, panelVisibility, onClosePreview, pane
   }
 
   const panelFor = (id: WorkspacePanelId, docked: boolean, dock?: PanelDock, popup = false, popupDragStart?: (event: ReactPointerEvent<HTMLElement>) => void) => {
-    const dockProps: DockDragProps = popup ? { docked: true, onPanelContextMenu: (event) => openPanelContextMenu(id, event), onDockDragStart: (event) => popupDragStart?.(event) } : { docked, onFloatingDock: (dock) => onPanelDockChange(id, dock), onPanelContextMenu: (event) => openPanelContextMenu(id, event), onDockDragStart: (event, detach) => {
+    const dockProps: DockDragProps = popup
+      ? { docked: true, onPanelContextMenu: (event) => openPanelContextMenu(id, event), onDockDragStart: (event) => popupDragStart?.(event) }
+      : id === 'freeTileInstances'
+        ? { docked, onPanelContextMenu: (event) => openPanelContextMenu(id, event) }
+        : { docked, onFloatingDock: (dock) => onPanelDockChange(id, dock), onPanelContextMenu: (event) => openPanelContextMenu(id, event), onDockDragStart: (event, detach) => {
       if (event.button !== 0 || (event.target as HTMLElement).closest('button, input, select')) return
       dockDragRef.current = { id, startX: event.clientX, startY: event.clientY, detach, moved: false }
       document.documentElement.classList.add(workspacePanelDraggingClass)
@@ -426,6 +478,10 @@ export function InspectorPanels({ session, panelVisibility, onClosePreview, pane
         ? <MemoPalettePanel renderKey={palettePanelRenderKey(session)} session={session} {...dockProps} />
         : id === 'layers'
           ? <MemoLayersPanel renderKey={layersPanelRenderKey(session)} session={session} sideDocked={dock === 'left' || dock === 'right'} {...dockProps} />
+          : id === 'freeTileInstances'
+            ? <MemoFreeTileInstancesPanel renderKey={layersPanelRenderKey(session)} session={session} {...dockProps} />
+          : id === 'history'
+            ? <HistoryPanel session={session} {...dockProps} />
           : id === 'brushes'
             ? <BrushLibraryPanel session={session} controller={brushLibrary} {...dockProps} />
             : id === 'tileset'
@@ -492,7 +548,7 @@ export function InspectorPanels({ session, panelVisibility, onClosePreview, pane
     {panelContextMenu && createPortal(<div className="context-menu workspace-panel-context-menu" role="menu" aria-label={t('panel.settings', { panel: panelLabels[panelContextMenu.id] })} style={{ left: panelContextMenu.x, top: panelContextMenu.y }} onContextMenu={(event) => event.preventDefault()}>
       <button className="context-menu-item" type="button" role="menuitem" onClick={() => { onPanelVisibilityChange(panelContextMenu.id, false); if (popupPanelId === panelContextMenu.id) onPopupPanelClose?.(); setPanelContextMenu(null) }}><PixelUtilityIcon kind="eyeOff" /><span>{t('panel.hide', { panel: panelLabels[panelContextMenu.id] })}</span></button>
       <span className="context-menu-divider" />
-      {(['left', 'right', 'bottom', 'floating'] as PanelDock[]).map((dock) => <button key={dock} className="context-menu-item" type="button" role="menuitemradio" aria-checked={dockFor(panelContextMenu.id) === dock} onClick={() => movePanelFromMenu(panelContextMenu.id, dock)}>{dockFor(panelContextMenu.id) === dock ? <PixelUtilityIcon kind="check" /> : <PixelUtilityIcon kind="move" />}<span>{panelDockLabels[dock]}</span></button>)}
+      {panelContextMenu.id !== 'freeTileInstances' && (['left', 'right', 'bottom', 'floating'] as PanelDock[]).map((dock) => <button key={dock} className="context-menu-item" type="button" role="menuitemradio" aria-checked={dockFor(panelContextMenu.id) === dock} onClick={() => movePanelFromMenu(panelContextMenu.id, dock)}>{dockFor(panelContextMenu.id) === dock ? <PixelUtilityIcon kind="check" /> : <PixelUtilityIcon kind="move" />}<span>{panelDockLabels[dock]}</span></button>)}
       {panelContextMenu.id === 'preview' && <><span className="context-menu-divider" /><button className="context-menu-item" type="button" role="menuitemcheckbox" aria-checked={previewRelativeLuminance} onClick={() => { setPreviewRelativeLuminanceOverride(!previewRelativeLuminance); setPanelContextMenu(null) }}>{previewRelativeLuminance ? <PixelUtilityIcon kind="check" /> : <span />}<span>{t('preview.relativeLuminance')}</span></button></>}
     </div>, document.body)}
   </></PerformanceProfiler>

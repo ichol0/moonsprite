@@ -31,7 +31,7 @@ export const isBrushTool = (tool: ToolId): tool is BrushTool => BRUSH_TOOLS.incl
 
 const TEXT_LAYER_ALLOWED_TOOLS = new Set<ToolId>(['text', 'move', 'eyedropper', 'hand', 'zoom', 'rotate'])
 const TILEMAP_LAYER_ALLOWED_TOOLS = new Set<ToolId>(['pencil', 'eraser', 'selection', 'move', 'eyedropper', 'hand', 'zoom', 'rotate'])
-const FREE_TILE_PAINT_ALLOWED_TOOLS = new Set<ToolId>(['pencil', 'eraser', 'selection', 'move', 'eyedropper', 'hand', 'zoom', 'rotate'])
+const FREE_TILE_PAINT_ALLOWED_TOOLS = new Set<ToolId>(['pencil', 'eraser', 'move', 'eyedropper', 'hand', 'zoom', 'rotate'])
 const FREE_TILE_EDIT_ALLOWED_TOOLS = new Set<ToolId>(['pencil', 'airbrush', 'eraser', 'fill', 'selection', 'shape', 'line', 'move', 'eyedropper', 'hand', 'zoom', 'rotate'])
 
 export const isToolAvailableForSession = (session: DocumentSession, tool: ToolId): boolean => {
@@ -175,6 +175,8 @@ export function persistToolSettings(session: DocumentSession): void {
     lineKind: session.lineKind,
     curveAnchorCount: session.curveAnchorCount,
     shapeRatio: session.shapeRatio ? { ...session.shapeRatio } : null,
+    shapeRounded: session.shapeRounded,
+    shapeCornerRadius: session.shapeCornerRadius,
     fillMode: session.fillMode,
     fillKind: session.fillKind ?? 'bucket',
     fillTolerance: session.fillTolerance,
@@ -182,10 +184,13 @@ export function persistToolSettings(session: DocumentSession): void {
     fillGapThreshold: session.fillGapThreshold,
     gradientTolerance: session.gradientTolerance,
     gradientContiguous: session.gradientContiguous,
+    gradientType: session.gradientType,
     gradientDither: session.gradientDither ?? 'none',
     moveAutoSelect: session.moveAutoSelect,
     selectionKind: session.selectionKind,
     selectionMode: session.selectionMode,
+    selectionRounded: session.selectionRounded,
+    selectionCornerRadius: session.selectionCornerRadius,
     wandTolerance: session.wandTolerance,
     wandContiguous: session.wandContiguous,
     wandGapClosing: session.wandGapClosing,
@@ -271,6 +276,8 @@ export const sessionFromDocument = (document: SpriteDocument): DocumentSession =
     lineKind: settings.lineKind,
     curveAnchorCount: settings.curveAnchorCount,
     shapeRatio: typeof settings.shapeRatio === 'number' ? { width: settings.shapeRatio, height: 1 } : settings.shapeRatio ? { ...settings.shapeRatio } : null,
+    shapeRounded: settings.shapeRounded,
+    shapeCornerRadius: settings.shapeCornerRadius,
     fillMode: settings.fillMode,
     fillKind: settings.fillKind,
     fillTolerance: settings.fillTolerance,
@@ -278,12 +285,15 @@ export const sessionFromDocument = (document: SpriteDocument): DocumentSession =
     fillGapThreshold: settings.fillGapThreshold,
     gradientTolerance: settings.gradientTolerance,
     gradientContiguous: settings.gradientContiguous,
+    gradientType: settings.gradientType,
     gradientDither: settings.gradientDither,
     moveAutoSelect: settings.moveAutoSelect,
     selection: null,
     selectionPivot: null,
     selectionKind: settings.selectionKind,
     selectionMode: settings.selectionMode,
+    selectionRounded: settings.selectionRounded,
+    selectionCornerRadius: settings.selectionCornerRadius,
     wandTolerance: settings.wandTolerance,
     wandContiguous: settings.wandContiguous,
     wandGapClosing: settings.wandGapClosing,
@@ -318,6 +328,7 @@ export const sessionFromDocument = (document: SpriteDocument): DocumentSession =
       mirroredVertical: false,
       showPixelGrid: document.displaySettings.showPixelGrid,
       showGrid: document.displaySettings.showGrid,
+      isoViewEnabled: false,
       relativeLuminance: false,
       showSelectionOutline: true,
       showSelectionPivot: false,
@@ -363,6 +374,7 @@ export const sessionFromDocument = (document: SpriteDocument): DocumentSession =
     contentRevision: 0,
     layersPanelRevision: 0,
     contentInvalidation: null,
+    recoveryOriginId: null,
     recoverySuppressed: false
   } as DocumentSession
   applyBrushProfile(session, brushProfiles.pencil)

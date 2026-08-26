@@ -45,6 +45,9 @@ const homeProjectLayoutStorageKey = 'moonsprite.home-project-layout.v1'
 const homeRecentPrivacyStorageKey = 'moonsprite.home-recent-privacy.v1'
 const homeProjectLayoutOrder: readonly HomeProjectLayout[] = ['small', 'medium', 'large']
 const recoveryDayMilliseconds = 24 * 60 * 60 * 1_000
+const logoSpinClickThreshold = 5
+const logoSpinClickWindowMs = 850
+const logoSpinDurationMs = 2_000
 const homeExternalLinks = {
   qq: 'https://qm.qq.com/q/3OUXtFg4lW',
   steam: 'https://store.steampowered.com/search/?term=MoonSprite',
@@ -252,7 +255,7 @@ function HomeLanguageDialog({ current, onApply, onClose }: { current: AppLocale;
   const { locale, t } = useI18n()
   const [selected, setSelected] = useState<AppLocale>(current)
   return <div className="modal-backdrop" role="presentation" onPointerDown={(event) => { if (event.target === event.currentTarget) onClose() }}>
-    <ModalShell storageKey="home-language-v2" defaultWidth={380} defaultHeight={238} minWidth={340} minHeight={220} maxWidth={480} maxHeight={360} className="home-language-modal" role="dialog" aria-modal="true" aria-labelledby="home-language-title">
+    <ModalShell storageKey="home-language-v3" defaultWidth={380} defaultHeight={540} minWidth={340} minHeight={360} maxWidth={480} maxHeight={620} className="home-language-modal" role="dialog" aria-modal="true" aria-labelledby="home-language-title">
       <DialogHeader title={t('home.languageDialogTitle')} titleId="home-language-title" closeLabel={t('common.close')} onClose={onClose} />
       <div className="modal-body home-language-dialog-body">
         <p className="home-language-description">{t('home.languageDialogDescription')}</p>
@@ -433,12 +436,35 @@ export function HomeWorkspace({ onNew, onOpen, onOpenProject, onRestoreRecovery,
   const [languageDialogOpen, setLanguageDialogOpen] = useState(false)
   const [sectionManagerOpen, setSectionManagerOpen] = useState(false)
   const [recoveryRetentionDays, setRecoveryRetentionDays] = useState(() => loadEditorPreferences().recoveryRetentionDays)
+  const [logoSpinActive, setLogoSpinActive] = useState(false)
+  const logoClickRef = useRef({ count: 0, lastClickAt: 0 })
   const setMessage = useWorkspace((state) => state.setMessage)
   const recoveryRecords = useWorkspace((state) => state.recoveryRecords)
   const discardRecovery = useWorkspace((state) => state.discardRecovery)
   const requestDialog = useWorkspace((state) => state.requestDialog)
   const activeSection = homeSections.find((candidate) => candidate.id === section) ?? homeSections[0] ?? { id: 'recent', kind: 'recent' }
   const activeSectionReloadKey = activeSection.kind === 'folder' ? `${activeSection.id}\u0000${activeSection.directoryPath}` : activeSection.id
+
+  const triggerLogoSpin = (): void => {
+    const now = Date.now()
+    const clicks = logoClickRef.current
+    if (now - clicks.lastClickAt > logoSpinClickWindowMs) clicks.count = 0
+    clicks.count += 1
+    clicks.lastClickAt = now
+    if (clicks.count < logoSpinClickThreshold) return
+    clicks.count = 0
+    setLogoSpinActive(true)
+  }
+
+  useEffect(() => {
+    if (!logoSpinActive) return
+    const finishTimer = window.setTimeout(() => {
+      setLogoSpinActive(false)
+    }, logoSpinDurationMs)
+    return () => {
+      window.clearTimeout(finishTimer)
+    }
+  }, [logoSpinActive])
 
   const releaseObjectUrls = (): void => {
     for (const url of objectUrls.current) URL.revokeObjectURL(url)
@@ -859,7 +885,9 @@ export function HomeWorkspace({ onNew, onOpen, onOpenProject, onRestoreRecovery,
   return <section className="aseprite-home" aria-label={t('home.aria')} onWheel={handleProjectLayoutWheel}>
     <div className="aseprite-home-inner">
       <header className="start-screen-header">
-        <div className="start-screen-mark" aria-hidden="true"><img src={moonspriteLogo} alt="" /></div>
+        <button className={`start-screen-mark ${logoSpinActive ? 'logo-spin-playing' : ''}`} type="button" aria-label="MoonSprite" onClick={triggerLogoSpin}>
+          <img className="start-screen-mark-logo" src={moonspriteLogo} alt="" />
+        </button>
         <div><h1>MOONSPRITE</h1><p>{t('home.tagline')}</p></div>
         <div className="start-screen-meta">
           <div className="start-screen-links" aria-label={t('home.linksAria')}>

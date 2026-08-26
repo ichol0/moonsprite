@@ -1,10 +1,11 @@
-import { getActiveLayer, getLayerStorageOrigin, setLayerStorageOrigin } from '@/core/document'
+import { cacheRasterContentBounds, cachedRasterContentBounds, getActiveLayer, getLayerStorageOrigin, markLayerContentChanged, setLayerStorageOrigin } from '@/core/document'
 import { animationCelAt, ensureAnimationDocument } from '@/core/animation'
 import type { LayerMergeSuccess } from '@/core/layer-merge'
 import type { AdjustmentSnapshot, DocumentSession } from './workspace-types'
 import { touch } from './workspace-session'
 import { translateCurrent as tr } from '@/core/localization'
 import { captureDocumentStructureSnapshot, documentStructureDeltaBytes, restoreDocumentStructureSnapshot, type DocumentStructureSnapshot } from './workspace-document-history'
+import type { SelectionRect } from '@shared/types'
 
 const adjustmentTargetLayerIds = (session: DocumentSession): string[] => {
   if (session.selection) return [getActiveLayer(session.document).id]
@@ -68,8 +69,8 @@ const restoreAdjustmentPalette = (session: DocumentSession, snapshot: Adjustment
   session.document.nextColorId = snapshot.nextColorId
 }
 
-/** Rebinds snapshot geometry to writable layer storage without copying its source pixels. */
-export function prepareAdjustmentSnapshotTargets(session: DocumentSession, snapshot: AdjustmentSnapshot): void {
+/** Rebinds snapshot geometry to writable layer storage. Partial previews initialize newly detached storage from the baseline. */
+export function prepareAdjustmentSnapshotTargets(session: DocumentSession, snapshot: AdjustmentSnapshot, initializeDetachedPixels = false): void {
   const timeline = ensureAnimationDocument(session.document)
   for (const layerSnapshot of snapshot.layers) {
     const layer = session.document.layers.find((candidate) => candidate.id === layerSnapshot.layerId)
@@ -86,6 +87,10 @@ export function prepareAdjustmentSnapshotTargets(session: DocumentSession, snaps
     const pixels = layerSnapshot.pixels instanceof Uint8ClampedArray
       ? current instanceof Uint8ClampedArray && current.length === expectedLength && !currentIsShared ? current : new Uint8ClampedArray(expectedLength)
       : current instanceof Uint32Array && current.length === expectedLength && !currentIsShared ? current : new Uint32Array(expectedLength)
+    if (initializeDetachedPixels && pixels !== current) {
+      if (pixels instanceof Uint8ClampedArray && layerSnapshot.pixels instanceof Uint8ClampedArray) pixels.set(layerSnapshot.pixels)
+      else if (pixels instanceof Uint32Array && layerSnapshot.pixels instanceof Uint32Array) pixels.set(layerSnapshot.pixels)
+    }
     bindAdjustmentSnapshotPixels(session, layerSnapshot, pixels)
   }
   restoreAdjustmentPalette(session, snapshot)
@@ -102,6 +107,82 @@ export function restoreAdjustmentSnapshot(session: DocumentSession, snapshot: Ad
     bindAdjustmentSnapshotPixels(session, layerSnapshot, pixels)
   }
   restoreAdjustmentPalette(session, snapshot)
+}
+
+const intersectAdjustmentRestoreRect = (first: SelectionRect, second: SelectionRect): SelectionRect | null => {
+  const x = Math.max(first.x, second.x)
+  const y = Math.max(first.y, second.y)
+  const right = Math.min(first.x + first.width, second.x + second.width)
+  const bottom = Math.min(first.y + first.height, second.y + second.height)
+  return right > x && bottom > y ? { x, y, width: right - x, height: bottom - y } : null
+}
+
+const mergeAdjustmentRestoreRects = (first: SelectionRect, second: SelectionRect): SelectionRect => {
+  const x = Math.min(first.x, second.x)
+  const y = Math.min(first.y, second.y)
+  const right = Math.max(first.x + first.width, second.x + second.width)
+  const bottom = Math.max(first.y + first.height, second.y + second.height)
+  return { x, y, width: right - x, height: bottom - y }
+}
+
+/** Restores only preview-touched rows. Returns null when geometry drift required a full restore. */
+export function restoreAdjustmentSnapshotRegions(
+  session: DocumentSession,
+  snapshot: AdjustmentSnapshot,
+  regions: readonly SelectionRect[]
+): Array<{ layerId: string; rect: SelectionRect }> | null {
+  const timeline = ensureAnimationDocument(session.document)
+  const targets = snapshot.layers.flatMap((layerSnapshot) => {
+    const layer = session.document.layers.find((candidate) => candidate.id === layerSnapshot.layerId)
+    const frameId = layerSnapshot.frameId ?? timeline.activeFrameId
+    if (!layer) return []
+    const origin = getLayerStorageOrigin(layer)
+    const compatible = timeline.activeFrameId === frameId
+      && layer.width === layerSnapshot.width
+      && layer.height === layerSnapshot.height
+      && layer.offsetX === layerSnapshot.offsetX
+      && layer.offsetY === layerSnapshot.offsetY
+      && origin.x === layerSnapshot.storageOriginX
+      && origin.y === layerSnapshot.storageOriginY
+      && layer.pixels.length === layerSnapshot.pixels.length
+      && (layer.pixels instanceof Uint8ClampedArray) === (layerSnapshot.pixels instanceof Uint8ClampedArray)
+    return compatible ? [{ layer, layerSnapshot }] : [{ layer, layerSnapshot, incompatible: true as const }]
+  })
+  if (targets.some((target) => 'incompatible' in target)) {
+    restoreAdjustmentSnapshot(session, snapshot)
+    return null
+  }
+
+  const restored: Array<{ layerId: string; rect: SelectionRect }> = []
+  for (const target of targets) {
+    const { layer, layerSnapshot } = target
+    const cachedBounds = cachedRasterContentBounds(layer, session.document.palette)
+    const layerBounds = { x: layer.offsetX, y: layer.offsetY, width: layer.width, height: layer.height }
+    const components = layer.pixels instanceof Uint8ClampedArray ? 4 : 1
+    let restoredRect: SelectionRect | null = null
+    for (const region of regions) {
+      const rect = intersectAdjustmentRestoreRect(region, layerBounds)
+      if (!rect) continue
+      const localX = rect.x - layer.offsetX
+      const localY = rect.y - layer.offsetY
+      for (let row = 0; row < rect.height; row += 1) {
+        const offset = ((localY + row) * layer.width + localX) * components
+        const length = rect.width * components
+        if (layer.pixels instanceof Uint8ClampedArray && layerSnapshot.pixels instanceof Uint8ClampedArray) {
+          layer.pixels.set(layerSnapshot.pixels.subarray(offset, offset + length), offset)
+        } else if (layer.pixels instanceof Uint32Array && layerSnapshot.pixels instanceof Uint32Array) {
+          layer.pixels.set(layerSnapshot.pixels.subarray(offset, offset + length), offset)
+        }
+      }
+      restoredRect = restoredRect ? mergeAdjustmentRestoreRects(restoredRect, rect) : rect
+    }
+    if (!restoredRect) continue
+    markLayerContentChanged(layer)
+    if (cachedBounds !== undefined) cacheRasterContentBounds(layer, snapshot.palette, cachedBounds)
+    restored.push({ layerId: layer.id, rect: restoredRect })
+  }
+  restoreAdjustmentPalette(session, snapshot)
+  return restored
 }
 
 export interface LayerUiSnapshot {

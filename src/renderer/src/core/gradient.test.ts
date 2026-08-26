@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { commitPixelEdit, revertPixelEdit } from './history'
 import { createDocument, getActiveLayer, readLayerColorAt, writeLayerColor } from './document'
-import { applyGradient, constrainGradientEndpoint, createGradientColorSampler, gradientAmountAt, gradientColorAt, gradientColorForAmount, gradientRegionSelection, GRADIENT_DITHER_PRESETS, interpolateRgbaColor } from './gradient'
+import { applyGradient, constrainGradientEndpoint, createGradientColorSampler, gradientAmountAt, gradientColorAt, gradientColorForAmount, gradientRegionSelection, GRADIENT_DITHER_PRESETS, interpolateRgbaColor, resolveRadialGradientGeometry } from './gradient'
 import { ditherStageCount } from './gradient-color'
 
 const red = { r: 255, g: 0, b: 0, a: 255 }
@@ -26,10 +26,73 @@ describe('gradient tool core', () => {
     expect(gradientColorAt(red, blue, 4, 0, { x: 0, y: 0 }, { x: 4, y: 0 }, 'none')).toEqual(blue)
   })
 
+  it('resolves radial gradients from independently sized ellipse bounds', () => {
+    const start = { x: 0, y: 0 }
+    const end = { x: 8, y: 4 }
+    expect(gradientAmountAt(4, 2, start, end, 'radial')).toBe(0)
+    expect(gradientAmountAt(8, 2, start, end, 'radial')).toBe(1)
+    expect(gradientAmountAt(4, 4, start, end, 'radial')).toBe(1)
+    expect(gradientAmountAt(6, 3, start, end, 'radial')).toBeCloseTo(Math.SQRT1_2)
+    expect(gradientAmountAt(0, 0, start, end, 'radial')).toBe(1)
+    expect(gradientColorAt(red, blue, 4, 2, start, end, 'none', 'radial')).toEqual(red)
+    expect(gradientColorAt(red, blue, 6, 2, start, end, 'none', 'radial')).toEqual({ r: 128, g: 0, b: 128, a: 255 })
+    expect(createGradientColorSampler(red, blue, start, end, 'none', 'radial')(4, 4)).toEqual(blue)
+  })
+
+  it('matches marquee-style center and proportional modifiers for radial geometry', () => {
+    expect(resolveRadialGradientGeometry({ x: 0, y: 0 }, { x: 8, y: 4 })).toEqual({
+      center: { x: 4, y: 2 },
+      radiusX: 4,
+      radiusY: 2
+    })
+    expect(resolveRadialGradientGeometry({ x: 3, y: 3 }, { x: 7, y: 5 }, { fromCenter: true })).toEqual({
+      center: { x: 3, y: 3 },
+      radiusX: 4,
+      radiusY: 2
+    })
+    expect(resolveRadialGradientGeometry({ x: 0, y: 0 }, { x: 4, y: 2 }, { proportional: true })).toEqual({
+      center: { x: 2, y: 2 },
+      radiusX: 2,
+      radiusY: 2
+    })
+    expect(resolveRadialGradientGeometry({ x: 0, y: 0 }, { x: 4, y: 2 }, { fromCenter: true, proportional: true })).toEqual({
+      center: { x: 0, y: 0 },
+      radiusX: 4,
+      radiusY: 4
+    })
+  })
+
+  it('keeps a zero-width radial axis finite and confined to its center line', () => {
+    const start = { x: 0, y: 0 }
+    const end = { x: 4, y: 0 }
+    expect(gradientAmountAt(2, 0, start, end, 'radial')).toBe(0)
+    expect(gradientAmountAt(0, 0, start, end, 'radial')).toBe(1)
+    expect(gradientAmountAt(2, 1, start, end, 'radial')).toBe(1)
+  })
+
+  it('applies radial gradients through the same undoable edit path', () => {
+    const document = createDocument('radial gradient', 5, 5, 'rgba')
+    const layer = getActiveLayer(document)
+    const edit = applyGradient(document, layer, { x: 0, y: 0 }, { x: 4, y: 4 }, red, blue, null, 'none', undefined, 'radial')
+
+    expect(edit).not.toBeNull()
+    expect(readLayerColorAt(document, layer, 2, 2)).toEqual(red)
+    expect(readLayerColorAt(document, layer, 2, 3)).toEqual({ r: 128, g: 0, b: 128, a: 255 })
+    expect(readLayerColorAt(document, layer, 2, 4)).toEqual(blue)
+    expect(readLayerColorAt(document, layer, 0, 0)).toEqual(blue)
+  })
+
   it('interpolates RGBA channels directly with rounding', () => {
     expect(interpolateRgbaColor({ r: 10, g: 20, b: 30, a: 40 }, { r: 21, g: 31, b: 41, a: 51 }, 0.5)).toEqual({ r: 16, g: 26, b: 36, a: 46 })
     expect(interpolateRgbaColor(red, blue, -1)).toEqual(red)
     expect(interpolateRgbaColor(red, blue, 2)).toEqual(blue)
+  })
+
+  it('carries the visible stop RGB through fully transparent gradient stops', () => {
+    const transparent = { r: 0, g: 0, b: 0, a: 0 }
+    expect(gradientColorForAmount(transparent, red, 0.5, 0, 0)).toEqual({ r: 255, g: 0, b: 0, a: 128 })
+    expect(gradientColorForAmount(red, transparent, 0.5, 0, 0)).toEqual({ r: 255, g: 0, b: 0, a: 128 })
+    expect(gradientColorForAmount(transparent, red, 0, 0, 0, 'checker')).toEqual({ r: 255, g: 0, b: 0, a: 0 })
   })
 
   it('provides deterministic built-in dither presets', () => {
@@ -108,6 +171,15 @@ describe('gradient tool core', () => {
     history?.redo()
     expect(readLayerColorAt(document, layer, 1, 0)).toEqual(red)
     expect(readLayerColorAt(document, layer, 2, 0)).toEqual(blue)
+  })
+
+  it('does not replace existing pixels with a fully transparent gradient stop', () => {
+    const document = createDocument('transparent gradient overlay', 1, 1, 'rgba')
+    const layer = getActiveLayer(document)
+    writeLayerColor(document, layer, 0, blue)
+    const edit = applyGradient(document, layer, { x: 0, y: 0 }, { x: 0, y: 0 }, { r: 0, g: 0, b: 0, a: 0 }, { r: 0, g: 0, b: 0, a: 0 })
+    expect(edit).toBeNull()
+    expect(readLayerColorAt(document, layer, 0, 0)).toEqual(blue)
   })
 
   it('keeps large dense gradients exact and undoable without per-pixel maps', () => {

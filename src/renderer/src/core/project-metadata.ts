@@ -1,4 +1,4 @@
-import type { ProjectDisplaySettings, ProjectStatistics, TimelapseQuality, TimelapseSettings, TimelapseSnapshot } from '@shared/types'
+import type { ProjectDisplaySettings, ProjectStatistics, TimelapseQuality, TimelapseRecordingMode, TimelapseSettings, TimelapseSnapshot } from '@shared/types'
 import { DEFAULT_GRID_SETTINGS, normalizeGridSettings } from './grid'
 
 export const DEFAULT_PROJECT_DISPLAY_SETTINGS: ProjectDisplaySettings = {
@@ -18,6 +18,7 @@ export const DEFAULT_TIMELAPSE_SETTINGS: TimelapseSettings = {
   quality: 'medium',
   fps: 12,
   speed: 8,
+  mode: 'full',
   snapshots: []
 }
 
@@ -45,6 +46,9 @@ export const normalizeProjectStatistics = (value: unknown): ProjectStatistics =>
 const timelapseQuality = (value: unknown): TimelapseQuality =>
   value === 'low' || value === 'high' ? value : 'medium'
 
+const timelapseRecordingMode = (value: unknown): TimelapseRecordingMode =>
+  value === 'smart' ? 'smart' : 'full'
+
 export const normalizeTimelapseSettings = (
   value: unknown,
   snapshots: TimelapseSnapshot[] = []
@@ -55,6 +59,7 @@ export const normalizeTimelapseSettings = (
     quality: timelapseQuality(candidate.quality),
     fps: Number.isFinite(candidate.fps) ? Math.max(1, Math.min(60, Math.round(candidate.fps!))) : DEFAULT_TIMELAPSE_SETTINGS.fps,
     speed: Number.isFinite(candidate.speed) ? Math.max(1, Math.min(64, Math.round(candidate.speed!))) : DEFAULT_TIMELAPSE_SETTINGS.speed,
+    mode: timelapseRecordingMode(candidate.mode),
     snapshots
   }
 }

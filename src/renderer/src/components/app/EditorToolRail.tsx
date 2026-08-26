@@ -5,8 +5,10 @@ import { PixelUtilityIcon } from '@/components/PixelUtilityIcon'
 import { Tooltip } from '@/components/Tooltip'
 import { useI18n } from '@/components/I18nProvider'
 import { toolRailRenderKey } from '@/components/app/app-render-keys'
-import { brushLineConnectionOverridesTemporaryMove, shouldUseTemporaryMoveTool } from '@/core/canvas-input'
-import { loadShortcuts } from '@/core/shortcuts'
+import { brushLineConnectionOverridesTemporaryMove, temporaryMoveToolAllowed } from '@/core/canvas-input'
+import { formatShortcutBindingsForLocale, loadShortcutBindings, matchingModifierShortcut, shortcutBindingsFor, shortcutDisplayText, type ShortcutId } from '@/core/shortcuts'
+import { applyQuickToolTarget } from '@/core/quick-tools'
+import { currentHeldShortcutKeyParts, useQuickToolShortcut } from '@/components/useQuickToolShortcut'
 import { useWorkspace } from '@/store/workspace'
 import { isToolAvailableForSession } from '@/store/workspace-session'
 import { ALL_EDITOR_TOOL_ICONS, FILL_KIND_ICONS, PixelAssetIcon, SELECTION_KIND_ICONS, activeToolPresentation, fillKindDefinitions, lineKindDefinitions, moveKindDefinitions, selectionKindDefinitions, shapeKindDefinitions, toolDefinitions } from './editor-tools'
@@ -26,42 +28,16 @@ export const EditorToolRail = memo(function EditorToolRail({ side, onGripPointer
   const [selectionFlyoutOpen, setSelectionFlyoutOpen] = useState(false)
   const [fillFlyoutOpen, setFillFlyoutOpen] = useState(false)
   const [moveFlyoutOpen, setMoveFlyoutOpen] = useState(false)
-  const [temporaryMoveSelected, setTemporaryMoveSelected] = useState(false)
-  const [shortcuts, setShortcuts] = useState(() => loadShortcuts())
+  const [shortcuts, setShortcuts] = useState(() => loadShortcutBindings())
   const state = useWorkspace.getState()
   const session = state.sessions.find((item) => item.document.id === state.activeId) ?? null
+  const quickToolMatch = useQuickToolShortcut(shortcuts)
 
   useEffect(() => {
-    const refreshShortcuts = (): void => setShortcuts(loadShortcuts())
+    const refreshShortcuts = (): void => setShortcuts(loadShortcutBindings())
     window.addEventListener('moonsprite:shortcuts-changed', refreshShortcuts)
     return () => window.removeEventListener('moonsprite:shortcuts-changed', refreshShortcuts)
   }, [])
-
-  useEffect(() => {
-    const updateTemporaryMove = (event: KeyboardEvent): void => {
-      if (!['Alt', 'Control', 'Meta', 'Shift'].includes(event.key)) return
-      const current = useWorkspace.getState()
-      const active = current.sessions.find((item) => item.document.id === current.activeId)
-      const lineConnectionHasPriority = Boolean(active && brushLineConnectionOverridesTemporaryMove(
-        active.tool,
-        event,
-        shortcuts.lineConnectionMode ?? '',
-        Boolean(active.tool === 'eraser' ? active.lastEraserPoint : active.tool === 'pencil' ? active.lastPencilPoint : null)
-      ))
-      setTemporaryMoveSelected(Boolean(active && !lineConnectionHasPriority && shouldUseTemporaryMoveTool(active.tool, event, shortcuts.temporaryMove ?? '', active.moveKind)))
-    }
-    const clearTemporaryMove = (): void => setTemporaryMoveSelected(false)
-    window.addEventListener('keydown', updateTemporaryMove)
-    window.addEventListener('keyup', updateTemporaryMove)
-    window.addEventListener('blur', clearTemporaryMove)
-    document.addEventListener('visibilitychange', clearTemporaryMove)
-    return () => {
-      window.removeEventListener('keydown', updateTemporaryMove)
-      window.removeEventListener('keyup', updateTemporaryMove)
-      window.removeEventListener('blur', clearTemporaryMove)
-      document.removeEventListener('visibilitychange', clearTemporaryMove)
-    }
-  }, [shortcuts.lineConnectionMode, shortcuts.temporaryMove])
 
   useEffect(() => {
     const closeOutside = (event: PointerEvent): void => {
@@ -102,14 +78,34 @@ export const EditorToolRail = memo(function EditorToolRail({ side, onGripPointer
 
   if (!session) return null
   const workspace = useWorkspace.getState()
+  const heldParts = currentHeldShortcutKeyParts()
+  const heldModifiers = {
+    ctrlKey: heldParts.has('Ctrl'),
+    metaKey: false,
+    altKey: heldParts.has('Alt'),
+    shiftKey: heldParts.has('Shift')
+  }
+  const lineConnectionHasPriority = brushLineConnectionOverridesTemporaryMove(
+    session.tool,
+    heldModifiers,
+    matchingModifierShortcut(heldModifiers, shortcutBindingsFor(shortcuts, 'lineConnectionMode')),
+    Boolean(session.tool === 'eraser' ? session.lastEraserPoint : session.tool === 'pencil' ? session.lastPencilPoint : null)
+  )
+  const quickTarget = quickToolMatch?.id === 'tool.move.quick'
+    && (!temporaryMoveToolAllowed(session.tool, session.moveKind) || lineConnectionHasPriority)
+    ? null
+    : quickToolMatch?.target ?? null
+  const displaySession = applyQuickToolTarget(session, quickTarget)
   const tools = toolDefinitions(locale)
   const selectionKinds = selectionKindDefinitions(locale)
   const shapeKinds = shapeKindDefinitions(locale)
   const lineKinds = lineKindDefinitions(locale)
   const fillKinds = fillKindDefinitions(locale)
   const moveKinds = moveKindDefinitions(locale)
-  const fillKind = session.fillKind ?? 'bucket'
+  const fillKind = displaySession.fillKind ?? 'bucket'
   const flyoutTooltip = (label: string, description: string, shortcut: string) => <><strong>{label}</strong><span>{description}</span><small>{t('tools.shortcut', { shortcut: shortcut || t('common.unset') })}</small></>
+  const shortcutFor = (id: ShortcutId): string => formatShortcutBindingsForLocale(shortcutBindingsFor(shortcuts, id), locale)
+  const primaryShortcutFor = (id: ShortcutId): string => shortcutDisplayText(shortcutBindingsFor(shortcuts, id)[0] ?? '', locale)
 
   return <PerformanceProfiler id="EditorToolRail"><aside className={`tool-rail side-${side}`} aria-label={t('tools.toolbar')}>
     <span className="tool-icon-preload" aria-hidden="true">
@@ -117,8 +113,8 @@ export const EditorToolRail = memo(function EditorToolRail({ side, onGripPointer
     </span>
     <button className="tool-rail-grip" type="button" aria-label={t('tools.moveToolbar')} title={t('tools.moveToolbarHint')} onPointerDown={onGripPointerDown}><PixelUtilityIcon kind="move" /></button>
     {tools.map((tool) => {
-      const presentation = activeToolPresentation(tool.id, session.selectionKind, session.shapeKind, locale, fillKind, session.lineKind, temporaryMoveSelected && tool.id === 'move' ? 'move' : session.moveKind)
-      const shortcut = shortcuts[presentation.shortcutId] ?? ''
+      const presentation = activeToolPresentation(tool.id, displaySession.selectionKind, displaySession.shapeKind, locale, fillKind, displaySession.lineKind, displaySession.moveKind)
+      const shortcut = primaryShortcutFor(presentation.shortcutId)
       const toolAvailable = isToolAvailableForSession(session, tool.id)
       const openToolFlyout = (): void => {
         if (!toolAvailable) return
@@ -130,24 +126,24 @@ export const EditorToolRail = memo(function EditorToolRail({ side, onGripPointer
         setMoveFlyoutOpen(tool.id === 'move' ? !moveFlyoutOpen : false)
       }
       return <div className="tool-slot" key={tool.id}>
-        <Tooltip className="rail-tool-tooltip" content={flyoutTooltip(presentation.label, presentation.description, shortcut)}><button className={(temporaryMoveSelected ? tool.id === 'move' : session.tool === tool.id) ? 'selected' : ''} aria-label={presentation.label} disabled={!toolAvailable} onClick={openToolFlyout}>
+        <Tooltip className="rail-tool-tooltip" content={flyoutTooltip(presentation.label, presentation.description, shortcutFor(presentation.shortcutId))}><button className={displaySession.tool === tool.id ? 'selected' : ''} aria-label={presentation.label} disabled={!toolAvailable} onClick={openToolFlyout}>
           <PixelAssetIcon src={presentation.icon} className="rail-tool-icon" />
           <small>{shortcut}</small>
         </button></Tooltip>
         {tool.id === 'selection' && selectionFlyoutOpen && <div className="tool-flyout selection-flyout" role="dialog" aria-label={t('tools.chooseSelectionTool')}>
-          {selectionKinds.map((definition) => <Tooltip key={definition.id} className="tool-flyout-tooltip" content={flyoutTooltip(definition.label, definition.description, shortcuts[definition.shortcutId] ?? '')}><button className={session.selectionKind === definition.id ? 'selected' : ''} aria-label={definition.label} onClick={() => { workspace.setSelectionKind(definition.id); setSelectionFlyoutOpen(false) }}><PixelAssetIcon src={SELECTION_KIND_ICONS[definition.id]} /></button></Tooltip>)}
+          {selectionKinds.map((definition) => <Tooltip key={definition.id} className="tool-flyout-tooltip" content={flyoutTooltip(definition.label, definition.description, shortcutFor(definition.shortcutId))}><button className={session.selectionKind === definition.id ? 'selected' : ''} aria-label={definition.label} onClick={() => { workspace.setSelectionKind(definition.id); setSelectionFlyoutOpen(false) }}><PixelAssetIcon src={SELECTION_KIND_ICONS[definition.id]} /></button></Tooltip>)}
         </div>}
         {tool.id === 'move' && moveFlyoutOpen && <div className="tool-flyout move-flyout" role="dialog" aria-label={t('tools.chooseMoveTool')}>
-          {moveKinds.map((definition) => <Tooltip key={definition.id} className="tool-flyout-tooltip" content={flyoutTooltip(definition.label, definition.description, shortcuts[definition.shortcutId] ?? '')}><button className={session.moveKind === definition.id ? 'selected' : ''} aria-label={definition.label} onClick={() => { workspace.setTool('move'); workspace.setMoveKind(definition.id); setMoveFlyoutOpen(false) }}><PixelAssetIcon src={definition.icon} /></button></Tooltip>)}
+          {moveKinds.map((definition) => <Tooltip key={definition.id} className="tool-flyout-tooltip" content={flyoutTooltip(definition.label, definition.description, shortcutFor(definition.shortcutId))}><button className={session.moveKind === definition.id ? 'selected' : ''} aria-label={definition.label} onClick={() => { workspace.setTool('move'); workspace.setMoveKind(definition.id); setMoveFlyoutOpen(false) }}><PixelAssetIcon src={definition.icon} /></button></Tooltip>)}
         </div>}
         {tool.id === 'shape' && shapeFlyoutOpen && <div className="tool-flyout shape-flyout" role="dialog" aria-label={t('tools.chooseShape')}>
-          {shapeKinds.map((definition) => <Tooltip key={definition.id} className="tool-flyout-tooltip" content={flyoutTooltip(definition.label, definition.description, t('tools.shapeShortcut', { shortcut: shortcuts[definition.shortcutId] || t('common.unset') }))}><button className={session.shapeKind === definition.id ? 'selected' : ''} aria-label={definition.label} onClick={() => { workspace.setShapeKind(definition.id); setShapeFlyoutOpen(false) }}><PixelAssetIcon src={definition.icon} /></button></Tooltip>)}
+          {shapeKinds.map((definition) => <Tooltip key={definition.id} className="tool-flyout-tooltip" content={flyoutTooltip(definition.label, definition.description, t('tools.shapeShortcut', { shortcut: shortcutFor(definition.shortcutId) || t('common.unset') }))}><button className={session.shapeKind === definition.id ? 'selected' : ''} aria-label={definition.label} onClick={() => { workspace.setShapeKind(definition.id); setShapeFlyoutOpen(false) }}><PixelAssetIcon src={definition.icon} /></button></Tooltip>)}
         </div>}
         {tool.id === 'line' && lineFlyoutOpen && <div className="tool-flyout line-flyout" role="dialog" aria-label={t('tools.chooseLineTool')}>
-          {lineKinds.map((definition) => <Tooltip key={definition.id} className="tool-flyout-tooltip" content={flyoutTooltip(definition.label, definition.description, shortcuts[definition.shortcutId] ?? '')}><button className={session.lineKind === definition.id ? 'selected' : ''} aria-label={definition.label} onClick={() => { workspace.setTool('line'); workspace.setLineKind(definition.id); setLineFlyoutOpen(false) }}><PixelAssetIcon src={definition.icon} /></button></Tooltip>)}
+          {lineKinds.map((definition) => <Tooltip key={definition.id} className="tool-flyout-tooltip" content={flyoutTooltip(definition.label, definition.description, shortcutFor(definition.shortcutId))}><button className={session.lineKind === definition.id ? 'selected' : ''} aria-label={definition.label} onClick={() => { workspace.setTool('line'); workspace.setLineKind(definition.id); setLineFlyoutOpen(false) }}><PixelAssetIcon src={definition.icon} /></button></Tooltip>)}
         </div>}
         {tool.id === 'fill' && fillFlyoutOpen && <div className="tool-flyout fill-flyout" role="dialog" aria-label={t('tools.chooseFillTool')}>
-          {fillKinds.map((definition) => <Tooltip key={definition.id} className="tool-flyout-tooltip" content={flyoutTooltip(definition.label, definition.description, shortcuts[definition.shortcutId] ?? '')}><button className={fillKind === definition.id ? 'selected' : ''} aria-label={definition.label} onClick={() => { workspace.setFillKind(definition.id); setFillFlyoutOpen(false) }}><PixelAssetIcon src={FILL_KIND_ICONS[definition.id]} /></button></Tooltip>)}
+          {fillKinds.map((definition) => <Tooltip key={definition.id} className="tool-flyout-tooltip" content={flyoutTooltip(definition.label, definition.description, shortcutFor(definition.shortcutId))}><button className={fillKind === definition.id ? 'selected' : ''} aria-label={definition.label} onClick={() => { workspace.setFillKind(definition.id); setFillFlyoutOpen(false) }}><PixelAssetIcon src={FILL_KIND_ICONS[definition.id]} /></button></Tooltip>)}
         </div>}
       </div>
     })}

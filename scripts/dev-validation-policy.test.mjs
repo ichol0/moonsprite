@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import test from 'node:test'
-import { evaluateDevValidationRequest, isExplicitDevTestFile } from './dev-validation-policy.mjs'
+import { classifyDevTier, evaluateDevValidationRequest, isExplicitDevTestFile } from './dev-validation-policy.mjs'
 
 const validationScript = fileURLToPath(new URL('./run-validation.mjs', import.meta.url))
 
@@ -18,6 +18,41 @@ test('normal core and store changes do not require tests', () => {
   ])
   assert.deepEqual(policy.errors, [])
   assert.deepEqual(policy.explicitTestFiles, [])
+  assert.equal(policy.tier, 'D2')
+  assert.equal(policy.runTypecheck, true)
+})
+
+test('ordinary component changes use the quick D1 path', () => {
+  const policy = evaluateDevValidationRequest([
+    'src/renderer/src/components/Toolbar.tsx',
+    'src/renderer/src/styles.css',
+  ])
+  assert.equal(policy.tier, 'D1')
+  assert.equal(policy.runTypecheck, false)
+})
+
+test('strict mode keeps type checking available for quick-path work', () => {
+  assert.equal(classifyDevTier(['src/renderer/src/components/Toolbar.tsx']), 'D1')
+  const policy = evaluateDevValidationRequest(
+    ['src/renderer/src/components/Toolbar.tsx'],
+    { strict: true },
+  )
+  assert.equal(policy.tier, 'D1')
+  assert.equal(policy.runTypecheck, true)
+})
+
+test('documentation-only changes stay on D0', () => {
+  const policy = evaluateDevValidationRequest(['docs/agent-workflow.md'])
+  assert.equal(policy.tier, 'D0')
+  assert.equal(policy.runTypecheck, false)
+})
+
+test('nested CSS-only changes stay on D0', () => {
+  assert.equal(classifyDevTier(['src/renderer/src/styles.css']), 'D0')
+})
+
+test('core tests do not get misclassified as presentation work', () => {
+  assert.equal(classifyDevTier(['src/renderer/src/core/tools.test.ts']), 'D2')
 })
 
 test('high-risk validation requires a targeted test', () => {

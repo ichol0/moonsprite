@@ -1,9 +1,67 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { CSSProperties, PointerEvent as ReactPointerEvent, RefObject } from 'react'
 import { loadFloatingPosition, resizeFloatingPosition, saveFloatingPosition, type FloatingPosition } from '@/core/panel-preferences'
 
 let floatingZIndex = 220
+const floatingWindowStackBaseZIndex = 600
+
+interface FloatingWindowStackEntry {
+  element: HTMLElement
+  setZIndex: (value: number) => void
+}
+
+let floatingWindowStack: FloatingWindowStackEntry[] = []
+const managedFloatingWindowRoots = new Map<HTMLElement, string>()
+
+const floatingWindowLayerRoot = (element: HTMLElement): HTMLElement | null =>
+  element.closest<HTMLElement>('.modal-backdrop, .lua-script-dialog-layer')
+
+const refreshFloatingWindowStack = (): void => {
+  floatingWindowStack = floatingWindowStack.filter((entry) => entry.element.isConnected)
+  const activeRoots = new Map<HTMLElement, number>()
+  floatingWindowStack.forEach((entry, index) => {
+    const zIndex = floatingWindowStackBaseZIndex + index * 2 + 1
+    entry.setZIndex(zIndex)
+    const root = floatingWindowLayerRoot(entry.element)
+    if (root && root !== entry.element) activeRoots.set(root, Math.max(activeRoots.get(root) ?? 0, zIndex - 1))
+  })
+  for (const [root, originalZIndex] of managedFloatingWindowRoots) {
+    if (activeRoots.has(root)) continue
+    root.style.zIndex = originalZIndex
+    managedFloatingWindowRoots.delete(root)
+  }
+  for (const [root, zIndex] of activeRoots) {
+    if (!managedFloatingWindowRoots.has(root)) managedFloatingWindowRoots.set(root, root.style.zIndex)
+    root.style.zIndex = String(zIndex)
+  }
+}
+
+export function useFloatingWindowStack(ref: RefObject<HTMLElement | null>, active = true) {
+  const [zIndex, setZIndex] = useState(floatingWindowStackBaseZIndex + 1)
+  const entryRef = useRef<FloatingWindowStackEntry | null>(null)
+  useLayoutEffect(() => {
+    const element = active ? ref.current : null
+    if (!element) return
+    const entry = { element, setZIndex }
+    entryRef.current = entry
+    floatingWindowStack.push(entry)
+    refreshFloatingWindowStack()
+    return () => {
+      floatingWindowStack = floatingWindowStack.filter((candidate) => candidate !== entry)
+      if (entryRef.current === entry) entryRef.current = null
+      refreshFloatingWindowStack()
+    }
+  }, [active, ref])
+  const bringToFront = useCallback((): void => {
+    const entry = entryRef.current
+    if (!entry) return
+    floatingWindowStack = floatingWindowStack.filter((candidate) => candidate !== entry)
+    floatingWindowStack.push(entry)
+    refreshFloatingWindowStack()
+  }, [])
+  return { zIndex, bringToFront }
+}
 
 export type PanelDock = 'right' | 'left' | 'bottom' | 'floating'
 export type FixedPanelDock = Exclude<PanelDock, 'floating'>

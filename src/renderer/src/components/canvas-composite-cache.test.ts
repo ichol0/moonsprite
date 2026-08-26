@@ -1,11 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { compositeRegion, createDocument, createLayer, createLayerMask, createSparseLayer, DocumentCompositeCache, readLayerColor, writeLayerColor } from '@/core/document'
-import { applySelectionTransform, applySelectionTranslationCommit, brushStrokeInvalidationRects, captureSelectionTransform, paintBrush } from '@/core/tools'
+import { applySelectionTransform, applySelectionTranslationCommit, brushStrokeInvalidationRects, captureSelectionTransform, paintBrush, selectionTransformPreviewPacked } from '@/core/tools'
 import { beginPixelEdit, revertPixelEdit } from '@/core/history'
 import { addBlankAnimationFrame, ensureAnimationDocument } from '@/core/animation'
 import { CanvasCompositeCache, shouldCacheFullCompositeSurface } from './canvas-composite-cache'
 import { canPrepareInitialDocumentComposite, registerInitialDocumentComposite, registerPendingInitialDocumentComposite } from '@/core/initial-document-composite'
 import { createDefaultLayerStyles } from '@/core/layer-styles'
+import { transformedSelectionBounds, type SelectionShearTransform } from '@/core/selection'
 
 class MockOffscreenCanvas {
   static instances: MockOffscreenCanvas[] = []
@@ -573,6 +574,79 @@ describe('CanvasCompositeCache', () => {
     expect(context.drawImage).toHaveBeenLastCalledWith(previewCanvas, 0, 0, 32, 32, -32, -32, 128, 128)
   })
 
+  it.each([
+    ['rotated', 90, undefined],
+    ['sheared', 0, { axis: 'x', edge: 's', amount: 2 } satisfies SelectionShearTransform]
+  ] as const)('rasterizes a %s clipboard transform once and reuses it while moving', (_label, angle, shear) => {
+    const context = {
+      save: vi.fn(), restore: vi.fn(), beginPath: vi.fn(), rect: vi.fn(), clip: vi.fn(),
+      translate: vi.fn(), scale: vi.fn(), drawImage: vi.fn(), imageSmoothingEnabled: true
+    }
+    const document = createDocument('transformed clipboard move preview', 16, 16, 'rgba')
+    const layer = document.layers[0]
+    const sourceSelection = { x: 1, y: 1, width: 3, height: 2 }
+    const values = Uint32Array.from([
+      0xff0000ff, 0xff00ff00, 0xffff0000,
+      0xff00ffff, 0xffff00ff, 0xffffff00
+    ])
+    const source = {
+      selection: sourceSelection,
+      values,
+      selectedOffsets: Uint32Array.from([0, 1, 2, 3, 4, 5]),
+      opaqueOffsets: Uint32Array.from([0, 1, 2, 3, 4, 5]),
+      opaqueIndices: new Uint32Array(0),
+      opaqueValues: new Uint32Array(0),
+      origin: 'clipboard' as const
+    }
+    const cache = new CanvasCompositeCache()
+    const draw = (target: typeof sourceSelection) => cache.draw({
+      context: context as never,
+      document,
+      view: { zoom: 8, panX: 0, panY: 0, rotation: 0, mirrored: false, mirroredVertical: false, showGrid: false, relativeLuminance: false },
+      originX: 0, originY: 0, canvasWidth: 128, canvasHeight: 128,
+      fromX: 0, fromY: 0, toX: 16, toY: 16,
+      revision: 1, contentRevision: 1,
+      selectionPreview: { layerId: layer.id, source, target, angle, shear, copy: true }
+    })
+    const target = { ...sourceSelection, x: 6, y: 5 }
+
+    draw(target)
+
+    const previewCanvas = context.drawImage.mock.calls.at(-1)?.[0] as MockOffscreenCanvas
+    const upload = previewCanvas.context.putImageData.mock.calls[0]?.[0] as MockImageData
+    const bounds = transformedSelectionBounds(target, angle, shear)
+    const left = Math.floor(bounds.x)
+    const top = Math.floor(bounds.y)
+    const width = Math.ceil(bounds.x + bounds.width) - left
+    const height = Math.ceil(bounds.y + bounds.height) - top
+    const expected = selectionTransformPreviewPacked(document, source, target, left, top, width, height, angle, shear, layer)
+    expect(Array.from(upload.data)).toEqual(Array.from(new Uint8ClampedArray(expected.buffer)))
+    expect(previewCanvas.context.putImageData).toHaveBeenCalledTimes(1)
+
+    context.drawImage.mockClear()
+    const movedTarget = { ...target, x: target.x + 2, y: target.y + 1 }
+    draw(movedTarget)
+
+    const movedBounds = transformedSelectionBounds(movedTarget, angle, shear)
+    const movedLeft = Math.floor(movedBounds.x)
+    const movedTop = Math.floor(movedBounds.y)
+    const movedWidth = Math.ceil(movedBounds.x + movedBounds.width) - movedLeft
+    const movedHeight = Math.ceil(movedBounds.y + movedBounds.height) - movedTop
+    expect(context.drawImage.mock.calls.at(-1)?.[0]).toBe(previewCanvas)
+    expect(previewCanvas.context.putImageData).toHaveBeenCalledTimes(1)
+    expect(context.drawImage).toHaveBeenLastCalledWith(
+      previewCanvas,
+      0,
+      0,
+      previewCanvas.width,
+      previewCanvas.height,
+      movedLeft * 8,
+      movedTop * 8,
+      movedWidth * 8,
+      movedHeight * 8
+    )
+  })
+
   it('matches the committed composite when a moved selection overlaps its source', () => {
     const context = {
       save: vi.fn(), restore: vi.fn(), beginPath: vi.fn(), rect: vi.fn(), clip: vi.fn(),
@@ -700,6 +774,67 @@ describe('CanvasCompositeCache', () => {
       { patchX: 1, patchY: 0 },
       { patchX: 4, patchY: 0 }
     ])
+  })
+
+  it('keeps a deferred transformed clipboard preview visible after rebuilding its reverted base and zooming', () => {
+    const context = {
+      save: vi.fn(), restore: vi.fn(), beginPath: vi.fn(), rect: vi.fn(), clip: vi.fn(),
+      translate: vi.fn(), scale: vi.fn(), drawImage: vi.fn(), imageSmoothingEnabled: true
+    }
+    const document = createDocument('reverted clipboard zoom preview', 8, 4, 'rgba')
+    const layer = document.layers[0]
+    const sourceSelection = { x: 1, y: 1, width: 2, height: 1 }
+    const source = {
+      selection: sourceSelection,
+      values: new Uint32Array([0xff0000ff, 0xffff0000]),
+      selectedOffsets: new Uint32Array(0),
+      opaqueOffsets: new Uint32Array(0),
+      opaqueIndices: new Uint32Array(0),
+      opaqueValues: new Uint32Array(0),
+      origin: 'clipboard' as const
+    }
+    const cache = new CanvasCompositeCache()
+    const draw = (zoom: number, fromX: number, fromY: number, toX: number, toY: number, selectionPreview?: Parameters<CanvasCompositeCache['draw']>[0]['selectionPreview']) => cache.draw({
+      context: context as never,
+      document,
+      view: { zoom, panX: 0, panY: 0, rotation: 0, mirrored: false, mirroredVertical: false, showGrid: false, relativeLuminance: false },
+      originX: -fromX * zoom,
+      originY: -fromY * zoom,
+      canvasWidth: document.width * zoom,
+      canvasHeight: document.height * zoom,
+      fromX,
+      fromY,
+      toX,
+      toY,
+      revision: 1,
+      contentRevision: 1,
+      selectionPreview
+    })
+
+    const materialized = applySelectionTransform(document, source, sourceSelection, 0, true, undefined, undefined, undefined, layer)!
+    draw(8, 0, 0, 8, 4)
+    const materializedBase = MockOffscreenCanvas.instances.find((canvas) => canvas.width === 8 && canvas.height === 4)!
+
+    revertPixelEdit(document, materialized)
+    cache.invalidateAll()
+    const target = { x: 3, y: 1, width: 4, height: 2 }
+    const preview = { layerId: layer.id, source, target, angle: 0, copy: true }
+    context.drawImage.mockClear()
+    draw(8, 0, 0, 8, 4, preview)
+
+    const rebuiltBase = MockOffscreenCanvas.instances.find((canvas) => canvas !== materializedBase
+      && canvas.width === 8
+      && canvas.height === 4
+      && canvas.context.putImageData.mock.calls.some(([pixels]) => (pixels as MockImageData).width === 8 && (pixels as MockImageData).height === 4))!
+    const rebuiltPixels = rebuiltBase.context.putImageData.mock.calls[0][0] as MockImageData
+    expect(Array.from(rebuiltPixels.data)).toEqual(new Array(8 * 4 * 4).fill(0))
+    const previewCanvas = context.drawImage.mock.calls.at(-1)?.[0] as MockOffscreenCanvas
+    expect(previewCanvas.context.putImageData.mock.calls.some(([pixels]) => Array.from((pixels as MockImageData).data).some((value) => value !== 0))).toBe(true)
+
+    context.drawImage.mockClear()
+    draw(32, 3, 1, 7, 3, preview)
+
+    expect(context.drawImage.mock.calls.at(-1)?.[0]).toBe(previewCanvas)
   })
 
   it('repairs only visible pixels after a full invalidation and repairs newly revealed pixels before drawing', () => {

@@ -21,7 +21,9 @@ describe('editor tool flyout definitions', () => {
     expect(SHAPE_KIND_DEFINITIONS.map((item) => item.id)).toEqual([
       'rectangle-outline', 'rectangle', 'ellipse-outline', 'ellipse', 'freeform', 'polygon'
     ])
-    expect(SHAPE_KIND_DEFINITIONS.every((item) => item.shortcutId === 'tool.shape')).toBe(true)
+    expect(SHAPE_KIND_DEFINITIONS.map((item) => item.shortcutId)).toEqual([
+      'tool.shape.rectangleOutline', 'tool.shape.rectangle', 'tool.shape.ellipseOutline', 'tool.shape.ellipse', 'tool.shape.freeform', 'tool.shape.polygon'
+    ])
     expect(SHAPE_KIND_DEFINITIONS.every((item) => item.icon.length > 0)).toBe(true)
   })
 

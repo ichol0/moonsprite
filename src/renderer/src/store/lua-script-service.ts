@@ -27,8 +27,24 @@ import { beginPixelEdit, recordPixel, type HistoryEntry } from '@/core/history'
 import { translateCurrent as tr } from '@/core/localization'
 import type { DocumentSession } from './workspace-types'
 import { useWorkspace } from './workspace'
+import { applyLuaScriptOperation, buildLuaMseSnapshot } from './lua-script-operations'
 
 const MAX_SCRIPT_IMAGE_PIXELS = 4_194_304
+const MAX_SCRIPT_OPERATION_BYTES = 16 * 1024 * 1024
+const MSE_OPERATION_PATHS = new Set([
+  'document.create', 'document.open', 'document.save',
+  'layers.create', 'layers.duplicate', 'layers.remove', 'layers.update',
+  'animation.setFrame', 'animation.createLoop', 'animation.updateLoop', 'animation.removeLoop', 'animation.play',
+  'palette.create', 'palette.update', 'palette.remove', 'palette.extract',
+  'tiles.createSet', 'tiles.createLayer', 'tiles.place', 'tiles.edit',
+  'freeTiles.createSource', 'freeTiles.createLayer', 'freeTiles.place', 'freeTiles.edit',
+  'brushes.importImage', 'brushes.createFromSelection', 'brushes.remove',
+  'selection.set', 'selection.clear', 'selection.invert', 'selection.transform',
+  'slices.create', 'slices.update', 'slices.remove',
+  'styles.apply', 'styles.copy', 'styles.paste', 'styles.clear', 'styles.setEnabled',
+  'workspace.setPanel', 'workspace.showPanel', 'workspace.hidePanel',
+  'io.export', 'io.save', 'io.open', 'ui.notify'
+])
 
 interface LuaScriptTarget {
   documentId: string
@@ -103,7 +119,7 @@ const selectionContext = (session: DocumentSession): LuaScriptExecutionContext['
   }
 }
 
-const buildInvocation = (session: DocumentSession): { context: LuaScriptExecutionContext; target: LuaScriptTarget } => {
+const buildInvocation = (session: DocumentSession, storedBrushes: Awaited<ReturnType<MoonSpriteApi['listBrushes']>>['brushes'] = []): { context: LuaScriptExecutionContext; target: LuaScriptTarget } => {
   if (session.activeLayerMaskId) throw new Error(tr('script.layerMaskUnsupported'))
   const document = session.document
   const layer = getActiveLayer(document)
@@ -140,7 +156,8 @@ const buildInvocation = (session: DocumentSession): { context: LuaScriptExecutio
       selection: selectionContext(session),
       transparentColor: 0,
       foreground: packRgba(session.primaryColor),
-      background: packRgba(session.secondaryColor)
+      background: packRgba(session.secondaryColor),
+      mseSnapshot: buildLuaMseSnapshot(session, storedBrushes)
     },
     target: {
       documentId: document.id,
@@ -215,6 +232,16 @@ const validateCreatedStructures = (target: LuaScriptTarget, result: LuaScriptRun
 const validateResult = (target: LuaScriptTarget, result: LuaScriptRunResult): void => {
   let expected = cloneSnapshot(target.expected)
   for (const batch of result.batches) {
+    let operationBytes = 0
+    for (const operation of batch.operations ?? []) {
+      if (!MSE_OPERATION_PATHS.has(operation.path)) throw new Error(tr('script.invalidResult'))
+      try {
+        operationBytes += JSON.stringify(operation.arguments).length
+      } catch {
+        throw new Error(tr('script.invalidResult'))
+      }
+      if (operationBytes > MAX_SCRIPT_OPERATION_BYTES) throw new Error(tr('script.invalidResult'))
+    }
     if (batch.surfaceChange) {
       if (batch.changes.length > 0) throw new Error(tr('script.invalidResult'))
       validateSurfaceSnapshot(batch.surfaceChange.before, expected.format)
@@ -270,9 +297,9 @@ export const luaScriptTargetIsActive = (clientSession: LuaScriptClientSession): 
   findActiveTargetSession(clientSession.target, false) !== null
 )
 
-const rebaseTarget = (target: LuaScriptTarget): LuaScriptExecutionContext => {
+const rebaseTarget = (target: LuaScriptTarget, storedBrushes: Awaited<ReturnType<MoonSpriteApi['listBrushes']>>['brushes'] = []): LuaScriptExecutionContext => {
   const session = activeTargetSession(target, false)
-  const current = buildInvocation(session)
+  const current = buildInvocation(session, storedBrushes)
   if (current.target.documentId !== target.documentId
     || current.target.layerId !== target.layerId
     || current.target.frameId !== target.frameId) {
@@ -460,12 +487,74 @@ const commitSurfaceChange = (
   return changedPixelCountForSurface(beforeSnapshot, afterSnapshot)
 }
 
-const applyResult = (target: LuaScriptTarget, result: LuaScriptRunResult): Pick<LuaScriptRunSummary, 'transactionCount' | 'changedPixelCount'> => {
+const focusScriptTarget = (target: LuaScriptTarget): DocumentSession => {
+  const workspace = useWorkspace.getState()
+  if (workspace.activeId !== target.documentId) workspace.setActive(target.documentId)
+  const session = workspace.sessions.find((candidate) => candidate.document.id === target.documentId)
+  if (!session || !session.document.layers.some((layer) => layer.id === target.layerId)) throw new Error(tr('script.targetChanged'))
+  if (session.document.activeLayerId !== target.layerId) workspace.selectLayer(target.layerId, 'replace')
+  if (target.frameId && session.document.animation?.activeFrameId !== target.frameId) workspace.setActiveAnimationFrame(target.frameId)
+  return activeTargetSession(target, false)
+}
+
+const historyPositions = (): Map<string, number> => new Map(
+  useWorkspace.getState().sessions.map((session) => [session.document.id, session.history.position])
+)
+
+const addedHistoryEntries = (before: ReadonlyMap<string, number>): number => useWorkspace.getState().sessions.reduce((count, session) => (
+  count + Math.max(0, session.history.position - (before.get(session.document.id) ?? 0))
+), 0)
+
+interface LuaBatchSessionBaseline {
+  dirty: boolean
+  updatedAt: string
+  revision: number
+  contentRevision: number
+  layersPanelRevision: number
+  contentInvalidation: DocumentSession['contentInvalidation']
+  recoverySuppressed: boolean
+}
+
+const captureLuaBatchSessionBaseline = (session: DocumentSession): LuaBatchSessionBaseline => ({
+  dirty: session.document.dirty,
+  updatedAt: session.document.updatedAt,
+  revision: session.revision,
+  contentRevision: session.contentRevision,
+  layersPanelRevision: session.layersPanelRevision,
+  contentInvalidation: session.contentInvalidation?.kind === 'region'
+    ? { ...session.contentInvalidation, rect: { ...session.contentInvalidation.rect } }
+    : session.contentInvalidation ? { ...session.contentInvalidation } : null,
+  recoverySuppressed: session.recoverySuppressed
+})
+
+const restoreLuaBatchSessionBaseline = (session: DocumentSession, baseline: LuaBatchSessionBaseline): void => {
+  session.document.dirty = baseline.dirty
+  session.document.updatedAt = baseline.updatedAt
+  session.revision = baseline.revision
+  session.contentRevision = baseline.contentRevision
+  session.layersPanelRevision = baseline.layersPanelRevision
+  session.contentInvalidation = baseline.contentInvalidation?.kind === 'region'
+    ? { ...baseline.contentInvalidation, rect: { ...baseline.contentInvalidation.rect } }
+    : baseline.contentInvalidation ? { ...baseline.contentInvalidation } : null
+  session.recoverySuppressed = baseline.recoverySuppressed
+}
+
+const applyResult = async (
+  target: LuaScriptTarget,
+  result: LuaScriptRunResult,
+  api: Partial<MoonSpriteApi>
+): Promise<Pick<LuaScriptRunSummary, 'transactionCount' | 'changedPixelCount'> & { documentBoundary: boolean }> => {
   validateResult(target, result)
   activeTargetSession(target)
-  let transactionCount = 0
+  const positionsBefore = historyPositions()
   let changedPixelCount = 0
+  let documentBoundary = false
   for (const batch of result.batches) {
+    const batchSession = focusScriptTarget(target)
+    const batchBaseline = captureLuaBatchSessionBaseline(batchSession)
+    batchSession.history.beginCompound()
+    let batchCompleted = false
+    try {
     if (batch.surfaceChange) {
       changedPixelCount += commitSurfaceChange(
         target,
@@ -473,41 +562,56 @@ const applyResult = (target: LuaScriptTarget, result: LuaScriptRunResult): Pick<
         batch.surfaceChange.after,
         batch.label || result.fileName || tr('script.historyLabel')
       )
-      transactionCount += 1
-      continue
+    } else if (batch.changes.length > 0) {
+      const session = activeTargetSession(target, false)
+      const layer = getLayer(session.document, target.layerId)
+      const edit = beginPixelEdit(target.layerId)
+      if (target.frameId) edit.frameId = target.frameId
+      let batchChangeCount = 0
+      for (const change of batch.changes) {
+        if (recordPixel(session.document, layer, edit, change.index, change.after >>> 0)) batchChangeCount += 1
+      }
+      if (batchChangeCount > 0 && useWorkspace.getState().commitPixelEdit(edit, batch.label || result.fileName || tr('script.historyLabel'))) {
+        changedPixelCount += batchChangeCount
+        for (const change of batch.changes) target.expected.pixels[change.index] = change.after >>> 0
+      }
     }
-    const session = activeTargetSession(target)
-    const layer = getLayer(session.document, target.layerId)
-    const edit = beginPixelEdit(target.layerId)
-    if (target.frameId) edit.frameId = target.frameId
-    let batchChangeCount = 0
-    for (const change of batch.changes) {
-      if (recordPixel(session.document, layer, edit, change.index, change.after >>> 0)) batchChangeCount += 1
+    for (const operation of batch.operations ?? []) {
+      const applied = await applyLuaScriptOperation(operation, api)
+      changedPixelCount += applied.changedPixelCount
+      documentBoundary ||= applied.documentBoundary
     }
-    if (batchChangeCount > 0 && useWorkspace.getState().commitPixelEdit(edit, batch.label || result.fileName || tr('script.historyLabel'))) {
-      transactionCount += 1
-      changedPixelCount += batchChangeCount
-      for (const change of batch.changes) target.expected.pixels[change.index] = change.after >>> 0
-      const updated = useWorkspace.getState().sessions.find((candidate) => candidate.document.id === target.documentId)
-      if (!updated) throw new Error(tr('script.targetChanged'))
+    batchSession.history.endCompound(batch.label || result.fileName || tr('script.historyLabel'))
+    batchCompleted = true
+    } finally {
+      if (!batchCompleted) {
+        batchSession.history.abortCompound()
+        restoreLuaBatchSessionBaseline(batchSession, batchBaseline)
+        useWorkspace.setState((state) => ({ sessions: [...state.sessions] }))
+      }
+    }
+    const updated = useWorkspace.getState().sessions.find((candidate) => candidate.document.id === target.documentId)
+    const targetLayer = updated?.document.layers.find((candidate) => candidate.id === target.layerId)
+    if (updated && targetLayer) {
+      target.expected = snapshotFromLayer(updated.document, layerForFrame(updated.document, target))
       target.revision = updated.revision
     }
   }
   for (const created of result.createdLayers) {
     changedPixelCount += commitCreatedLayer(target, created, result.fileName || tr('script.historyLabel'))
-    transactionCount += 1
   }
   for (const created of result.createdDocuments) {
     const document = createScriptDocument(created)
     useWorkspace.getState().addSession(document)
     changedPixelCount += created.layers.reduce((count, layer) => count + createdLayerPixelCount(layer), 0)
-    transactionCount += 1
+    documentBoundary = true
   }
-  return { transactionCount, changedPixelCount }
+  return { transactionCount: addedHistoryEntries(positionsBefore) + result.createdDocuments.length, changedPixelCount, documentBoundary }
 }
 
-const outcomeFromResult = (target: LuaScriptTarget, result: LuaScriptRunResult): LuaScriptRunOutcome => {
-  const applied = applyResult(target, result)
+const outcomeFromResult = async (target: LuaScriptTarget, result: LuaScriptRunResult, api: Partial<MoonSpriteApi>): Promise<LuaScriptRunOutcome> => {
+  const applied = await applyResult(target, result, api)
+  if (applied.documentBoundary && !result.finished) throw new Error(tr('script.targetChanged'))
   const summary: LuaScriptRunSummary = {
     fileName: result.fileName,
     filePath: result.filePath,
@@ -529,16 +633,17 @@ const outcomeFromResult = (target: LuaScriptTarget, result: LuaScriptRunResult):
 }
 
 export async function runLuaScriptForActiveDocument(
-  api: Pick<MoonSpriteApi, 'runLuaScript'> & Partial<Pick<MoonSpriteApi, 'closeLuaScriptSession'>>,
+  api: Pick<MoonSpriteApi, 'runLuaScript'> & Partial<MoonSpriteApi>,
   scriptId: string
 ): Promise<LuaScriptRunOutcome> {
   const state = useWorkspace.getState()
   const session = state.sessions.find((candidate) => candidate.document.id === state.activeId)
   if (!session) throw new Error(tr('script.documentRequired'))
-  const { context, target } = buildInvocation(session)
+  const storedBrushes = api.listBrushes ? (await api.listBrushes().catch(() => ({ directoryPath: '', brushes: [], folders: [] }))).brushes : []
+  const { context, target } = buildInvocation(session, storedBrushes)
   const result = await api.runLuaScript(scriptId, context)
   try {
-    return outcomeFromResult(target, result)
+    return await outcomeFromResult(target, result, api)
   } catch (error) {
     if (result.sessionId && api.closeLuaScriptSession) await api.closeLuaScriptSession(result.sessionId).catch(() => undefined)
     throw error
@@ -546,14 +651,15 @@ export async function runLuaScriptForActiveDocument(
 }
 
 export async function dispatchLuaScriptDialogForActiveDocument(
-  api: Pick<MoonSpriteApi, 'dispatchLuaScriptDialog'> & Partial<Pick<MoonSpriteApi, 'closeLuaScriptSession'>>,
+  api: Pick<MoonSpriteApi, 'dispatchLuaScriptDialog'> & Partial<MoonSpriteApi>,
   session: LuaScriptClientSession,
   action: LuaScriptDialogAction
 ): Promise<LuaScriptRunOutcome> {
-  const context = rebaseTarget(session.target)
+  const storedBrushes = api.listBrushes ? (await api.listBrushes().catch(() => ({ directoryPath: '', brushes: [], folders: [] }))).brushes : []
+  const context = rebaseTarget(session.target, storedBrushes)
   const result = await api.dispatchLuaScriptDialog(session.sessionId, action, context)
   try {
-    return outcomeFromResult(session.target, result)
+    return await outcomeFromResult(session.target, result, api)
   } catch (error) {
     if (api.closeLuaScriptSession) await api.closeLuaScriptSession(session.sessionId).catch(() => undefined)
     throw error

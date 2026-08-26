@@ -1,7 +1,9 @@
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { CanvasCompositeCache } from '@/components/canvas-composite-cache'
 import { createDocument } from '@/core/document'
 import { WHEEL_ZOOM_MODE_PREFERENCE_KEY } from '@/core/file-preferences'
+import { notifyCanvasPreview } from '@/core/canvas-preview-lifecycle'
 import { useWorkspace } from '@/store/workspace'
 import { PreviewPanel } from './PreviewPanel'
 
@@ -41,6 +43,39 @@ afterEach(() => {
 })
 
 describe('PreviewPanel animation controls', () => {
+  it('renders the canvas move preview while the gesture is still active', async () => {
+    const context = {
+      setTransform: vi.fn(), clearRect: vi.fn(), fillRect: vi.fn(), save: vi.fn(), restore: vi.fn(),
+      beginPath: vi.fn(), rect: vi.fn(), clip: vi.fn(), drawImage: vi.fn(),
+      imageSmoothingEnabled: false, imageSmoothingQuality: 'low', fillStyle: ''
+    }
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockImplementation(() => context as never)
+    vi.spyOn(HTMLCanvasElement.prototype, 'getBoundingClientRect').mockReturnValue({
+      x: 0, y: 0, top: 0, left: 0, right: 200, bottom: 200, width: 200, height: 200, toJSON: () => ({})
+    })
+    const document = createDocument('live canvas preview', 8, 8, 'rgba')
+    useWorkspace.getState().addSession(document)
+    const session = useWorkspace.getState().sessions[0]
+    const draw = vi.spyOn(CanvasCompositeCache.prototype, 'draw')
+    const invalidate = vi.spyOn(CanvasCompositeCache.prototype, 'invalidateAll')
+    render(<PreviewPanel session={session} onClose={vi.fn()} docked />)
+
+    await waitFor(() => expect(draw).toHaveBeenCalled())
+    act(() => notifyCanvasPreview(document.id, {
+      document,
+      frameId: document.animation!.activeFrameId,
+      revision: session.revision,
+      contentRevision: session.contentRevision,
+      movingLayerIds: [document.activeLayerId]
+    }))
+
+    await waitFor(() => expect(draw).toHaveBeenLastCalledWith(expect.objectContaining({ movingLayerIds: [document.activeLayerId] })))
+    expect(invalidate).toHaveBeenCalled()
+
+    act(() => notifyCanvasPreview(document.id, null))
+    await waitFor(() => expect(draw).toHaveBeenLastCalledWith(expect.objectContaining({ movingLayerIds: undefined, selectionPreview: undefined })))
+  })
+
   it('keeps one exact source surface for dirty-region preview updates', () => {
     const context = {
       setTransform: vi.fn(), clearRect: vi.fn(), fillRect: vi.fn(), save: vi.fn(), restore: vi.fn(),
@@ -134,6 +169,62 @@ describe('PreviewPanel animation controls', () => {
     fireEvent.click(play)
     expect(session.animationPlaying).toBe(false)
     expect(screen.getByRole('button', { name: '暂停动画' })).toBeInTheDocument()
+  })
+
+  it('shows the selected timeline frame while preview playback is stopped', async () => {
+    const context = {
+      setTransform: vi.fn(), clearRect: vi.fn(), fillRect: vi.fn(), save: vi.fn(), restore: vi.fn(),
+      beginPath: vi.fn(), rect: vi.fn(), clip: vi.fn(), translate: vi.fn(), scale: vi.fn(), drawImage: vi.fn(),
+      imageSmoothingEnabled: false, imageSmoothingQuality: 'low', fillStyle: ''
+    }
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockImplementation(() => context as never)
+    vi.spyOn(HTMLCanvasElement.prototype, 'getBoundingClientRect').mockReturnValue({
+      x: 0, y: 0, top: 0, left: 0, right: 200, bottom: 200, width: 200, height: 200, toJSON: () => ({})
+    })
+    const draw = vi.spyOn(CanvasCompositeCache.prototype, 'draw')
+    const document = createDocument('selected preview frame', 8, 8, 'rgba')
+    useWorkspace.getState().addSession(document)
+    const firstFrameId = document.animation!.activeFrameId
+    useWorkspace.getState().duplicateAnimationFrame()
+    const secondFrameId = document.animation!.activeFrameId
+    useWorkspace.getState().setActiveAnimationFrame(firstFrameId)
+
+    const { rerender } = render(<PreviewPanel session={useWorkspace.getState().sessions[0]} onClose={vi.fn()} docked />)
+    await waitFor(() => expect(draw).toHaveBeenLastCalledWith(expect.objectContaining({ frameId: firstFrameId })))
+
+    useWorkspace.getState().setActiveAnimationFrame(secondFrameId)
+    rerender(<PreviewPanel session={useWorkspace.getState().sessions[0]} onClose={vi.fn()} docked />)
+
+    await waitFor(() => expect(draw).toHaveBeenLastCalledWith(expect.objectContaining({ frameId: secondFrameId })))
+  })
+
+  it('follows the active frame while the main animation is playing', async () => {
+    const context = {
+      setTransform: vi.fn(), clearRect: vi.fn(), fillRect: vi.fn(), save: vi.fn(), restore: vi.fn(),
+      beginPath: vi.fn(), rect: vi.fn(), clip: vi.fn(), translate: vi.fn(), scale: vi.fn(), drawImage: vi.fn(),
+      imageSmoothingEnabled: false, imageSmoothingQuality: 'low', fillStyle: ''
+    }
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockImplementation(() => context as never)
+    vi.spyOn(HTMLCanvasElement.prototype, 'getBoundingClientRect').mockReturnValue({
+      x: 0, y: 0, top: 0, left: 0, right: 200, bottom: 200, width: 200, height: 200, toJSON: () => ({})
+    })
+    const draw = vi.spyOn(CanvasCompositeCache.prototype, 'draw')
+    const document = createDocument('playing preview frame', 8, 8, 'rgba')
+    useWorkspace.getState().addSession(document)
+    const firstFrameId = document.animation!.activeFrameId
+    useWorkspace.getState().duplicateAnimationFrame()
+    const secondFrameId = document.animation!.activeFrameId
+    useWorkspace.getState().setActiveAnimationFrame(firstFrameId)
+
+    const { rerender } = render(<PreviewPanel session={useWorkspace.getState().sessions[0]} onClose={vi.fn()} docked />)
+    await waitFor(() => expect(draw).toHaveBeenLastCalledWith(expect.objectContaining({ frameId: firstFrameId })))
+
+    useWorkspace.getState().setAnimationPlaying(true)
+    useWorkspace.getState().setActiveAnimationFrame(secondFrameId)
+    expect(useWorkspace.getState().sessions[0].animationPlaying).toBe(true)
+    rerender(<PreviewPanel session={useWorkspace.getState().sessions[0]} onClose={vi.fn()} docked />)
+
+    await waitFor(() => expect(draw).toHaveBeenLastCalledWith(expect.objectContaining({ frameId: secondFrameId })))
   })
 
   it('keeps fixed zoom controls without rendering a percentage label', () => {

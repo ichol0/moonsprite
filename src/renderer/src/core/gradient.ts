@@ -1,11 +1,12 @@
-import type { GradientDither, RasterLayer, RgbaColor, SelectionMask, SpriteDocument } from '@shared/types'
+import type { GradientDither, GradientType, RasterLayer, RgbaColor, SelectionMask, SpriteDocument } from '@shared/types'
 import { beginPixelEdit, preparePixelEdit, recordPixel, type PixelEdit } from './history'
 import { expandLayerToRect, getLayerStorageOrigin, isLayerEffectivelyLocked, layerIndexAt, markLayerContentChanged, normalizeLayerPackedValue, paletteColorIdForCanvas, readLayerColor, readLayerPacked, writeLayerPacked } from './document'
 import { blendOver, packColor } from './raster'
 import { magicWandSelection, selectionContains } from './selection'
-import { createGradientColorSampler } from './gradient-color'
+import { createGradientColorSampler, type GradientGeometryOptions } from './gradient-color'
 
-export { createGradientColorSampler, gradientAmountAt, gradientColorAt, gradientColorForAmount, GRADIENT_DITHER_PRESETS, interpolateRgbaColor } from './gradient-color'
+export { createGradientColorSampler, gradientAmountAt, gradientColorAt, gradientColorForAmount, GRADIENT_DITHER_PRESETS, interpolateRgbaColor, resolveRadialGradientGeometry } from './gradient-color'
+export type { GradientGeometryOptions, RadialGradientGeometry } from './gradient-color'
 
 /** Snaps a gradient endpoint to one of sixteen evenly spaced directions. */
 export const constrainGradientEndpoint = (
@@ -38,7 +39,11 @@ export const gradientRegionSelection = (
 ): SelectionMask | null => magicWandSelection(document, layer, start.x, start.y, tolerance, contiguous)
 
 const gradientPaintValue = (document: SpriteDocument, layer: RasterLayer, index: number, color: RgbaColor): number => {
-  if (color.a === 0) return layer.format === 'rgba' ? packColor(color) : 0
+  if (color.a === 0) {
+    // A transparent gradient source is source-over no-op, including hidden
+    // RGB channels on an already transparent destination.
+    return readLayerPacked(document, layer, index)
+  }
   if (color.a === 255) return layer.format === 'rgba' ? packColor(color) : paletteColorIdForCanvas(document, color)
   return layer.format === 'rgba'
     ? packColor(blendOver(readLayerColor(document, layer, index), color))
@@ -111,7 +116,7 @@ const applyDenseGradient = (
   return edit
 }
 
-/** Applies one linear gradient as a single undoable pixel edit. */
+/** Applies one gradient as a single undoable pixel edit. */
 export const applyGradient = (
   document: SpriteDocument,
   layer: RasterLayer,
@@ -121,7 +126,9 @@ export const applyGradient = (
   endColor: RgbaColor,
   selection?: SelectionMask | null,
   dither: GradientDither = 'none',
-  paintRegion?: SelectionMask | null
+  paintRegion?: SelectionMask | null,
+  type: GradientType = 'linear',
+  geometryOptions: GradientGeometryOptions = {}
 ): PixelEdit | null => {
   if (paintRegion === null || isLayerEffectivelyLocked(document, layer)) return null
   const left = Math.ceil(Math.max(0, selection?.x ?? 0, paintRegion?.x ?? 0))
@@ -130,7 +137,7 @@ export const applyGradient = (
   const bottom = Math.min(document.height, selection ? selection.y + selection.height : document.height, paintRegion ? paintRegion.y + paintRegion.height : document.height)
   if (right <= left || bottom <= top) return null
   if (!expandLayerToRect(layer, left, top, right, bottom)) return null
-  const sampleColor = createGradientColorSampler(startColor, endColor, start, end, dither)
+  const sampleColor = createGradientColorSampler(startColor, endColor, start, end, dither, type, geometryOptions)
   const edit = beginPixelEdit(layer.id)
   if ((right - left) * (bottom - top) >= DENSE_GRADIENT_MIN_PIXELS) {
     return applyDenseGradient(document, layer, edit, left, top, right, bottom, sampleColor, selection, paintRegion)

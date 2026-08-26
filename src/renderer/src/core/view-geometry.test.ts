@@ -142,4 +142,25 @@ describe('view rotation geometry', () => {
     expect(next.panX).toBeCloseTo(150)
     expect(next.panY).toBeCloseTo(0)
   })
+
+  it('uses oversized floating content bounds while zooming and panning a small canvas', () => {
+    const floatingBounds = { x: 0, y: 0, width: 200, height: 100 }
+    for (const zoom of [2, 4]) {
+      const centered = { zoom, panX: -90 * zoom, panY: -40 * zoom, rotation: 0 }
+      expect(clampCanvasViewPan(300, 200, 20, 20, centered, 'view', floatingBounds)).toEqual(centered)
+    }
+
+    const edge = clampCanvasViewPan(300, 200, 20, 20, { zoom: 2, panX: 1000, panY: -1000, rotation: 0 }, 'view', floatingBounds)
+    expect(edge.panX).toBeCloseTo(20)
+    expect(edge.panY).toBeCloseTo(-180)
+  })
+
+  it('keeps offset floating content navigable through rotation, mirror, and either rotation pivot', () => {
+    const floatingBounds = { x: -80, y: 0, width: 200, height: 50 }
+    const viewCentered = { zoom: 8, panX: -80, panY: -160, rotation: 90, mirrored: true }
+    expect(clampCanvasViewPan(300, 300, 20, 10, viewCentered, 'view', floatingBounds)).toEqual(viewCentered)
+
+    const canvasCentered = { zoom: 8, panX: 160, panY: 80, rotation: 90, mirrored: true }
+    expect(clampCanvasViewPan(300, 300, 20, 10, canvasCentered, 'canvas', floatingBounds)).toEqual(canvasCentered)
+  })
 })

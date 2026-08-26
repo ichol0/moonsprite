@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { applyColorAdjustment, applyColorAdjustmentDirect, adjustColor, buildCurveHistogram, buildCurveLut, buildCurvePath, type ColorAdjustment } from './adjustments'
+import { applyColorAdjustment, applyColorAdjustmentDirect, adjustColor, buildCurveHistogram, buildCurveHistogramChunked, buildCurveLut, buildCurvePath, isColorAdjustmentIdentity, type ColorAdjustment } from './adjustments'
+import { processAdjustmentPreview } from './adjustment-preview-processing'
 import { createDocument, getActiveLayer, readLayerColor, writeLayerColor } from './document'
 
 describe('color adjustments', () => {
@@ -79,6 +80,74 @@ describe('color adjustments', () => {
     expect(readLayerColor(document, layer, 0)).toEqual({ r: 10, g: 20, b: 30, a: 255 })
     expect(readLayerColor(document, layer, 1).r).toBeGreaterThan(40)
     expect(readLayerColor(document, layer, 2)).toEqual({ r: 70, g: 80, b: 90, a: 255 })
+  })
+
+  it('limits direct previews to the requested document region', () => {
+    const document = createDocument('regional direct adjustment', 4, 2, 'rgba')
+    const layer = getActiveLayer(document)
+    const baseline = new Uint8ClampedArray(4 * 2 * 4)
+    for (let index = 0; index < 8; index += 1) baseline.set([index * 10, 20, 30, 255], index * 4)
+    layer.pixels.set(baseline)
+
+    applyColorAdjustmentDirect(document, layer, { kind: 'brightness-contrast', brightness: 20 }, null, baseline, { x: 1, y: 0, width: 2, height: 1 })
+
+    expect(readLayerColor(document, layer, 0)).toEqual({ r: 0, g: 20, b: 30, a: 255 })
+    expect(readLayerColor(document, layer, 1).r).toBeGreaterThan(10)
+    expect(readLayerColor(document, layer, 2).r).toBeGreaterThan(20)
+    expect(readLayerColor(document, layer, 3)).toEqual({ r: 30, g: 20, b: 30, a: 255 })
+    expect(readLayerColor(document, layer, 4)).toEqual({ r: 40, g: 20, b: 30, a: 255 })
+  })
+
+  it('produces worker preview pixels identical to the complete adjustment path', async () => {
+    const document = createDocument('worker adjustment preview', 4, 2, 'rgba')
+    const layer = getActiveLayer(document)
+    const source = new Uint8ClampedArray([
+      10, 20, 30, 255, 40, 50, 60, 255, 70, 80, 90, 255, 100, 110, 120, 255,
+      130, 140, 150, 255, 160, 170, 180, 255, 190, 200, 210, 255, 220, 230, 240, 255
+    ])
+    layer.pixels.set(source)
+    const selection = { x: 1, y: 0, width: 2, height: 2, mask: new Uint8Array([1, 0, 1, 1]) }
+    const adjustment: ColorAdjustment = { kind: 'hue-saturation', hue: 30, saturation: 25, lightness: 10 }
+    applyColorAdjustmentDirect(document, layer, adjustment, selection, source)
+    const expected = new Uint8ClampedArray(layer.pixels)
+
+    const result = await processAdjustmentPreview({
+      documentWidth: 4,
+      documentHeight: 2,
+      colorMode: 'rgba',
+      palette: document.palette,
+      paletteOrder: document.paletteOrder,
+      nextColorId: document.nextColorId,
+      selection,
+      locale: 'zh-CN',
+      layers: [{ layerId: layer.id, width: 4, height: 2, offsetX: 0, offsetY: 0, format: 'rgba', isMask: false, localContentBounds: { x: 0, y: 0, width: 4, height: 2 }, pixels: source }]
+    }, 1, adjustment, { x: 0, y: 0, width: 4, height: 2 })
+
+    expect(result).not.toBeNull()
+    const previewLayer = result!.layers[0]
+    const actual = new Uint8ClampedArray(source)
+    for (let row = 0; row < previewLayer.height; row += 1) {
+      const sourceOffset = row * previewLayer.width * 4
+      const targetOffset = ((previewLayer.y + row) * 4 + previewLayer.x) * 4
+      actual.set((previewLayer.pixels as Uint8ClampedArray).subarray(sourceOffset, sourceOffset + previewLayer.width * 4), targetOffset)
+    }
+    expect(actual).toEqual(expected)
+  })
+
+  it('recognizes neutral adjustment controls without processing pixels', () => {
+    expect(isColorAdjustmentIdentity({ kind: 'brightness-contrast', brightness: 0, contrast: 0 })).toBe(true)
+    expect(isColorAdjustmentIdentity({ kind: 'curves', curvePoints: [{ x: 0, y: 0 }, { x: 255, y: 255 }] })).toBe(true)
+    expect(isColorAdjustmentIdentity({ kind: 'hue-saturation', saturation: 1 })).toBe(false)
+  })
+
+  it('builds chunked curve histograms with the same values as the synchronous path', async () => {
+    const pixels = new Uint8ClampedArray([
+      10, 20, 30, 255,
+      10, 20, 30, 255,
+      90, 80, 70, 128,
+      1, 2, 3, 0
+    ])
+    expect(await buildCurveHistogramChunked(pixels, 'rgba', [])).toEqual(buildCurveHistogram(pixels, 'rgba', []))
   })
 
   it('matches indexed adjustment quantization while reusing transformed palette ids', () => {

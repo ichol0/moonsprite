@@ -70,17 +70,26 @@ end)
 - `app.*` 是 Aseprite 兼容 API。它用于迁移已有脚本，当前只实现项目明确列出的兼容子集。
 - `mse.*` 是 MoonSprite 专属 API。它不会伪装成 Aseprite API，也不会暴露内部 `SpriteDocument` 或 Renderer 状态。
 
+当前兼容子集支持常见的图层与 Cel 用法，包括 `Sprite:newCel(layer, frame, image, position)` 的可选图像和位置参数，以及 `Layer.isEditable`、`Layer.isContinuous` 的读写。兼容脚本仍运行在 Lua 沙箱的图像、内存、指令数和执行时间预算内；逐像素邻域扫描等高计算量脚本在较大画布上可能因预算耗尽而停止，这不是 API 语法错误。
+
 完整的 MSE API 外形、端点状态和错误约定见 [mse-api.md](mse-api.md)。编辑器类型提示见 [mse-api.lua](mse-api.lua)，可以将它加入 VS Code 的 LuaLS 工作区库路径。
 
 ## 当前可用接口
 
-首版只开放安全的只读查询：
+`mse` 当前开放文档、图层、动画循环节、调色板、瓦片、自由瓦片、图案笔刷、选区、切片、图层样式、工作区栏目、文件操作和通用 UI。查询立即返回脚本启动时的结构快照；写入会加入当前 `app.transaction()`，脚本调用成功后再由 Renderer 通过 Store 领域命令顺序提交：
 
 ```lua
 local document = mse.document.info()
-local selection = mse.selection.info()
+local layers = mse.layers.list()
+
+app.transaction("Create palette color", function()
+  mse.palette.create { color = { r = 41, g = 121, b = 255, a = 255 } }
+  mse.layers.update(layers[1].id, { name = "Lua Layer", opacity = 192 })
+end)
 ```
 
-脚本可以用 `mse.apiVersion`、`mse.status` 和 `mse.capabilities` 判断运行时版本与端点状态，也可以用 `mse.isSupported("document.info")` 做能力探测。规划中的端点已经出现在能力表中，但调用时会返回明确错误，不会静默成功。
+同一个 Lua 事务中的像素修改与 `mse` 写入只形成一个撤销步骤；任一操作校验失败时整批撤回。创建/打开其他工程、保存、导出、导入本地笔刷和工作区显隐属于应用或文件操作，不进入当前工程的撤销历史。
 
-可运行示例见 [examples/intro.lua](examples/intro.lua)。
+脚本可以用 `mse.apiVersion`、`mse.status`、`mse.capabilities` 和 `mse.isSupported("document.info")` 做能力探测。当前 `0.2.0` 能力表中的所有方法均为真实实现，不再包含只报错的规划占位端点。
+
+可运行示例见 [examples/intro.lua](examples/intro.lua) 和 [examples/moon-phase.lua](examples/moon-phase.lua)。首次打开“文件 > 脚本”时，`moon-phase.lua` 也会自动放入程序根目录的 `scripts` 文件夹；如果用户已经存在同名文件则不会覆盖。

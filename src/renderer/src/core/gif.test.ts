@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { addBlankAnimationFrame } from './animation'
-import { createDocument, writeLayerColor } from './document'
+import { decompressFrames, parseGIF } from 'gifuct-js'
+import { addBlankAnimationFrame, animationCelAt } from './animation'
+import { createDocument, ensureLayerCoversCanvas, writeLayerColor } from './document'
 import { exportAnimationGif, gifFrameSequence } from './gif'
+import { decodeGifAnimation } from './gif-import'
 
 const firstGifFrame = (bytes: Uint8Array): { width: number; height: number; pixels: Uint8Array } => {
   const width = bytes[6] | bytes[7] << 8
@@ -90,6 +92,29 @@ describe('GIF animation export', () => {
     expect(result.bytes.at(-1)).toBe(0x3b)
     expect(result).toMatchObject({ width: 4, height: 2, frameCount: 2 })
     expect([...result.bytes].filter((value) => value === 0x2c)).toHaveLength(2)
+  })
+
+  it('clears transparent pixels between full-canvas animation frames', () => {
+    const document = createDocument('gif disposal', 2, 1, 'rgba')
+    const layer = document.layers[0]
+    writeLayerColor(document, layer, 0, { r: 255, g: 0, b: 0, a: 255 })
+    addBlankAnimationFrame(document)
+    expect(ensureLayerCoversCanvas(document, document.layers[0])).toBe(true)
+    writeLayerColor(document, document.layers[0], 1, { r: 0, g: 0, b: 255, a: 255 })
+    expect(document.layers[0].pixels).toEqual(new Uint8ClampedArray([0, 0, 0, 0, 0, 0, 255, 255]))
+
+    const encoded = exportAnimationGif(document, { scalePercent: 100, direction: 'forward' }).bytes
+    const patches = decompressFrames(parseGIF(encoded.slice().buffer), true)
+    expect(patches.map((frame) => frame.disposalType)).toEqual([2, 2])
+    expect(patches[1].patch).toEqual(new Uint8ClampedArray([0, 0, 0, 0, 0, 0, 255, 255]))
+    const decoded = decodeGifAnimation(encoded, 'gif-disposal.gif')
+    const timeline = decoded.animation!
+    const decodedLayer = decoded.layers[0]
+    const firstCel = animationCelAt(timeline, decodedLayer.id, timeline.frames[0].id)!
+    const secondCel = animationCelAt(timeline, decodedLayer.id, timeline.frames[1].id)!
+
+    expect(firstCel.surface?.pixels).toEqual(new Uint8ClampedArray([255, 0, 0, 255, 0, 0, 0, 0]))
+    expect(secondCel.surface?.pixels).toEqual(new Uint8ClampedArray([0, 0, 0, 0, 0, 0, 255, 255]))
   })
 
   it('crops every animation frame to the requested slice before scaling', () => {

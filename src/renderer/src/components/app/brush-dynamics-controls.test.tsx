@@ -43,8 +43,8 @@ describe('brush dynamics range endpoint selection', () => {
 describe('BrushDynamicsTelemetryCapture', () => {
   it('captures global samples, settles speed, and clears inactive lifecycle state', () => {
     const view = render(<BrushDynamicsTelemetryCapture documentId="doc-a" />)
-    window.dispatchEvent(pointerEvent('pointerdown', { clientX: 0, clientY: 0, timeStamp: 0, pressure: 0.5, pointerType: 'pen' }))
-    window.dispatchEvent(pointerEvent('pointermove', { clientX: 20, clientY: 0, timeStamp: 20, pressure: 0.5, pointerType: 'pen' }))
+    window.dispatchEvent(pointerEvent('pointerdown', { clientX: 0, clientY: 0, timeStamp: 0, pressure: 0.35, pointerType: 'pen' }))
+    window.dispatchEvent(pointerEvent('pointermove', { clientX: 20, clientY: 0, timeStamp: 20, pressure: 0.65, pointerType: 'pen' }))
     vi.advanceTimersByTime(0)
     expect(getBrushDynamicsTelemetry()).toMatchObject({ documentId: 'doc-a', active: true, pointerType: 'pen' })
     expect(getBrushDynamicsTelemetry()!.pressure).toBeGreaterThan(0)
@@ -74,5 +74,31 @@ describe('BrushDynamicsTelemetryCapture', () => {
     vi.advanceTimersByTime(0)
 
     expect(getBrushDynamicsTelemetry()).toMatchObject({ documentId: 'doc-a', pressure: null, speed: 0, pointerType, active: true })
+  })
+
+  it('promotes a mouse-labelled tablet only after real pressure evidence', () => {
+    render(<BrushDynamicsTelemetryCapture documentId="doc-a" />)
+    window.dispatchEvent(pointerEvent('pointerdown', { pointerId: 12, buttons: 1, clientX: 0, clientY: 0, timeStamp: 0, pressure: 0.5, pointerType: 'mouse' }))
+    vi.advanceTimersByTime(0)
+    expect(getBrushDynamicsTelemetry()).toMatchObject({ pointerType: 'mouse', pressure: null, active: true })
+
+    window.dispatchEvent(pointerEvent('pointermove', { pointerId: 12, buttons: 1, clientX: 8, clientY: 0, timeStamp: 8, pressure: 0.72, pointerType: 'mouse' }))
+    vi.advanceTimersByTime(0)
+    expect(getBrushDynamicsTelemetry()!.pressure).toBeGreaterThan(0)
+
+    window.dispatchEvent(pointerEvent('pointermove', { pointerId: 12, buttons: 1, clientX: 16, clientY: 0, timeStamp: 16, pressure: 0.5, pointerType: 'mouse' }))
+    vi.advanceTimersByTime(0)
+    expect(getBrushDynamicsTelemetry()!.pressure).toBeGreaterThan(0)
+  })
+
+  it('falls back to full-strength drawing telemetry for a pressure-less pen contact', () => {
+    render(<BrushDynamicsTelemetryCapture documentId="doc-a" />)
+    window.dispatchEvent(pointerEvent('pointerdown', { pointerId: 13, buttons: 1, clientX: 0, clientY: 0, timeStamp: 0, pressure: 0, pointerType: 'pen' }))
+    vi.advanceTimersByTime(0)
+    expect(getBrushDynamicsTelemetry()).toMatchObject({ pointerType: 'pen', pressure: null, active: true })
+
+    window.dispatchEvent(pointerEvent('pointermove', { pointerId: 13, buttons: 1, clientX: 4, clientY: 0, timeStamp: 8, pressure: 0.4, pointerType: 'pen' }))
+    vi.advanceTimersByTime(0)
+    expect(getBrushDynamicsTelemetry()!.pressure).toBeGreaterThan(0)
   })
 })

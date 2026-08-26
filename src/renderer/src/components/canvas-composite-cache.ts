@@ -1,11 +1,12 @@
-import type { LayerMask, SelectionRect, SpriteDocument, ViewState } from '@shared/types'
+import type { LayerMask, RasterLayer, SelectionRect, SpriteDocument, ViewState } from '@shared/types'
 import { compositeRegion, DocumentCompositeCache, expandLayerStyleInvalidationRect, rasterContentBounds, readLayerPackedAt, renderLayerMaskRegion } from '@/core/document'
 import { applyRelativeLuminance } from '@/core/raster'
-import { selectionTransformPreviewPacked, type SelectionTransformSource } from '@/core/tools'
-import { transformedSelectionBounds, type SelectionShearTransform } from '@/core/selection'
+import { selectionTransformPreviewPacked, selectionTransformPreviewRasterPacked, type SelectionTransformSource } from '@/core/tools'
+import { transformedSelectionBounds } from '@/core/selection'
 import { translatedSelectionRect } from '@/core/canvas-input'
 import { normalizeSelectionForTileRepeatPreview, tileRepeatDocumentOffsets } from '@/core/tilemap'
 import { initialDocumentCompositePending, initialDocumentCompositeSurface, registerInitialDocumentCompositeSurface } from '@/core/initial-document-composite'
+import type { CanvasPreviewSelection } from '@/core/canvas-preview-lifecycle'
 import type { RasterContext2D } from './canvas-selection-renderer'
 
 const recordCanvasStage = (stage: string, startedAt: number, detail?: Record<string, number | string | boolean>): void => {
@@ -38,14 +39,7 @@ interface MovePreviewSurface {
   canvas: OffscreenCanvas
 }
 
-export interface SelectionTransformCompositePreview {
-  layerId: string
-  source: SelectionTransformSource
-  target: SelectionRect
-  angle: number
-  shear?: SelectionShearTransform
-  copy: boolean
-}
+export type SelectionTransformCompositePreview = CanvasPreviewSelection
 
 interface SelectionPreviewSurface {
   key: string
@@ -66,7 +60,16 @@ interface SelectionPreviewSurface {
 
 interface ClipboardPreviewSurface {
   source: SelectionTransformSource
+  key: string
   canvas: OffscreenCanvas
+}
+
+interface SelectionTransformRasterSurface {
+  source: SelectionTransformSource
+  key: string
+  width: number
+  height: number
+  pixels: Uint32Array
 }
 
 interface DrawCompositeOptions {
@@ -158,6 +161,68 @@ const visibleDocumentRect = (document: SpriteDocument, fromX: number, fromY: num
   return right > x && bottom > y ? { x, y, width: right - x, height: bottom - y } : null
 }
 
+const pixelAlignedRect = (rect: SelectionRect): SelectionRect => {
+  const x = Math.floor(rect.x)
+  const y = Math.floor(rect.y)
+  return {
+    x,
+    y,
+    width: Math.ceil(rect.x + rect.width) - x,
+    height: Math.ceil(rect.y + rect.height) - y
+  }
+}
+
+const selectionPreviewRasterKey = (selection: SelectionTransformCompositePreview, layerFormat: RasterLayer['format']): string => {
+  const { target, shear } = selection
+  return [
+    target.x - Math.floor(target.x),
+    target.y - Math.floor(target.y),
+    target.width,
+    target.height,
+    target.flipHorizontal ? 1 : 0,
+    target.flipVertical ? 1 : 0,
+    Number.isFinite(target.flipOriginX) ? target.flipOriginX! - target.x : '',
+    Number.isFinite(target.flipOriginY) ? target.flipOriginY! - target.y : '',
+    selection.angle,
+    shear?.axis ?? '',
+    shear?.edge ?? '',
+    shear?.amount ?? '',
+    layerFormat
+  ].join(':')
+}
+
+const compositePreviewPixel = (
+  output: Uint8ClampedArray,
+  outputOffset: number,
+  packed: number,
+  layerFormat: RasterLayer['format'],
+  layerOpacity: number,
+  palette: Map<number, SpriteDocument['palette'][number]['color']> | null
+): void => {
+  const indexedColor = layerFormat === 'indexed' ? palette?.get(packed) : undefined
+  const r = indexedColor?.r ?? (packed & 0xff)
+  const g = indexedColor?.g ?? (packed >>> 8 & 0xff)
+  const b = indexedColor?.b ?? (packed >>> 16 & 0xff)
+  const a = indexedColor?.a ?? (layerFormat === 'rgba' ? packed >>> 24 & 0xff : 0)
+  if (a === 0) return
+  const bottomAlpha = output[outputOffset + 3]
+  if (layerOpacity === 1 && (bottomAlpha === 0 || a === 255)) {
+    output[outputOffset] = r
+    output[outputOffset + 1] = g
+    output[outputOffset + 2] = b
+    output[outputOffset + 3] = a
+    return
+  }
+  const topAlpha = a / 255 * layerOpacity
+  const baseAlpha = bottomAlpha / 255
+  const outputAlpha = topAlpha + baseAlpha * (1 - topAlpha)
+  if (outputAlpha <= 0) return
+  output[outputOffset] = Math.round((r * topAlpha + output[outputOffset] * baseAlpha * (1 - topAlpha)) / outputAlpha)
+  output[outputOffset + 1] = Math.round((g * topAlpha + output[outputOffset + 1] * baseAlpha * (1 - topAlpha)) / outputAlpha)
+  output[outputOffset + 2] = Math.round((b * topAlpha + output[outputOffset + 2] * baseAlpha * (1 - topAlpha)) / outputAlpha)
+  output[outputOffset + 3] = Math.round(outputAlpha * 255)
+}
+
 const selectionPreviewTransformKey = (selection: SelectionTransformCompositePreview, tileRepeatMode: NonNullable<ViewState['tileRepeatMode']>): string => {
   const { target, shear } = selection
   return [
@@ -217,6 +282,7 @@ export class CanvasCompositeCache {
   private movePreview: MovePreviewSurface | null = null
   private selectionPreview: SelectionPreviewSurface | null = null
   private clipboardPreview: ClipboardPreviewSurface | null = null
+  private selectionTransformRaster: SelectionTransformRasterSurface | null = null
 
   constructor(private readonly maxCacheBytes = DEFAULT_MAX_CACHE_BYTES) {}
 
@@ -231,6 +297,7 @@ export class CanvasCompositeCache {
     this.movePreview = null
     this.selectionPreview = null
     this.clipboardPreview = null
+    this.selectionTransformRaster = null
   }
 
   invalidateAll(): void {
@@ -291,6 +358,28 @@ export class CanvasCompositeCache {
     context.restore()
   }
 
+  private selectionTransformRasterFor(
+    document: SpriteDocument,
+    contentRevision: number,
+    selection: SelectionTransformCompositePreview,
+    activeLayer: RasterLayer
+  ): SelectionTransformRasterSurface {
+    const key = `${document.id}:${contentRevision}:${selection.layerId}:${selectionPreviewRasterKey(selection, activeLayer.format)}`
+    const cached = this.selectionTransformRaster
+    if (cached && cached.source === selection.source && cached.key === key) return cached
+    const raster = selectionTransformPreviewRasterPacked(
+      document,
+      selection.source,
+      selection.target,
+      selection.angle,
+      selection.shear,
+      activeLayer
+    )
+    const next = { source: selection.source, key, ...raster }
+    this.selectionTransformRaster = next
+    return next
+  }
+
   private drawClipboardPreview(
     context: RasterContext2D,
     document: SpriteDocument,
@@ -313,13 +402,7 @@ export class CanvasCompositeCache {
     const source = selection.source
     const target = selection.target
     if (source.origin !== 'clipboard'
-      || !selection.copy
-      || selection.angle % 360 !== 0
-      || selection.shear
-      || target.flipHorizontal
-      || target.flipVertical
-      || target.width !== source.selection.width
-      || target.height !== source.selection.height) return false
+      || !selection.copy) return false
 
     const layers = this.compositeCache.normalLayersFor(document, contentRevision)
     if (!layers) return false
@@ -332,22 +415,41 @@ export class CanvasCompositeCache {
       || activeLayer.blendMode !== 'normal'
       || rasterContentBounds(activeLayer, document.palette) !== null) return false
 
+    const directSource = selection.angle % 360 === 0
+      && !selection.shear
+      && !target.flipHorizontal
+      && !target.flipVertical
+      && target.width === source.selection.width
+      && target.height === source.selection.height
+    const previewKey = directSource
+      ? `direct:${source.selection.width}:${source.selection.height}`
+      : selectionPreviewRasterKey(selection, activeLayer.format)
     let preview = this.clipboardPreview
-    if (!preview || preview.source !== source) {
-      const width = source.selection.width
-      const height = source.selection.height
-      const rgba = new Uint8ClampedArray(source.values.buffer as ArrayBuffer, source.values.byteOffset, source.values.byteLength)
-      let pixels = rgba
-      if (source.selection.mask) {
-        pixels = new Uint8ClampedArray(rgba.length)
-        const words = new Uint32Array(pixels.buffer)
-        for (let index = 0; index < source.selection.mask.length; index += 1) {
-          if (source.selection.mask[index] === 1) words[index] = source.values[index]
+    if (!preview || preview.source !== source || preview.key !== previewKey) {
+      let width: number
+      let height: number
+      let pixels: Uint8ClampedArray
+      if (directSource) {
+        width = source.selection.width
+        height = source.selection.height
+        const rgba = new Uint8ClampedArray(source.values.buffer as ArrayBuffer, source.values.byteOffset, source.values.byteLength)
+        pixels = rgba
+        if (source.selection.mask) {
+          pixels = new Uint8ClampedArray(rgba.length)
+          const words = new Uint32Array(pixels.buffer)
+          for (let index = 0; index < source.selection.mask.length; index += 1) {
+            if (source.selection.mask[index] === 1) words[index] = source.values[index]
+          }
         }
+      } else {
+        const raster = this.selectionTransformRasterFor(document, contentRevision, selection, activeLayer)
+        width = raster.width
+        height = raster.height
+        pixels = new Uint8ClampedArray(raster.pixels.buffer as ArrayBuffer, raster.pixels.byteOffset, raster.pixels.byteLength)
       }
       const canvas = new OffscreenCanvas(width, height)
       canvas.getContext('2d')?.putImageData(imageData(pixels, width, height), 0, 0)
-      preview = { source, canvas }
+      preview = { source, key: previewKey, canvas }
       this.clipboardPreview = preview
     }
 
@@ -358,16 +460,19 @@ export class CanvasCompositeCache {
       this.drawRegion(context, document, view, originX, originY, fromX, fromY, toX, toY, frameKey, frameId, contentRevision, contentInvalidation)
     }
     for (const repeatedTarget of repeatedSelectionTargets(selection, document, view)) {
+      const drawRect = directSource
+        ? repeatedTarget
+        : pixelAlignedRect(transformedSelectionBounds(repeatedTarget, selection.angle, selection.shear))
       context.drawImage(
         preview.canvas,
         0,
         0,
         preview.canvas.width,
         preview.canvas.height,
-        originX + repeatedTarget.x * view.zoom,
-        originY + repeatedTarget.y * view.zoom,
-        repeatedTarget.width * view.zoom,
-        repeatedTarget.height * view.zoom
+        originX + drawRect.x * view.zoom,
+        originY + drawRect.y * view.zoom,
+        drawRect.width * view.zoom,
+        drawRect.height * view.zoom
       )
     }
     return true
@@ -442,17 +547,12 @@ export class CanvasCompositeCache {
     const transformKey = selectionPreviewTransformKey(selection, tileRepeatMode)
     const previewChanged = preview.source !== selection.source || preview.transformKey !== transformKey
     const selectionTargets = repeatedSelectionTargets(selection, document, view)
-    const currentBounds = selectionTargets.map((target) => transformedSelectionBounds(target, selection.angle, selection.shear))
+    const currentBounds = selectionTargets.map((target) => pixelAlignedRect(transformedSelectionBounds(target, selection.angle, selection.shear)))
     const sourceSelection = selection.source.selection
     const patchRects = mergeOverlappingRects([
       ...(!selection.copy ? [sourceSelection] : []),
       ...currentBounds
-    ].map((rect) => ({
-      x: Math.floor(rect.x),
-      y: Math.floor(rect.y),
-      width: Math.ceil(rect.x + rect.width) - Math.floor(rect.x),
-      height: Math.ceil(rect.y + rect.height) - Math.floor(rect.y)
-    })))
+    ].map(pixelAlignedRect))
     const visibleRect = { x, y, width, height }
     const patchUpdateRect = tileRepeatMode === 'off'
       ? visibleRect
@@ -480,6 +580,7 @@ export class CanvasCompositeCache {
         )
       }
       const palette = activeLayer.format === 'indexed' ? new Map(document.palette.map((entry) => [entry.id, entry.color])) : null
+      const transformedRaster = this.selectionTransformRasterFor(document, contentRevision, selection, activeLayer)
       for (const patchRect of visiblePatchRects) {
         const patchPixels = new Uint8ClampedArray(this.compositeCache.normalLayerRegion(document, preview.lowerLayers, patchRect.x, patchRect.y, patchRect.width, patchRect.height, contentRevision))
         for (let localY = 0; localY < patchRect.height; localY += 1) for (let localX = 0; localX < patchRect.width; localX += 1) {
@@ -490,54 +591,26 @@ export class CanvasCompositeCache {
             && pixelX < sourceSelection.x + sourceSelection.width && pixelY < sourceSelection.y + sourceSelection.height
             && (!sourceSelection.mask || sourceSelection.mask[(pixelY - sourceSelection.y) * sourceSelection.width + pixelX - sourceSelection.x] === 1)
           const packed = selected ? 0 : readLayerPackedAt(document, activeLayer, pixelX, pixelY) ?? 0
-          const color = activeLayer.format === 'indexed'
-            ? palette?.get(packed)
-            : { r: packed & 0xff, g: packed >>> 8 & 0xff, b: packed >>> 16 & 0xff, a: packed >>> 24 & 0xff }
-          if (!color || color.a === 0) continue
           const outputOffset = (localY * patchRect.width + localX) * 4
-          const bottomAlpha = patchPixels[outputOffset + 3]
-          if (activeLayer.opacity === 1 && (bottomAlpha === 0 || color.a === 255)) {
-            patchPixels[outputOffset] = color.r
-            patchPixels[outputOffset + 1] = color.g
-            patchPixels[outputOffset + 2] = color.b
-            patchPixels[outputOffset + 3] = color.a
-            continue
-          }
-          const topAlpha = color.a / 255 * activeLayer.opacity
-          const baseAlpha = bottomAlpha / 255
-          const outputAlpha = topAlpha + baseAlpha * (1 - topAlpha)
-          if (outputAlpha <= 0) continue
-          patchPixels[outputOffset] = Math.round((color.r * topAlpha + patchPixels[outputOffset] * baseAlpha * (1 - topAlpha)) / outputAlpha)
-          patchPixels[outputOffset + 1] = Math.round((color.g * topAlpha + patchPixels[outputOffset + 1] * baseAlpha * (1 - topAlpha)) / outputAlpha)
-          patchPixels[outputOffset + 2] = Math.round((color.b * topAlpha + patchPixels[outputOffset + 2] * baseAlpha * (1 - topAlpha)) / outputAlpha)
-          patchPixels[outputOffset + 3] = Math.round(outputAlpha * 255)
+          compositePreviewPixel(patchPixels, outputOffset, packed, activeLayer.format, activeLayer.opacity, palette)
         }
         for (let targetIndex = 0; targetIndex < selectionTargets.length; targetIndex += 1) {
-          if (!intersectRect(currentBounds[targetIndex], patchRect)) continue
-          const transformed = selectionTransformPreviewPacked(document, selection.source, selectionTargets[targetIndex], patchRect.x, patchRect.y, patchRect.width, patchRect.height, selection.angle, selection.shear, activeLayer)
-          for (let offset = 0; offset < transformed.length; offset += 1) {
-            const packed = transformed[offset]
-            const color = activeLayer.format === 'indexed'
-              ? palette?.get(packed)
-              : { r: packed & 0xff, g: packed >>> 8 & 0xff, b: packed >>> 16 & 0xff, a: packed >>> 24 & 0xff }
-            if (!color || color.a === 0) continue
-            const outputOffset = offset * 4
-            const bottomAlpha = patchPixels[outputOffset + 3]
-            if (activeLayer.opacity === 1 && (bottomAlpha === 0 || color.a === 255)) {
-              patchPixels[outputOffset] = color.r
-              patchPixels[outputOffset + 1] = color.g
-              patchPixels[outputOffset + 2] = color.b
-              patchPixels[outputOffset + 3] = color.a
-              continue
+          const transformedRect = currentBounds[targetIndex]
+          const overlap = intersectRect(transformedRect, patchRect)
+          if (!overlap) continue
+          if (transformedRaster.width !== transformedRect.width || transformedRaster.height !== transformedRect.height) {
+            const transformed = selectionTransformPreviewPacked(document, selection.source, selectionTargets[targetIndex], patchRect.x, patchRect.y, patchRect.width, patchRect.height, selection.angle, selection.shear, activeLayer)
+            for (let offset = 0; offset < transformed.length; offset += 1) {
+              const outputOffset = offset * 4
+              compositePreviewPixel(patchPixels, outputOffset, transformed[offset], activeLayer.format, activeLayer.opacity, palette)
             }
-            const topAlpha = color.a / 255 * activeLayer.opacity
-            const baseAlpha = bottomAlpha / 255
-            const outputAlpha = topAlpha + baseAlpha * (1 - topAlpha)
-            if (outputAlpha <= 0) continue
-            patchPixels[outputOffset] = Math.round((color.r * topAlpha + patchPixels[outputOffset] * baseAlpha * (1 - topAlpha)) / outputAlpha)
-            patchPixels[outputOffset + 1] = Math.round((color.g * topAlpha + patchPixels[outputOffset + 1] * baseAlpha * (1 - topAlpha)) / outputAlpha)
-            patchPixels[outputOffset + 2] = Math.round((color.b * topAlpha + patchPixels[outputOffset + 2] * baseAlpha * (1 - topAlpha)) / outputAlpha)
-            patchPixels[outputOffset + 3] = Math.round(outputAlpha * 255)
+            continue
+          }
+          for (let pixelY = overlap.y; pixelY < overlap.y + overlap.height; pixelY += 1) for (let pixelX = overlap.x; pixelX < overlap.x + overlap.width; pixelX += 1) {
+            const rasterOffset = (pixelY - transformedRect.y) * transformedRaster.width + pixelX - transformedRect.x
+            const packed = transformedRaster.pixels[rasterOffset]
+            const outputOffset = ((pixelY - patchRect.y) * patchRect.width + pixelX - patchRect.x) * 4
+            compositePreviewPixel(patchPixels, outputOffset, packed, activeLayer.format, activeLayer.opacity, palette)
           }
         }
         if (preview.upperLayers.length > 0) this.compositeCache.compositeNormalLayersInto(document, preview.upperLayers, patchRect.x, patchRect.y, patchRect.width, patchRect.height, contentRevision, patchPixels)

@@ -15,10 +15,10 @@ use serde_json::{Number as JsonNumber, Value as JsonValue};
 
 use super::{
     LuaScriptBatch, LuaScriptContext, LuaScriptCreatedDocument, LuaScriptCreatedLayer,
-    LuaScriptDialog, LuaScriptDialogAction, LuaScriptDialogControl, LuaScriptPixelChange,
-    LuaScriptSelectionContext, LuaScriptSurfaceChange, LuaScriptSurfaceSnapshot,
-    MAX_CHANGED_PIXELS, MAX_EXECUTION_MILLIS, MAX_IMAGE_PIXELS, MAX_INSTRUCTIONS,
-    MAX_LUA_MEMORY_BYTES, MAX_OUTPUT_BYTES,
+    LuaScriptDialog, LuaScriptDialogAction, LuaScriptDialogControl, LuaScriptOperation,
+    LuaScriptPixelChange, LuaScriptSelectionContext, LuaScriptSurfaceChange,
+    LuaScriptSurfaceSnapshot, MAX_CHANGED_PIXELS, MAX_EXECUTION_MILLIS, MAX_IMAGE_PIXELS,
+    MAX_INSTRUCTIONS, MAX_LUA_MEMORY_BYTES, MAX_OUTPUT_BYTES,
 };
 
 #[path = "mse_api.rs"]
@@ -292,6 +292,7 @@ struct ScriptLayerData {
     opacity: u8,
     visible: bool,
     locked: bool,
+    continuous: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -337,6 +338,7 @@ struct PendingBatch {
     label: String,
     explicit: bool,
     before: ScriptStateCheckpoint,
+    operations: Vec<LuaScriptOperation>,
 }
 
 #[derive(Debug)]
@@ -346,6 +348,7 @@ struct ScriptDocumentState {
     document_width: u32,
     document_height: u32,
     document_file_path: String,
+    mse_snapshot: JsonValue,
     selection: Option<LuaScriptSelectionContext>,
     target_mode: ScriptPixelMode,
     target_image: Rc<RefCell<ScriptImageData>>,
@@ -560,7 +563,15 @@ impl ScriptDocumentState {
                 label: self.default_label.clone(),
                 explicit: false,
                 before: self.checkpoint(),
+                operations: Vec::new(),
             });
+        }
+    }
+
+    fn queue_mse_operation(&mut self, operation: LuaScriptOperation) {
+        self.ensure_pending();
+        if let Some(batch) = &mut self.pending {
+            batch.operations.push(operation);
         }
     }
 
@@ -575,6 +586,7 @@ impl ScriptDocumentState {
             label: clean_label(&label, &self.default_label),
             explicit: true,
             before: self.checkpoint(),
+            operations: Vec::new(),
         });
         Ok(())
     }
@@ -605,7 +617,7 @@ impl ScriptDocumentState {
             return Ok(());
         };
         let after = self.snapshot();
-        if batch.before.surface == after {
+        if batch.before.surface == after && batch.operations.is_empty() {
             return Ok(());
         }
         let same_geometry = batch.before.surface.mode == after.mode
@@ -653,6 +665,14 @@ impl ScriptDocumentState {
                     label: batch.label,
                     changes,
                     surface_change: None,
+                    operations: batch.operations,
+                });
+            } else if !batch.operations.is_empty() {
+                self.batches.push(LuaScriptBatch {
+                    label: batch.label,
+                    changes: Vec::new(),
+                    surface_change: None,
+                    operations: batch.operations,
                 });
             }
         } else {
@@ -663,6 +683,7 @@ impl ScriptDocumentState {
                     before: batch.before.surface.serialized(),
                     after: after.serialized(),
                 }),
+                operations: batch.operations,
             });
         }
         Ok(())
@@ -950,6 +971,17 @@ impl UserData for ScriptLayer {
             Ok(())
         });
         fields.add_field_method_get("isEditable", |_, layer| Ok(!layer.data.borrow().locked));
+        fields.add_field_method_set("isEditable", |_, layer, value: bool| {
+            layer.data.borrow_mut().locked = !value;
+            Ok(())
+        });
+        fields.add_field_method_get("isContinuous", |_, layer| {
+            Ok(layer.data.borrow().continuous)
+        });
+        fields.add_field_method_set("isContinuous", |_, layer, value: bool| {
+            layer.data.borrow_mut().continuous = value;
+            Ok(())
+        });
         fields.add_field_method_get("isLocked", |_, layer| Ok(layer.data.borrow().locked));
         fields.add_field_method_set("isLocked", |_, layer, value: bool| {
             layer.data.borrow_mut().locked = value;
@@ -1193,6 +1225,7 @@ impl UserData for ScriptSprite {
                 opacity: 255,
                 visible: true,
                 locked: false,
+                continuous: true,
             }));
             let state = Rc::new(RefCell::new(ScriptCreatedLayerState {
                 layer: layer.clone(),
@@ -1241,61 +1274,92 @@ impl UserData for ScriptSprite {
             )?;
             lua.create_userdata(ScriptLayer { data: layer })
         });
-        methods.add_method(
-            "newCel",
-            |lua, sprite, (layer, frame_number): (AnyUserData, Option<u32>)| {
-                let layer = layer.borrow::<ScriptLayer>()?.data.clone();
-                let (width, height) = sprite.dimensions();
-                let mode = sprite.mode();
-                let frame_number = frame_number.unwrap_or(1).max(1);
-                let mut document = sprite.document.borrow_mut();
-                document.ensure_pending();
-                let (active_surface, state) = match sprite.kind {
-                    ScriptSpriteKind::Root => {
-                        let index = document
-                            .created_layers
-                            .iter()
-                            .position(|candidate| Rc::ptr_eq(&candidate.borrow().layer, &layer))
-                            .ok_or_else(|| {
-                                LuaError::RuntimeError(
-                                    "newCel() requires a layer from this sprite.".into(),
-                                )
-                            })?;
-                        (
-                            ActiveSurfaceRef::CreatedLayer(index),
-                            document.created_layers[index].clone(),
-                        )
+        methods.add_method("newCel", |lua, sprite, args: Variadic<Value>| {
+            let layer = match args.first() {
+                Some(Value::UserData(layer)) => layer.borrow::<ScriptLayer>()?.data.clone(),
+                _ => {
+                    return Err(LuaError::RuntimeError(
+                        "newCel() expects a layer as its first argument.".into(),
+                    ));
+                }
+            };
+            let frame_number = match args.get(1) {
+                None | Some(Value::Nil) => 1,
+                Some(value) => numeric_value(value)?.round() as u32,
+            }
+            .max(1);
+            let supplied_image = match args.get(2) {
+                Some(Value::UserData(image)) => {
+                    let image = image.borrow::<ScriptImage>()?;
+                    let image_data = image.data.borrow();
+                    if image_data.mode != sprite.mode() {
+                        return Err(LuaError::RuntimeError(
+                            "newCel() image must use the sprite color mode.".into(),
+                        ));
                     }
-                    ScriptSpriteKind::CreatedDocument(document_index) => {
-                        let created = document
-                            .created_documents
-                            .get(document_index)
-                            .cloned()
-                            .ok_or_else(|| {
-                                LuaError::RuntimeError("Sprite is no longer available.".into())
-                            })?;
-                        let mut created = created.borrow_mut();
-                        let layer_index = created
-                            .layers
-                            .iter()
-                            .position(|candidate| Rc::ptr_eq(&candidate.borrow().layer, &layer))
-                            .ok_or_else(|| {
-                                LuaError::RuntimeError(
-                                    "newCel() requires a layer from this sprite.".into(),
-                                )
-                            })?;
-                        created.active_layer = layer_index;
-                        (
-                            ActiveSurfaceRef::CreatedDocument {
-                                document: document_index,
-                                layer: layer_index,
-                            },
-                            created.layers[layer_index].clone(),
-                        )
-                    }
-                };
-                let image = state.borrow().image.clone();
-                *image.borrow_mut() = ScriptImageData {
+                    Some(image.data.clone())
+                }
+                Some(Value::Nil) | None => None,
+                _ => {
+                    return Err(LuaError::RuntimeError(
+                        "newCel() expects an Image as its third argument.".into(),
+                    ));
+                }
+            };
+            let position = match args.get(3) {
+                None | Some(Value::Nil) => ScriptPoint { x: 0, y: 0 },
+                Some(value) => point_from_value(value.clone())?,
+            };
+            let (width, height) = sprite.dimensions();
+            let mode = sprite.mode();
+            let mut document = sprite.document.borrow_mut();
+            document.ensure_pending();
+            let (active_surface, state) = match sprite.kind {
+                ScriptSpriteKind::Root => {
+                    let index = document
+                        .created_layers
+                        .iter()
+                        .position(|candidate| Rc::ptr_eq(&candidate.borrow().layer, &layer))
+                        .ok_or_else(|| {
+                            LuaError::RuntimeError(
+                                "newCel() requires a layer from this sprite.".into(),
+                            )
+                        })?;
+                    (
+                        ActiveSurfaceRef::CreatedLayer(index),
+                        document.created_layers[index].clone(),
+                    )
+                }
+                ScriptSpriteKind::CreatedDocument(document_index) => {
+                    let created = document
+                        .created_documents
+                        .get(document_index)
+                        .cloned()
+                        .ok_or_else(|| {
+                            LuaError::RuntimeError("Sprite is no longer available.".into())
+                        })?;
+                    let mut created = created.borrow_mut();
+                    let layer_index = created
+                        .layers
+                        .iter()
+                        .position(|candidate| Rc::ptr_eq(&candidate.borrow().layer, &layer))
+                        .ok_or_else(|| {
+                            LuaError::RuntimeError(
+                                "newCel() requires a layer from this sprite.".into(),
+                            )
+                        })?;
+                    created.active_layer = layer_index;
+                    (
+                        ActiveSurfaceRef::CreatedDocument {
+                            document: document_index,
+                            layer: layer_index,
+                        },
+                        created.layers[layer_index].clone(),
+                    )
+                }
+            };
+            let image = supplied_image.unwrap_or_else(|| {
+                Rc::new(RefCell::new(ScriptImageData {
                     mode,
                     width: width as usize,
                     height: height as usize,
@@ -1307,34 +1371,35 @@ impl UserData for ScriptSprite {
                         };
                         width as usize * height as usize
                     ],
-                };
-                {
-                    let mut state = state.borrow_mut();
-                    state.offset_x = 0;
-                    state.offset_y = 0;
-                    state.frame_number = frame_number;
-                }
-                document.active_surface = active_surface;
-                document.active_image = image;
-                document.offset_x = 0;
-                document.offset_y = 0;
-                document.active_layer = layer.clone();
-                drop(document);
-                refresh_active_globals(
-                    lua,
-                    &sprite.document,
-                    &sprite.allocated_pixels,
-                    sprite.transparent_color,
-                )?;
-                lua.create_userdata(ScriptCel {
-                    document: sprite.document.clone(),
-                    allocated_pixels: sprite.allocated_pixels.clone(),
-                    transparent_color: sprite.transparent_color,
-                    frame_number,
-                    layer,
-                })
-            },
-        );
+                }))
+            });
+            {
+                let mut state = state.borrow_mut();
+                state.image = image.clone();
+                state.offset_x = position.x;
+                state.offset_y = position.y;
+                state.frame_number = frame_number;
+            }
+            document.active_surface = active_surface;
+            document.active_image = image;
+            document.offset_x = position.x;
+            document.offset_y = position.y;
+            document.active_layer = layer.clone();
+            drop(document);
+            refresh_active_globals(
+                lua,
+                &sprite.document,
+                &sprite.allocated_pixels,
+                sprite.transparent_color,
+            )?;
+            lua.create_userdata(ScriptCel {
+                document: sprite.document.clone(),
+                allocated_pixels: sprite.allocated_pixels.clone(),
+                transparent_color: sprite.transparent_color,
+                frame_number,
+                layer,
+            })
+        });
     }
 }
 
@@ -1903,6 +1968,7 @@ impl LuaSession {
             opacity: context.layer_opacity,
             visible: context.layer_visible,
             locked: context.layer_locked,
+            continuous: true,
         }));
         let document = Rc::new(RefCell::new(ScriptDocumentState {
             document_id: context.document_id.clone(),
@@ -1910,6 +1976,7 @@ impl LuaSession {
             document_width: context.document_width,
             document_height: context.document_height,
             document_file_path: context.document_file_path.clone(),
+            mse_snapshot: context.mse_snapshot.clone(),
             selection: context.selection.clone(),
             target_mode: mode,
             target_image: active_image.clone(),
@@ -2064,11 +2131,13 @@ impl LuaSession {
             opacity: context.layer_opacity,
             visible: context.layer_visible,
             locked: context.layer_locked,
+            continuous: true,
         };
         document.document_name = context.document_name.clone();
         document.document_width = context.document_width;
         document.document_height = context.document_height;
         document.document_file_path = context.document_file_path.clone();
+        document.mse_snapshot = context.mse_snapshot.clone();
         document.selection = context.selection.clone();
         document.target_image = active_image.clone();
         document.target_offset_x = context.layer_offset_x;
@@ -2565,6 +2634,7 @@ fn install_sandbox_globals(
                 opacity: 255,
                 visible: true,
                 locked: false,
+                continuous: true,
             }));
             let layer_state = Rc::new(RefCell::new(ScriptCreatedLayerState {
                 layer: layer.clone(),
@@ -3124,7 +3194,54 @@ mod tests {
             transparent_color: 0,
             foreground: rgba(255, 255, 255, 255),
             background: rgba(0, 0, 0, 255),
+            mse_snapshot: serde_json::json!({
+                "document": {
+                    "id": "document-1",
+                    "name": "Test",
+                    "width": 4,
+                    "height": 4,
+                    "colorMode": "rgba",
+                    "frame": 1,
+                    "activeLayer": { "id": "layer-1", "name": "Layer 1", "width": 2, "height": 2, "x": 1, "y": 1 }
+                },
+                "layers": [{ "id": "layer-1", "name": "Layer 1", "width": 2, "height": 2, "x": 1, "y": 1, "styles": null }],
+                "animation": { "frames": [{ "id": "frame-1", "number": 1, "duration": 100, "active": true }], "loops": [] },
+                "palette": { "entries": [{ "id": 1, "name": "White", "color": { "r": 255, "g": 255, "b": 255, "a": 255 } }] },
+                "tiles": { "sets": [{ "id": "tileset-1", "name": "Tiles", "tileWidth": 8, "tileHeight": 8, "tileIds": ["tile-1"] }] },
+                "freeTiles": { "sources": [] },
+                "brushes": [{ "id": "brush-1", "name": "Brush", "source": "project" }],
+                "slices": [{ "id": "slice-1", "name": "Slice", "x": 0, "y": 0, "width": 2, "height": 2 }],
+                "workspace": { "panels": [{ "id": "layers", "visible": true, "dock": "right" }] }
+            }),
         }
+    }
+
+    #[test]
+    fn runs_the_builtin_moon_phase_example_as_an_animation_document() {
+        let mut session = LuaSession::new(context(), "moon-phase.lua").unwrap();
+        let result = session
+            .execute_source(include_str!("../../resources/scripts/moon-phase.lua"))
+            .expect("the built-in moon phase script should execute");
+
+        assert_eq!(result.created_documents.len(), 1);
+        let document = &result.created_documents[0];
+        assert_eq!(document.name, "Moon Phases");
+        assert_eq!(document.width, 32);
+        assert_eq!(document.height, 32);
+        assert_eq!(document.layers.len(), 8);
+        assert_eq!(
+            document
+                .layers
+                .iter()
+                .map(|layer| layer.frame_number)
+                .collect::<Vec<_>>(),
+            (1..=8).collect::<Vec<_>>()
+        );
+        assert!(document.layers.iter().any(|layer| layer
+            .surface
+            .pixels
+            .iter()
+            .any(|pixel| *pixel != 0)));
     }
 
     #[test]
@@ -3159,16 +3276,16 @@ mod tests {
             .execute_source(
                 r#"
                     assert(type(mse) == "table")
-                    assert(mse.apiVersion == "0.1.0")
+                    assert(mse.apiVersion == "0.2.0")
                     assert(mse.status.namespace == "mse")
                     assert(mse.status.stage == "experimental")
-                    assert(mse.capabilities.document.status == "partial")
+                    assert(mse.capabilities.document.status == "stable")
                     assert(mse.capabilities.document.methods[1].name == "info")
                     assert(mse.capabilities.document.methods[1].implemented == true)
-                    assert(mse.capabilities.tiles.status == "planned")
+                    assert(mse.capabilities.tiles.status == "stable")
                     assert(mse.isSupported("document.info"))
                     assert(mse.isSupported("mse.document.info"))
-                    assert(not mse.isSupported("tiles.createLayer"))
+                    assert(mse.isSupported("tiles.createLayer"))
 
                     local document = mse.document.info()
                     assert(document.id == "document-1")
@@ -3185,50 +3302,43 @@ mod tests {
                     assert(selection.selectedPixels == 2)
                     assert(selection.bounds.x == 1 and selection.bounds.y == 1)
                     assert(selection.bounds.width == 2 and selection.bounds.height == 2)
+
+                    assert(#mse.layers.list() == 1)
+                    assert(mse.layers.get("layer-1").name == "Layer 1")
+                    assert(mse.animation.frames()[1].duration == 100)
+                    assert(mse.palette.get(1).name == "White")
+                    assert(mse.tiles.getSet("tileset-1").tileIds[1] == "tile-1")
+                    assert(mse.brushes.get("brush-1").name == "Brush")
+                    assert(mse.slices.get("slice-1").width == 2)
+                    assert(mse.workspace.getPanel("layers").visible)
                 "#,
             )
             .expect("mse read-only API should execute");
     }
 
     #[test]
-    fn reports_explicit_errors_for_unimplemented_mse_operations() {
-        let mut session = LuaSession::new(context(), "mse-unsupported.lua").unwrap();
-        let error = session
+    fn queues_mse_operations_inside_the_current_transaction() {
+        let mut session = LuaSession::new(context(), "mse-operations.lua").unwrap();
+        let result = session
             .execute_source(
                 r#"
-                    local ok, error = pcall(function()
-                        return mse.tiles.createLayer({ width = 8, height = 8 })
+                    app.transaction("MSE update", function()
+                        assert(mse.layers.update("layer-1", { name = "Renamed", opacity = 128 }))
+                        assert(mse.selection.set(Rectangle(1, 2, 3, 4)))
+                        assert(mse.palette.create(Color { r = 4, g = 5, b = 6, a = 255 }))
+                        assert(mse.ui.notify("done"))
                     end)
-                    assert(not ok)
-
-                    local module_names = {
-                        "document", "layers", "animation", "palette", "tiles",
-                        "freeTiles", "brushes", "selection", "slices", "styles",
-                        "workspace", "io", "ui"
-                    }
-                    for module_index = 1, #module_names do
-                        local module_name = module_names[module_index]
-                        local capability = mse.capabilities[module_name]
-                        for method_index = 1, #capability.methods do
-                            local method = capability.methods[method_index]
-                            if not method.implemented then
-                                local method_ok = pcall(function()
-                                    return mse[module_name][method.name]()
-                                end)
-                                assert(not method_ok)
-                            end
-                        end
-                    end
-
-                    mse.tiles.createLayer()
                 "#,
             )
-            .expect_err("unimplemented mse operations must fail");
+            .expect("implemented mse operations should queue");
 
-        assert!(
-            error.contains("mse.tiles.createLayer is not implemented yet"),
-            "unexpected Lua error: {error}"
-        );
+        assert_eq!(result.batches.len(), 1);
+        assert_eq!(result.batches[0].label, "MSE update");
+        assert_eq!(result.batches[0].operations.len(), 4);
+        assert_eq!(result.batches[0].operations[0].path, "layers.update");
+        assert_eq!(result.batches[0].operations[1].arguments["width"], 3);
+        assert_eq!(result.batches[0].operations[2].arguments["r"], 4);
+        assert_eq!(result.batches[0].operations[3].arguments, "done");
     }
 
     #[test]
@@ -3508,5 +3618,50 @@ mod tests {
             .expect_err("loop should be interrupted");
 
         assert!(error.contains("execution limit"));
+    }
+
+    #[test]
+    fn supports_ase_new_cel_image_and_position_arguments() {
+        let mut session = LuaSession::new(context(), "new-cel.lua").unwrap();
+        let result = session
+            .execute_source(
+                r#"
+                    local image = Image(2, 2, ColorMode.RGB)
+                    image:putPixel(0, 0, app.pixelColor.rgba(1, 2, 3, 255))
+                    local layer = app.activeSprite:newLayer()
+                    local cel = app.activeSprite:newCel(layer, 1, image, Point(-2, 3))
+                    assert(cel.frameNumber == 1)
+                    assert(cel.position.x == -2 and cel.position.y == 3)
+                    assert(cel.image:getPixel(0, 0) == app.pixelColor.rgba(1, 2, 3, 255))
+                "#,
+            )
+            .expect("Aseprite newCel arguments should execute");
+
+        assert_eq!(result.created_layers.len(), 1);
+        let surface = &result.created_layers[0].surface;
+        assert_eq!((surface.offset_x, surface.offset_y), (-2, 3));
+        assert_eq!(surface.pixels[0], rgba(1, 2, 3, 255));
+    }
+
+    #[test]
+    fn supports_ase_layer_editability_and_continuity_fields() {
+        let mut session = LuaSession::new(context(), "layer-fields.lua").unwrap();
+        let result = session
+            .execute_source(
+                r#"
+                    local layer = app.activeSprite:newLayer()
+                    layer.isEditable = false
+                    layer.isContinuous = true
+                    layer.opacity = 127.5
+                    assert(not layer.isEditable)
+                    assert(layer.isContinuous)
+                    app.activeSprite:newCel(layer, 1)
+                "#,
+            )
+            .expect("Aseprite layer fields should execute");
+
+        assert_eq!(result.created_layers.len(), 1);
+        assert!(result.created_layers[0].locked);
+        assert_eq!(result.created_layers[0].opacity, 127);
     }
 }

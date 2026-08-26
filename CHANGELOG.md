@@ -10,12 +10,11 @@
 
 ### 修复
 
-- Tauri 桌面冒烟检查改为解析 CSP 的 `connect-src` URL，并仅接受精确的 `ipc.localhost` 主机，避免路径或子域名伪装通过安全校验。
-
 ## 版本索引
 
 | 版本 | 完整记录 |
 | --- | --- |
+| `1.0.0-beta.1` | [查看 1.0.0-beta.1 完整更新记录](docs/changelog/1.0.0-beta.1.md) |
 | `DEV.6` | [查看 DEV.6 完整更新记录](docs/changelog/DEV.6.md) |
 | `DEV.5` | [查看 DEV.5 完整更新记录](docs/changelog/DEV.5.md) |
 | `DEV.4` | [查看 DEV.4 完整更新记录](docs/changelog/DEV.4.md) |

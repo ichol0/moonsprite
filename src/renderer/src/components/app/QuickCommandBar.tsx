@@ -4,11 +4,12 @@ import { Tooltip } from '@/components/Tooltip'
 import { useI18n } from '@/components/I18nProvider'
 import { loadEditorPreferences, saveEditorPreferences, type QuickCommandId, type QuickCommandPreference } from '@/core/file-preferences'
 import { useWorkspace } from '@/store/workspace'
+import type { ShortcutId } from '@/core/shortcuts'
 import { QUICK_COMMAND_METADATA, type QuickCommandMetadata, type QuickCommandSettingsTarget } from './quick-command-registry'
 
 interface QuickCommandBarProps {
   documentId: string
-  shortcutFor: (id: string) => string
+  shortcutFor: (id: ShortcutId) => string
   onToggleMirror: (axis: 'horizontal' | 'vertical') => void
   onOpenPreferences: () => void
   onOpenCommandSettings?: (target: QuickCommandSettingsTarget) => void

@@ -8,6 +8,7 @@ import type { DocumentSession } from '@/store/workspace'
 import { useWorkspace } from '@/store/workspace'
 import { QuickCommandBar } from './QuickCommandBar'
 import type { QuickCommandSettingsTarget } from './quick-command-registry'
+import type { ShortcutId } from '@/core/shortcuts'
 
 const LazyCanvasStage = lazy(() => import('@/components/CanvasStage').then(({ CanvasStage }) => ({ default: CanvasStage })))
 
@@ -20,7 +21,7 @@ interface FloatingDocumentWindowProps {
   onPinnedChange: (documentId: string, pinned: boolean) => void
   onReturnToTabs: (documentId: string, visibleIndex?: number) => void
   onCloseDocument: (documentId: string) => void
-  shortcutFor: (id: string) => string
+  shortcutFor: (id: ShortcutId) => string
   onToggleMirror: (axis: 'horizontal' | 'vertical') => void
   onOpenPreferences: () => void
   onOpenCommandSettings?: (target: QuickCommandSettingsTarget) => void

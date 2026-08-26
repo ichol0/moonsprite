@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { FileVideo, Pause, Play } from 'lucide-react'
-import type { TimelapseQuality, TimelapseSettings, TimelapseSnapshot, TimelapseVideoFormat } from '@shared/types'
-import { timelapseFrameDurations, timelapseOutputDimensions, timelapseOutputScale, timelapseSourceDurationMs, type TimelapseExportMode, type TimelapseExportOptions } from '@/core/timelapse'
+import type { TimelapseExportFormat, TimelapseQuality, TimelapseRecordingMode, TimelapseSettings, TimelapseSnapshot } from '@shared/types'
+import { isTimelapseVideoFormat, timelapseImageOutputDimensions, timelapseOutputDimensions, timelapseOutputScale, timelapseSourceDurationMs, timelapseVideoFramePlan, type TimelapseExportMode, type TimelapseExportOptions } from '@/core/timelapse'
 import { loadEditorPreferences } from '@/core/file-preferences'
 import { resolveTheme } from '@/core/theme'
 import { DialogHeader } from './DialogHeader'
@@ -9,6 +8,7 @@ import { ModalShell } from './ModalShell'
 import { NumberInput } from './NumberInput'
 import { ThemedSelect } from './ThemedSelect'
 import { useI18n } from './I18nProvider'
+import { PlaybackPixelIcon } from './PlaybackPixelIcon'
 import { PixelUtilityIcon } from './PixelUtilityIcon'
 import { FormField } from './FormField'
 import { PreferenceToggle } from './PreferenceToggle'
@@ -18,7 +18,7 @@ interface TimelapseDialogProps {
   settings: TimelapseSettings
   onChange: (settings: Partial<Omit<TimelapseSettings, 'snapshots'>>) => void
   onClear: () => void
-  onExport: (format: TimelapseVideoFormat, options: TimelapseExportOptions) => Promise<boolean>
+  onExport: (format: TimelapseExportFormat, options: TimelapseExportOptions) => Promise<boolean>
   onClose: () => void
 }
 
@@ -28,22 +28,31 @@ export function TimelapseDialog({ settings, onChange, onClear, onExport, onClose
   const previewStartFrameRef = useRef(0)
   const [previewPlaying, setPreviewPlaying] = useState(false)
   const [previewFrame, setPreviewFrame] = useState(0)
-  const [format, setFormat] = useState<TimelapseVideoFormat>('mp4')
+  const [format, setFormat] = useState<TimelapseExportFormat>('mp4')
   const [exportMode, setExportMode] = useState<TimelapseExportMode>('duration')
   const [clearConfirm, setClearConfirm] = useState(false)
+  const [imageScalePercent, setImageScalePercent] = useState(() => {
+    const presets = loadEditorPreferences().exportScalePresets
+    return presets.includes(100) ? 100 : presets[0] ?? 100
+  })
+  const [exportScalePresets, setExportScalePresets] = useState(() => loadEditorPreferences().exportScalePresets)
   const [durationSeconds, setDurationSeconds] = useState(() => Math.max(1, Math.round(timelapseSourceDurationMs(settings) / 1000 / Math.max(1, settings.speed))))
   const [previewVisuals, setPreviewVisuals] = useState(() => {
     const preferences = loadEditorPreferences()
     return { checkerboard: preferences.checkerboard, background: resolveTheme(preferences.theme).variables['--theme-deep-surface'] }
   })
-  const snapshot = settings.snapshots[Math.min(previewFrame, Math.max(0, settings.snapshots.length - 1))]
-  const exportOptions = useMemo<TimelapseExportOptions>(() => ({ mode: exportMode, durationSeconds }), [durationSeconds, exportMode])
-  const frameDurations = useMemo(
-    () => timelapseFrameDurations(settings, exportOptions),
-    [exportOptions, settings.fps, settings.snapshots.length, settings.speed]
+  const videoFormat = isTimelapseVideoFormat(format)
+  const exportOptions = useMemo<TimelapseExportOptions>(() => ({ mode: exportMode, durationSeconds, scalePercent: imageScalePercent }), [durationSeconds, exportMode, imageScalePercent])
+  const videoFramePlan = useMemo(() => timelapseVideoFramePlan(settings, exportOptions), [exportOptions, settings.fps, settings.snapshots, settings.speed])
+  const previewPlan = useMemo(
+    () => videoFormat ? videoFramePlan : settings.snapshots.map((_, index) => ({ snapshotIndex: index, durationMs: 1000 / Math.max(1, settings.fps) })),
+    [settings.fps, settings.snapshots, videoFormat, videoFramePlan]
   )
-  const { width: outputWidth, height: outputHeight } = timelapseOutputDimensions(settings)
-  const outputDurationMs = frameDurations.reduce((total, duration) => total + duration, 0)
+  const previewPlanFrame = previewPlan[Math.min(previewFrame, Math.max(0, previewPlan.length - 1))]
+  const snapshot = previewPlanFrame ? settings.snapshots[previewPlanFrame.snapshotIndex] : undefined
+  const { width: outputWidth, height: outputHeight } = videoFormat ? timelapseOutputDimensions(settings) : timelapseImageOutputDimensions(settings.snapshots, imageScalePercent)
+  const previewDurationMs = previewPlan.reduce((total, frame) => total + frame.durationMs, 0)
+  const outputDurationMs = videoFormat ? videoFramePlan.reduce((total, frame) => total + frame.durationMs, 0) : 0
   const outputDuration = outputDurationMs === 0 ? '0 s' : outputDurationMs < 10_000 ? `${(outputDurationMs / 1000).toFixed(1)} s` : `${Math.round(outputDurationMs / 1000)} s`
   const effectiveSpeed = outputDurationMs > 0 ? timelapseSourceDurationMs(settings) / outputDurationMs : settings.speed
   const qualityOptions = (['low', 'medium', 'high'] as const).map((quality) => {
@@ -57,7 +66,7 @@ export function TimelapseDialog({ settings, onChange, onClear, onExport, onClose
       setPreviewPlaying(false)
       return
     }
-    const lastFrame = Math.max(0, settings.snapshots.length - 1)
+    const lastFrame = Math.max(0, previewPlan.length - 1)
     const startFrame = previewFrame >= lastFrame ? 0 : previewFrame
     previewStartFrameRef.current = startFrame
     if (startFrame !== previewFrame) setPreviewFrame(startFrame)
@@ -65,42 +74,47 @@ export function TimelapseDialog({ settings, onChange, onClear, onExport, onClose
   }
 
   useEffect(() => {
-    if (previewFrame < settings.snapshots.length) return
-    setPreviewFrame(Math.max(0, settings.snapshots.length - 1))
-  }, [previewFrame, settings.snapshots.length])
+    if (previewFrame < previewPlan.length) return
+    setPreviewFrame(Math.max(0, previewPlan.length - 1))
+  }, [previewFrame, previewPlan.length])
 
   useEffect(() => {
     const syncPreferences = (): void => {
       const preferences = loadEditorPreferences()
       setPreviewVisuals({ checkerboard: preferences.checkerboard, background: resolveTheme(preferences.theme).variables['--theme-deep-surface'] })
+      setExportScalePresets(preferences.exportScalePresets)
+      setImageScalePercent((current) => preferences.exportScalePresets.includes(current) ? current : preferences.exportScalePresets[0] ?? 100)
     }
     window.addEventListener('moonsprite:preferences-changed', syncPreferences)
     return () => window.removeEventListener('moonsprite:preferences-changed', syncPreferences)
   }, [])
 
   useEffect(() => {
-    if (!previewPlaying || settings.snapshots.length < 2 || outputDurationMs <= 0) return
-    const frameCount = settings.snapshots.length
-    const lastFrame = frameCount - 1
-    const frameDuration = outputDurationMs / frameCount
+    if (!previewPlaying || previewPlan.length < 2 || previewDurationMs <= 0) return
+    const lastFrame = previewPlan.length - 1
     const startFrame = Math.min(previewStartFrameRef.current, lastFrame)
-    const startOffset = startFrame * frameDuration
+    const startOffset = previewPlan.slice(0, startFrame).reduce((total, frame) => total + frame.durationMs, 0)
     const startedAt = performance.now()
     let animationFrame = 0
     const advance = (now: number): void => {
       const elapsed = startOffset + now - startedAt
-      if (elapsed >= outputDurationMs) {
+      if (elapsed >= previewDurationMs) {
         setPreviewFrame(lastFrame)
         setPreviewPlaying(false)
         return
       }
-      const nextFrame = Math.min(lastFrame, Math.floor(elapsed / frameDuration))
+      let nextFrame = 0
+      let elapsedFrame = 0
+      while (nextFrame < lastFrame && elapsed >= elapsedFrame + previewPlan[nextFrame].durationMs) {
+        elapsedFrame += previewPlan[nextFrame].durationMs
+        nextFrame += 1
+      }
       setPreviewFrame((frame) => frame === nextFrame ? frame : nextFrame)
       animationFrame = window.requestAnimationFrame(advance)
     }
     animationFrame = window.requestAnimationFrame(advance)
     return () => window.cancelAnimationFrame(animationFrame)
-  }, [outputDurationMs, previewPlaying, settings.snapshots.length])
+  }, [previewDurationMs, previewPlan, previewPlaying])
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -146,37 +160,49 @@ export function TimelapseDialog({ settings, onChange, onClear, onExport, onClose
   }, [previewVisuals, snapshot])
 
   return <div className="modal-backdrop" role="presentation" onPointerDown={(event) => { if (event.target === event.currentTarget) onClose() }}>
-    <ModalShell storageKey="timelapse-v2" defaultWidth={640} defaultHeight={525} fitContent={false} minWidth={420} minHeight={420} maxWidth={760} maxHeight={760} className="timelapse-modal" role="dialog" aria-modal="true" aria-labelledby="timelapse-title">
+    <ModalShell storageKey="timelapse-v3" defaultWidth={420} defaultHeight={525} fitContent={false} minWidth={420} minHeight={420} maxWidth={760} maxHeight={760} className="timelapse-modal" role="dialog" aria-modal="true" aria-labelledby="timelapse-title">
       <DialogHeader title={t('timelapse.title')} titleId="timelapse-title" closeLabel={t('common.close')} onClose={onClose} />
       <div className="modal-body timelapse-body component-scrollbar">
         <section className="timelapse-preview" aria-label={t('timelapse.preview')}>
           <div className="timelapse-preview-frame"><canvas ref={canvasRef} /></div>
           <div className="timelapse-preview-controls">
-            <button type="button" className="icon-button" disabled={settings.snapshots.length < 2} title={previewPlaying ? t('timelapse.pausePreview') : t('timelapse.playPreview')} aria-label={previewPlaying ? t('timelapse.pausePreview') : t('timelapse.playPreview')} onClick={togglePreviewPlayback}>{previewPlaying ? <Pause size={15} /> : <Play size={15} />}</button>
-            <RangeField ariaLabel={t('timelapse.previewPosition')} density="compact" min={0} max={Math.max(0, settings.snapshots.length - 1)} value={Math.min(previewFrame, Math.max(0, settings.snapshots.length - 1))} valueLabel={settings.snapshots.length === 0 ? '0 / 0' : `${previewFrame + 1} / ${settings.snapshots.length}`} disabled={settings.snapshots.length === 0} onChange={(value) => { setPreviewPlaying(false); setPreviewFrame(value) }} />
+            <button type="button" className="icon-button" disabled={previewPlan.length < 2} title={previewPlaying ? t('timelapse.pausePreview') : t('timelapse.playPreview')} aria-label={previewPlaying ? t('timelapse.pausePreview') : t('timelapse.playPreview')} onClick={togglePreviewPlayback}>{previewPlaying ? <PlaybackPixelIcon kind="pause" /> : <PlaybackPixelIcon kind="play" />}</button>
+            <RangeField ariaLabel={t('timelapse.previewPosition')} density="compact" min={0} max={Math.max(0, previewPlan.length - 1)} value={Math.min(previewFrame, Math.max(0, previewPlan.length - 1))} valueLabel={previewPlan.length === 0 ? '0 / 0' : `${previewFrame + 1} / ${previewPlan.length}`} disabled={previewPlan.length === 0} onChange={(value) => { setPreviewPlaying(false); setPreviewFrame(value) }} />
           </div>
         </section>
         <PreferenceToggle className="timelapse-toggle" checked={settings.enabled} label={t('timelapse.recording')} onChange={(enabled) => onChange({ enabled })} />
+        <FormField label={t('timelapse.recordingMode')} hint={settings.mode === 'smart' ? t('timelapse.recordingModeSmartHint') : t('timelapse.recordingModeFullHint')}>
+          <ThemedSelect<TimelapseRecordingMode>
+            value={settings.mode ?? 'full'}
+            groups={[{ label: t('timelapse.recordingMode'), options: [
+              { value: 'full', label: t('timelapse.recordingModeFull'), description: t('timelapse.recordingModeFullHint') },
+              { value: 'smart', label: t('timelapse.recordingModeSmart'), description: t('timelapse.recordingModeSmartHint') }
+            ] }]}
+            label={t('timelapse.recordingMode')}
+            onChange={(mode) => onChange({ mode })}
+          />
+        </FormField>
         <div className="timelapse-config-grid">
-          <FormField label={t('timelapse.quality')} hint={t('timelapse.qualityHint')}><ThemedSelect<TimelapseQuality> value={settings.quality} groups={[{ label: t('timelapse.quality'), options: qualityOptions }]} label={t('timelapse.quality')} onChange={(quality) => onChange({ quality })} /></FormField>
-          <FormField label={t('timelapse.videoFormat')}><ThemedSelect<TimelapseVideoFormat> value={format} groups={[{ label: t('timelapse.videoFormat'), options: [{ value: 'mp4', label: 'MP4' }, { value: 'webm', label: 'WebM' }] }]} label={t('timelapse.videoFormat')} onChange={setFormat} /></FormField>
+          <FormField label={t('timelapse.exportFormat')}><ThemedSelect<TimelapseExportFormat> value={format} groups={[{ label: t('timelapse.exportFormat'), options: [{ value: 'mp4', label: 'MP4' }, { value: 'webm', label: 'WebM' }, { value: 'png', label: 'PNG' }, { value: 'jpeg', label: 'JPG' }] }]} label={t('timelapse.exportFormat')} onChange={setFormat} /></FormField>
+          {videoFormat ? <FormField label={t('timelapse.quality')}><ThemedSelect<TimelapseQuality> value={settings.quality} groups={[{ label: t('timelapse.quality'), options: qualityOptions }]} label={t('timelapse.quality')} onChange={(quality) => onChange({ quality })} /></FormField> : <FormField className="timelapse-scale-field" label={t('timelapse.exportScale')}><div className="timelapse-scale-control"><NumberInput min={1} max={6400} value={imageScalePercent} suffix="%" onValueChange={setImageScalePercent} /><div className="scale-presets" aria-label={t('timelapse.exportScale')}>
+            {exportScalePresets.map((scale) => <button type="button" key={scale} className={imageScalePercent === scale ? 'selected' : ''} onClick={() => setImageScalePercent(scale)}>{`${scale}%`}</button>)}
+          </div></div></FormField>}
         </div>
-        <div className="timelapse-export-grid">
+        {videoFormat && <div className="timelapse-export-grid">
           <FormField label={t('timelapse.exportMode')}><ThemedSelect<TimelapseExportMode> value={exportMode} groups={[{ label: t('timelapse.exportMode'), options: [{ value: 'duration', label: t('timelapse.modeDuration'), description: t('timelapse.modeDurationHint') }, { value: 'speed', label: t('timelapse.modeSpeed'), description: t('timelapse.modeSpeedHint') }] }]} label={t('timelapse.exportMode')} onChange={setExportMode} /></FormField>
           {exportMode === 'duration' ? <FormField label={t('timelapse.duration')}><NumberInput live min={1} max={3600} value={durationSeconds} suffix="s" onValueChange={setDurationSeconds} /></FormField> : <FormField className="timelapse-speed-control" label={t('timelapse.speed')} hint={t('timelapse.speedHint')}><NumberInput live min={1} max={64} value={settings.speed} suffix="x" onValueChange={(speed) => onChange({ speed })} /></FormField>}
-        </div>
+        </div>}
         <section className="timelapse-output-summary" aria-label={t('timelapse.outputSummary')}>
-          <div><span>{t('timelapse.outputSize')}</span><strong>{outputWidth > 0 ? `${outputWidth} x ${outputHeight}` : '-'}</strong></div>
+          <div><span>{videoFormat ? t('timelapse.outputSize') : t('timelapse.imageSize')}</span><strong>{outputWidth > 0 ? `${outputWidth} x ${outputHeight}` : '-'}</strong></div>
           <div><span>{t('timelapse.capturedFrames')}</span><strong>{settings.snapshots.length.toLocaleString()}</strong></div>
-          <div><span>{t('timelapse.speed')}</span><strong>{effectiveSpeed.toFixed(1)}x</strong></div>
-          <div><span>{t('timelapse.outputDuration')}</span><strong>{outputDuration}</strong></div>
+          {videoFormat ? <><div><span>{t('timelapse.speed')}</span><strong>{effectiveSpeed.toFixed(1)}x</strong></div><div><span>{t('timelapse.outputDuration')}</span><strong>{outputDuration}</strong></div></> : <div><span>{t('timelapse.exportScale')}</span><strong>{`${imageScalePercent}%`}</strong></div>}
         </section>
       </div>
       <footer className="timelapse-footer">
         <div className="timelapse-clear-actions">
           {!clearConfirm ? <button type="button" className="quiet-button timelapse-clear" disabled={settings.snapshots.length === 0} onClick={() => { setPreviewPlaying(false); setClearConfirm(true) }}><PixelUtilityIcon kind="clearRecords" />{t('timelapse.clear')}</button> : <><span className="timelapse-clear-confirm-label">{t('timelapse.clearConfirm')}</span><button type="button" className="quiet-button" onClick={() => setClearConfirm(false)}>{t('common.cancel')}</button><button type="button" className="danger-button" onClick={() => { setClearConfirm(false); setPreviewFrame(0); onClear() }}>{t('timelapse.confirmClear')}</button></>}
         </div>
-        <div className="timelapse-footer-actions"><button className="quiet-button" onClick={onClose}>{t('common.close')}</button><button className="primary-button" disabled={settings.snapshots.length === 0} onClick={() => { void onExport(format, exportOptions) }}><FileVideo size={15} />{t('timelapse.exportVideo')}</button></div>
+        <div className="timelapse-footer-actions"><button className="quiet-button" onClick={onClose}>{t('common.close')}</button><button className="primary-button" disabled={settings.snapshots.length === 0} onClick={() => { void onExport(format, exportOptions) }}><PixelUtilityIcon kind="export" />{t(videoFormat ? 'timelapse.exportVideo' : 'timelapse.exportImages')}</button></div>
       </footer>
     </ModalShell>
   </div>

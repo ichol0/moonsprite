@@ -10,7 +10,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 use tauri::State;
 
-use crate::{platform_extensions, platform_paths::ensure_executable_subdirectory};
+use crate::{
+    platform_extensions, platform_paths::ensure_executable_subdirectory,
+    platform_storage::atomic_write,
+};
 
 mod lua_api;
 
@@ -23,6 +26,9 @@ pub(super) const MAX_OUTPUT_BYTES: usize = 64 * 1024;
 pub(super) const MAX_LUA_MEMORY_BYTES: usize = 64 * 1024 * 1024;
 pub(super) const MAX_INSTRUCTIONS: u64 = 20_000_000;
 pub(super) const MAX_EXECUTION_MILLIS: u64 = 2_000;
+const BUILTIN_SCRIPT_FILE_NAME: &str = "moon-phase.lua";
+const BUILTIN_SCRIPT_MARKER: &str = ".moonsprite-script-examples.v1";
+const BUILTIN_MOON_PHASE_SCRIPT: &[u8] = include_bytes!("../resources/scripts/moon-phase.lua");
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -82,6 +88,8 @@ pub(crate) struct LuaScriptContext {
     pub(super) transparent_color: u32,
     pub(super) foreground: u32,
     pub(super) background: u32,
+    #[serde(default)]
+    pub(super) mse_snapshot: JsonValue,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -116,6 +124,14 @@ pub(super) struct LuaScriptBatch {
     pub(super) label: String,
     pub(super) changes: Vec<LuaScriptPixelChange>,
     pub(super) surface_change: Option<LuaScriptSurfaceChange>,
+    pub(super) operations: Vec<LuaScriptOperation>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct LuaScriptOperation {
+    pub(super) path: String,
+    pub(super) arguments: JsonValue,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -191,7 +207,23 @@ pub(crate) struct LuaScriptRunResult {
 }
 
 fn script_directory() -> Result<PathBuf, String> {
-    ensure_executable_subdirectory("scripts", "脚本")
+    let directory = ensure_executable_subdirectory("scripts", "脚本")?;
+    seed_builtin_scripts(&directory)?;
+    Ok(directory)
+}
+
+fn seed_builtin_scripts(directory: &Path) -> Result<(), String> {
+    let marker = directory.join(BUILTIN_SCRIPT_MARKER);
+    if marker.is_file() {
+        return Ok(());
+    }
+    let script = directory.join(BUILTIN_SCRIPT_FILE_NAME);
+    if !script.exists() {
+        atomic_write(&script, BUILTIN_MOON_PHASE_SCRIPT)
+            .map_err(|error| format!("无法安装内置 Lua 示例：{error}"))?;
+    }
+    atomic_write(&marker, b"1").map_err(|error| format!("无法记录内置 Lua 示例状态：{error}"))?;
+    Ok(())
 }
 
 fn is_lua_file(path: &Path) -> bool {
@@ -603,6 +635,22 @@ mod tests {
             vec!["Alpha.LUA", "zebra.lua"]
         );
         assert_eq!(scripts[0].name, "Alpha");
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn seeds_the_moon_phase_example_once_without_overwriting_user_files() {
+        let directory = temporary_script_directory();
+        let script = directory.join(BUILTIN_SCRIPT_FILE_NAME);
+        fs::write(&script, b"-- user copy").unwrap();
+
+        seed_builtin_scripts(&directory).unwrap();
+        assert_eq!(fs::read_to_string(&script).unwrap(), "-- user copy");
+        assert!(directory.join(BUILTIN_SCRIPT_MARKER).is_file());
+
+        fs::remove_file(&script).unwrap();
+        seed_builtin_scripts(&directory).unwrap();
+        assert!(!script.exists());
         let _ = fs::remove_dir_all(directory);
     }
 

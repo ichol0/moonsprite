@@ -1,6 +1,6 @@
 import type { FreeTileCelData, FreeTileSourceLayer, RgbaColor } from '@shared/types'
 import { cloneFreeTileCelData, freeTileCelDataEqual, freeTileInstanceBounds, freeTileSourceForInstance } from '@/core/free-tile'
-import { activeFreeTileCelTarget, applyFreeTilePlacementEdit, freeTileCelTargetAt, freeTileSourceOwnerForId, rerenderFreeTileSourceReferences, type FreeTileCelTarget, type FreeTilePlacementEdit } from '@/core/free-tile-document'
+import { activeFreeTileCelTarget, applyFreeTilePlacementEdit, applyFreeTileSourceLayerSnapshot, freeTileCelTargetAt, freeTileLayerIdsForSource, freeTileSourceOwnerForId, type FreeTileCelTarget, type FreeTilePlacementEdit } from '@/core/free-tile-document'
 import type { HistoryEntry } from '@/core/history'
 import { translateCurrent as tr } from '@/core/localization'
 import type { DocumentTransactionRegistry } from './document-transactions'
@@ -195,15 +195,7 @@ const sourceAfterChanges = (
 }
 
 const applySourceSnapshot = (session: DocumentSession, snapshot: FreeTileSourcePropertySnapshot): boolean => {
-  const owner = freeTileSourceOwnerForId(session.document, snapshot.source.id)
-  if (!owner) return false
-  const normalized = cloneSource(snapshot.source)
-  Object.assign(owner.source, normalized)
-  if (normalized.description === undefined) delete owner.source.description
-  if (normalized.displayColor === undefined) delete owner.source.displayColor
-  owner.tileset.name = snapshot.tilesetName
-  rerenderFreeTileSourceReferences(session.document, snapshot.source.id)
-  return true
+  return applyFreeTileSourceLayerSnapshot(session.document, { ...snapshot.source, name: snapshot.tilesetName })
 }
 
 const restoreSourcePreview = (session: DocumentSession, data: FreeTileSourcePropertiesTransactionData, notify = true): void => {
@@ -223,7 +215,7 @@ const sourceHistoryEntry = (
   undo: () => { applySourceSnapshot(session, data.before) },
   redo: () => { applySourceSnapshot(session, after) },
   invalidation: { kind: 'full' },
-  affectedLayerIds: [data.layerId],
+  affectedLayerIds: freeTileLayerIdsForSource(session.document, data.sourceId),
   contentChanged: true,
   requiresAnimationSync: false
 })

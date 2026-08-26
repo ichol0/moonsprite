@@ -15,15 +15,14 @@ import type {
   FreeTileInstance,
   FreeTileSourceLayer,
   GradientDither,
+  GradientType,
   ImageBrush,
   ImageBrushSettings,
   ImageResizeInterpolation,
   LayerStyles,
   LineKind,
   MoveKind,
-  OutlineDirections,
-  OutlineKernel,
-  OutlinePosition,
+  OutlineSettings,
   PaletteEntry,
   PaletteSlotLayout,
   ProceduralBrushSettings,
@@ -39,11 +38,12 @@ import type {
   TextCelData,
   TileRepeatMode,
   TimelapseSettings,
-  TimelapseVideoFormat,
+  TimelapseExportFormat,
   ToolId,
   ViewState
 } from '@shared/types'
 import type { ColorAdjustment } from '@/core/adjustments'
+import type { AdjustmentPreviewResult } from '@/core/adjustment-preview-protocol'
 import type { BackgroundPatternTile } from '@/core/background-patterns'
 import type { HistoryEntry, PixelEdit } from '@/core/history'
 import type { LayerPanelRowMoveTarget } from '@/core/layer-operations'
@@ -57,6 +57,7 @@ import type { FreeTileDrawingMode } from '@/core/free-tile'
 import type { FreeTilePlacementEdit, FreeTileSourceEditSnapshot } from '@/core/free-tile-document'
 import type { FreeTileSourceEditRaster } from '@/core/free-tile-edit'
 import type { TimelapseExportOptions } from '@/core/timelapse'
+import type { SpriteSheetExportOptions } from '@/core/sprite-sheet'
 import type { ExportOptions, SaveAsOptions } from './document-file-service'
 import type { LayerMoveDuplicateResult, LayerMoveState } from './workspace-layer-move'
 import type { LayerPropertyField, LayerPropertyTarget, LayerPropertyValues } from './workspace-layer-properties'
@@ -97,6 +98,8 @@ export interface TilemapLayerOptions {
 
 export interface FreeTileLayerOptions {
   name: string
+  /** Reuse a project Free Tile source set; null or omitted creates a new one. */
+  freeTileSetId?: string | null
 }
 
 export interface WorkspaceData {
@@ -113,8 +116,10 @@ export interface WorkspaceData {
 
 export interface WorkspaceSessionCommands {
   newDocument(name: string, width: number, height: number, colorMode: ColorMode, recordDrawing?: boolean): Promise<void>
-  createSpriteSheetFromActive(): Promise<boolean>
-  addSession(document: SpriteDocument): void
+  exportSpriteSheet(options: SpriteSheetExportOptions, sourceDocumentId?: string): Promise<boolean>
+  previewSpriteSheet(sourceDocumentId: string, options: SpriteSheetExportOptions, previousPreviewDocumentIds: readonly string[]): Promise<string[] | null>
+  closeSpriteSheetPreview(documentIds: readonly string[], preferredActiveId: string): void
+  addSession(document: SpriteDocument, options?: { recoveryOriginId?: string }): void
   reorderSessions(documentIds: string[]): void
   setActive(id: string): void
   mutateActive(mutator: (session: DocumentSession) => void, dirty?: boolean | 'content' | 'metadata'): void
@@ -153,6 +158,7 @@ export interface WorkspaceToolCommands {
   setTemporaryBrush(brush: ImageBrush): void
   deleteProjectBrush(id: string): void
   createBrushFromSelection(): Promise<void>
+  createBackgroundPresetFromSelection(): Promise<void>
   setBrushImageSettings(settings: Partial<ImageBrushSettings>): void
   setProceduralBrushSettings(settings: Partial<ProceduralBrushSettings>): void
   setProceduralAntialias(enabled: boolean): void
@@ -161,6 +167,8 @@ export interface WorkspaceToolCommands {
   setLineKind(kind: LineKind): void
   setCurveAnchorCount(count: number): void
   setShapeRatio(ratio: ShapeRatio | null): void
+  setShapeRounded(enabled: boolean): void
+  setShapeCornerRadius(radius: number): void
   setFillMode(mode: FillMode): void
   setFillKind(kind: FillKind): void
   setFillTolerance(tolerance: number): void
@@ -168,6 +176,7 @@ export interface WorkspaceToolCommands {
   setFillGapThreshold(threshold: number): void
   setGradientTolerance(tolerance: number): void
   setGradientContiguous(contiguous: boolean): void
+  setGradientType(type: GradientType): void
   setGradientDither(dither: GradientDither): void
   setMoveAutoSelect(enabled: boolean): void
   setPerfectPixels(enabled: boolean): void
@@ -218,8 +227,11 @@ export interface WorkspaceViewSelectionCommands {
   cancelTextBoxTransform(): void
   setSelectionKind(kind: SelectionKind): void
   commitSelectionChange(before: SelectionMask | null, after: SelectionMask | null, label: string): void
+  commitFloatingSelectionBoxMove(before: SelectionMask, after: SelectionMask, beforePivot: SelectionPivot | null, afterPivot: SelectionPivot | null): void
   commitTilemapSelectionMove(edit: TilemapEdit, before: SelectionMask | null, after: SelectionMask | null, label: string): void
   setSelectionMode(mode: SelectionMode): void
+  setSelectionRounded(enabled: boolean): void
+  setSelectionCornerRadius(radius: number): void
   setWandTolerance(tolerance: number): void
   setWandContiguous(contiguous: boolean): void
   setWandGapClosing(enabled: boolean): void
@@ -230,7 +242,7 @@ export interface WorkspaceViewSelectionCommands {
   deleteSelection(): void
   fillForeground(): void
   setOutlinePreview(preview: OutlinePreview | null): void
-  outlineActiveSelection(color: RgbaColor, thickness: number, position: OutlinePosition, directions?: OutlineDirections, kernel?: OutlineKernel, previewEnabled?: boolean): boolean
+  outlineActiveSelection(settings: OutlineSettings): boolean
   beginFloatingSelectionTransform(source: SelectionTransformSource, edit: PixelEdit | null, before: SelectionMask, target: SelectionMask, copy: boolean, label: string, translationPreview?: SelectionTranslationPreview | null, transformTarget?: SelectionRect, transformAngle?: number, transformShear?: SelectionShearTransform, previewDeferred?: boolean, tilemapEditCellIndex?: number, layers?: SelectionTransformLayerState[]): void
   beginFreeTileFloatingSelectionTransform(options: {
     sourceId: string
@@ -265,9 +277,10 @@ export interface WorkspaceHistoryCommands {
   pushHistory(entry: HistoryEntry): void
   undo(): void
   redo(): void
+  setHistoryPosition(position: number): void
   setTimelapseSettings(settings: Partial<Omit<TimelapseSettings, 'snapshots'>>): void
   clearTimelapse(): void
-  exportTimelapse(format: TimelapseVideoFormat, options: TimelapseExportOptions): Promise<boolean>
+  exportTimelapse(format: TimelapseExportFormat, options: TimelapseExportOptions): Promise<boolean>
 }
 
 export interface WorkspaceTilemapCommands {
@@ -320,7 +333,16 @@ export interface WorkspaceFreeTileCommands {
   ): HistoryEntry | null
   beginFreeTilePlacement(): FreeTilePlacementEdit | null
   previewFreeTilePlacement(edit: FreeTilePlacementEdit): boolean
-  commitFreeTilePlacement(edit: FreeTilePlacementEdit, label: string): HistoryEntry | null
+  commitFreeTilePlacement(
+    edit: FreeTilePlacementEdit,
+    label: string,
+    selectionEdit?: {
+      before: SelectionMask | null
+      after: SelectionMask | null
+      beforePivot: SelectionPivot | null
+      afterPivot: SelectionPivot | null
+    }
+  ): HistoryEntry | null
   cancelFreeTilePlacement(edit: FreeTilePlacementEdit): void
 }
 
@@ -476,9 +498,10 @@ export interface WorkspaceLayerCommands {
   clearLayerStyles(targets: readonly LayerPropertyTarget[]): boolean
   applyActiveLayerAdjustment(adjustment: ColorAdjustment): void
   captureActiveLayerAdjustmentSnapshot(): AdjustmentSnapshot | null
-  previewActiveLayerAdjustment(adjustment: ColorAdjustment, baseline: AdjustmentSnapshot, selection?: SelectionMask | null): void
-  restoreActiveDocumentSnapshot(snapshot: AdjustmentSnapshot): void
-  applyActiveLayerAdjustmentFromSnapshot(adjustment: ColorAdjustment, baseline: AdjustmentSnapshot): void
+  previewActiveLayerAdjustment(adjustment: ColorAdjustment, baseline: AdjustmentSnapshot, selection?: SelectionMask | null, region?: SelectionRect): void
+  applyActiveLayerAdjustmentPreviewResult(baseline: AdjustmentSnapshot, result: AdjustmentPreviewResult): void
+  restoreActiveDocumentSnapshot(snapshot: AdjustmentSnapshot, regions?: readonly SelectionRect[]): void
+  applyActiveLayerAdjustmentFromSnapshot(adjustment: ColorAdjustment, baseline: AdjustmentSnapshot, previewResult?: AdjustmentPreviewResult | null): void
 }
 
 export interface WorkspaceClipboardCommands {
@@ -515,6 +538,7 @@ export interface WorkspaceRecoveryCommands {
 
 export interface WorkspaceUiCommands {
   dismissSaveProgress(): void
+  cancelExport(): void
   setMessage(message: string | null): void
   requestDialog(options: Omit<AppDialog, 'resolve'>): Promise<string>
   resolveDialog(choice: string): void

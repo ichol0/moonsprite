@@ -4,7 +4,7 @@ import type { PaletteEntry, RgbaColor, ToolId } from '@shared/types'
 import { clampByte } from '@/core/raster'
 import { colorFromValues, colorToValues, colorValueFields, colorValueModeLabel, displayRgbaHex, parseRgbaHex, type ColorValueMode } from '@/core/color-values'
 import { NumberInput } from './NumberInput'
-import { PanelResizeHandles, type ResizeDirection } from './floating-panel'
+import { PanelResizeHandles, useFloatingWindowStack, type ResizeDirection } from './floating-panel'
 import { useI18n } from '@/components/I18nProvider'
 import { loadEditorPreferences } from '@/core/file-preferences'
 import { paletteMarkerColor } from '@/core/palette-layout'
@@ -112,6 +112,7 @@ export function ColorValueControl({ color, density = 'regular', onChange, onComm
   const [paletteEntries, setPaletteEntries] = useState<PaletteEntry[]>(activePaletteEntries)
   const triggerRef = useRef<HTMLButtonElement>(null)
   const popoverRef = useRef<HTMLDivElement>(null)
+  const editorWindowStack = useFloatingWindowStack(popoverRef, open)
   const dragRef = useRef<{ pointerX: number; pointerY: number; left: number; top: number } | null>(null)
   const resizeRef = useRef<{ direction: ResizeDirection; pointerX: number; pointerY: number; left: number; top: number; width: number; height: number } | null>(null)
   const positionRef = useRef(position)
@@ -434,7 +435,7 @@ export function ColorValueControl({ color, density = 'regular', onChange, onComm
 
   const roleTitle = roleLabel ? (locale === 'zh-CN' && !roleLabel.endsWith('色') ? `${roleLabel}色` : roleLabel) : ''
   const editorLabel = `${t('colorEditor.title')}${roleTitle ? ` ${roleTitle}` : ''}`
-  const editor = open ? <div ref={popoverRef} className={`color-editor-popover ${resident ? 'resident' : 'transient'}`} data-preserve-animation-selection={preserveAnimationSelection ? '' : undefined} role="dialog" aria-label={editorLabel} style={{ ...position, ...size }}>
+  const editor = open ? <div ref={popoverRef} className={`color-editor-popover ${resident ? 'resident' : 'transient'}`} data-preserve-animation-selection={preserveAnimationSelection ? '' : undefined} role="dialog" aria-label={editorLabel} style={{ ...position, ...size, zIndex: editorWindowStack.zIndex }} onPointerDownCapture={editorWindowStack.bringToFront} onFocusCapture={editorWindowStack.bringToFront}>
     <header className="color-editor-titlebar" onPointerDown={(event) => {
       if (event.button !== 0 || (event.target as HTMLElement).closest('button')) return
       dragRef.current = { pointerX: event.clientX, pointerY: event.clientY, left: position.left, top: position.top }
@@ -453,7 +454,7 @@ export function ColorValueControl({ color, density = 'regular', onChange, onComm
         {paletteEntries.length > 0 ? paletteEntries.map((entry) => <button key={entry.id} type="button" role="option" aria-selected={sameColor(entry.color, workingColor)} className={`color-editor-palette-swatch ${sameColor(entry.color, workingColor) ? 'selected' : ''}`} title={`${entry.name} · ${displayRgbaHex(entry.color)}`} aria-label={`${entry.name} ${displayRgbaHex(entry.color)}`} disabled={disabled} onClick={() => applyEditorColor(entry.color)}><i style={{ background: cssColor(entry.color) }} /></button>) : <p className="color-editor-palette-empty">{t('colorEditor.paletteEmpty')}</p>}
       </div> : fields.map((field) => {
         const gradient = colorGradient(mode, values, color, field)
-        const background = field.key === 'a' ? `${gradient}, repeating-conic-gradient(var(--theme-checker-dark) 0 25%, var(--theme-checker-light) 0 50%) 50% / 12px 12px` : gradient
+        const background = field.key === 'a' ? `${gradient}, repeating-conic-gradient(var(--theme-checker-dark) 0 25%, var(--theme-checker-light) 0 50%) 50% / 20px 20px` : gradient
         return <label key={field.key} className="color-editor-field"><span className="color-editor-field-label">{field.label}</span><input aria-label={t('colorEditor.slider', { label, field: field.label })} className="color-editor-range" style={{ background }} type="range" min={field.min} max={field.max} step={field.step} value={values[field.key] ?? 0} disabled={disabled} onChange={(event) => updateValue(field.key, Number(event.target.value))} onPointerUp={(event) => { confirmWorkingColor(); event.currentTarget.blur() }} onPointerCancel={(event) => { confirmWorkingColor(); event.currentTarget.blur() }} onBlur={confirmWorkingColor} /><NumberInput aria-label={`${label} ${field.label}`} min={field.min} max={field.max} step={field.step} value={Math.round(values[field.key] ?? 0)} disabled={disabled} onValueChange={(value) => { const next = updateValue(field.key, value); commitEditorColor(next) }} /></label>
       })}
     </div>

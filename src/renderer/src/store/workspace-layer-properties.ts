@@ -1,6 +1,7 @@
 import type { BlendMode, LayerGroup, RasterLayer, RgbaColor } from '@shared/types'
 import { cachedLayerContentBounds, expandLayerStyleInvalidationRect, getGroupLockingAncestor, getLayerLockingGroup } from '@/core/document'
 import type { ContentInvalidationHint, HistoryEntry } from '@/core/history'
+import { setLinkedLayerGroupDisplayColor } from '@/core/linked-layers'
 import { translateCurrent as tr } from '@/core/localization'
 import type { DocumentTransactionRegistry } from './document-transactions'
 import type { DocumentSession } from './workspace-types'
@@ -83,6 +84,9 @@ const applySnapshot = (session: DocumentSession, snapshot: LayerPropertySnapshot
   if (snapshot.kind === 'group') (target as LayerGroup).cumulativeBlend = snapshot.cumulativeBlend
   if (snapshot.displayColor) target.displayColor = { ...snapshot.displayColor }
   else delete target.displayColor
+  if (snapshot.kind === 'layer' && (target as RasterLayer).linkedContentId) {
+    setLinkedLayerGroupDisplayColor(session.document, (target as RasterLayer).linkedContentId!, snapshot.displayColor)
+  }
   target.description = snapshot.description
 }
 

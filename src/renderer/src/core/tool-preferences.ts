@@ -1,4 +1,4 @@
-import type { BrushDitherSettings, BrushPaintMode, BrushShape, BrushTexture, FillKind, FillMode, GradientDither, ImageBrushSettings, LineKind, ProceduralBrushId, ProceduralBrushSettings, SelectionKind, SelectionMode, ShapeKind, ShapeRatio, ToolId } from '@shared/types'
+import type { BrushDitherSettings, BrushPaintMode, BrushShape, BrushTexture, FillKind, FillMode, GradientDither, GradientType, ImageBrushSettings, LineKind, ProceduralBrushId, ProceduralBrushSettings, SelectionKind, SelectionMode, ShapeKind, ShapeRatio, ToolId } from '@shared/types'
 import { normalizeProceduralBrushSettings, PROCEDURAL_BRUSH_IDS } from './brushes'
 import { DEFAULT_BRUSH_DITHER_SETTINGS, normalizeBrushDitherSettings } from './gradient-color'
 import { readStoredJson, writeStoredJson } from './storage'
@@ -46,6 +46,8 @@ export interface PersistedToolSettings extends PersistedBrushProfile {
   lineKind: LineKind
   curveAnchorCount: number
   shapeRatio: ShapeRatio | number | null
+  shapeRounded: boolean
+  shapeCornerRadius: number
   fillMode: FillMode
   fillKind: FillKind
   fillTolerance: number
@@ -53,10 +55,13 @@ export interface PersistedToolSettings extends PersistedBrushProfile {
   fillGapThreshold: number
   gradientTolerance: number
   gradientContiguous: boolean
+  gradientType: GradientType
   gradientDither: GradientDither
   moveAutoSelect: boolean
   selectionKind: SelectionKind
   selectionMode: SelectionMode
+  selectionRounded: boolean
+  selectionCornerRadius: number
   wandTolerance: number
   wandContiguous: boolean
   wandGapClosing: boolean
@@ -95,6 +100,8 @@ export const defaultToolSettings: PersistedToolSettings = {
   lineKind: 'line',
   curveAnchorCount: 2,
   shapeRatio: null,
+  shapeRounded: false,
+  shapeCornerRadius: 4,
   fillMode: 'contiguous',
   fillKind: 'bucket',
   fillTolerance: 0,
@@ -102,10 +109,13 @@ export const defaultToolSettings: PersistedToolSettings = {
   fillGapThreshold: DEFAULT_GAP_CLOSING_THRESHOLD,
   gradientTolerance: 0,
   gradientContiguous: true,
+  gradientType: 'linear',
   gradientDither: 'none',
   moveAutoSelect: true,
   selectionKind: 'rectangle',
   selectionMode: 'replace',
+  selectionRounded: false,
+  selectionCornerRadius: 4,
   wandTolerance: 0,
   wandContiguous: true,
   wandGapClosing: false,
@@ -194,6 +204,8 @@ export function loadToolSettings(storage?: Storage): PersistedToolSettings {
       lineKind: stored.lineKind === 'curve' ? 'curve' : 'line',
       curveAnchorCount: Number.isFinite(stored.curveAnchorCount) ? Math.max(1, Math.min(8, Math.round(stored.curveAnchorCount!))) : defaultToolSettings.curveAnchorCount,
       shapeRatio: normalizeShapeRatio(stored.shapeRatio),
+      shapeRounded: typeof stored.shapeRounded === 'boolean' ? stored.shapeRounded : defaultToolSettings.shapeRounded,
+      shapeCornerRadius: Number.isFinite(stored.shapeCornerRadius) ? Math.max(0, Math.min(256, Math.round(stored.shapeCornerRadius!))) : defaultToolSettings.shapeCornerRadius,
       fillMode: stored.fillMode === 'global' || stored.fillMode === 'contiguous' ? stored.fillMode : defaultToolSettings.fillMode,
       fillKind: stored.fillKind === 'gradient' || stored.fillKind === 'bucket' ? stored.fillKind : defaultToolSettings.fillKind,
       fillTolerance: Number.isFinite(stored.fillTolerance) ? Math.max(0, Math.min(255, Math.round(stored.fillTolerance!))) : defaultToolSettings.fillTolerance,
@@ -201,10 +213,13 @@ export function loadToolSettings(storage?: Storage): PersistedToolSettings {
       fillGapThreshold: Number.isFinite(stored.fillGapThreshold) ? normalizeGapClosingThreshold(stored.fillGapThreshold!) : defaultToolSettings.fillGapThreshold,
       gradientTolerance: Number.isFinite(stored.gradientTolerance) ? Math.max(0, Math.min(255, Math.round(stored.gradientTolerance!))) : defaultToolSettings.gradientTolerance,
       gradientContiguous: typeof stored.gradientContiguous === 'boolean' ? stored.gradientContiguous : defaultToolSettings.gradientContiguous,
+      gradientType: stored.gradientType === 'radial' ? 'radial' : 'linear',
       gradientDither: stored.gradientDither === 'checker' || stored.gradientDither === 'diagonal' || stored.gradientDither === 'diagonal-reverse' || stored.gradientDither === 'horizontal' || stored.gradientDither === 'vertical' || stored.gradientDither === 'bayer-2' || stored.gradientDither === 'bayer-4' || stored.gradientDither === 'bayer-8' || stored.gradientDither === 'none' ? stored.gradientDither : defaultToolSettings.gradientDither,
       moveAutoSelect: typeof stored.moveAutoSelect === 'boolean' ? stored.moveAutoSelect : defaultToolSettings.moveAutoSelect,
       selectionKind: stored.selectionKind === 'magic' || stored.selectionKind === 'lasso' || stored.selectionKind === 'polygon-lasso' || stored.selectionKind === 'ellipse' || stored.selectionKind === 'rectangle' ? stored.selectionKind : defaultToolSettings.selectionKind,
       selectionMode: stored.selectionMode === 'add' || stored.selectionMode === 'subtract' || stored.selectionMode === 'intersect' || stored.selectionMode === 'replace' ? stored.selectionMode : defaultToolSettings.selectionMode,
+      selectionRounded: typeof stored.selectionRounded === 'boolean' ? stored.selectionRounded : defaultToolSettings.selectionRounded,
+      selectionCornerRadius: Number.isFinite(stored.selectionCornerRadius) ? Math.max(0, Math.min(256, Math.round(stored.selectionCornerRadius!))) : defaultToolSettings.selectionCornerRadius,
       wandTolerance: Number.isFinite(stored.wandTolerance) ? Math.max(0, Math.min(255, Math.round(stored.wandTolerance!))) : defaultToolSettings.wandTolerance,
       wandContiguous: typeof stored.wandContiguous === 'boolean' ? stored.wandContiguous : defaultToolSettings.wandContiguous,
       wandGapClosing: typeof stored.wandGapClosing === 'boolean' ? stored.wandGapClosing : defaultToolSettings.wandGapClosing,

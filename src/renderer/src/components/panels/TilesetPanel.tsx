@@ -12,10 +12,11 @@ import { PALETTE_SWATCH_GAP, PALETTE_SWATCH_PIXELS, paletteSlotRange, type Palet
 import { readStoredString, writeStoredString } from '@/core/panel-preferences'
 import { activeTilemapCelTarget, tilemapLayerTilesets } from '@/core/tilemap-document'
 import { type FreeTileDrawingMode } from '@/core/free-tile'
-import { TILESET_DELETE_COMMAND_EVENT } from '@/core/command-context'
+import { EDITOR_SHORTCUT_COMMAND_EVENT, TILESET_DELETE_COMMAND_EVENT, type EditorShortcutCommandDetail } from '@/core/command-context'
 import { useWorkspace, type DocumentSession } from '@/store/workspace'
 import { useI18n } from '@/components/I18nProvider'
 import { FreeTileSourcePropertiesDialog } from '@/components/FreeTileSourcePropertiesDialog'
+import type { ShortcutId } from '@/core/shortcuts'
 
 const TILESET_SWATCH_SIZE_STORAGE_KEY = 'moonsprite.tileset-swatch-size'
 const FREE_TILE_SWATCH_SIZE_STORAGE_KEY = 'moonsprite.free-tile-swatch-size'
@@ -61,6 +62,7 @@ function TilemapTilesetPanel({ session, docked = false, onDockDragStart, onPanel
   const tileGridRef = useRef<HTMLDivElement>(null)
   const tileDragRef = useRef<{ tilesetId: string; tileIds: string[]; baseSlots: Array<string | null>; anchorTileId: string; columns: number; pointerId: number; element: HTMLDivElement; startX: number; startY: number; moved: boolean; targetIndex: number | null; previewSlots: Array<string | null> } | null>(null)
   const tileSelectionGestureRef = useRef<TileSelectionGesture | null>(null)
+  const shortcutCommandHandlerRef = useRef<(id: ShortcutId) => void>(() => {})
   const [tileSelectionIds, setTileSelectionIds] = useState<string[]>([])
   const [tileSelectionAnchorId, setTileSelectionAnchorId] = useState<string | null>(null)
   const [gestureSelectedTileIds, setGestureSelectedTileIds] = useState<string[] | null>(null)
@@ -206,6 +208,15 @@ function TilemapTilesetPanel({ session, docked = false, onDockDragStart, onPanel
     panel.addEventListener(TILESET_DELETE_COMMAND_EVENT, handleDeleteCommand)
     return () => panel.removeEventListener(TILESET_DELETE_COMMAND_EVENT, handleDeleteCommand)
   })
+  useEffect(() => {
+    const handleShortcutCommand = (event: Event): void => {
+      const detail = (event as CustomEvent<EditorShortcutCommandDetail>).detail
+      if (!detail || detail.documentId !== session.document.id) return
+      shortcutCommandHandlerRef.current(detail.id)
+    }
+    window.addEventListener(EDITOR_SHORTCUT_COMMAND_EVENT, handleShortcutCommand)
+    return () => window.removeEventListener(EDITOR_SHORTCUT_COMMAND_EVENT, handleShortcutCommand)
+  }, [session.document.id])
 
   const tileIndexAt = (clientX: number, clientY: number): number | null => {
     const grid = tileGridRef.current
@@ -396,6 +407,16 @@ function TilemapTilesetPanel({ session, docked = false, onDockDragStart, onPanel
     writeStoredString(TILESET_SWATCH_SIZE_STORAGE_KEY, next)
   }
 
+  shortcutCommandHandlerRef.current = (id): void => {
+    switch (id) {
+      case 'tilemapModeEdit': store.setTilemapMode('edit'); break
+      case 'tilemapModeCreate': store.setTilemapMode('create'); break
+      case 'tilemapModeHybrid': store.setTilemapMode('hybrid'); break
+      case 'tilemapModePaint': store.setTilemapMode('paint'); break
+      case 'deleteTilesetSelection': deleteSelectedTiles(); break
+    }
+  }
+
   const panelTitle = t('panel.tileset')
 
   return <><section ref={floating.ref} className={`panel tileset-panel ${floating.style ? 'floating-panel' : ''}`} data-command-scope="tileset" style={floating.style} onPointerDown={floating.bringToFront} onContextMenu={onPanelContextMenu}>
@@ -465,6 +486,7 @@ function FreeTileSourcesPanel({ session, docked = false, onDockDragStart, onPane
   const [ctrlHeld, setCtrlHeld] = useState(false)
   const [sourceContextMenu, setSourceContextMenu] = useState<{ sourceId: string; x: number; y: number } | null>(null)
   const [sourcePropertiesId, setSourcePropertiesId] = useState<string | null>(null)
+  const shortcutCommandHandlerRef = useRef<(id: ShortcutId) => void>(() => {})
   const panelTitle = t('panel.tileset')
   const modeOptions: Array<{ value: FreeTileDrawingMode; icon: PixelUtilityIconKind; label: string; description: string }> = [
     { value: 'edit', icon: 'tileModeEdit', label: t('freeTiles.mode.edit'), description: t('freeTiles.mode.editDescription') }
@@ -508,6 +530,16 @@ function FreeTileSourcesPanel({ session, docked = false, onDockDragStart, onPane
     if (tileId) store.setSelectedTile(selectedEntry.tileset.id, tileId)
   }, [selectedEntry?.tileset.id, session.selectedTilesetId])
 
+  useEffect(() => {
+    const handleShortcutCommand = (event: Event): void => {
+      const detail = (event as CustomEvent<EditorShortcutCommandDetail>).detail
+      if (!detail || detail.documentId !== session.document.id) return
+      shortcutCommandHandlerRef.current(detail.id)
+    }
+    window.addEventListener(EDITOR_SHORTCUT_COMMAND_EVENT, handleShortcutCommand)
+    return () => window.removeEventListener(EDITOR_SHORTCUT_COMMAND_EVENT, handleShortcutCommand)
+  }, [session.document.id])
+
   const selectSource = (tilesetId: string, paint = false): void => {
     const entry = sourceEntries.find(({ tileset }) => tileset.id === tilesetId)
     const tileId = entry?.tileset.tileIds[0]
@@ -547,6 +579,16 @@ function FreeTileSourcesPanel({ session, docked = false, onDockDragStart, onPane
     const next = TILESET_SWATCH_SIZE_ORDER[nextIndex]
     setSwatchSize(next)
     writeStoredString(FREE_TILE_SWATCH_SIZE_STORAGE_KEY, next)
+  }
+
+  shortcutCommandHandlerRef.current = (id): void => {
+    switch (id) {
+      case 'freeTileModeEdit': store.setFreeTileMode('edit'); break
+      case 'freeTileModePaint': placeInstance(); break
+      case 'addFreeTileSource': addSource(); break
+      case 'deleteTilesetSelection': if (sourceEntries.length > 1) deleteSource(); break
+      case 'openFreeTileSourceProperties': if (selectedEntry) openSourceProperties(selectedEntry.source.id); break
+    }
   }
 
   const sourcePropertiesEntry = sourcePropertiesId ? sourceEntryForId(sourcePropertiesId) : null

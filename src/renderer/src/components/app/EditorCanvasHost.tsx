@@ -8,6 +8,7 @@ import { paneDockTargetAtPoint, type DocumentPaneDockTarget } from './document-p
 import { QuickCommandBar } from './QuickCommandBar'
 import { useWorkspace } from '@/store/workspace'
 import { useI18n } from '@/components/I18nProvider'
+import type { ShortcutId } from '@/core/shortcuts'
 import type { QuickCommandSettingsTarget } from './quick-command-registry'
 
 const loadCanvasStage = () => import('@/components/CanvasStage').then(({ CanvasStage }) => ({ default: CanvasStage }))
@@ -23,7 +24,7 @@ interface EditorCanvasHostProps {
   onDocumentPaneMove: (documentId: string, targetPaneId: string, direction: DocumentPaneDirection) => void
   onDocumentPaneReturnToTabs: (documentId: string, visibleIndex: number) => void
   onDocumentPaneFloat?: (documentId: string, anchor: { x: number; y: number }) => void
-  shortcutFor: (id: string) => string
+  shortcutFor: (id: ShortcutId) => string
   onToggleMirror: (axis: 'horizontal' | 'vertical') => void
   onOpenPreferences: () => void
   onOpenCommandSettings?: (target: QuickCommandSettingsTarget) => void

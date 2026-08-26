@@ -3,7 +3,7 @@ import { createLayer, getPaletteEntry, paletteColorIdForCanvas } from './documen
 import type { FreeTileSourceEditSnapshot } from './free-tile-document'
 import { freeTileInstanceInverseTransformPoint, transformFreeTileSourcePixels, type FreeTileInstanceTransform, type FreeTileSourceRef } from './free-tile'
 import { relativeLuminanceColor } from './raster'
-import { shiftSelection } from './selection'
+import { selectionContains, shiftSelection } from './selection'
 import { readTilesetTilePixels } from './tilemap'
 
 export interface FreeTileSourceEditRaster {
@@ -65,6 +65,21 @@ export const freeTileSelectionForInstanceEdit = (
     if (selection.mask[(y - selection.y) * selection.width + x - selection.x] === 1) return selection
   }
   return null
+}
+
+/** Returns whether a selection contains every pixel in an instance rectangle. */
+export const selectionCoversRect = (selection: SelectionMask | null, bounds: SelectionRect): boolean => {
+  if (!selection
+    || selection.x > bounds.x
+    || selection.y > bounds.y
+    || selection.x + selection.width < bounds.x + bounds.width
+    || selection.y + selection.height < bounds.y + bounds.height) return false
+  for (let y = bounds.y; y < bounds.y + bounds.height; y += 1) {
+    for (let x = bounds.x; x < bounds.x + bounds.width; x += 1) {
+      if (!selectionContains(selection, x, y)) return false
+    }
+  }
+  return true
 }
 
 export const freeTileTransformTargetToEditRaster = (

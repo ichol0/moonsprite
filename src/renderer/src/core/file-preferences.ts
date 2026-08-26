@@ -4,6 +4,7 @@ import { readStoredString, writeStoredString } from './storage'
 import type { RgbaColor } from '@shared/types'
 import type { ColorValueMode } from './color-values'
 import { DEFAULT_THEME_PREFERENCES, THEME_PREFERENCE_KEY, loadThemePreferences, normalizeThemePreferences, resolveTheme, rgbaHex, saveThemePreferences, withThemePaletteColors, type ThemePalette, type ThemePreferences } from './theme'
+import { ISO_GUIDE_BASE_SPACING, ISO_LINE_STAIR_STEP } from './isometric'
 
 export const SAVE_FORMAT_PREFERENCE_KEY = 'moonsprite.preference.save-format'
 export const EXPORT_FORMAT_PREFERENCE_KEY = 'moonsprite.preference.export-format'
@@ -19,6 +20,7 @@ export const RECOVERY_PREFERENCE_KEY = 'moonsprite.preference.recovery'
 export const RECOVERY_MINUTES_PREFERENCE_KEY = 'moonsprite.preference.recovery-minutes'
 export const RECOVERY_RETENTION_DAYS_PREFERENCE_KEY = 'moonsprite.preference.recovery-retention-days'
 export const ZOOM_TOOL_DRAG_MODE_PREFERENCE_KEY = 'moonsprite.preference.zoom-tool-drag-mode'
+export const VIEW_DRAG_SENSITIVITY_PREFERENCE_KEY = 'moonsprite.preference.view-drag-sensitivity'
 export const WHEEL_ZOOM_MODE_PREFERENCE_KEY = 'moonsprite.preference.wheel-zoom-mode'
 export const BRUSH_SHIFT_LINE_ENABLED_KEY = 'moonsprite.preference.brush-shift-line-enabled'
 export const USE_LOCAL_CURSORS_PREFERENCE_KEY = 'moonsprite.preference.use-local-cursors'
@@ -29,6 +31,10 @@ export const CHECKER_LIGHT_COLOR_PREFERENCE_KEY = 'moonsprite.preference.checker
 export const CHECKER_DARK_COLOR_PREFERENCE_KEY = 'moonsprite.preference.checker-dark-color'
 export const PIXEL_GRID_COLOR_PREFERENCE_KEY = 'moonsprite.preference.pixel-grid-color'
 export const GRID_COLOR_PREFERENCE_KEY = 'moonsprite.preference.grid-color'
+export const GRID_ALIGNMENT_ENABLED_PREFERENCE_KEY = 'moonsprite.preference.grid-alignment-enabled'
+export const SMART_ALIGNMENT_ENABLED_PREFERENCE_KEY = 'moonsprite.preference.smart-alignment-enabled'
+export const ALIGNMENT_GUIDES_VISIBLE_PREFERENCE_KEY = 'moonsprite.preference.alignment-guides-visible'
+export const ALIGNMENT_THRESHOLD_PREFERENCE_KEY = 'moonsprite.preference.alignment-threshold'
 export const SLICE_COLOR_PREFERENCE_KEY = 'moonsprite.preference.slice-color'
 export const TEXT_BOX_COLOR_PREFERENCE_KEY = 'moonsprite.preference.text-box-color'
 export const CANVAS_RESIZE_COLOR_PREFERENCE_KEY = 'moonsprite.preference.canvas-resize-color'
@@ -39,6 +45,7 @@ export const LASSO_PREVIEW_CLOSED_PREFERENCE_KEY = 'moonsprite.preference.lasso-
 export const EYEDROPPER_SWITCH_TO_PENCIL_PREFERENCE_KEY = 'moonsprite.preference.eyedropper-switch-to-pencil'
 export const EYEDROPPER_MAGNIFIER_ENABLED_PREFERENCE_KEY = 'moonsprite.preference.eyedropper-magnifier-enabled'
 export const EYEDROPPER_MAGNIFIER_STYLE_PREFERENCE_KEY = 'moonsprite.preference.eyedropper-magnifier-style'
+export const EYEDROPPER_MAGNIFIER_SIZE_PREFERENCE_KEY = 'moonsprite.preference.eyedropper-magnifier-size'
 export const EYEDROPPER_MAGNIFIER_DISTORTION_ENABLED_PREFERENCE_KEY = 'moonsprite.preference.eyedropper-magnifier-distortion-enabled'
 export const MOVE_LAYER_CONTENT_PREVIEW_ENABLED_PREFERENCE_KEY = 'moonsprite.preference.move-layer-content-preview-enabled'
 export const MOVE_LAYER_CLICK_FLASH_ENABLED_PREFERENCE_KEY = 'moonsprite.preference.move-layer-click-flash-enabled'
@@ -54,6 +61,8 @@ export const COLOR_EDITOR_MODES_PREFERENCE_KEY = 'moonsprite.preference.color-ed
 export const ONION_SKIN_PREFERENCE_KEY = 'moonsprite.preference.onion-skin'
 export const TIMELINE_HIDDEN_PREFERENCE_KEY = 'moonsprite.preference.timeline-hidden'
 export const SYMMETRY_AXIS_PREFERENCE_KEY = 'moonsprite.preference.symmetry-axis'
+export const ISO_VIEW_PREFERENCE_KEY = 'moonsprite.preference.iso-view'
+export const ISO_VIEW_PREFERENCES_PREVIEW_EVENT = 'moonsprite:iso-view-preferences-preview'
 export const TIMELAPSE_RECORDING_ENABLED_PREFERENCE_KEY = 'moonsprite.preference.timelapse-recording-enabled'
 export const QUICK_COMMAND_BAR_ENABLED_PREFERENCE_KEY = 'moonsprite.preference.quick-command-bar-enabled'
 export const QUICK_COMMAND_BAR_EXPANDED_PREFERENCE_KEY = 'moonsprite.preference.quick-command-bar-expanded'
@@ -61,21 +70,29 @@ export const QUICK_COMMAND_BAR_TRANSLUCENT_PREFERENCE_KEY = 'moonsprite.preferen
 export const QUICK_COMMAND_PREFERENCES_KEY = 'moonsprite.preference.quick-command-items'
 export const UI_SCALE_PREFERENCE_KEY = 'moonsprite.preference.ui-scale'
 export const TOOL_ICON_SCALE_PREFERENCE_KEY = 'moonsprite.preference.tool-icon-scale'
+export const ANIMATIONS_ENABLED_PREFERENCE_KEY = 'moonsprite.preference.animations-enabled'
+export const UI_MOTION_LEVEL_PREFERENCE_KEY = 'moonsprite.preference.ui-motion-level'
 export { THEME_PREFERENCE_KEY }
 
 export type RotationIndicatorPosition = 'view' | 'canvas'
 export type RelativeLuminanceScope = 'canvas' | 'app'
 export type ZoomToolDragMode = 'smooth' | 'stepped'
 export type WheelZoomMode = 'smooth' | 'stepped'
+export const VIEW_DRAG_SENSITIVITY_VALUES = [0.5, 0.75, 1, 1.5, 2] as const
+export type ViewDragSensitivity = typeof VIEW_DRAG_SENSITIVITY_VALUES[number]
 export type CursorScale = 1 | 1.25 | 1.5 | 2
 export type MoveLayerClickFlashDuration = 80 | 120 | 180
 export const MOVE_LAYER_CLICK_FLASH_DURATIONS: readonly MoveLayerClickFlashDuration[] = [80, 120, 180]
 export const UI_SCALE_VALUES = [0.75, 1, 1.5, 2] as const
 export type UiScale = typeof UI_SCALE_VALUES[number]
 export type ToolIconScale = 1 | 2
+export type UiMotionLevel = 'off' | 'subtle' | 'normal' | 'full'
+export const UI_MOTION_LEVELS: readonly UiMotionLevel[] = ['off', 'subtle', 'normal', 'full']
 export type BrushPreviewMode = 'none' | 'edge' | 'full' | 'full-edge'
 export type SelectionPreviewColorMode = 'auto' | 'custom'
 export type EyedropperMagnifierStyle = 'pixel' | 'line'
+export const EYEDROPPER_MAGNIFIER_SIZE_VALUES = [0.5, 0.75, 1, 1.25] as const
+export type EyedropperMagnifierSize = typeof EYEDROPPER_MAGNIFIER_SIZE_VALUES[number]
 export type CheckerSize = number
 
 export const QUICK_COMMAND_IDS = [
@@ -160,8 +177,8 @@ export interface CheckerboardPreferences {
 
 export const DEFAULT_CHECKERBOARD_PREFERENCES: CheckerboardPreferences = {
   size: 16,
-  lightColor: { r: 215, g: 215, b: 217, a: 255 },
-  darkColor: { r: 155, g: 155, b: 159, a: 255 }
+  lightColor: { r: 192, g: 192, b: 192, a: 255 },
+  darkColor: { r: 128, g: 128, b: 128, a: 255 }
 }
 
 export const DEFAULT_PIXEL_GRID_COLOR: RgbaColor = { r: 69, g: 77, b: 92, a: 143 }
@@ -185,6 +202,11 @@ export function parseRelativeLuminanceScope(value: string | null): RelativeLumin
 
 export function parseZoomToolDragMode(value: string | null): ZoomToolDragMode {
   return value === 'smooth' ? 'smooth' : 'stepped'
+}
+
+export function parseViewDragSensitivity(value: string | null): ViewDragSensitivity {
+  const parsed = Number(value)
+  return VIEW_DRAG_SENSITIVITY_VALUES.includes(parsed as ViewDragSensitivity) ? parsed as ViewDragSensitivity : 1
 }
 
 export function parseWheelZoomMode(value: string | null): WheelZoomMode {
@@ -219,6 +241,11 @@ export function parseSelectionPreviewColorMode(value: string | null): SelectionP
 
 export function parseEyedropperMagnifierStyle(value: string | null): EyedropperMagnifierStyle {
   return value === 'line' ? 'line' : 'pixel'
+}
+
+export function parseEyedropperMagnifierSize(value: string | null): EyedropperMagnifierSize {
+  const parsed = Number(value)
+  return EYEDROPPER_MAGNIFIER_SIZE_VALUES.includes(parsed as EyedropperMagnifierSize) ? parsed as EyedropperMagnifierSize : 1
 }
 
 export function parseCheckerSize(value: string | null): CheckerSize {
@@ -324,6 +351,44 @@ export const DEFAULT_SYMMETRY_AXIS_PREFERENCES: SymmetryAxisPreferences = {
   thickness: 1
 }
 
+export type IsoGuideLineStyle = 'solid' | 'pixel'
+
+export interface IsoViewPreferences {
+  stairStep: number
+  guideLineStyle: IsoGuideLineStyle
+  guideOriginX: number
+  guideOriginY: number
+  guideUnitSize: number
+  guideColors: Record<IsoGuideLineStyle, RgbaColor>
+  guideThickness: number
+  forceLineAlignment: boolean
+  snapToGrid: boolean
+}
+
+export const MIN_ISO_STAIR_STEP = 1
+export const MAX_ISO_STAIR_STEP = 16
+export const MIN_ISO_GUIDE_UNIT_SIZE = 1
+export const MAX_ISO_GUIDE_UNIT_SIZE = 256
+export const MIN_ISO_GUIDE_THICKNESS = 1
+export const MAX_ISO_GUIDE_THICKNESS = 8
+export const ISO_PIXEL_GUIDE_DEFAULT_ALPHA = 26
+const LEGACY_DEFAULT_ISO_GUIDE_COLOR = { r: 41, g: 121, b: 255 }
+
+export const DEFAULT_ISO_VIEW_PREFERENCES: IsoViewPreferences = {
+  stairStep: ISO_LINE_STAIR_STEP,
+  guideLineStyle: 'solid',
+  guideOriginX: 0,
+  guideOriginY: 0,
+  guideUnitSize: ISO_GUIDE_BASE_SPACING,
+  guideColors: {
+    solid: { r: 57, g: 255, b: 20, a: 160 },
+    pixel: { r: 57, g: 255, b: 20, a: ISO_PIXEL_GUIDE_DEFAULT_ALPHA }
+  },
+  guideThickness: 1,
+  forceLineAlignment: true,
+  snapToGrid: false
+}
+
 export type SaveFormatPreference = 'moonsprite' | 'png' | 'jpeg' | 'webp' | 'psd' | 'ase' | 'aseprite'
 export type ExportFormatPreference = 'png' | 'jpeg' | 'webp' | 'svg' | 'gif' | 'psd'
 
@@ -331,6 +396,8 @@ export interface EditorPreferences {
   language: AppLocale
   uiScale: UiScale
   toolIconScale: ToolIconScale
+  uiMotionLevel: UiMotionLevel
+  animationsEnabled: boolean
   saveFormat: SaveFormatPreference
   exportFormat: ExportFormatPreference
   saveDirectory: string
@@ -344,6 +411,7 @@ export interface EditorPreferences {
   drawingBrushPreviewEnabled: boolean
   relativeLuminanceScope: RelativeLuminanceScope
   zoomToolDragMode: ZoomToolDragMode
+  viewDragSensitivity: ViewDragSensitivity
   brushShiftLineEnabled: boolean
   useLocalCursors: boolean
   cursorScale: CursorScale
@@ -351,6 +419,10 @@ export interface EditorPreferences {
   checkerboard: CheckerboardPreferences
   pixelGridColor: RgbaColor
   gridColor: RgbaColor
+  gridAlignmentEnabled: boolean
+  smartAlignmentEnabled: boolean
+  alignmentGuidesVisible: boolean
+  alignmentThreshold: number
   sliceColor: RgbaColor
   textBoxColor: RgbaColor
   canvasResizeColor: RgbaColor
@@ -362,6 +434,7 @@ export interface EditorPreferences {
   eyedropperSwitchToPencil: boolean
   eyedropperMagnifierEnabled: boolean
   eyedropperMagnifierStyle: EyedropperMagnifierStyle
+  eyedropperMagnifierSize: EyedropperMagnifierSize
   eyedropperMagnifierDistortionEnabled: boolean
   moveLayerContentPreviewEnabled: boolean
   moveLayerClickFlashEnabled: boolean
@@ -377,6 +450,7 @@ export interface EditorPreferences {
   onionSkin: OnionSkinPreferences
   timelineHidden: boolean
   symmetryAxis: SymmetryAxisPreferences
+  isoView: IsoViewPreferences
   timelapseRecordingEnabled: boolean
   quickCommandBarEnabled: boolean
   quickCommandBarExpanded: boolean
@@ -389,6 +463,8 @@ export const DEFAULT_EDITOR_PREFERENCES: EditorPreferences = {
   language: DEFAULT_APP_LOCALE,
   uiScale: 1,
   toolIconScale: 1,
+  uiMotionLevel: 'normal',
+  animationsEnabled: true,
   saveFormat: 'moonsprite',
   exportFormat: 'png',
   saveDirectory: '',
@@ -402,6 +478,7 @@ export const DEFAULT_EDITOR_PREFERENCES: EditorPreferences = {
   drawingBrushPreviewEnabled: true,
   relativeLuminanceScope: 'canvas',
   zoomToolDragMode: 'stepped',
+  viewDragSensitivity: 1,
   brushShiftLineEnabled: true,
   useLocalCursors: false,
   cursorScale: 1,
@@ -409,6 +486,10 @@ export const DEFAULT_EDITOR_PREFERENCES: EditorPreferences = {
   checkerboard: DEFAULT_CHECKERBOARD_PREFERENCES,
   pixelGridColor: DEFAULT_PIXEL_GRID_COLOR,
   gridColor: DEFAULT_GRID_COLOR,
+  gridAlignmentEnabled: false,
+  smartAlignmentEnabled: false,
+  alignmentGuidesVisible: false,
+  alignmentThreshold: 6,
   sliceColor: DEFAULT_SLICE_COLOR,
   textBoxColor: DEFAULT_TEXT_BOX_COLOR,
   canvasResizeColor: DEFAULT_CANVAS_RESIZE_COLOR,
@@ -420,6 +501,7 @@ export const DEFAULT_EDITOR_PREFERENCES: EditorPreferences = {
   eyedropperSwitchToPencil: false,
   eyedropperMagnifierEnabled: true,
   eyedropperMagnifierStyle: 'pixel',
+  eyedropperMagnifierSize: 1,
   eyedropperMagnifierDistortionEnabled: true,
   moveLayerContentPreviewEnabled: true,
   moveLayerClickFlashEnabled: true,
@@ -435,6 +517,7 @@ export const DEFAULT_EDITOR_PREFERENCES: EditorPreferences = {
   onionSkin: DEFAULT_ONION_SKIN_PREFERENCES,
   timelineHidden: false,
   symmetryAxis: DEFAULT_SYMMETRY_AXIS_PREFERENCES,
+  isoView: DEFAULT_ISO_VIEW_PREFERENCES,
   timelapseRecordingEnabled: false,
   quickCommandBarEnabled: true,
   quickCommandBarExpanded: false,
@@ -638,6 +721,73 @@ export function parseSymmetryAxisPreferences(value: string | null): SymmetryAxis
   }
 }
 
+export function parseIsoViewPreferences(value: string | null): IsoViewPreferences {
+  const fallback = (): IsoViewPreferences => ({
+    ...DEFAULT_ISO_VIEW_PREFERENCES,
+    guideColors: {
+      solid: { ...DEFAULT_ISO_VIEW_PREFERENCES.guideColors.solid },
+      pixel: { ...DEFAULT_ISO_VIEW_PREFERENCES.guideColors.pixel }
+    }
+  })
+  try {
+    const parsed = JSON.parse(value ?? 'null') as (Partial<IsoViewPreferences> & { guideColor?: Partial<RgbaColor> }) | null
+    if (!parsed || typeof parsed !== 'object') return fallback()
+    const guideLineStyle: IsoGuideLineStyle = parsed.guideLineStyle === 'pixel' ? 'pixel' : 'solid'
+    const normalizeGuideColor = (candidate: unknown): RgbaColor | null => {
+      if (!candidate || typeof candidate !== 'object') return null
+      const storedColor = candidate as Partial<RgbaColor>
+      const channels = [storedColor.r, storedColor.g, storedColor.b, storedColor.a]
+      if (!channels.every((channel) => typeof channel === 'number' && Number.isFinite(channel) && channel >= 0 && channel <= 255)) return null
+      const color = { r: Math.round(storedColor.r!), g: Math.round(storedColor.g!), b: Math.round(storedColor.b!), a: Math.round(storedColor.a!) }
+      return color.r === LEGACY_DEFAULT_ISO_GUIDE_COLOR.r
+        && color.g === LEGACY_DEFAULT_ISO_GUIDE_COLOR.g
+        && color.b === LEGACY_DEFAULT_ISO_GUIDE_COLOR.b
+        ? { ...DEFAULT_ISO_VIEW_PREFERENCES.guideColors[guideLineStyle], a: color.a }
+        : color
+    }
+    const storedGuideColors = parsed.guideColors && typeof parsed.guideColors === 'object'
+      ? parsed.guideColors as Partial<Record<IsoGuideLineStyle, unknown>>
+      : null
+    const legacyGuideColor = normalizeGuideColor(parsed.guideColor)
+    const guideColors = {
+      solid: normalizeGuideColor(storedGuideColors?.solid)
+        ?? (guideLineStyle === 'solid' ? legacyGuideColor : null)
+        ?? { ...DEFAULT_ISO_VIEW_PREFERENCES.guideColors.solid },
+      pixel: normalizeGuideColor(storedGuideColors?.pixel)
+        ?? (guideLineStyle === 'pixel' ? legacyGuideColor : null)
+        ?? { ...DEFAULT_ISO_VIEW_PREFERENCES.guideColors.pixel }
+    }
+    const guideThickness = typeof parsed.guideThickness === 'number' && Number.isFinite(parsed.guideThickness)
+      ? Math.max(MIN_ISO_GUIDE_THICKNESS, Math.min(MAX_ISO_GUIDE_THICKNESS, Math.round(parsed.guideThickness)))
+      : DEFAULT_ISO_VIEW_PREFERENCES.guideThickness
+    const stairStep = typeof parsed.stairStep === 'number' && Number.isFinite(parsed.stairStep)
+      ? Math.max(MIN_ISO_STAIR_STEP, Math.min(MAX_ISO_STAIR_STEP, Math.round(parsed.stairStep)))
+      : DEFAULT_ISO_VIEW_PREFERENCES.stairStep
+    const guideOriginX = typeof parsed.guideOriginX === 'number' && Number.isFinite(parsed.guideOriginX)
+      ? Math.trunc(parsed.guideOriginX)
+      : DEFAULT_ISO_VIEW_PREFERENCES.guideOriginX
+    const guideOriginY = typeof parsed.guideOriginY === 'number' && Number.isFinite(parsed.guideOriginY)
+      ? Math.trunc(parsed.guideOriginY)
+      : DEFAULT_ISO_VIEW_PREFERENCES.guideOriginY
+    const guideUnitSize = typeof parsed.guideUnitSize === 'number' && Number.isFinite(parsed.guideUnitSize)
+      ? Math.max(MIN_ISO_GUIDE_UNIT_SIZE, Math.min(MAX_ISO_GUIDE_UNIT_SIZE, Math.round(parsed.guideUnitSize)))
+      : DEFAULT_ISO_VIEW_PREFERENCES.guideUnitSize
+    return {
+      stairStep,
+      guideLineStyle,
+      guideOriginX,
+      guideOriginY,
+      guideUnitSize,
+      guideColors,
+      guideThickness,
+      forceLineAlignment: parsed.forceLineAlignment !== false,
+      snapToGrid: parsed.snapToGrid === true
+    }
+  } catch {
+    return fallback()
+  }
+}
+
 export function imageExportKindForPreference(value: string | null): ImageExportKind {
   if (value === 'gif') return 'gif'
   if (value === 'jpeg') return 'jpeg'
@@ -689,14 +839,32 @@ export function parseMoveLayerClickFlashDuration(value: string | null): MoveLaye
     : DEFAULT_EDITOR_PREFERENCES.moveLayerClickFlashDuration
 }
 
+export function parseUiMotionLevel(value: string | null): UiMotionLevel {
+  return UI_MOTION_LEVELS.includes(value as UiMotionLevel) ? value as UiMotionLevel : DEFAULT_EDITOR_PREFERENCES.uiMotionLevel
+}
+
+export function parseAlignmentThreshold(value: string | null): number {
+  if (!value?.trim()) return DEFAULT_EDITOR_PREFERENCES.alignmentThreshold
+  const parsed = Number(value)
+  return Number.isFinite(parsed)
+    ? Math.max(1, Math.min(32, Math.round(parsed)))
+    : DEFAULT_EDITOR_PREFERENCES.alignmentThreshold
+}
+
 export function loadEditorPreferences(storage?: Storage): EditorPreferences {
   if (!storage && previewPreferences) return copyPreferences(previewPreferences)
   const get = (key: string): string | null => readStoredString(key, storage)
   const theme = effectiveThemeColors(loadThemePreferences(storage), get, storage)
+  const storedMotionLevel = get(UI_MOTION_LEVEL_PREFERENCE_KEY)
+  const uiMotionLevel = storedMotionLevel !== null
+    ? parseUiMotionLevel(storedMotionLevel)
+    : get(ANIMATIONS_ENABLED_PREFERENCE_KEY) === 'false' ? 'off' : DEFAULT_EDITOR_PREFERENCES.uiMotionLevel
   return {
     language: parseAppLocale(get(LANGUAGE_PREFERENCE_KEY)),
     uiScale: parseUiScale(get(UI_SCALE_PREFERENCE_KEY)),
     toolIconScale: parseToolIconScale(get(TOOL_ICON_SCALE_PREFERENCE_KEY)),
+    uiMotionLevel,
+    animationsEnabled: uiMotionLevel !== 'off',
     saveFormat: parseSaveFormat(get(SAVE_FORMAT_PREFERENCE_KEY)),
     exportFormat: parseExportFormat(get(EXPORT_FORMAT_PREFERENCE_KEY)),
     saveDirectory: parseDirectoryPreference(get(SAVE_DIRECTORY_PREFERENCE_KEY)),
@@ -710,6 +878,7 @@ export function loadEditorPreferences(storage?: Storage): EditorPreferences {
     drawingBrushPreviewEnabled: parseDrawingBrushPreviewEnabled(get(DRAWING_BRUSH_PREVIEW_ENABLED_KEY)),
     relativeLuminanceScope: parseRelativeLuminanceScope(get(RELATIVE_LUMINANCE_SCOPE_KEY)),
     zoomToolDragMode: parseZoomToolDragMode(get(ZOOM_TOOL_DRAG_MODE_PREFERENCE_KEY)),
+    viewDragSensitivity: parseViewDragSensitivity(get(VIEW_DRAG_SENSITIVITY_PREFERENCE_KEY)),
     brushShiftLineEnabled: parseBrushShiftLineEnabled(get(BRUSH_SHIFT_LINE_ENABLED_KEY)),
     useLocalCursors: get(USE_LOCAL_CURSORS_PREFERENCE_KEY) === 'true',
     cursorScale: parseCursorScale(get(CURSOR_SCALE_PREFERENCE_KEY)),
@@ -717,6 +886,10 @@ export function loadEditorPreferences(storage?: Storage): EditorPreferences {
     checkerboard: theme.checkerboard,
     pixelGridColor: theme.grid.pixelGridColor,
     gridColor: theme.grid.gridColor,
+    gridAlignmentEnabled: get(GRID_ALIGNMENT_ENABLED_PREFERENCE_KEY) === 'true',
+    smartAlignmentEnabled: get(SMART_ALIGNMENT_ENABLED_PREFERENCE_KEY) === 'true',
+    alignmentGuidesVisible: get(ALIGNMENT_GUIDES_VISIBLE_PREFERENCE_KEY) === 'true',
+    alignmentThreshold: parseAlignmentThreshold(get(ALIGNMENT_THRESHOLD_PREFERENCE_KEY)),
     sliceColor: parseHexColor(get(SLICE_COLOR_PREFERENCE_KEY), DEFAULT_SLICE_COLOR),
     textBoxColor: parseHexColor(get(TEXT_BOX_COLOR_PREFERENCE_KEY), DEFAULT_TEXT_BOX_COLOR),
     canvasResizeColor: parseHexColor(get(CANVAS_RESIZE_COLOR_PREFERENCE_KEY), DEFAULT_CANVAS_RESIZE_COLOR),
@@ -728,6 +901,7 @@ export function loadEditorPreferences(storage?: Storage): EditorPreferences {
     eyedropperSwitchToPencil: get(EYEDROPPER_SWITCH_TO_PENCIL_PREFERENCE_KEY) === 'true',
     eyedropperMagnifierEnabled: get(EYEDROPPER_MAGNIFIER_ENABLED_PREFERENCE_KEY) !== 'false',
     eyedropperMagnifierStyle: parseEyedropperMagnifierStyle(get(EYEDROPPER_MAGNIFIER_STYLE_PREFERENCE_KEY)),
+    eyedropperMagnifierSize: parseEyedropperMagnifierSize(get(EYEDROPPER_MAGNIFIER_SIZE_PREFERENCE_KEY)),
     eyedropperMagnifierDistortionEnabled: get(EYEDROPPER_MAGNIFIER_DISTORTION_ENABLED_PREFERENCE_KEY) !== 'false',
     moveLayerContentPreviewEnabled: get(MOVE_LAYER_CONTENT_PREVIEW_ENABLED_PREFERENCE_KEY) !== 'false',
     moveLayerClickFlashEnabled: get(MOVE_LAYER_CLICK_FLASH_ENABLED_PREFERENCE_KEY) !== 'false',
@@ -743,6 +917,7 @@ export function loadEditorPreferences(storage?: Storage): EditorPreferences {
     onionSkin: theme.onionSkin,
     timelineHidden: get(TIMELINE_HIDDEN_PREFERENCE_KEY) === 'true',
     symmetryAxis: theme.symmetryAxis,
+    isoView: parseIsoViewPreferences(get(ISO_VIEW_PREFERENCE_KEY)),
     timelapseRecordingEnabled: get(TIMELAPSE_RECORDING_ENABLED_PREFERENCE_KEY) === 'true',
     quickCommandBarEnabled: get(QUICK_COMMAND_BAR_ENABLED_PREFERENCE_KEY) !== 'false',
     quickCommandBarExpanded: get(QUICK_COMMAND_BAR_EXPANDED_PREFERENCE_KEY) === 'true',
@@ -754,10 +929,15 @@ export function loadEditorPreferences(storage?: Storage): EditorPreferences {
 
 export function saveEditorPreferences(preferences: EditorPreferences, storage?: Storage): void {
   const theme = themeWithInferredVisualColors(preferences)
+  const uiMotionLevel: UiMotionLevel = preferences.animationsEnabled === false
+    ? 'off'
+    : parseUiMotionLevel(preferences.uiMotionLevel)
   const values: Record<string, string> = {
     [LANGUAGE_PREFERENCE_KEY]: preferences.language,
     [UI_SCALE_PREFERENCE_KEY]: String(parseUiScale(String(preferences.uiScale))),
     [TOOL_ICON_SCALE_PREFERENCE_KEY]: String(parseToolIconScale(String(preferences.toolIconScale))),
+    [ANIMATIONS_ENABLED_PREFERENCE_KEY]: String(uiMotionLevel !== 'off'),
+    [UI_MOTION_LEVEL_PREFERENCE_KEY]: uiMotionLevel,
     [SAVE_FORMAT_PREFERENCE_KEY]: preferences.saveFormat,
     [EXPORT_FORMAT_PREFERENCE_KEY]: preferences.exportFormat,
     [SAVE_DIRECTORY_PREFERENCE_KEY]: parseDirectoryPreference(preferences.saveDirectory),
@@ -771,6 +951,7 @@ export function saveEditorPreferences(preferences: EditorPreferences, storage?: 
     [DRAWING_BRUSH_PREVIEW_ENABLED_KEY]: String(preferences.drawingBrushPreviewEnabled),
     [RELATIVE_LUMINANCE_SCOPE_KEY]: preferences.relativeLuminanceScope,
     [ZOOM_TOOL_DRAG_MODE_PREFERENCE_KEY]: preferences.zoomToolDragMode,
+    [VIEW_DRAG_SENSITIVITY_PREFERENCE_KEY]: String(parseViewDragSensitivity(String(preferences.viewDragSensitivity))),
     [BRUSH_SHIFT_LINE_ENABLED_KEY]: String(preferences.brushShiftLineEnabled),
     [USE_LOCAL_CURSORS_PREFERENCE_KEY]: String(preferences.useLocalCursors),
     [CURSOR_SCALE_PREFERENCE_KEY]: String(preferences.cursorScale),
@@ -780,6 +961,10 @@ export function saveEditorPreferences(preferences: EditorPreferences, storage?: 
     [CHECKER_DARK_COLOR_PREFERENCE_KEY]: colorHex(preferences.checkerboard.darkColor),
     [PIXEL_GRID_COLOR_PREFERENCE_KEY]: colorHex(preferences.pixelGridColor),
     [GRID_COLOR_PREFERENCE_KEY]: colorHex(preferences.gridColor),
+    [GRID_ALIGNMENT_ENABLED_PREFERENCE_KEY]: String(preferences.gridAlignmentEnabled),
+    [SMART_ALIGNMENT_ENABLED_PREFERENCE_KEY]: String(preferences.smartAlignmentEnabled),
+    [ALIGNMENT_GUIDES_VISIBLE_PREFERENCE_KEY]: String(preferences.alignmentGuidesVisible),
+    [ALIGNMENT_THRESHOLD_PREFERENCE_KEY]: String(parseAlignmentThreshold(String(preferences.alignmentThreshold))),
     [SLICE_COLOR_PREFERENCE_KEY]: colorHex(preferences.sliceColor),
     [TEXT_BOX_COLOR_PREFERENCE_KEY]: colorHex(preferences.textBoxColor),
     [CANVAS_RESIZE_COLOR_PREFERENCE_KEY]: colorHex(preferences.canvasResizeColor),
@@ -791,6 +976,7 @@ export function saveEditorPreferences(preferences: EditorPreferences, storage?: 
     [EYEDROPPER_SWITCH_TO_PENCIL_PREFERENCE_KEY]: String(preferences.eyedropperSwitchToPencil),
     [EYEDROPPER_MAGNIFIER_ENABLED_PREFERENCE_KEY]: String(preferences.eyedropperMagnifierEnabled),
     [EYEDROPPER_MAGNIFIER_STYLE_PREFERENCE_KEY]: preferences.eyedropperMagnifierStyle,
+    [EYEDROPPER_MAGNIFIER_SIZE_PREFERENCE_KEY]: String(parseEyedropperMagnifierSize(String(preferences.eyedropperMagnifierSize))),
     [EYEDROPPER_MAGNIFIER_DISTORTION_ENABLED_PREFERENCE_KEY]: String(preferences.eyedropperMagnifierDistortionEnabled),
     [MOVE_LAYER_CONTENT_PREVIEW_ENABLED_PREFERENCE_KEY]: String(preferences.moveLayerContentPreviewEnabled),
     [MOVE_LAYER_CLICK_FLASH_ENABLED_PREFERENCE_KEY]: String(preferences.moveLayerClickFlashEnabled),
@@ -806,6 +992,7 @@ export function saveEditorPreferences(preferences: EditorPreferences, storage?: 
     [ONION_SKIN_PREFERENCE_KEY]: JSON.stringify(parseOnionSkinPreferences(JSON.stringify(preferences.onionSkin))),
     [TIMELINE_HIDDEN_PREFERENCE_KEY]: String(preferences.timelineHidden),
     [SYMMETRY_AXIS_PREFERENCE_KEY]: JSON.stringify(parseSymmetryAxisPreferences(JSON.stringify(preferences.symmetryAxis))),
+    [ISO_VIEW_PREFERENCE_KEY]: JSON.stringify(parseIsoViewPreferences(JSON.stringify(preferences.isoView))),
     [TIMELAPSE_RECORDING_ENABLED_PREFERENCE_KEY]: String(preferences.timelapseRecordingEnabled),
     [QUICK_COMMAND_BAR_ENABLED_PREFERENCE_KEY]: String(preferences.quickCommandBarEnabled),
     [QUICK_COMMAND_BAR_EXPANDED_PREFERENCE_KEY]: String(preferences.quickCommandBarExpanded),

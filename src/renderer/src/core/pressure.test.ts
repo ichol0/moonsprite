@@ -4,6 +4,8 @@ import {
   brushPressureFromDynamics,
   calibrateBrushPressure,
   cloneBrushDynamicsSettings,
+  hasReliableBrushPressure,
+  isPressurePointerType,
   migrateBrushPressureSettings,
   normalizeBrushDynamicsSettings,
   patchBrushDynamicsGradientDither,
@@ -111,6 +113,31 @@ describe('brush dynamics', () => {
       sensor: 'pressure', outputMin: 0, outputMax: 100, inputMin: 0, inputMax: 100, curve: 'linear'
     })
     expect(resolveBrushDynamics(settings, { pointerType: 'pen', pressure: 0.5 }, 10)).toEqual({ size: 3, opacityScale: 1, gradientAmount: null })
+  })
+
+  it('keeps Aseprite-style full pressure for ordinary mouse compatibility values', () => {
+    expect(isPressurePointerType('pen')).toBe(true)
+    expect(isPressurePointerType('eraser')).toBe(true)
+    expect(isPressurePointerType('Apple-Pencil')).toBe(true)
+    expect(isPressurePointerType('windows-ink')).toBe(true)
+    expect(isPressurePointerType('Windows Ink Pen')).toBe(true)
+    expect(isPressurePointerType('win_tab')).toBe(true)
+    expect(isPressurePointerType('mouse')).toBe(false)
+    expect(hasReliableBrushPressure('mouse', 0.5)).toBe(false)
+    expect(hasReliableBrushPressure('touch', 0)).toBe(false)
+    expect(hasReliableBrushPressure('mouse', 0.5, 0.5)).toBe(false)
+    expect(hasReliableBrushPressure('mouse', 0.7)).toBe(true)
+    expect(hasReliableBrushPressure('mouse', 0.5, 0.7)).toBe(true)
+    expect(hasReliableBrushPressure('touch', 0.7)).toBe(false)
+  })
+
+  it('accepts vendor stylus types and explicit capability overrides', () => {
+    const settings = patchBrushDynamicsMapping(DEFAULT_BRUSH_DYNAMICS_SETTINGS, 'size', {
+      sensor: 'pressure', outputMin: 0, outputMax: 100, inputMin: 0, inputMax: 100, curve: 'linear'
+    })
+    expect(resolveBrushDynamics(settings, { pointerType: 'stylus', pressure: 0.5 }, 10).size).toBe(3)
+    expect(resolveBrushDynamics(settings, { pointerType: 'mouse', pressure: 0.5, pressureAvailable: true }, 10).size).toBe(3)
+    expect(resolveBrushDynamics(settings, { pointerType: 'pen', pressure: 0.5, pressureAvailable: false }, 10).size).toBe(10)
   })
 
   it('resolves missing speed as zero with direction-aware endpoints', () => {

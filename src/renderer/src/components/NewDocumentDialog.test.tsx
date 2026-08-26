@@ -14,7 +14,7 @@ describe('getWindowsFileNameError', () => {
   it('uses a default width that keeps the built-in size presets on one row', () => {
     render(<NewDocumentDialog open onClose={vi.fn()} onCreate={vi.fn()} />)
 
-    expect(screen.getByRole('form', { name: '新建画布' })).toHaveStyle({ width: '480px', minWidth: '440px' })
+    expect(screen.getByRole('form', { name: '新建画布' })).toHaveStyle({ width: '440px' })
     expect(screen.getByLabelText('常用画布尺寸').querySelectorAll('button')).toHaveLength(6)
     expect(screen.getByRole('group', { name: '颜色模式' }).querySelectorAll('button')).toHaveLength(3)
     expect(screen.getByRole('button', { name: '灰度' })).toBeInTheDocument()

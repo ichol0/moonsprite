@@ -134,6 +134,7 @@ interface LayerDefinitionSnapshot {
   linkedContentId?: string
   kind?: RasterLayer['kind']
   tilemapTilesetId?: string
+  freeTileSetId?: string
   freeTileSources?: FreeTileSourceLayer[]
   layerStyles?: RasterLayer['layerStyles']
   background?: RasterLayer['background']
@@ -163,6 +164,7 @@ export const captureLayerContentSnapshot = (document: SpriteDocument, layerId: s
       linkedContentId: layer.linkedContentId,
       kind: layer.kind,
       tilemapTilesetId: layer.tilemapTilesetId,
+      freeTileSetId: layer.freeTileSetId,
       freeTileSources: layer.freeTileSources?.map((source) => ({ ...source, displayColor: source.displayColor ? { ...source.displayColor } : undefined })),
       layerStyles: cloneLayerStyles(layer.layerStyles),
       background: layer.background ? { ...layer.background } : undefined
@@ -188,6 +190,8 @@ export const restoreLayerContentSnapshot = (document: SpriteDocument, snapshot: 
   if (snapshot.definition.tilemapTilesetId) layer.tilemapTilesetId = snapshot.definition.tilemapTilesetId
   else delete layer.tilemapTilesetId
   delete layer.freeTileTilesetId
+  if (snapshot.definition.freeTileSetId) layer.freeTileSetId = snapshot.definition.freeTileSetId
+  else delete layer.freeTileSetId
   if (snapshot.definition.freeTileSources) layer.freeTileSources = snapshot.definition.freeTileSources.map((source) => ({ ...source, displayColor: source.displayColor ? { ...source.displayColor } : undefined }))
   else delete layer.freeTileSources
   if (snapshot.definition.layerStyles) layer.layerStyles = cloneLayerStyles(snapshot.definition.layerStyles)

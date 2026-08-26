@@ -24,8 +24,10 @@
 | 原子保存与并发保存 | 保存失败不损坏原文件；并发保存按顺序完成，dirty 只反映最后已持久化状态 | `workspace.test.ts`、`document-files.test.ts`、Rust 文件测试 |
 | Aseprite 导入兼容 | 合法单帧/多帧像素、图层和时长正确导入；截断、未知或越界数据明确失败 | `aseprite.test.ts` |
 | 图片与 GIF 编码 | PNG 等静态格式保持尺寸与透明度；GIF 帧顺序、时长、缩放和往返方向生成确定字节结果，跨越 LZW 编码位宽边界后仍可逐帧解码为精确像素 | `png.test.ts`、`gif.test.ts`、`raster-image.test.ts` |
+| 缩时导出格式与采样 | MP4/WebM 按目标时长或倍率以固定 FPS 首尾均匀采样；1 秒、2 秒等短时长不会因记录帧很多而只保留近似同一画面；PNG/JPG 按记录顺序一次选择路径后连续写出带序号的图片，缩放尺寸和透明度符合格式语义 | `timelapse.test.ts`、`document-file-service.test.ts` |
+| 精灵表布局、预览与拆分输出 | 水平/垂直条幅；按行的固定列数/宽度与按列的固定行数/高度保持确定尺寸和顺序，无限制分别退化为 1 行/1 列，过小像素尺寸钳制为单项尺寸；透明帧不占矩形，重复帧共享矩形；图层与循环节拆分目标按顺序纵向合并到同一结果且不修改源文档；预览临时打开并随设置替换，替换时保留缩放、平移和视图方向，关闭预览或弹窗后恢复源文档；文件输出只原子写入一个 PNG | `sprite-sheet.test.ts`、`workspace.test.ts`、`document-file-service.test.ts` |
 | 输入资源上限 | 零尺寸、溢出、超大图片、异常工程和剪贴板数据在分配大内存或调用系统接口前被拒绝 | `resource-policy.test.ts`、`NewDocumentDialog.test.tsx`、Rust 剪贴板测试 |
-| 恢复写入与放弃 | 恢复保存串行执行；用户放弃后等待在途写入结束并删除，晚到写入不得重新创建草稿 | `recovery-service.test.ts`、`workspace.test.ts`、Rust 恢复测试 |
+| 恢复写入、打开与删除 | 恢复保存串行执行；从恢复打开、关闭会话或未保存提示中放弃都保留原记录并继续以同一 ID 自动恢复；只有恢复栏目显式删除或对应项目完整保存后才清理，显式删除需等待在途写入结束且晚到写入不得重新创建草稿 | `recovery-service.test.ts`、`workspace.test.ts`、Rust 恢复测试 |
 | 恢复能力降级 | 恢复目录或会话标记不可写时只记录警告，不阻止主窗口和编辑器启动 | Rust `platform_recovery` 测试 |
 | 文件拖放去重 | Windows 路径与 `file://` 路径统一规范化；HTML、Webview、Window 与 Rust 重复事件只打开一次并可重新订阅 | `document-drop.test.ts`、`document-drop-events.test.ts`、`document-drop-service.test.ts` |
 | 笔刷库文件边界 | 拖到笔刷库的图片不得作为文档打开；RGBA 和半透明像素往返保存保持，宽高超过 `256px` 在写盘前拒绝；`Ctrl+B` 只写全局库且不污染工程 dirty | `brushes.test.ts`、`workspace-session.test.ts`、`document-drop-service.test.ts`、`workspace.test.ts` |
@@ -34,10 +36,12 @@
 | Tileset 槽位兼容 | 空槽布局保存重开后保持；旧 v13 紧凑布局可读取；重复、缺失或越界槽位明确拒绝，槽位移动不改变瓦片像素和稳定引用 | `project-format.test.ts`、`tilemap.test.ts`、`workspace-tilemap.test.ts` |
 | Tilemap 共享 Tileset | 新建 Tilemap 图层默认新建 Tileset，也可复用已有 Tilemap Tileset；尺寸跟随、删除引用不误删资源、保存重开后共享 ID 保持 | `project-format.test.ts`、`workspace-tilemap.test.ts` |
 | 图层转换为 Tilemap | 普通或背景图层按画布网格裁切全部帧，相同瓦片去重、边缘补透明；转换、重命名、背景身份、Tileset 与会话选择通过同一个 Undo/Redo 完整恢复 | `tilemap.test.ts`、`workspace-tilemap.test.ts`、`LayersPanel.test.tsx` |
+| 自由瓦片共享源集 | 新建自由瓦片图层默认创建新集合，也可复用已有集合；同一 `freeTileSetId` 的源增删、属性和像素修改同步到全部成员，图层删除不误删仍被引用的 Tileset；v1-v17 迁移为独立集合，v18 保存重开保持共享关系并拒绝跨集合所有权冲突 | `project-format.test.ts`、`workspace-tilemap.test.ts` |
 | 栅格选区粘贴到自由瓦片 | 未选实例时普通画布选区按原坐标裁切并创建源、Tileset 与实例；已选实例时只编辑其共享源并同步全部同源实例；Undo/Redo 不遗留资源，普通动画 cel 仍拒绝粘贴到自由瓦片或实例时间轴 | `free-tile.test.ts`、`workspace-tilemap.test.ts`、`command-context.test.ts` |
-| 自由瓦片实例选区变换 | 新建选区只落在当前实例；普通及旋转/镜像实例按显示朝向移动、缩放、旋转和倾斜，移动预览不落后一帧，结果逆向写回共享源并实时刷新同源实例；其他实例不出现选区覆盖层，源像素、选区和轴心通过一次 Undo/Redo 同步恢复 | `free-tile.test.ts`、`workspace-tilemap.test.ts` |
-| 自由瓦片实例属性与行手势 | 非正方形实例旋转、镜像后的边界、命中、合成和源同步正确；属性变换保持显示左上角，保存重开与 Undo/Redo 保留状态；实例眼睛/锁支持图层一致的 `Alt` 全部操作和按住跨行操作；多选实例的属性与删除各自只产生一个可完整撤销的历史步骤 | `free-tile.test.ts`、`workspace-tilemap.test.ts`、`project-format.test.ts`、`LayersPanel.test.tsx` |
+| 自由瓦片实例选区变换 | 放置模式清除实例选择并拒绝框选与 `Ctrl+T`，源编辑自动选择可编辑实例；矩形、椭圆与套索可在画布任意区域建立选区，`Ctrl+T` 只取当前实例边界；完整覆盖实例后拖动只平移当前实例、选区和轴心，不改共享源或其他实例，部分选区仍按显示朝向变换并逆向写回共享源；移动预览不落后一帧，删除、剪切、已有选区外落笔及一次 Undo/Redo 保持一致 | `free-tile.test.ts`、`workspace-tilemap.test.ts` |
+| 自由瓦片实例属性与行手势 | 非正方形实例旋转、镜像后的边界、命中、合成和源同步正确；属性变换保持显示左上角，保存重开与 Undo/Redo 保留状态；实例眼睛/锁支持图层一致的 `Alt` 全部操作和按住跨行操作；多选实例的属性与删除各自只产生一个可完整撤销的历史步骤，删除后选择相邻实例，删除末项后不得让后续删除落到外层图层 | `free-tile.test.ts`、`workspace-tilemap.test.ts`、`project-format.test.ts`、`LayersPanel.test.tsx` |
 | 偏好与语言回退 | 损坏、未知或旧版偏好安全回退；切换语言不翻译工程名、图层名和用户输入 | `file-preferences.test.ts`、`localization.test.ts` |
+| 快捷键配置事务与迁移 | 旧版单绑定配置迁移为多绑定；设置弹窗取消不落盘、完成才整体提交；同上下文冲突转移、工具共享循环和导入导出差量保持一致；录入控件可捕获键盘及任意多修饰键滚轮上下输入且不触发背景命令，一次滚轮事件串只录入一次且不被修饰键重复事件刷新；组合键松开后不残留修饰键或临时手势状态，画布上未绑定的滚轮继续执行原缩放或笔刷调整 | `shortcuts.test.ts`、`ShortcutDialog.test.tsx`、`canvas-input.test.ts` |
 | 原生标题栏拖动安全 | 单击标题栏只激活窗口；只有主键仍处于物理按下状态且指针超过拖动阈值时才进入系统拖动，异步请求到达时若已松键必须拒绝，双击最大化和标题按钮保持可用；最大化或还原完成后先重置一次原生指针，并在下一次无按键的标题栏客户端移动时再次清除 Windows 顶部边框遗留的上下缩放指针 | `AppWindowTitleBar.test.tsx`、`app-window.test.ts`、Rust `cargo check` |
 
 ## 历史与会话
@@ -50,18 +54,22 @@
 | 临时预览隔离 | 画布尺寸、视图和颜色调整预览可取消或内部撤销，确认前不污染文档历史 | `CanvasResizeDialog.test.tsx`、`AdjustmentDialog.test.tsx`、`adjustment-preview-lifecycle.test.ts` |
 | 进行中路径历史 | 自由形状、多边形形状与两种套索在完成前逐点 Undo/Redo；撤销最后一点后退出手势并继续文档历史，完成后仍只提交一次 | `canvas-input.test.ts`、`workspace.test.ts` |
 | 历史失败恢复 | 撤销或重做执行失败时原条目和内存计数保持，可在修复条件后重试 | `history.test.ts` |
+| Lua MSE 类型化事务 | Lua 只读取隔离的像素与结构快照；同一事务中的像素修改和 `mse` 文档写入合并为一个撤销步骤，后续操作失败时已应用内容逆序恢复且不留下历史条目；持久对话框回调使用重新校验后的当前快照 | `lua-script-service.test.ts`、`history.test.ts`、Rust `platform_scripts` 测试 |
 | 跨帧历史定位 | 在其他帧执行 Undo/Redo 时仍修改原操作所属 frame/cel，不误写当前帧 | `animation.test.ts`、`workspace.test.ts` |
 | 跨文档图层剪贴板 | 复制图层和组保留层级、顺序、偏移和属性；目标粘贴独立像素并作为一次历史 | `workspace.test.ts`、`layer-operations.test.ts` |
 | 调整与后续操作顺序 | 调整确认后再编辑像素或选区时，两项历史严格分离并按原顺序 Undo/Redo | `workspace.test.ts`、`history.test.ts` |
+| 颜色模式历史 | RGB、灰度与索引转换必须把所有图层/Cel 表面的格式与像素、调色板内容、顺序、槽位和 `nextColorId` 作为同一历史原子恢复；Undo/Redo 后不得残留转换期间生成的索引色或错误解释像素存储 | `workspace.test.ts` |
 
 ## 坐标与像素编辑
 
 | 契约 | 必须保持的结果 | 自动化保护 |
 | --- | --- | --- |
 | 视图逆变换 | 旋转、水平/垂直镜像和非整数缩放后，绘制、吸色、选区与预览命中同一文档像素 | `view-geometry.test.ts`、`canvas-input.test.ts` |
+| 高 DPI 像素对齐 | 主画布与工具预览在半设备像素边界使用同一最近邻归属规则；快速连续绘制时相邻像素之间不出现 1px 裂缝 | `canvas-render-plan.test.ts` |
 | 指针锚点缩放 | 主画布和预览栏缩放前后保持指针下的文档位置，不因旋转或镜像回弹 | `view-geometry.test.ts`、`preview-geometry.test.ts` |
 | 视口尺寸重绘 | 分栏和浮窗改变宽高时，旧 Canvas 位图在下一次重绘前保持原像素比例，不被 CSS 横向或纵向拉伸 | `canvas-display-size.test.ts` |
 | 选区命中对称性 | 八个手柄、边缘移动、旋转和倾斜使用连续文档坐标，左右上下命中无固定偏移或空洞 | `canvas-input.test.ts`、`canvas-visuals.test.ts` |
+| 图层与选区移动对齐 | 网格原点非零、不同缩放、画布/图层边缘与中心目标下均选择阈值内最小整数修正；默认 `16x` 高倍缩放仍至少允许相邻 `1` 个文档像素触发吸附；X/Y 独立吸附，Shift 锁轴不引入另一轴位移，阈值外保持原位移，半像素中心不得产生小数图层或选区坐标 | `alignment.test.ts` |
 | 套索与组合边界 | 套索闭合不丢右边或下边像素；新建、加选、减选、交集和比例修饰键使用统一规则 | `tools.test.ts`、`selection.test.ts`、`canvas-input.test.ts` |
 | 画布外选区内容 | 浮动内容移出画布再移回时像素完整保留，确认时才按文档边界写入 | `tools.test.ts`、`workspace.test.ts` |
 | 浮动选区镜像缓存 | 粘贴或移动后反复水平/垂直镜像再移动，像素、掩码与快速路径缓存同步，不恢复旧方向、生成重复像素或留下无法撤销的画布内容 | `tools.test.ts`、`workspace.test.ts` |

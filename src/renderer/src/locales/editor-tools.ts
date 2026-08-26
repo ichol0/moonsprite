@@ -99,13 +99,100 @@ const enShapes: Record<ShapeKind, ToolCopy> = {
   polygon: { label: 'Polygon Shape Tool', description: 'Click to add polygon points. Double-click, click the start point, or press Enter to finish and fill it.' }
 }
 
-export const editorToolCopyByLocale: Record<AppLocale, Record<ToolId, ToolCopy>> = { 'zh-CN': zhTools, 'en-US': enTools }
-export const moveToolCopyByLocale: Record<AppLocale, Record<MoveKind, ToolCopy>> = { 'zh-CN': zhMoves, 'en-US': enMoves }
-export const lineToolCopyByLocale: Record<AppLocale, Record<LineKind, ToolCopy>> = { 'zh-CN': zhLines, 'en-US': enLines }
-export const selectionToolCopyByLocale: Record<AppLocale, Record<SelectionKind, ToolCopy>> = { 'zh-CN': zhSelections, 'en-US': enSelections }
-export const shapeToolCopyByLocale: Record<AppLocale, Record<ShapeKind, ToolCopy>> = { 'zh-CN': zhShapes, 'en-US': enShapes }
-export const fillToolCopyByLocale: Record<AppLocale, Record<FillKind, ToolCopy>> = { 'zh-CN': zhFills, 'en-US': enFills }
+const localizedToolDescription = (locale: AppLocale, label: string): string => ({
+  'zh-CN': `使用${label}。`, 'en-US': `Use ${label}.`, 'ja-JP': `${label}を使用します。`, 'ko-KR': `${label}를 사용합니다.`, 'es-ES': `Usar ${label}.`, 'fr-FR': `Utiliser ${label}.`, 'de-DE': `${label} verwenden.`, 'pt-BR': `Usar ${label}.`, 'ru-RU': `Использовать: ${label}.`
+})[locale]
+const localizedCopies = <T extends string>(base: Record<T, ToolCopy>, labels: Partial<Record<T, string>>, locale: AppLocale): Record<T, ToolCopy> => Object.fromEntries((Object.entries(base) as Array<[T, ToolCopy]>).map(([id, copy]) => {
+  const label = labels[id as T] ?? copy.label
+  return [id, { label, description: localizedToolDescription(locale, label) }]
+})) as Record<T, ToolCopy>
+
+const jaTools = localizedCopies(enTools, { pencil: '鉛筆ツール', airbrush: 'エアブラシツール', eraser: '消しゴムツール', selection: '選択ツール', move: '移動ツール', shape: '図形ツール', line: '直線ツール', text: 'テキストツール', fill: '塗りつぶしツール', eyedropper: 'スポイトツール', hand: '手のひらツール', zoom: 'ズームツール', rotate: 'ビュー回転ツール' }, 'ja-JP')
+const koTools = localizedCopies(enTools, { pencil: '연필 도구', airbrush: '에어브러시 도구', eraser: '지우개 도구', selection: '선택 도구', move: '이동 도구', shape: '도형 도구', line: '직선 도구', text: '텍스트 도구', fill: '페인트 통 도구', eyedropper: '스포이트 도구', hand: '손 도구', zoom: '확대/축소 도구', rotate: '보기 회전 도구' }, 'ko-KR')
+const esTools = localizedCopies(enTools, { pencil: 'Herramienta lápiz', airbrush: 'Herramienta aerógrafo', eraser: 'Herramienta borrador', selection: 'Herramienta selección', move: 'Herramienta mover', shape: 'Herramienta formas', line: 'Herramienta línea', text: 'Herramienta texto', fill: 'Bote de pintura', eyedropper: 'Cuentagotas', hand: 'Herramienta mano', zoom: 'Herramienta zoom', rotate: 'Rotar vista' }, 'es-ES')
+const frTools = localizedCopies(enTools, { pencil: 'Outil crayon', airbrush: 'Aérographe', eraser: 'Gomme', selection: 'Outil de sélection', move: 'Outil déplacement', shape: 'Outil forme', line: 'Outil ligne', text: 'Outil texte', fill: 'Pot de peinture', eyedropper: 'Pipette', hand: 'Main', zoom: 'Zoom', rotate: 'Rotation de la vue' }, 'fr-FR')
+const deTools = localizedCopies(enTools, { pencil: 'Bleistift', airbrush: 'Airbrush', eraser: 'Radierer', selection: 'Auswahlwerkzeug', move: 'Verschieben', shape: 'Formwerkzeug', line: 'Linie', text: 'Textwerkzeug', fill: 'Füllwerkzeug', eyedropper: 'Pipette', hand: 'Hand', zoom: 'Zoom', rotate: 'Ansicht drehen' }, 'de-DE')
+const ptTools = localizedCopies(enTools, { pencil: 'Ferramenta lápis', airbrush: 'Aerógrafo', eraser: 'Borracha', selection: 'Ferramenta de seleção', move: 'Ferramenta mover', shape: 'Ferramenta forma', line: 'Ferramenta linha', text: 'Ferramenta texto', fill: 'Balde de tinta', eyedropper: 'Conta-gotas', hand: 'Mão', zoom: 'Zoom', rotate: 'Girar visualização' }, 'pt-BR')
+const ruTools = localizedCopies(enTools, { pencil: 'Карандаш', airbrush: 'Аэрограф', eraser: 'Ластик', selection: 'Выделение', move: 'Перемещение', shape: 'Фигуры', line: 'Линия', text: 'Текст', fill: 'Заливка', eyedropper: 'Пипетка', hand: 'Рука', zoom: 'Масштаб', rotate: 'Поворот вида' }, 'ru-RU')
+
+const jaMoves = localizedCopies(enMoves, { move: '移動ツール', slice: 'スライスツール' }, 'ja-JP'); const koMoves = localizedCopies(enMoves, { move: '이동 도구', slice: '슬라이스 도구' }, 'ko-KR'); const esMoves = localizedCopies(enMoves, { move: 'Mover', slice: 'Cortar' }, 'es-ES'); const frMoves = localizedCopies(enMoves, { move: 'Déplacement', slice: 'Tranche' }, 'fr-FR'); const deMoves = localizedCopies(enMoves, { move: 'Verschieben', slice: 'Slice' }, 'de-DE'); const ptMoves = localizedCopies(enMoves, { move: 'Mover', slice: 'Fatia' }, 'pt-BR'); const ruMoves = localizedCopies(enMoves, { move: 'Перемещение', slice: 'Срез' }, 'ru-RU')
+const jaLines = localizedCopies(enLines, { line: '直線ツール', curve: '曲線ツール' }, 'ja-JP'); const koLines = localizedCopies(enLines, { line: '직선 도구', curve: '곡선 도구' }, 'ko-KR'); const esLines = localizedCopies(enLines, { line: 'Línea', curve: 'Curva' }, 'es-ES'); const frLines = localizedCopies(enLines, { line: 'Ligne', curve: 'Courbe' }, 'fr-FR'); const deLines = localizedCopies(enLines, { line: 'Linie', curve: 'Kurve' }, 'de-DE'); const ptLines = localizedCopies(enLines, { line: 'Linha', curve: 'Curva' }, 'pt-BR'); const ruLines = localizedCopies(enLines, { line: 'Линия', curve: 'Кривая' }, 'ru-RU')
+const jaFills = localizedCopies(enFills, { bucket: '塗りつぶし', gradient: 'グラデーション' }, 'ja-JP'); const koFills = localizedCopies(enFills, { bucket: '페인트 통', gradient: '그라디언트' }, 'ko-KR'); const esFills = localizedCopies(enFills, { bucket: 'Bote de pintura', gradient: 'Degradado' }, 'es-ES'); const frFills = localizedCopies(enFills, { bucket: 'Pot de peinture', gradient: 'Dégradé' }, 'fr-FR'); const deFills = localizedCopies(enFills, { bucket: 'Fülleimer', gradient: 'Verlauf' }, 'de-DE'); const ptFills = localizedCopies(enFills, { bucket: 'Balde de tinta', gradient: 'Gradiente' }, 'pt-BR'); const ruFills = localizedCopies(enFills, { bucket: 'Заливка', gradient: 'Градиент' }, 'ru-RU')
+
+export const editorToolCopyByLocale: Record<AppLocale, Record<ToolId, ToolCopy>> = {
+  'zh-CN': zhTools,
+  'en-US': enTools,
+  'ja-JP': jaTools,
+  'ko-KR': koTools,
+  'es-ES': esTools,
+  'fr-FR': frTools,
+  'de-DE': deTools,
+  'pt-BR': ptTools,
+  'ru-RU': ruTools
+}
+export const moveToolCopyByLocale: Record<AppLocale, Record<MoveKind, ToolCopy>> = {
+  'zh-CN': zhMoves,
+  'en-US': enMoves,
+  'ja-JP': jaMoves,
+  'ko-KR': koMoves,
+  'es-ES': esMoves,
+  'fr-FR': frMoves,
+  'de-DE': deMoves,
+  'pt-BR': ptMoves,
+  'ru-RU': ruMoves
+}
+export const lineToolCopyByLocale: Record<AppLocale, Record<LineKind, ToolCopy>> = {
+  'zh-CN': zhLines,
+  'en-US': enLines,
+  'ja-JP': jaLines,
+  'ko-KR': koLines,
+  'es-ES': esLines,
+  'fr-FR': frLines,
+  'de-DE': deLines,
+  'pt-BR': ptLines,
+  'ru-RU': ruLines
+}
+export const selectionToolCopyByLocale: Record<AppLocale, Record<SelectionKind, ToolCopy>> = {
+  'zh-CN': zhSelections,
+  'en-US': enSelections,
+  'ja-JP': localizedCopies(enSelections, { rectangle: '長方形選択', ellipse: '楕円選択', lasso: 'なげなわ', 'polygon-lasso': '多角形なげなわ', magic: '自動選択' }, 'ja-JP'),
+  'ko-KR': localizedCopies(enSelections, { rectangle: '사각형 선택', ellipse: '타원 선택', lasso: '올가미', 'polygon-lasso': '다각형 올가미', magic: '자동 선택' }, 'ko-KR'),
+  'es-ES': localizedCopies(enSelections, { rectangle: 'Selección rectangular', ellipse: 'Selección elíptica', lasso: 'Lazo', 'polygon-lasso': 'Lazo poligonal', magic: 'Varita mágica' }, 'es-ES'),
+  'fr-FR': localizedCopies(enSelections, { rectangle: 'Sélection rectangulaire', ellipse: 'Sélection elliptique', lasso: 'Lasso', 'polygon-lasso': 'Lasso polygonal', magic: 'Baguette magique' }, 'fr-FR'),
+  'de-DE': localizedCopies(enSelections, { rectangle: 'Rechteckauswahl', ellipse: 'Ellipsenauswahl', lasso: 'Lasso', 'polygon-lasso': 'Polygon-Lasso', magic: 'Zauberstab' }, 'de-DE'),
+  'pt-BR': localizedCopies(enSelections, { rectangle: 'Seleção retangular', ellipse: 'Seleção elíptica', lasso: 'Laço', 'polygon-lasso': 'Laço poligonal', magic: 'Varinha mágica' }, 'pt-BR'),
+  'ru-RU': localizedCopies(enSelections, { rectangle: 'Прямоугольное выделение', ellipse: 'Эллиптическое выделение', lasso: 'Лассо', 'polygon-lasso': 'Многоугольное лассо', magic: 'Волшебная палочка' }, 'ru-RU')
+}
+export const shapeToolCopyByLocale: Record<AppLocale, Record<ShapeKind, ToolCopy>> = {
+  'zh-CN': zhShapes,
+  'en-US': enShapes,
+  'ja-JP': localizedCopies(enShapes, { 'rectangle-outline': '長方形', rectangle: '塗りつぶし長方形', 'ellipse-outline': '楕円', ellipse: '塗りつぶし楕円', freeform: '自由形状', polygon: '多角形' }, 'ja-JP'),
+  'ko-KR': localizedCopies(enShapes, { 'rectangle-outline': '사각형', rectangle: '채운 사각형', 'ellipse-outline': '타원', ellipse: '채운 타원', freeform: '자유 도형', polygon: '다각형' }, 'ko-KR'),
+  'es-ES': localizedCopies(enShapes, { 'rectangle-outline': 'Rectángulo', rectangle: 'Rectángulo relleno', 'ellipse-outline': 'Elipse', ellipse: 'Elipse rellena', freeform: 'Forma libre', polygon: 'Polígono' }, 'es-ES'),
+  'fr-FR': localizedCopies(enShapes, { 'rectangle-outline': 'Rectangle', rectangle: 'Rectangle plein', 'ellipse-outline': 'Ellipse', ellipse: 'Ellipse pleine', freeform: 'Forme libre', polygon: 'Polygone' }, 'fr-FR'),
+  'de-DE': localizedCopies(enShapes, { 'rectangle-outline': 'Rechteck', rectangle: 'Gefülltes Rechteck', 'ellipse-outline': 'Ellipse', ellipse: 'Gefüllte Ellipse', freeform: 'Freie Form', polygon: 'Polygon' }, 'de-DE'),
+  'pt-BR': localizedCopies(enShapes, { 'rectangle-outline': 'Retângulo', rectangle: 'Retângulo preenchido', 'ellipse-outline': 'Elipse', ellipse: 'Elipse preenchida', freeform: 'Forma livre', polygon: 'Polígono' }, 'pt-BR'),
+  'ru-RU': localizedCopies(enShapes, { 'rectangle-outline': 'Прямоугольник', rectangle: 'Залитый прямоугольник', 'ellipse-outline': 'Эллипс', ellipse: 'Залитый эллипс', freeform: 'Свободная форма', polygon: 'Многоугольник' }, 'ru-RU')
+}
+export const fillToolCopyByLocale: Record<AppLocale, Record<FillKind, ToolCopy>> = {
+  'zh-CN': zhFills,
+  'en-US': enFills,
+  'ja-JP': jaFills,
+  'ko-KR': koFills,
+  'es-ES': esFills,
+  'fr-FR': frFills,
+  'de-DE': deFills,
+  'pt-BR': ptFills,
+  'ru-RU': ruFills
+}
 export const selectionModeLabelsByLocale: Record<AppLocale, Record<SelectionMode, string>> = {
   'zh-CN': { replace: '新建', add: '加选', subtract: '减选', intersect: '交集' },
-  'en-US': { replace: 'Replace', add: 'Add', subtract: 'Subtract', intersect: 'Intersect' }
+  'en-US': { replace: 'Replace', add: 'Add', subtract: 'Subtract', intersect: 'Intersect' },
+  'ja-JP': { replace: '置換', add: '追加', subtract: '削除', intersect: '交差' },
+  'ko-KR': { replace: '바꾸기', add: '추가', subtract: '빼기', intersect: '교차' },
+  'es-ES': { replace: 'Reemplazar', add: 'Añadir', subtract: 'Restar', intersect: 'Intersecar' },
+  'fr-FR': { replace: 'Remplacer', add: 'Ajouter', subtract: 'Soustraire', intersect: 'Intersection' },
+  'de-DE': { replace: 'Ersetzen', add: 'Hinzufügen', subtract: 'Subtrahieren', intersect: 'Schnittmenge' },
+  'pt-BR': { replace: 'Substituir', add: 'Adicionar', subtract: 'Subtrair', intersect: 'Interseção' },
+  'ru-RU': { replace: 'Заменить', add: 'Добавить', subtract: 'Вычесть', intersect: 'Пересечение' }
 }

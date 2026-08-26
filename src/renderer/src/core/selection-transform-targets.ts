@@ -2,7 +2,7 @@ import type { SelectionMask, SelectionRect, SpriteDocument } from '@shared/types
 import { animationLayerAtFrame, createAnimationCelLookup, ensureAnimationDocument, syncAnimationLayerAtFrame } from './animation'
 import type { PixelEdit } from './history'
 import type { SelectionShearTransform } from './selection'
-import type { SymmetryAxes, SymmetryCenter } from './symmetry'
+import type { SymmetryAxes, SymmetryCenter, SymmetryPoint } from './symmetry'
 import { applySelectionTransform, captureSelectionTransform, type SelectionTransformLayerState } from './tools'
 
 export const captureAnimationFrameSelectionTransformStates = (
@@ -65,11 +65,12 @@ export const applySelectionTransformLayerState = (
   copy = false,
   shear?: SelectionShearTransform,
   symmetryAxes?: SymmetryAxes,
-  symmetryCenter?: SymmetryCenter
+  symmetryCenter?: SymmetryCenter,
+  symmetryStartPoint?: SymmetryPoint
 ): PixelEdit | null => {
   const layer = selectionTransformLayerForState(document, state)
   if (!layer || layer.kind) return null
-  const edit = applySelectionTransform(document, state.source, target, angle, copy, shear, symmetryAxes, symmetryCenter, layer)
+  const edit = applySelectionTransform(document, state.source, target, angle, copy, shear, symmetryAxes, symmetryCenter, layer, symmetryStartPoint)
   if (state.frameId) {
     if (edit) edit.frameId = state.frameId
     syncAnimationLayerAtFrame(document, layer, state.frameId)

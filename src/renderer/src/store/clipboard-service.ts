@@ -16,6 +16,7 @@ export interface LayerClipboard {
   linkedContentId?: string
   kind?: 'text' | 'tilemap' | 'free-tile'
   tilemapTilesetId?: string
+  freeTileSetId?: string
   freeTileSources?: FreeTileSourceLayer[]
   width: number
   height: number

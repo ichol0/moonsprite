@@ -1,12 +1,12 @@
 import type { GradientDither, LayerStyles, RasterLayer, RgbaColor, SelectionRect } from '@shared/types'
 import { blendWithMode, colorEquals, TRANSPARENT } from './raster'
-import { normalizeOutlineDirections, normalizeOutlineKernel, normalizeOutlinePosition, OUTLINE_DIRECTIONS, outlineDirectionsForKernel, outlineDirectionForOffset, outlineKernelContainsOffset } from './outline-settings'
+import { DEFAULT_OUTLINE_SMART_HUE_DARKNESS, normalizeOutlineDirections, normalizeOutlineKernel, normalizeOutlinePosition, OUTLINE_DIRECTIONS, outlineDirectionsForKernel, outlineDirectionForOffset, outlineKernelContainsOffset, resolveOutlineStrokeColor } from './outline-settings'
 import { gradientColorForAmount, GRADIENT_DITHER_PRESETS } from './gradient-color'
 
 export const MAX_LAYER_STYLE_SIZE = 32
 export const MAX_LAYER_STYLE_STROKE_SIZE = 64
 export const MAX_LAYER_STYLE_SHADOW_OFFSET = 64
-export const DEFAULT_LAYER_STYLE_SMART_HUE_DARKNESS = 45
+export const DEFAULT_LAYER_STYLE_SMART_HUE_DARKNESS = DEFAULT_OUTLINE_SMART_HUE_DARKNESS
 export const DEFAULT_LAYER_STYLE_SMART_SHADOW_DARKNESS = 45
 
 const gradientDithers = new Set<GradientDither>(GRADIENT_DITHER_PRESETS)
@@ -253,17 +253,6 @@ const outsideStrokeSample = (read: LayerStyleSourceReader, x: number, y: number,
   return { alpha: maximum, referenceColor }
 }
 
-const smartHueStrokeColor = (style: LayerStyles['stroke'], reference: RgbaColor, resolveColor: LayerStyleColorResolver): RgbaColor => {
-  if (!style.smartHue || reference.a === 0) return style.color
-  const multiplier = 1 - clamp(style.smartHueDarkness, 0, 100) / 100
-  return resolveColor({
-    r: Math.round(reference.r * multiplier),
-    g: Math.round(reference.g * multiplier),
-    b: Math.round(reference.b * multiplier),
-    a: style.color.a
-  })
-}
-
 const innerStrokeCoverage = (read: LayerStyleSourceReader, x: number, y: number, style: LayerStyles['stroke']): number => {
   let coverage = 0
   for (let offsetY = -style.size; offsetY <= style.size; offsetY += 1) for (let offsetX = -style.size; offsetX <= style.size; offsetX += 1) {
@@ -347,13 +336,13 @@ export function applyLayerStylesAt(
   if (styles.stroke.enabled && styles.stroke.position !== 'inside' && source.a === 0) {
     const sample = outsideStrokeSample(readGeometry, x, y, styles.stroke)
     const coverage = sample.alpha / 255
-    if (coverage > 0) backdrop = blendWithMode(backdrop, withCoverage(smartHueStrokeColor(styles.stroke, sample.referenceColor, resolveDynamicColor), coverage), 1, 'normal')
+    if (coverage > 0) backdrop = blendWithMode(backdrop, withCoverage(resolveOutlineStrokeColor(styles.stroke, sample.referenceColor, resolveDynamicColor), coverage), 1, 'normal')
   }
 
   let styledSource = source
   if (styledSource.a > 0 && styles.colorOverlay.enabled) styledSource = overlayPreservingAlpha(styledSource, styles.colorOverlay.color)
   if (styledSource.a > 0 && styles.gradientOverlay.enabled) styledSource = overlayPreservingAlpha(styledSource, gradientColorAt('offsetX' in geometry ? { x: geometry.offsetX, y: geometry.offsetY, width: geometry.width, height: geometry.height } : geometry, styles.gradientOverlay, x, y))
   if (styledSource.a > 0 && styles.innerGlow.enabled) styledSource = overlayPreservingAlpha(styledSource, styles.innerGlow.color, innerGlowCoverage(readGeometry, x, y, styles.innerGlow.size))
-  if (styledSource.a > 0 && styles.stroke.enabled && styles.stroke.position !== 'outside') styledSource = overlayPreservingAlpha(styledSource, smartHueStrokeColor(styles.stroke, styledSource, resolveDynamicColor), innerStrokeCoverage(readGeometry, x, y, styles.stroke))
+  if (styledSource.a > 0 && styles.stroke.enabled && styles.stroke.position !== 'outside') styledSource = overlayPreservingAlpha(styledSource, resolveOutlineStrokeColor(styles.stroke, styledSource, resolveDynamicColor), innerStrokeCoverage(readGeometry, x, y, styles.stroke))
   return styledSource.a > 0 ? blendWithMode(backdrop, styledSource, 1, 'normal') : backdrop
 }

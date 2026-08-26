@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import type { LuaScriptExecutionContext, LuaScriptRunResult } from '@shared/types'
 import { createDocument, getActiveLayer, readLayerPacked } from '@/core/document'
+import { createDefaultLayerStyles } from '@/core/layer-styles'
 import {
   dispatchLuaScriptDialogForActiveDocument,
   luaScriptTargetIsActive,
@@ -189,6 +190,112 @@ describe('Lua script document service', () => {
     const created = state.sessions.find((session) => session.document.name === 'Guidelines')
     expect(created?.document).toMatchObject({ width: 3, height: 2, dirty: true })
     expect(readLayerPacked(created!.document, getActiveLayer(created!.document), 5) >>> 0).toBe(red)
+  })
+
+  it('exposes the structural MSE snapshot and commits a typed operation batch as one undo step', async () => {
+    const document = createDocument('mse operations', 2, 2, 'rgba')
+    const layer = getActiveLayer(document)
+    useWorkspace.getState().addSession(document)
+    let contextSnapshot: LuaScriptExecutionContext['mseSnapshot'] | null = null
+
+    const outcome = await runLuaScriptForActiveDocument({
+      runLuaScript: async (_scriptId, context) => {
+        contextSnapshot = context.mseSnapshot
+        return result({
+          batches: [{
+            label: 'MSE batch',
+            changes: [],
+            surfaceChange: null,
+            operations: [
+              { path: 'layers.update', arguments: { id: layer.id, name: 'Renamed', opacity: 128 } },
+              { path: 'palette.create', arguments: { color: { r: 12, g: 34, b: 56, a: 255 } } },
+              { path: 'selection.set', arguments: { x: 0, y: 0, width: 1, height: 2 } }
+            ]
+          }]
+        })
+      }
+    }, 'mse.lua')
+
+    expect(contextSnapshot).toMatchObject({
+      document: { id: document.id, activeLayer: { id: layer.id } },
+      layers: [{ id: layer.id }],
+      animation: { frames: [{ number: 1, active: true }] },
+      workspace: { panels: expect.any(Array) }
+    })
+    expect(outcome.summary.transactionCount).toBe(1)
+    expect(layer.name).toBe('Renamed')
+    expect(layer.opacity).toBeCloseTo(128 / 255)
+    expect(document.palette.some((entry) => entry.color.r === 12 && entry.color.g === 34 && entry.color.b === 56)).toBe(true)
+    expect(useWorkspace.getState().sessions[0].selection).toEqual({ x: 0, y: 0, width: 1, height: 2 })
+
+    useWorkspace.getState().undo()
+    expect(layer.name).not.toBe('Renamed')
+    expect(document.palette.some((entry) => entry.color.r === 12 && entry.color.g === 34 && entry.color.b === 56)).toBe(false)
+    expect(useWorkspace.getState().sessions[0].selection).toBeNull()
+  })
+
+  it('rolls back pixel and MSE writes when a later operation in the transaction fails', async () => {
+    const document = createDocument('mse rollback', 1, 1, 'rgba')
+    const layer = getActiveLayer(document)
+    const originalName = layer.name
+    useWorkspace.getState().addSession(document)
+    const session = useWorkspace.getState().sessions[0]
+    const historyPosition = session.history.position
+    const revision = session.revision
+    const contentRevision = session.contentRevision
+    const updatedAt = document.updatedAt
+
+    await expect(runLuaScriptForActiveDocument({
+      runLuaScript: async () => result({
+        batches: [{
+          label: 'Failing MSE batch',
+          changes: [{ index: 0, before: 0, after: 0xff0000ff }],
+          surfaceChange: null,
+          operations: [
+            { path: 'layers.update', arguments: { id: layer.id, name: 'Temporary name' } },
+            { path: 'tiles.edit', arguments: { tilesetId: 'missing', tileId: 'missing', pixels: [] } }
+          ]
+        }]
+      })
+    }, 'rollback.lua')).rejects.toThrow('mse.tiles.edit')
+
+    expect(readLayerPacked(document, layer, 0) >>> 0).toBe(0)
+    expect(layer.name).toBe(originalName)
+    expect(session.history.position).toBe(historyPosition)
+    expect(document.dirty).toBe(false)
+    expect(document.updatedAt).toBe(updatedAt)
+    expect(session.revision).toBe(revision)
+    expect(session.contentRevision).toBe(contentRevision)
+  })
+
+  it('accepts positional layer styles and a direct Color-shaped palette update', async () => {
+    const document = createDocument('mse positional arguments', 1, 1, 'rgba')
+    const layer = getActiveLayer(document)
+    const paletteEntry = document.palette[0]
+    const styles = createDefaultLayerStyles()
+    styles.stroke.enabled = true
+    useWorkspace.getState().addSession(document)
+
+    await runLuaScriptForActiveDocument({
+      runLuaScript: async () => result({
+        batches: [{
+          label: 'MSE positional arguments',
+          changes: [],
+          surfaceChange: null,
+          operations: [
+            { path: 'styles.apply', arguments: [layer.id, styles] },
+            { path: 'palette.update', arguments: [paletteEntry.id, { r: 11, g: 22, b: 33, a: 255 }] }
+          ]
+        }]
+      })
+    }, 'arguments.lua')
+
+    expect(layer.layerStyles?.stroke.enabled).toBe(true)
+    expect(paletteEntry.color).toEqual({ r: 11, g: 22, b: 33, a: 255 })
+
+    useWorkspace.getState().undo()
+    expect(layer.layerStyles).toBeUndefined()
+    expect(paletteEntry.color).not.toEqual({ r: 11, g: 22, b: 33, a: 255 })
   })
 
   it('continues a dialog callback against the same validated target', async () => {

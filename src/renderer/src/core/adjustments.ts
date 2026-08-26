@@ -1,5 +1,5 @@
-import type { RasterLayer, RgbaColor, SelectionMask, SpriteDocument } from '@shared/types'
-import { isLayerMask, markLayerContentChanged, normalizeLayerPackedValue, readLayerColor } from './document'
+import type { RasterLayer, RgbaColor, SelectionMask, SelectionRect, SpriteDocument } from '@shared/types'
+import { cacheRasterContentBounds, cachedRasterContentBounds, isLayerMask, markLayerContentChanged, normalizeLayerPackedValue, readLayerColor } from './document'
 import { beginPixelEdit, recordPixel, type PixelEdit } from './history'
 import { translateCurrent as tr } from './localization'
 import { packColor, unpackColor } from './raster'
@@ -44,17 +44,55 @@ export interface ColorAdjustment {
   preserveLuminosity?: boolean
 }
 
+const identityCurvePoints = (points: CurvePoint[] | undefined): boolean => !points
+  || (points.length === 2 && points[0].x === 0 && points[0].y === 0 && points[1].x === 255 && points[1].y === 255)
+
+export const isColorAdjustmentIdentity = (adjustment: ColorAdjustment): boolean => {
+  if (adjustment.kind === 'brightness-contrast') return (adjustment.brightness ?? 0) === 0 && (adjustment.contrast ?? 0) === 0
+  if (adjustment.kind === 'hue-saturation') return (adjustment.hue ?? 0) === 0 && (adjustment.saturation ?? 0) === 0 && (adjustment.lightness ?? 0) === 0
+  if (adjustment.kind === 'curves') return (adjustment.curveMidpoint ?? 128) === 128
+    && identityCurvePoints(adjustment.curvePoints)
+    && identityCurvePoints(adjustment.curveRedPoints)
+    && identityCurvePoints(adjustment.curveGreenPoints)
+    && identityCurvePoints(adjustment.curveBluePoints)
+  return (adjustment.shadows ?? 0) === 0
+    && (adjustment.midtones ?? 0) === 0
+    && (adjustment.highlights ?? 0) === 0
+    && (adjustment.shadowsCyanRed ?? 0) === 0
+    && (adjustment.shadowsMagentaGreen ?? 0) === 0
+    && (adjustment.shadowsYellowBlue ?? 0) === 0
+    && (adjustment.midtonesCyanRed ?? 0) === 0
+    && (adjustment.midtonesMagentaGreen ?? 0) === 0
+    && (adjustment.midtonesYellowBlue ?? 0) === 0
+    && (adjustment.highlightsCyanRed ?? 0) === 0
+    && (adjustment.highlightsMagentaGreen ?? 0) === 0
+    && (adjustment.highlightsYellowBlue ?? 0) === 0
+}
+
 const clamp = (value: number): number => Math.max(0, Math.min(255, Math.round(value)))
 
 const identityCurve: CurvePoint[] = [{ x: 0, y: 0 }, { x: 255, y: 255 }]
 
-export function buildCurveHistogram(pixels: Uint8ClampedArray | Uint32Array, format: 'rgba' | 'indexed', palette: Array<{ id: number; color: RgbaColor }>): CurveHistogram {
-  const histogram: CurveHistogram = { rgb: new Uint32Array(256), red: new Uint32Array(256), green: new Uint32Array(256), blue: new Uint32Array(256) }
+const createCurveHistogram = (): CurveHistogram => ({
+  rgb: new Uint32Array(256),
+  red: new Uint32Array(256),
+  green: new Uint32Array(256),
+  blue: new Uint32Array(256)
+})
+
+const accumulateCurveHistogram = (
+  histogram: CurveHistogram,
+  pixels: Uint8ClampedArray | Uint32Array,
+  format: 'rgba' | 'indexed',
+  paletteMap: Map<number, RgbaColor> | null,
+  fromPixel: number,
+  toPixel: number
+): void => {
   if (format === 'rgba') {
     const rgba = pixels as Uint8ClampedArray
     if (rgba.byteOffset % 4 === 0) {
       const words = new Uint32Array(rgba.buffer as ArrayBuffer, rgba.byteOffset, rgba.byteLength / 4)
-      for (let index = 0; index < words.length; index += 1) {
+      for (let index = fromPixel; index < toPixel; index += 1) {
         const current = words[index]
         if ((current >>> 24) === 0) continue
         const red = current & 0xff
@@ -65,20 +103,21 @@ export function buildCurveHistogram(pixels: Uint8ClampedArray | Uint32Array, for
         histogram.green[green] += 1
         histogram.blue[blue] += 1
       }
-    } else for (let index = 0; index < rgba.length; index += 4) {
-      if (rgba[index + 3] === 0) continue
-      const red = rgba[index]
-      const green = rgba[index + 1]
-      const blue = rgba[index + 2]
+    } else for (let pixel = fromPixel; pixel < toPixel; pixel += 1) {
+      const offset = pixel * 4
+      if (rgba[offset + 3] === 0) continue
+      const red = rgba[offset]
+      const green = rgba[offset + 1]
+      const blue = rgba[offset + 2]
       histogram.rgb[((red + green + blue + 1) / 3) | 0] += 1
       histogram.red[red] += 1
       histogram.green[green] += 1
       histogram.blue[blue] += 1
     }
   } else {
-    const paletteMap = new Map(palette.map((entry) => [entry.id, entry.color]))
-    for (const value of pixels) {
-      const color = paletteMap.get(value)
+    const indexed = pixels as Uint32Array
+    for (let index = fromPixel; index < toPixel; index += 1) {
+      const color = paletteMap?.get(indexed[index])
       if (!color || color.a === 0) continue
       histogram.rgb[((color.r + color.g + color.b + 1) / 3) | 0] += 1
       histogram.red[color.r] += 1
@@ -86,7 +125,34 @@ export function buildCurveHistogram(pixels: Uint8ClampedArray | Uint32Array, for
       histogram.blue[color.b] += 1
     }
   }
+}
+
+export function buildCurveHistogram(pixels: Uint8ClampedArray | Uint32Array, format: 'rgba' | 'indexed', palette: Array<{ id: number; color: RgbaColor }>): CurveHistogram {
+  const histogram = createCurveHistogram()
+  const totalPixels = format === 'rgba' ? pixels.length / 4 : pixels.length
+  accumulateCurveHistogram(histogram, pixels, format, format === 'indexed' ? new Map(palette.map((entry) => [entry.id, entry.color])) : null, 0, totalPixels)
   return histogram
+}
+
+const CURVE_HISTOGRAM_CHUNK_PIXELS = 512 * 1024
+
+export async function buildCurveHistogramChunked(
+  pixels: Uint8ClampedArray | Uint32Array,
+  format: 'rgba' | 'indexed',
+  palette: Array<{ id: number; color: RgbaColor }>,
+  shouldContinue: () => boolean = () => true,
+  yieldControl: () => Promise<void> = () => Promise.resolve()
+): Promise<CurveHistogram | null> {
+  const histogram = createCurveHistogram()
+  const totalPixels = format === 'rgba' ? pixels.length / 4 : pixels.length
+  const paletteMap = format === 'indexed' ? new Map(palette.map((entry) => [entry.id, entry.color])) : null
+  for (let fromPixel = 0; fromPixel < totalPixels; fromPixel += CURVE_HISTOGRAM_CHUNK_PIXELS) {
+    if (!shouldContinue()) return null
+    const toPixel = Math.min(totalPixels, fromPixel + CURVE_HISTOGRAM_CHUNK_PIXELS)
+    accumulateCurveHistogram(histogram, pixels, format, paletteMap, fromPixel, toPixel)
+    if (toPixel < totalPixels) await yieldControl()
+  }
+  return shouldContinue() ? histogram : null
 }
 
 export function buildHistogramPath(values: Uint32Array, width = 255, height = 255): string {
@@ -254,6 +320,33 @@ const adjustmentChannelLuts = (adjustment: ColorAdjustment): PreparedCurveLuts |
   return { rgb: curves.rgb, red, green, blue }
 }
 
+interface AdjustmentLocalBounds { left: number; top: number; right: number; bottom: number }
+
+const adjustmentLocalBounds = (layer: RasterLayer, selection: SelectionMask | null, region?: SelectionRect): AdjustmentLocalBounds | null => {
+  let left = 0
+  let top = 0
+  let right = layer.width
+  let bottom = layer.height
+  if (selection) {
+    left = Math.max(left, selection.x - layer.offsetX)
+    top = Math.max(top, selection.y - layer.offsetY)
+    right = Math.min(right, selection.x + selection.width - layer.offsetX)
+    bottom = Math.min(bottom, selection.y + selection.height - layer.offsetY)
+  }
+  if (region) {
+    left = Math.max(left, region.x - layer.offsetX)
+    top = Math.max(top, region.y - layer.offsetY)
+    right = Math.min(right, region.x + region.width - layer.offsetX)
+    bottom = Math.min(bottom, region.y + region.height - layer.offsetY)
+  }
+  left = Math.max(0, Math.floor(left))
+  top = Math.max(0, Math.floor(top))
+  right = Math.min(layer.width, Math.ceil(right))
+  bottom = Math.min(layer.height, Math.ceil(bottom))
+  if (left >= right || top >= bottom) return null
+  return { left, top, right, bottom }
+}
+
 const visitAdjustmentIndices = (layer: RasterLayer, selection: SelectionMask | null, visit: (index: number) => void): void => {
   if (!selection) {
     const total = layer.width * layer.height
@@ -266,6 +359,24 @@ const visitAdjustmentIndices = (layer: RasterLayer, selection: SelectionMask | n
   const bottom = Math.min(layer.height, selection.y + selection.height - layer.offsetY)
   if (left >= right || top >= bottom) return
   if (!selection.mask) {
+    for (let y = top; y < bottom; y += 1) {
+      const row = y * layer.width
+      for (let x = left; x < right; x += 1) visit(row + x)
+    }
+    return
+  }
+  for (let y = top; y < bottom; y += 1) {
+    const row = y * layer.width
+    const maskRow = (y + layer.offsetY - selection.y) * selection.width - selection.x + layer.offsetX
+    for (let x = left; x < right; x += 1) if (selection.mask[maskRow + x] === 1) visit(row + x)
+  }
+}
+
+const visitAdjustmentRegionIndices = (layer: RasterLayer, selection: SelectionMask | null, region: SelectionRect, visit: (index: number) => void): void => {
+  const bounds = adjustmentLocalBounds(layer, selection, region)
+  if (!bounds) return
+  const { left, top, right, bottom } = bounds
+  if (!selection?.mask) {
     for (let y = top; y < bottom; y += 1) {
       const row = y * layer.width
       for (let x = left; x < right; x += 1) visit(row + x)
@@ -299,6 +410,30 @@ const applyRgbaChannelLuts = (
     return
   }
   visitAdjustmentIndices(layer, selection, (index) => {
+    const offset = index * 4
+    const alpha = source[offset + 3]
+    if (alpha === 0) {
+      target[offset] = source[offset]
+      target[offset + 1] = source[offset + 1]
+      target[offset + 2] = source[offset + 2]
+    } else {
+      target[offset] = luts.red[source[offset]]
+      target[offset + 1] = luts.green[source[offset + 1]]
+      target[offset + 2] = luts.blue[source[offset + 2]]
+    }
+    target[offset + 3] = alpha
+  })
+}
+
+const applyRgbaChannelLutsRegion = (
+  layer: RasterLayer,
+  selection: SelectionMask | null,
+  source: Uint8ClampedArray,
+  target: Uint8ClampedArray,
+  luts: PreparedCurveLuts,
+  region: SelectionRect
+): void => {
+  visitAdjustmentRegionIndices(layer, selection, region, (index) => {
     const offset = index * 4
     const alpha = source[offset + 3]
     if (alpha === 0) {
@@ -371,26 +506,69 @@ const applyRgbaPackedTransform = (
   })
 }
 
+const applyRgbaPackedTransformRegion = (
+  layer: RasterLayer,
+  selection: SelectionMask | null,
+  source: Uint8ClampedArray,
+  target: Uint8ClampedArray,
+  transform: (red: number, green: number, blue: number) => number,
+  region: SelectionRect
+): void => {
+  let repeatedColorCache: Map<number, number> | null = new Map()
+  visitAdjustmentRegionIndices(layer, selection, region, (index) => {
+    const offset = index * 4
+    const alpha = source[offset + 3]
+    if (alpha === 0) {
+      target[offset] = source[offset]
+      target[offset + 1] = source[offset + 1]
+      target[offset + 2] = source[offset + 2]
+      target[offset + 3] = alpha
+      return
+    }
+    const sourceRgb = source[offset] | (source[offset + 1] << 8) | (source[offset + 2] << 16)
+    let packed = repeatedColorCache?.get(sourceRgb)
+    if (packed === undefined) {
+      packed = transform(source[offset], source[offset + 1], source[offset + 2])
+      if (repeatedColorCache) {
+        if (repeatedColorCache.size < 8192) repeatedColorCache.set(sourceRgb, packed)
+        else repeatedColorCache = null
+      }
+    }
+    target[offset] = packed & 0xff
+    target[offset + 1] = (packed >>> 8) & 0xff
+    target[offset + 2] = (packed >>> 16) & 0xff
+    target[offset + 3] = alpha
+  })
+}
+
 /** Applies a preview/final adjustment without constructing per-pixel history data. */
 export function applyColorAdjustmentDirect(
   document: SpriteDocument,
   layer: RasterLayer,
   adjustment: ColorAdjustment,
   selection: SelectionMask | null = null,
-  sourcePixels: Uint8ClampedArray | Uint32Array = layer.pixels
+  sourcePixels: Uint8ClampedArray | Uint32Array = layer.pixels,
+  region?: SelectionRect
 ): void {
   if ((layer.format === 'rgba') !== (sourcePixels instanceof Uint8ClampedArray)) throw new Error(tr('core.history.adjustmentFormatChanged'))
   const expectedLength = layer.width * layer.height * (layer.format === 'rgba' ? 4 : 1)
   if (sourcePixels.length !== expectedLength) throw new Error(tr('core.history.adjustmentFormatChanged'))
+  if (region && !adjustmentLocalBounds(layer, selection, region)) return
+  const contentBounds = cachedRasterContentBounds(layer, document.palette)
   markLayerContentChanged(layer)
+  const preserveContentBounds = (): void => {
+    if (contentBounds !== undefined) cacheRasterContentBounds(layer, document.palette, contentBounds)
+  }
 
   if (layer.format === 'rgba') {
     const source = sourcePixels as Uint8ClampedArray
     const target = layer.pixels as Uint8ClampedArray
-    if (selection && source !== target) target.set(source)
+    if (selection && source !== target && !region) target.set(source)
     const channelLuts = document.colorMode === 'rgba' && !isLayerMask(layer) ? adjustmentChannelLuts(adjustment) : null
     if (channelLuts) {
-      applyRgbaChannelLuts(layer, selection, source, target, channelLuts)
+      if (region) applyRgbaChannelLutsRegion(layer, selection, source, target, channelLuts, region)
+      else applyRgbaChannelLuts(layer, selection, source, target, channelLuts)
+      preserveContentBounds()
       return
     }
     const packedRgbTransform = document.colorMode === 'rgba' && !isLayerMask(layer) && !channelLuts
@@ -401,11 +579,16 @@ export function applyColorAdjustmentDirect(
           : null
       : null
     if (packedRgbTransform) {
-      applyRgbaPackedTransform(layer, selection, source, target, packedRgbTransform)
+      if (region) applyRgbaPackedTransformRegion(layer, selection, source, target, packedRgbTransform, region)
+      else applyRgbaPackedTransform(layer, selection, source, target, packedRgbTransform)
+      preserveContentBounds()
       return
     }
     const preparedCurve = adjustment.kind === 'curves' ? prepareCurveLuts(adjustment) : undefined
-    visitAdjustmentIndices(layer, selection, (index) => {
+    const visit = region
+      ? (callback: (index: number) => void): void => visitAdjustmentRegionIndices(layer, selection, region, callback)
+      : (callback: (index: number) => void): void => visitAdjustmentIndices(layer, selection, callback)
+    visit((index) => {
       const offset = index * 4
       const alpha = source[offset + 3]
       const next = adjustColor({ r: source[offset], g: source[offset + 1], b: source[offset + 2], a: alpha }, adjustment, preparedCurve)
@@ -415,12 +598,13 @@ export function applyColorAdjustmentDirect(
       target[offset + 2] = (packed >>> 16) & 0xff
       target[offset + 3] = (packed >>> 24) & 0xff
     })
+    preserveContentBounds()
     return
   }
 
   const source = sourcePixels as Uint32Array
   const target = layer.pixels as Uint32Array
-  if (selection && source !== target) target.set(source)
+  if (selection && source !== target && !region) target.set(source)
   const paletteById = new Map(document.palette.map((entry) => [entry.id, entry.color]))
   const paletteIdByColor = new Map<number, number>()
   for (const entry of document.palette) {
@@ -450,7 +634,9 @@ export function applyColorAdjustmentDirect(
     adjustedIdBySourceId.set(sourceId, normalized)
     return normalized
   }
-  visitAdjustmentIndices(layer, selection, (index) => { target[index] = adjustedId(source[index]) })
+  if (region) visitAdjustmentRegionIndices(layer, selection, region, (index) => { target[index] = adjustedId(source[index]) })
+  else visitAdjustmentIndices(layer, selection, (index) => { target[index] = adjustedId(source[index]) })
+  preserveContentBounds()
 }
 
 export function applyColorAdjustment(document: SpriteDocument, layer: RasterLayer, adjustment: ColorAdjustment, selection: SelectionMask | null = null): PixelEdit {

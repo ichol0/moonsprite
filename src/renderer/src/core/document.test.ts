@@ -951,6 +951,32 @@ describe('document compositing', () => {
     expect(surfacePixelsMaterialized(layer)).toBe(false)
   })
 
+  it('composites a sparse RGBA layer by copying its stored tiles', () => {
+    const document = createDocument('runtime composite', 4, 4, 'rgba')
+    const layer = document.layers[0]
+    const runtime = {
+      kind: 'sparse-tiles-v1' as const,
+      format: 'rgba' as const,
+      width: 4,
+      height: 4,
+      tileSize: 2,
+      data: new Uint8Array([
+        255, 0, 0, 255, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 255, 128
+      ]),
+      tileOffsets: new Int32Array([1, 0, 0, 0])
+    }
+    installRuntimeRaster(layer, runtime)
+
+    expect(Array.from(compositeRegion(document, 0, 0, 4, 4))).toEqual([
+      255, 0, 0, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+      0, 0, 0, 0, 0, 0, 255, 128, 0, 0, 0, 0, 0, 0, 0, 0,
+      0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+      0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+    ])
+    expect(surfacePixelsMaterialized(layer)).toBe(false)
+  })
+
   it('permanently crops layer pixels outside the resized canvas when requested', () => {
     const document = createDocument('trim canvas', 4, 2, 'rgba')
     const layer = document.layers[0]

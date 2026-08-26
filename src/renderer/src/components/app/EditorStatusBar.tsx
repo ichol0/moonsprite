@@ -42,7 +42,7 @@ export const EditorStatusBar = memo(function EditorStatusBar({ homeOpen, resourc
       <span>{displayedSelectionSize ? t('status.selection', { width: displayedSelectionSize.width, height: displayedSelectionSize.height }) : t('status.noSelection')}</span>
     </> : <span>{t('status.ready')}</span>}
     <span className="status-spacer" />
-    {state.message && <span className="status-message" onClick={() => useWorkspace.getState().setMessage(null)}>{state.message}</span>}
+    {state.message && <span key={state.message} className="status-message" onClick={() => useWorkspace.getState().setMessage(null)}>{state.message}</span>}
     <span>{resourceLabel}</span>
   </footer></PerformanceProfiler>
 })

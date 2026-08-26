@@ -27,7 +27,7 @@ import { LivePreviewToggle } from './LivePreviewToggle'
 import { OutlineStrokeControls } from './OutlineStrokeControls'
 import { TilesetTileThumbnail } from './TilesetTileThumbnail'
 import { BrushDynamicsSettingsPanel } from './app/EditorToolOptions'
-import { FILL_KIND_ICONS, SELECTION_KIND_ICONS, fillKindDefinitions, lineKindDefinitions, normalEditorToolIconFor, selectionKindDefinitions, shapeKindDefinitions, toolDefinitions } from './app/editor-tools'
+import { FILL_KIND_ICONS, GRADIENT_TYPE_ICONS, SELECTION_KIND_ICONS, fillKindDefinitions, lineKindDefinitions, normalEditorToolIconFor, selectionKindDefinitions, shapeKindDefinitions, toolDefinitions } from './app/editor-tools'
 import { CURSOR_ICON_LIBRARY } from '@/platform/cursor-theme'
 import { translate, type AppLocale, type TranslationKey, type TranslationParams } from '@/core/localization'
 import { outlineDirectionsForKernel } from '@/core/outline-settings'
@@ -60,6 +60,23 @@ const tagKeys: Record<string, TranslationKey> = {
 
 const componentText = (locale: AppLocale, key: TranslationKey, params?: TranslationParams): string => translate(locale, key, params)
 
+/** Short labels used only by the interactive component previews. Keep these
+ * outside JSX so every supported locale gets an explicit value instead of a
+ * zh/en conditional that silently leaks English into other languages. */
+const previewLiterals = {
+  'zh-CN': { compact: '紧凑', name: '名称', colorSettings: '颜色设置', restore: '恢复', displaySettings: '显示设置', sharedSurface: '共享表面', showGrid: '显示网格', normal: '（正常）', normalSize: '正常尺寸', largeSize: '大号尺寸', toolIcons: '工具图标库', pointerIcons: '指针图标库', builtIn: '（内置）', linearGradient: '线性渐变', radialGradient: '径向渐变' },
+  'en-US': { compact: 'Compact', name: 'Name', colorSettings: 'Color settings', restore: 'Restore', displaySettings: 'Display settings', sharedSurface: 'Shared surface', showGrid: 'Show grid', normal: ' (normal)', normalSize: 'Normal size', largeSize: 'Large size', toolIcons: 'Tool icon library', pointerIcons: 'Pointer icon library', builtIn: ' (built-in)', linearGradient: 'Linear gradient', radialGradient: 'Radial gradient' },
+  'ja-JP': { compact: 'コンパクト', name: '名前', colorSettings: 'カラー設定', restore: '復元', displaySettings: '表示設定', sharedSurface: '共有サーフェス', showGrid: 'グリッドを表示', normal: '（標準）', normalSize: '標準サイズ', largeSize: '大サイズ', toolIcons: 'ツールアイコンライブラリ', pointerIcons: 'ポインターアイコンライブラリ', builtIn: '（内蔵）', linearGradient: '線形グラデーション', radialGradient: '放射状グラデーション' },
+  'ko-KR': { compact: '컴팩트', name: '이름', colorSettings: '색상 설정', restore: '복원', displaySettings: '표시 설정', sharedSurface: '공유 표면', showGrid: '격자 표시', normal: ' (일반)', normalSize: '일반 크기', largeSize: '큰 크기', toolIcons: '도구 아이콘 라이브러리', pointerIcons: '포인터 아이콘 라이브러리', builtIn: ' (내장)', linearGradient: '선형 그라디언트', radialGradient: '방사형 그라디언트' },
+  'es-ES': { compact: 'Compacto', name: 'Nombre', colorSettings: 'Ajustes de color', restore: 'Restaurar', displaySettings: 'Ajustes de visualización', sharedSurface: 'Superficie compartida', showGrid: 'Mostrar cuadrícula', normal: ' (normal)', normalSize: 'Tamaño normal', largeSize: 'Tamaño grande', toolIcons: 'Biblioteca de iconos de herramientas', pointerIcons: 'Biblioteca de iconos de puntero', builtIn: ' (integrado)', linearGradient: 'Degradado lineal', radialGradient: 'Degradado radial' },
+  'fr-FR': { compact: 'Compact', name: 'Nom', colorSettings: 'Paramètres de couleur', restore: 'Restaurer', displaySettings: "Paramètres d'affichage", sharedSurface: 'Surface partagée', showGrid: 'Afficher la grille', normal: ' (normal)', normalSize: 'Taille normale', largeSize: 'Grande taille', toolIcons: "Bibliothèque d’icônes d’outils", pointerIcons: 'Bibliothèque d’icônes de pointeur', builtIn: ' (intégré)', linearGradient: 'Dégradé linéaire', radialGradient: 'Dégradé radial' },
+  'de-DE': { compact: 'Kompakt', name: 'Name', colorSettings: 'Farbeinstellungen', restore: 'Wiederherstellen', displaySettings: 'Anzeigeeinstellungen', sharedSurface: 'Gemeinsame Oberfläche', showGrid: 'Raster anzeigen', normal: ' (normal)', normalSize: 'Normale Größe', largeSize: 'Große Größe', toolIcons: 'Werkzeugsymbolbibliothek', pointerIcons: 'Zeigersymbolbibliothek', builtIn: ' (integriert)', linearGradient: 'Linearer Verlauf', radialGradient: 'Radialer Verlauf' },
+  'pt-BR': { compact: 'Compacto', name: 'Nome', colorSettings: 'Configurações de cor', restore: 'Restaurar', displaySettings: 'Configurações de exibição', sharedSurface: 'Superfície compartilhada', showGrid: 'Mostrar grade', normal: ' (normal)', normalSize: 'Tamanho normal', largeSize: 'Tamanho grande', toolIcons: 'Biblioteca de ícones de ferramentas', pointerIcons: 'Biblioteca de ícones de ponteiro', builtIn: ' (integrado)', linearGradient: 'Gradiente linear', radialGradient: 'Gradiente radial' },
+  'ru-RU': { compact: 'Компактный', name: 'Название', colorSettings: 'Параметры цвета', restore: 'Восстановить', displaySettings: 'Параметры отображения', sharedSurface: 'Общая поверхность', showGrid: 'Показать сетку', normal: ' (обычный)', normalSize: 'Обычный размер', largeSize: 'Большой размер', toolIcons: 'Библиотека значков инструментов', pointerIcons: 'Библиотека указателей', builtIn: ' (встроенный)', linearGradient: 'Линейный градиент', radialGradient: 'Радиальный градиент' }
+} satisfies Record<AppLocale, Record<string, string>>
+
+const previewText = (locale: AppLocale, key: keyof (typeof previewLiterals)['zh-CN']): string => previewLiterals[locale][key]
+
 const pixelIconNames: Partial<Record<PixelUtilityIconKind, string>> = {
   lock: '关锁', unlock: '开锁', eye: '睁眼', eyeOff: '闭眼', properties: '调整', delete: '删除',
   newFolder: '新建文件夹', ungroupFolder: '解组文件夹', plus: '加', minus: '减', close: '叉', up: '上', down: '下',
@@ -89,13 +106,25 @@ const cursorNames: Record<string, { zh: string; en: string }> = {
   'pencil-black': { zh: '铅笔指针（深色）', en: 'Pencil pointer (dark)' }, 'pencil-white': { zh: '铅笔指针（浅色）', en: 'Pencil pointer (light)' }, 'selection-black': { zh: '选区指针（深色）', en: 'Selection pointer (dark)' }, 'selection-white': { zh: '选区指针（浅色）', en: 'Selection pointer (light)' }, unavailable: { zh: '不可用指针', en: 'Unavailable pointer' }, grab: { zh: '抓取指针', en: 'Grab pointer' }, grabbing: { zh: '抓取中指针', en: 'Grabbing pointer' }, move: { zh: '移动指针', en: 'Move pointer' }, 'swatch-edge': { zh: '色格边缘指针', en: 'Swatch edge pointer' }, eyedropper: { zh: '吸管指针', en: 'Eyedropper pointer' }, 'selection-move': { zh: '选区移动指针', en: 'Selection move pointer' }, copy: { zh: '复制指针', en: 'Copy pointer' }, zoom: { zh: '缩放指针', en: 'Zoom pointer' }, rotate: { zh: '旋转指针', en: 'Rotate pointer' }, 'ns-resize': { zh: '上下调整指针', en: 'Vertical resize pointer' }, 'n-resize': { zh: '向上调整指针', en: 'North resize pointer' }, 'ew-resize': { zh: '左右调整指针', en: 'Horizontal resize pointer' }, 'nwse-resize': { zh: '左上右下调整指针', en: 'Diagonal resize pointer' }, 'nesw-resize': { zh: '右上左下调整指针', en: 'Diagonal resize pointer' }, 'selection-rotate-n': { zh: '选区上方旋转指针', en: 'Selection rotate north pointer' }, 'selection-rotate-ne': { zh: '选区右上旋转指针', en: 'Selection rotate NE pointer' }, 'selection-rotate-se': { zh: '选区右下旋转指针', en: 'Selection rotate SE pointer' }, 'selection-rotate-s': { zh: '选区下方旋转指针', en: 'Selection rotate south pointer' }, 'selection-rotate-sw': { zh: '选区左下旋转指针', en: 'Selection rotate SW pointer' }, 'selection-rotate-nw': { zh: '选区左上旋转指针', en: 'Selection rotate NW pointer' }, 'selection-shear-horizontal': { zh: '选区水平倾斜指针', en: 'Selection horizontal shear pointer' }, 'selection-shear-vertical': { zh: '选区垂直倾斜指针', en: 'Selection vertical shear pointer' }
 }
 
+const cursorLabel = (locale: AppLocale, names: { zh: string; en: string }): string => ({
+  'zh-CN': names.zh,
+  'en-US': names.en,
+  'ja-JP': `${names.en}カーソル`,
+  'ko-KR': `${names.en} 커서`,
+  'es-ES': `Cursor ${names.en.toLowerCase()}`,
+  'fr-FR': `Curseur ${names.en.toLowerCase()}`,
+  'de-DE': `${names.en}zeiger`,
+  'pt-BR': `Cursor ${names.en.toLowerCase()}`,
+  'ru-RU': `Указатель: ${names.en.toLowerCase()}`
+})[locale]
+
 const cursorLibraryItems = (locale: AppLocale) => CURSOR_ICON_LIBRARY.flatMap((item) => {
   const key = item.variable.replace('--cursor-', '')
   const names = cursorNames[key] ?? { zh: key, en: key }
-  const name = locale === 'zh-CN' ? names.zh : names.en
+  const name = cursorLabel(locale, names)
   const base = { id: `cursor.${key}`, name, source: item.source, builtinSource: item.builtinSource }
   return item.builtinSource && item.builtinSource !== item.source
-    ? [base, { ...base, id: `${base.id}.builtin`, name: `${name}${locale === 'zh-CN' ? '（内置）' : ' (built-in)'}`, source: item.builtinSource, builtinSource: item.builtinSource }]
+    ? [base, { ...base, id: `${base.id}.builtin`, name: `${name}${previewText(locale, 'builtIn')}`, source: item.builtinSource, builtinSource: item.builtinSource }]
     : [base]
 })
 
@@ -108,10 +137,15 @@ const toolLibraryItems = (locale: AppLocale) => {
     ...lineKindDefinitions(locale).map((item) => ({ id: `tool.line.${item.id}`, name: item.label, largeSource: item.icon })),
     ...fillKindDefinitions(locale).map((item) => ({ id: `tool.fill.${item.id}`, name: item.label, largeSource: FILL_KIND_ICONS[item.id] }))
   ]
-  return items.flatMap((item) => {
+  const toolItems = items.flatMap((item) => {
     const normalSource = normalEditorToolIconFor(item.largeSource)
     return normalSource ? [{ ...item, normalSource }] : []
   })
+  const gradientModeItems = [
+    { id: 'tool.gradient.linear', name: previewText(locale, 'linearGradient'), largeSource: GRADIENT_TYPE_ICONS.linear, normalSource: GRADIENT_TYPE_ICONS.linear },
+    { id: 'tool.gradient.radial', name: previewText(locale, 'radialGradient'), largeSource: GRADIENT_TYPE_ICONS.radial, normalSource: GRADIENT_TYPE_ICONS.radial }
+  ]
+  return [...toolItems, ...gradientModeItems]
 }
 
 const localizeEntry = (entry: ComponentLibraryEntry, locale: AppLocale): ComponentLibraryEntry => ({
@@ -216,7 +250,7 @@ function NumberInputPreview({ locale }: { locale: AppLocale }) {
   const [sliderOpen, setSliderOpen] = useState(false)
   return <div className="component-number-input-preview">
     <FormField className="component-number-input-row" layout="inline" label={componentText(locale, 'componentLibrary.preview.size')}><NumberInput value={value} min={1} max={128} suffix="px" onValueChange={setValue} /></FormField>
-    <FormField className="component-number-input-row" layout="inline" label={locale === 'zh-CN' ? '紧凑' : 'Compact'}><NumberInput density="compact" value={value} min={1} max={128} suffix="px" onValueChange={setValue} /></FormField>
+    <FormField className="component-number-input-row" layout="inline" label={previewText(locale, 'compact')}><NumberInput density="compact" value={value} min={1} max={128} suffix="px" onValueChange={setValue} /></FormField>
     <div className="component-number-input-row component-number-input-no-label"><NumberInput aria-label={componentText(locale, 'componentLibrary.preview.untitledNumber')} value={untitledValue} min={1} max={128} suffix="px" onValueChange={setUntitledValue} /></div>
     <FormField className="component-number-input-row" layout="inline" label={componentText(locale, 'componentLibrary.preview.hintNumber')}><NumberInput className="component-number-input-hint-input" aria-label={componentText(locale, 'componentLibrary.preview.hintNumber')} value="" min={1} max={128} placeholder={componentText(locale, 'componentLibrary.preview.enterNumber')} onValueChange={() => undefined} /></FormField>
     <FormField className="component-number-input-row" layout="inline" label={componentText(locale, 'componentLibrary.preview.size')}><div className="brush-size-control component-number-input-slider" onPointerDown={() => setSliderOpen(true)}><NumberInput aria-label={componentText(locale, 'componentLibrary.preview.sliderNumber')} value={sliderValue} min={1} max={128} suffix="px" onValueChange={setSliderValue} onFocus={() => setSliderOpen(true)} />{sliderOpen && <div className="brush-size-popover" role="dialog" aria-label={componentText(locale, 'componentLibrary.preview.adjustNumber')}><RangeField ariaLabel={componentText(locale, 'componentLibrary.preview.valueSlider')} density="compact" min={1} max={128} suffix="px" value={sliderValue} onChange={setSliderValue} /></div>}</div></FormField>
@@ -231,13 +265,13 @@ function TextAreaInputPreview({ locale }: { locale: AppLocale }) {
 
 function TextInputPreview({ locale }: { locale: AppLocale }) {
   const [value, setValue] = useState('MoonSprite')
-  return <div className="component-preview-form"><FormField label={locale === 'zh-CN' ? '名称' : 'Name'}><TextInput value={value} onChange={(event) => setValue(event.target.value)} /></FormField><FormField label={locale === 'zh-CN' ? '紧凑' : 'Compact'}><TextInput density="compact" value={value} onChange={(event) => setValue(event.target.value)} /></FormField><FormField label={componentText(locale, 'componentLibrary.preview.disabled')}><TextInput disabled value={value} readOnly /></FormField></div>
+  return <div className="component-preview-form"><FormField label={previewText(locale, 'name')}><TextInput value={value} onChange={(event) => setValue(event.target.value)} /></FormField><FormField label={previewText(locale, 'compact')}><TextInput density="compact" value={value} onChange={(event) => setValue(event.target.value)} /></FormField><FormField label={componentText(locale, 'componentLibrary.preview.disabled')}><TextInput disabled value={value} readOnly /></FormField></div>
 }
 
 function SelectPreview({ locale }: { locale: AppLocale }) {
   const [value, setValue] = useState('normal')
   const groups: Array<ThemedSelectGroup<string>> = selectGroups.map((group) => ({ label: componentText(locale, group.labelKey), options: group.options.map((option) => ({ value: option.value, label: componentText(locale, option.labelKey) })) }))
-  return <div className="component-preview-form"><FormField label={componentText(locale, 'componentLibrary.preview.blendMode')}><ThemedSelect value={value} groups={groups} label={componentText(locale, 'componentLibrary.preview.blendMode')} onChange={setValue} /></FormField><FormField label={locale === 'zh-CN' ? '紧凑' : 'Compact'}><ThemedSelect density="compact" value={value} groups={groups} label={componentText(locale, 'componentLibrary.preview.blendMode')} onChange={setValue} /></FormField><FormField label={componentText(locale, 'componentLibrary.preview.disabled')}><ThemedSelect disabled value={value} groups={groups} label={componentText(locale, 'componentLibrary.preview.blendMode')} onChange={setValue} /></FormField></div>
+  return <div className="component-preview-form"><FormField label={componentText(locale, 'componentLibrary.preview.blendMode')}><ThemedSelect value={value} groups={groups} label={componentText(locale, 'componentLibrary.preview.blendMode')} onChange={setValue} /></FormField><FormField label={previewText(locale, 'compact')}><ThemedSelect density="compact" value={value} groups={groups} label={componentText(locale, 'componentLibrary.preview.blendMode')} onChange={setValue} /></FormField><FormField label={componentText(locale, 'componentLibrary.preview.disabled')}><ThemedSelect disabled value={value} groups={groups} label={componentText(locale, 'componentLibrary.preview.blendMode')} onChange={setValue} /></FormField></div>
 }
 
 function FormFieldPreview({ locale }: { locale: AppLocale }) {
@@ -246,14 +280,14 @@ function FormFieldPreview({ locale }: { locale: AppLocale }) {
 }
 
 function SettingsSectionHeaderPreview({ locale }: { locale: AppLocale }) {
-  return <SettingsSectionHeader title={locale === 'zh-CN' ? '颜色设置' : 'Color settings'} actions={<><button type="button" className="quiet-button"><PixelUtilityIcon kind="restore" />{locale === 'zh-CN' ? '恢复' : 'Restore'}</button><button type="button" className="quiet-button"><PixelUtilityIcon kind="plus" />{componentText(locale, 'componentLibrary.preview.new')}</button></>} />
+  return <SettingsSectionHeader title={previewText(locale, 'colorSettings')} actions={<><button type="button" className="quiet-button"><PixelUtilityIcon kind="restore" />{previewText(locale, 'restore')}</button><button type="button" className="quiet-button"><PixelUtilityIcon kind="plus" />{componentText(locale, 'componentLibrary.preview.new')}</button></>} />
 }
 
 function SettingsSectionPreview({ locale }: { locale: AppLocale }) {
   const [enabled, setEnabled] = useState(true)
-  return <SettingsSection className="component-settings-section-preview" title={locale === 'zh-CN' ? '显示设置' : 'Display settings'} actions={<span className="settings-section-meta">{locale === 'zh-CN' ? '共享表面' : 'Shared surface'}</span>}>
+  return <SettingsSection className="component-settings-section-preview" title={previewText(locale, 'displaySettings')} actions={<span className="settings-section-meta">{previewText(locale, 'sharedSurface')}</span>}>
     <div className="settings-section-body">
-      <PreferenceToggle label={locale === 'zh-CN' ? '显示网格' : 'Show grid'} checked={enabled} onChange={setEnabled} />
+      <PreferenceToggle label={previewText(locale, 'showGrid')} checked={enabled} onChange={setEnabled} />
       <CheckboxField checked={enabled} label={componentText(locale, 'componentLibrary.preview.perfectPixels')} onChange={setEnabled} />
     </div>
   </SettingsSection>
@@ -312,17 +346,17 @@ function ToolIconPreview({ locale }: { locale: AppLocale }) {
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const renderItems = (group: 'small' | 'large') => <div className={`component-icon-library-grid component-tool-icon-grid component-tool-icon-grid-${group}`}>{items.map((item) => {
     const id = group === 'small' ? `${item.id}.normal` : item.id
-    const name = group === 'small' ? `${item.name}${locale === 'zh-CN' ? '（正常）' : ' (normal)'}` : item.name
+    const name = group === 'small' ? `${item.name}${previewText(locale, 'normal')}` : item.name
     const source = group === 'small' ? item.normalSource : item.largeSource
     const title = iconLibraryTitle(name, id)
     return <button key={id} type="button" className={`component-icon-library-button ${selectedId === id ? 'selected' : ''}`} title={title} aria-label={title} aria-pressed={selectedId === id} onClick={() => setSelectedId((current) => current === id ? null : id)}><span className="pixel-asset-icon component-library-asset-icon" style={{ '--pixel-icon-source': `url("${source}")`, '--pixel-icon-normal-source': `url("${source}")` } as React.CSSProperties} aria-hidden="true" /></button>
   })}</div>
-  return <div className="component-tool-icon-groups" aria-label={locale === 'zh-CN' ? '工具图标库' : 'Tool icon library'}><section><h4>{locale === 'zh-CN' ? '正常尺寸' : 'Normal size'}</h4>{renderItems('small')}</section><section><h4>{locale === 'zh-CN' ? '大号尺寸' : 'Large size'}</h4>{renderItems('large')}</section></div>
+  return <div className="component-tool-icon-groups" aria-label={previewText(locale, 'toolIcons')}><section><h4>{previewText(locale, 'normalSize')}</h4>{renderItems('small')}</section><section><h4>{previewText(locale, 'largeSize')}</h4>{renderItems('large')}</section></div>
 }
 
 function PointerIconPreview({ locale }: { locale: AppLocale }) {
   const items = cursorLibraryItems(locale)
-  return <div className="component-icon-library-grid component-pointer-icon-grid" aria-label={locale === 'zh-CN' ? '指针图标库' : 'Pointer icon library'}>{items.map((item) => {
+  return <div className="component-icon-library-grid component-pointer-icon-grid" aria-label={previewText(locale, 'pointerIcons')}>{items.map((item) => {
     const title = iconLibraryTitle(item.name, item.id)
     return <span key={item.id} className="component-pointer-icon" title={title} aria-label={title} role="img"><img src={item.source} alt="" /></span>
   })}</div>

@@ -8,9 +8,10 @@ import type { DockDragProps } from '@/components/workspace-panel-types'
 import { cloneDocumentForAnimationFrame, ensureAnimationDocument, nextAnimationFrameId } from '@/core/animation'
 import { advanceAnimationLoopSectionPlayback, animationLoopSectionAtFrame, animationLoopSectionStartFrameId } from '@/core/animation-loop-sections'
 import { anchoredPreviewPan, followPreviewPosition, previewCheckerCellSize } from '@/core/preview-geometry'
-import { normalizeCanvasWheelDelta, steppedCanvasZoom } from '@/core/canvas-input'
+import { normalizeCanvasWheelDelta, steppedCanvasZoom, viewDragClientDelta } from '@/core/canvas-input'
 import { loadEditorPreferences, type CheckerboardPreferences } from '@/core/file-preferences'
 import { registerViewPreviewListener } from '@/core/view-preview-lifecycle'
+import { registerCanvasPreviewListener, type CanvasPreviewSnapshot } from '@/core/canvas-preview-lifecycle'
 import { useWorkspace, type AnimationPlaybackMode, type DocumentSession } from '@/store/workspace'
 import { useI18n } from '@/components/I18nProvider'
 import { resolveTheme } from '@/core/theme'
@@ -55,6 +56,7 @@ export function PreviewPanel({ session, onClose, docked = false, onDockDragStart
   const [checkerboard, setCheckerboard] = useState<CheckerboardPreferences>(() => loadEditorPreferences().checkerboard)
   const [canvasSurround, setCanvasSurround] = useState(() => resolveTheme(loadEditorPreferences().theme).definition.seeds.canvasSurround)
   const [rotationIndicatorPosition, setRotationIndicatorPosition] = useState(() => loadEditorPreferences().rotationIndicatorPosition)
+  const [viewDragSensitivity, setViewDragSensitivity] = useState(() => loadEditorPreferences().viewDragSensitivity)
   const [timelineHidden, setTimelineHidden] = useState(() => loadEditorPreferences().timelineHidden)
   const [playbackMenu, setPlaybackMenu] = useState<{ x: number; y: number } | null>(null)
   const [initialCompositeReady, setInitialCompositeReady] = useState(() => !initialDocumentCompositePending(session.document))
@@ -73,8 +75,10 @@ export function PreviewPanel({ session, onClose, docked = false, onDockDragStart
   const baseFitRef = useRef<{ documentId: string; width: number; height: number; viewportWidth: number; viewportHeight: number; scale: number } | null>(null)
   const followSnapshotRef = useRef<FollowViewportSnapshot>(followViewportSnapshot(session))
   const drawRef = useRef<() => void>(() => {})
+  const liveCanvasPreviewRef = useRef<CanvasPreviewSnapshot | null>(null)
   const followFrameRef = useRef<number | null>(null)
   const panFrameRef = useRef<number | null>(null)
+  const liveCanvasPreviewFrameRef = useRef<number | null>(null)
   const pendingPanRef = useRef<{ x: number; y: number } | null>(null)
   const inheritedRelativeLuminance = session.view.relativeLuminance && relativeLuminanceInPreview
   const showRelativeLuminance = relativeLuminanceOverride ?? inheritedRelativeLuminance
@@ -83,6 +87,29 @@ export function PreviewPanel({ session, onClose, docked = false, onDockDragStart
     setInitialCompositeReady(!initialDocumentCompositePending(session.document))
     return subscribeInitialDocumentComposite(session.document, () => setInitialCompositeReady(true))
   }, [session.document])
+
+  useEffect(() => {
+    const scheduleDraw = (): void => {
+      if (liveCanvasPreviewFrameRef.current !== null) return
+      liveCanvasPreviewFrameRef.current = window.requestAnimationFrame(() => {
+        liveCanvasPreviewFrameRef.current = null
+        drawRef.current()
+      })
+    }
+    const unregister = registerCanvasPreviewListener(session.document.id, (snapshot) => {
+      liveCanvasPreviewRef.current = snapshot
+      compositeCacheRef.current.invalidateAll()
+      scheduleDraw()
+    })
+    return () => {
+      unregister()
+      liveCanvasPreviewRef.current = null
+      if (liveCanvasPreviewFrameRef.current !== null) {
+        window.cancelAnimationFrame(liveCanvasPreviewFrameRef.current)
+        liveCanvasPreviewFrameRef.current = null
+      }
+    }
+  }, [session.document.id])
 
   useEffect(() => {
     if (!followViewport) return
@@ -123,6 +150,11 @@ export function PreviewPanel({ session, onClose, docked = false, onDockDragStart
     if (!timeline.frames.some((frame) => frame.id === previewFrameId)) setPreviewFrameId(timeline.activeFrameId)
     if (previewPlaying && !timeline.frames.some((frame) => frame.id === previewStartFrameId)) setPreviewStartFrameId(previewFrameId)
   }, [session.document, previewFrameId, previewPlaying, previewStartFrameId, timeline])
+
+  useEffect(() => {
+    if (previewPlaying) return
+    if (previewFrameId !== timeline.activeFrameId) setPreviewFrameId(timeline.activeFrameId)
+  }, [previewFrameId, previewPlaying, timeline.activeFrameId])
 
   useEffect(() => {
     if (!previewPlaying) return
@@ -204,6 +236,7 @@ export function PreviewPanel({ session, onClose, docked = false, onDockDragStart
       setCheckerboard(preferences.checkerboard)
       setCanvasSurround(resolveTheme(preferences.theme).definition.seeds.canvasSurround)
       setRotationIndicatorPosition(preferences.rotationIndicatorPosition)
+      setViewDragSensitivity(preferences.viewDragSensitivity)
       setTimelineHidden(preferences.timelineHidden)
     }
     window.addEventListener('moonsprite:preferences-changed', syncPreferences)
@@ -242,13 +275,30 @@ export function PreviewPanel({ session, onClose, docked = false, onDockDragStart
   useEffect(() => {
     const canvas = canvasRef.current
     if (!canvas || !initialCompositeReady) return
-    const previewDocument = previewFrameId === timeline.activeFrameId
-      ? session.document
-      : cloneDocumentForAnimationFrame(session.document, previewFrameId)
     const draw = (): void => {
       const context = canvas.getContext('2d')
       const bounds = canvas.getBoundingClientRect()
       if (!context || bounds.width < 1 || bounds.height < 1) return
+      const storeSession = useWorkspace.getState().sessions.find((item) => item.document.id === session.document.id)
+      const currentSession = storeSession && (
+        storeSession.document !== session.document
+        || (storeSession.revision >= session.revision && storeSession.contentRevision >= session.contentRevision)
+      ) ? storeSession : session
+      const currentTimeline = currentSession.document.animation ?? ensureAnimationDocument(currentSession.document)
+      const livePreview = liveCanvasPreviewRef.current
+      const livePreviewForFrame = !previewPlaying
+        && livePreview
+        && livePreview.document.id === currentSession.document.id
+        && livePreview.frameId === currentTimeline.activeFrameId
+        && previewFrameId === currentTimeline.activeFrameId
+        ? livePreview
+        : null
+      const sourceDocument = livePreviewForFrame?.document ?? currentSession.document
+      const previewDocument = previewFrameId === currentTimeline.activeFrameId
+        ? sourceDocument
+        : cloneDocumentForAnimationFrame(sourceDocument, previewFrameId)
+      const renderRevision = livePreviewForFrame?.revision ?? currentSession.revision
+      const renderContentRevision = livePreviewForFrame?.contentRevision ?? currentSession.contentRevision
       const dpr = Math.max(1, window.devicePixelRatio || 1)
       const width = Math.max(1, Math.round(bounds.width * dpr))
       const height = Math.max(1, Math.round(bounds.height * dpr))
@@ -258,23 +308,23 @@ export function PreviewPanel({ session, onClose, docked = false, onDockDragStart
       const displayHeight = bounds.height
       context.clearRect(0, 0, displayWidth, displayHeight)
       let baseFit = baseFitRef.current
-      if (!baseFit || baseFit.documentId !== session.document.id || baseFit.width !== session.document.width || baseFit.height !== session.document.height || baseFit.viewportWidth !== displayWidth || baseFit.viewportHeight !== displayHeight) {
-        baseFit = { documentId: session.document.id, width: session.document.width, height: session.document.height, viewportWidth: displayWidth, viewportHeight: displayHeight, scale: Math.min(displayWidth / session.document.width, displayHeight / session.document.height) }
+      if (!baseFit || baseFit.documentId !== sourceDocument.id || baseFit.width !== sourceDocument.width || baseFit.height !== sourceDocument.height || baseFit.viewportWidth !== displayWidth || baseFit.viewportHeight !== displayHeight) {
+        baseFit = { documentId: sourceDocument.id, width: sourceDocument.width, height: sourceDocument.height, viewportWidth: displayWidth, viewportHeight: displayHeight, scale: Math.min(displayWidth / sourceDocument.width, displayHeight / sourceDocument.height) }
         baseFitRef.current = baseFit
       }
       const scale = baseFit.scale * zoom
       const smoothPixelSampling = pixelSamplingMode(scale) === 'smooth'
       const followSnapshot = followSnapshotRef.current
       const effectivePan = followViewport ? followPreviewPosition({
-        documentSize: { width: session.document.width, height: session.document.height },
+        documentSize: { width: sourceDocument.width, height: sourceDocument.height },
         sourceViewportSize: followSnapshot.viewportSize,
         previewViewportSize: { width: displayWidth, height: displayHeight },
         previewScale: scale,
         sourceView: followSnapshot.view,
         rotationIndicatorPosition
       }) : pan
-      const drawWidth = session.document.width * scale
-      const drawHeight = session.document.height * scale
+      const drawWidth = sourceDocument.width * scale
+      const drawHeight = sourceDocument.height * scale
       const originX = (displayWidth - drawWidth) / 2 + effectivePan.x
       const originY = (displayHeight - drawHeight) / 2 + effectivePan.y
       context.fillStyle = canvasSurround
@@ -287,8 +337,8 @@ export function PreviewPanel({ session, onClose, docked = false, onDockDragStart
       context.fillRect(originX, originY, drawWidth, drawHeight)
       const checkerCell = previewCheckerCellSize(checkerboard.size, scale)
       if (checkerCell >= 2) {
-        const columnCount = Math.ceil(session.document.width / checkerboard.size)
-        const rowCount = Math.ceil(session.document.height / checkerboard.size)
+        const columnCount = Math.ceil(sourceDocument.width / checkerboard.size)
+        const rowCount = Math.ceil(sourceDocument.height / checkerboard.size)
         const firstColumn = Math.max(0, Math.floor((0 - originX) / checkerCell))
         const firstRow = Math.max(0, Math.floor((0 - originY) / checkerCell))
         const lastColumn = Math.min(columnCount, Math.ceil((displayWidth - originX) / checkerCell))
@@ -303,8 +353,8 @@ export function PreviewPanel({ session, onClose, docked = false, onDockDragStart
       if (smoothPixelSampling) context.imageSmoothingQuality = 'high'
       const fromX = Math.max(0, Math.floor((0 - originX) / scale))
       const fromY = Math.max(0, Math.floor((0 - originY) / scale))
-      const toX = Math.min(session.document.width, Math.ceil((displayWidth - originX) / scale))
-      const toY = Math.min(session.document.height, Math.ceil((displayHeight - originY) / scale))
+      const toX = Math.min(sourceDocument.width, Math.ceil((displayWidth - originX) / scale))
+      const toY = Math.min(sourceDocument.height, Math.ceil((displayHeight - originY) / scale))
       if (toX > fromX && toY > fromY) compositeCacheRef.current.draw({
         context,
         document: previewDocument,
@@ -317,17 +367,19 @@ export function PreviewPanel({ session, onClose, docked = false, onDockDragStart
         fromY,
         toX,
         toY,
-        revision: session.revision,
-        contentRevision: session.contentRevision,
-        contentInvalidation: session.contentInvalidation,
+        revision: renderRevision,
+        contentRevision: renderContentRevision,
+        contentInvalidation: livePreviewForFrame ? null : currentSession.contentInvalidation,
         frameId: previewFrameId,
-        imageSmoothingEnabled: smoothPixelSampling
+        imageSmoothingEnabled: smoothPixelSampling,
+        movingLayerIds: livePreviewForFrame?.movingLayerIds,
+        selectionPreview: livePreviewForFrame?.selectionPreview
       })
       context.restore()
     }
     drawRef.current = draw
     draw()
-  }, [session.document, session.contentRevision, previewFrameId, showRelativeLuminance, checkerboard, canvasSurround, rotationIndicatorPosition, zoom, pan, followViewport, initialCompositeReady])
+  }, [session.document, session.revision, session.contentRevision, previewFrameId, previewPlaying, timeline.activeFrameId, showRelativeLuminance, checkerboard, canvasSurround, rotationIndicatorPosition, zoom, pan, followViewport, initialCompositeReady])
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -343,6 +395,7 @@ export function PreviewPanel({ session, onClose, docked = false, onDockDragStart
   useEffect(() => () => {
     if (panFrameRef.current !== null) window.cancelAnimationFrame(panFrameRef.current)
     if (followFrameRef.current !== null) window.cancelAnimationFrame(followFrameRef.current)
+    if (liveCanvasPreviewFrameRef.current !== null) window.cancelAnimationFrame(liveCanvasPreviewFrameRef.current)
   }, [])
 
   const schedulePan = (next: { x: number; y: number }): void => {
@@ -444,9 +497,19 @@ export function PreviewPanel({ session, onClose, docked = false, onDockDragStart
     setPanning(false)
     if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId)
   }
+  const movePan = (event: React.PointerEvent<HTMLDivElement>): void => {
+    const drag = panDrag.current
+    if (!drag) return
+    const delta = viewDragClientDelta(
+      { x: event.clientX, y: event.clientY },
+      { x: drag.x, y: drag.y },
+      viewDragSensitivity
+    )
+    schedulePan({ x: drag.panX + delta.x, y: drag.panY + delta.y })
+  }
   return <section ref={floating.ref} className={`panel preview-panel ${floating.style ? 'floating-panel' : ''}`} style={floating.style} onPointerDown={floating.bringToFront} onContextMenu={onPanelContextMenu}>
     <header onPointerDown={(event) => floating.style ? floating.startDrag(event) : onDockDragStart?.(event, floating.startDetachedDrag)}><span>{t('panel.preview')}</span><span className="panel-actions"><button className={followViewport ? 'active' : ''} title={t('preview.followViewport')} aria-label={t('preview.followViewport')} aria-pressed={followViewport} onClick={toggleFollowViewport}><PixelUtilityIcon kind="follow" /></button><button title={t('preview.zoomOut')} aria-label={t('preview.zoomOut')} onClick={() => adjustZoom(false)}><PixelUtilityIcon kind="minus" /></button><button title={t('preview.zoomIn')} aria-label={t('preview.zoomIn')} onClick={() => adjustZoom(true)}><PixelUtilityIcon kind="plus" /></button><button className={previewPlaying ? 'active' : ''} disabled={timelineHidden || timeline.frames.length <= 1} title={t(previewPlaying ? 'timeline.pause' : 'timeline.play')} aria-label={t(previewPlaying ? 'timeline.pause' : 'timeline.play')} onClick={() => setPreviewPlayingState(!previewPlaying)} onContextMenu={(event) => { event.preventDefault(); event.stopPropagation(); if (!timelineHidden) setPlaybackMenu({ x: event.clientX, y: event.clientY }) }}><PlaybackPixelIcon kind={previewPlaying ? 'pause' : 'play'} /></button><button title={t('preview.close')} aria-label={t('preview.close')} onClick={onClose}><PixelUtilityIcon kind="close" /></button></span></header>
-    <div className={`preview-canvas-wrap ${panning ? 'space-panning' : ''}`} onWheel={adjustWheelZoom} onPointerDown={startPan} onPointerMove={(event) => { const drag = panDrag.current; if (!drag) return; schedulePan({ x: drag.panX + event.clientX - drag.x, y: drag.panY + event.clientY - drag.y }) }} onPointerUp={finishPan} onPointerCancel={finishPan}><div className="preview-canvas-frame"><canvas ref={canvasRef} aria-label={t('preview.canvasAria')} /></div></div>
+    <div className={`preview-canvas-wrap ${panning ? 'space-panning' : ''}`} onWheel={adjustWheelZoom} onPointerDown={startPan} onPointerMove={movePan} onPointerUp={finishPan} onPointerCancel={finishPan}><div className="preview-canvas-frame"><canvas ref={canvasRef} aria-label={t('preview.canvasAria')} /></div></div>
     {floating.style && <PanelResizeHandles onResize={floating.startResize} />}
     <FloatingDockPreview style={floating.dockPreview} />
     {playbackMenu && <AnimationPlaybackMenu session={session} x={playbackMenu.x} y={playbackMenu.y} playback={previewPlayback} onClose={() => setPlaybackMenu(null)} />}

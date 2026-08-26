@@ -166,7 +166,7 @@ const encodeGif = (frames: readonly GifFramePixels[], width: number, height: num
   if (loop) output.push(0x21, 0xff, 0x0b, ...new TextEncoder().encode('NETSCAPE2.0'), 0x03, 0x01, 0x00, 0x00, 0x00)
   frames.forEach((frame, frameIndex) => {
     const delay = Math.max(1, Math.min(65535, Math.round(frame.duration / 10)))
-    output.push(0x21, 0xf9, 0x04, 0x05)
+    output.push(0x21, 0xf9, 0x04, 0x09)
     pushU16(output, delay)
     output.push(0, 0)
     output.push(0x2c); pushU16(output, 0); pushU16(output, 0); pushU16(output, width); pushU16(output, height); output.push(0)

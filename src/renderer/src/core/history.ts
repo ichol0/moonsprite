@@ -14,6 +14,16 @@ export interface HistoryEntry {
   requiresAnimationSync?: boolean
 }
 
+export interface HistoryTimelineEntry {
+  label: string
+  position: number
+}
+
+export interface HistoryTimeline {
+  entries: HistoryTimelineEntry[]
+  position: number
+}
+
 export type ContentInvalidationHint =
   | { kind: 'full' }
   | { kind: 'region'; frameId?: string; rect: SelectionRect }
@@ -48,6 +58,8 @@ export class HistoryStack {
   private redoEntries: HistoryEntry[] = []
   private bytes = 0
   private compoundEntries: HistoryEntry[] | null = null
+  private compoundDepth = 0
+  private stackRevision = 0
 
   constructor(private readonly maxBytes = 256 * 1024 * 1024) {}
 
@@ -55,12 +67,22 @@ export class HistoryStack {
   get canRedo(): boolean { return this.redoEntries.length > 0 }
   get memoryBytes(): number { return this.bytes }
   get latestUndoEntry(): HistoryEntry | null { return this.undoEntries.at(-1) ?? null }
+  get position(): number { return this.undoEntries.length }
+  get length(): number { return this.undoEntries.length + this.redoEntries.length }
+  get revision(): number { return this.stackRevision }
+  get timeline(): HistoryTimeline {
+    const entries = [...this.undoEntries, ...[...this.redoEntries].reverse()]
+      .map((entry, index) => ({ label: entry.label, position: index + 1 }))
+    return { entries, position: this.position }
+  }
 
   clear(): void {
     this.undoEntries = []
     this.redoEntries = []
     this.bytes = 0
     this.compoundEntries = null
+    this.compoundDepth = 0
+    this.stackRevision += 1
   }
 
   push(entry: HistoryEntry): void {
@@ -74,13 +96,18 @@ export class HistoryStack {
     while (this.bytes > this.maxBytes && this.undoEntries.length > 1) {
       this.bytes -= this.undoEntries.shift()!.bytes
     }
+    this.stackRevision += 1
   }
 
   beginCompound(): void {
-    if (!this.compoundEntries) this.compoundEntries = []
+    if (this.compoundDepth === 0) this.compoundEntries = []
+    this.compoundDepth += 1
   }
 
   endCompound(label: string): void {
+    if (this.compoundDepth === 0) return
+    this.compoundDepth -= 1
+    if (this.compoundDepth > 0) return
     const entries = this.compoundEntries
     this.compoundEntries = null
     if (!entries || entries.length === 0) return
@@ -91,8 +118,17 @@ export class HistoryStack {
     this.push(compoundHistoryEntry(entries, label))
   }
 
+  abortCompound(): void {
+    if (this.compoundDepth === 0) return
+    const entries = this.compoundEntries ?? []
+    this.compoundEntries = null
+    this.compoundDepth = 0
+    for (let index = entries.length - 1; index >= 0; index -= 1) entries[index].undo()
+    this.stackRevision += 1
+  }
+
   mergeLastTwo(label: string): HistoryEntry | null {
-    if (this.compoundEntries || this.undoEntries.length < 2) return null
+    if (this.compoundDepth > 0 || this.undoEntries.length < 2) return null
     const entries = this.undoEntries.splice(-2)
     this.bytes -= entries.reduce((sum, entry) => sum + entry.bytes, 0)
     const merged = compoundHistoryEntry(entries, label)
@@ -107,6 +143,7 @@ export class HistoryStack {
     this.undoEntries.pop()
     this.bytes -= entry.bytes
     this.redoEntries.push(entry)
+    this.stackRevision += 1
     return entry
   }
 
@@ -117,6 +154,7 @@ export class HistoryStack {
     this.redoEntries.pop()
     this.undoEntries.push(entry)
     this.bytes += entry.bytes
+    this.stackRevision += 1
     return entry
   }
 }

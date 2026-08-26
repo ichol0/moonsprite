@@ -20,6 +20,7 @@ describe('tool preferences persistence boundary', () => {
     expect(loadToolSettings(storage).brushSize).toBe(1)
     expect(loadToolSettings(storage).brushPaintMode).toBe('paint')
     expect(loadToolSettings(storage).brushDither).toEqual({ enabled: false, template: 'bayer-4', stage: 8 })
+    expect(loadToolSettings(storage)).toMatchObject({ shapeRounded: false, shapeCornerRadius: 4, selectionRounded: false, selectionCornerRadius: 4, gradientType: 'linear' })
     storage.setItem(TOOL_SETTINGS_KEY, '{bad')
     expect(loadToolSettings(storage).brushPaintMode).toBe(defaultToolSettings.brushPaintMode)
   })
@@ -41,6 +42,15 @@ describe('tool preferences persistence boundary', () => {
     expect(loadToolSettings(storage)).toMatchObject({ lineKind: 'curve', curveAnchorCount: 6 })
     storage.setItem(TOOL_SETTINGS_KEY, JSON.stringify({ curveAnchorCount: 99 }))
     expect(loadToolSettings(storage).curveAnchorCount).toBe(8)
+  })
+
+  it('normalizes and persists rounded corners and gradient type', () => {
+    const storage = createStorage()
+    saveToolSettings({ ...defaultToolSettings, shapeRounded: true, shapeCornerRadius: 12, selectionRounded: true, selectionCornerRadius: 7, gradientType: 'radial' }, storage)
+    expect(loadToolSettings(storage)).toMatchObject({ shapeRounded: true, shapeCornerRadius: 12, selectionRounded: true, selectionCornerRadius: 7, gradientType: 'radial' })
+
+    storage.setItem(TOOL_SETTINGS_KEY, JSON.stringify({ shapeRounded: true, shapeCornerRadius: 999, selectionRounded: true, selectionCornerRadius: -5, gradientType: 'unknown' }))
+    expect(loadToolSettings(storage)).toMatchObject({ shapeRounded: true, shapeCornerRadius: 256, selectionRounded: true, selectionCornerRadius: 0, gradientType: 'linear' })
   })
 
   it('normalizes old and out-of-range brush values', () => {
@@ -191,7 +201,7 @@ describe('tool preferences persistence boundary', () => {
     const storage = createStorage()
     saveToolSettings(defaultToolSettings, storage)
     expect(storage.getItem(TOOL_SETTINGS_KEY)).toContain('moveAutoSelect')
-    expect(loadToolSettings(storage)).toMatchObject({ brushSize: 1, brushDither: { enabled: false, template: 'bayer-4', stage: 8 }, moveAutoSelect: true, selectionMode: 'replace', fillKind: 'bucket', gradientTolerance: 0, gradientContiguous: true, gradientDither: 'none' })
+    expect(loadToolSettings(storage)).toMatchObject({ brushSize: 1, brushDither: { enabled: false, template: 'bayer-4', stage: 8 }, moveAutoSelect: true, selectionMode: 'replace', selectionRounded: false, selectionCornerRadius: 4, shapeRounded: false, shapeCornerRadius: 4, fillKind: 'bucket', gradientTolerance: 0, gradientContiguous: true, gradientType: 'linear', gradientDither: 'none' })
   })
 
   it('persists independent paint-bucket, magic-wand, and gradient range settings', () => {
