@@ -10,6 +10,7 @@ import type { SymmetryAxes, SymmetryMode } from '@/core/symmetry'
 import { useI18n } from '@/components/I18nProvider'
 import { PixelAssetIcon } from './editor-tools'
 import { PixelUtilityIcon } from '@/components/PixelUtilityIcon'
+import { Tooltip } from '@/components/Tooltip'
 import symmetryDiagonalDownIcon from '@/assets/pixel-icons/symmetry-diagonal-down.svg'
 import symmetryDiagonalUpIcon from '@/assets/pixel-icons/symmetry-diagonal-up.svg'
 import symmetryHorizontalIcon from '@/assets/pixel-icons/symmetry-horizontal.svg'
@@ -135,10 +136,12 @@ export function SymmetryControls({ axes, onAxisToggle, onResetCenter }: Symmetry
         <PixelUtilityIcon kind="refresh" />
         <span>{t('toolOptions.resetSymmetryAxis')}</span>
       </button>
-      <button type="button" role="menuitemcheckbox" aria-checked={preferences.locked} className="symmetry-more-item" onClick={() => updatePreferences({ locked: !preferences.locked })}>
-        {preferences.locked ? <PixelUtilityIcon kind="lock" /> : <PixelUtilityIcon kind="unlock" />}
-        <span>{t(preferences.locked ? 'toolOptions.unlockSymmetryAxis' : 'toolOptions.lockSymmetryAxis')}</span>
-      </button>
+      <Tooltip className="symmetry-lock-tooltip" content={t('toolOptions.symmetryLockHint')}>
+        <button type="button" role="menuitemcheckbox" aria-checked={preferences.locked} className="symmetry-more-item" onClick={() => updatePreferences({ locked: !preferences.locked })}>
+          {preferences.locked ? <PixelUtilityIcon kind="lock" /> : <PixelUtilityIcon kind="unlock" />}
+          <span>{t(preferences.locked ? 'toolOptions.unlockSymmetryAxis' : 'toolOptions.lockSymmetryAxis')}</span>
+        </button>
+      </Tooltip>
       <button type="button" role="menuitem" aria-expanded={settingsOpen} className={`symmetry-more-item ${settingsOpen ? 'selected' : ''}`} onClick={() => setSettingsOpen((open) => {
         if (open) setThicknessSliderOpen(false)
         return !open

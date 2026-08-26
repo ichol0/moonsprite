@@ -2,25 +2,50 @@ import type { AnimationCelSurface, BrushDitherSettings, BrushPaintMode, BrushSha
 import { compositeRegion, ensureLayerCoversCanvas, expandLayerToRect, getActiveLayer, getLayer, getLayerStorageOrigin, getPaletteEntry, isLayerEffectivelyLocked, layerContentBounds, layerIndexAt, layerIndexAtStoragePoint, markLayerContentChanged, normalizeLayerPackedValue, paletteColorIdForCanvas, readLayerColor, readLayerColorAt, readLayerPacked, readLayerPackedAt, writeLayerPacked, writeLayerPackedRun } from './document'
 import { beginPixelEdit, preparePixelEdit, recordPixel, recordPixelKnownCurrent, type PixelEdit } from './history'
 import { blendOver, isInBounds, packColor, pixelIndex, unpackColor } from './raster'
-import { flipSelectionMask, lassoSelection, packedColorMatchesTolerance, rasterLinePoints, rotatedEllipseSelection, rotatedRectSelection, selectionContains, transformedSelectionBounds, transformedSelectionDestinationPoint, transformedSelectionSourcePoint, type SelectionFlipAxis, type SelectionShearTransform } from './selection'
+import { flipSelectionMask, lassoSelection, packedColorMatchesTolerance, rasterLinePoints, rotatedEllipseSelection, rotatedRectSelection, roundedRectContainsPoint, selectionContains, transformedSelectionBounds, transformedSelectionDestinationPoint, transformedSelectionSourcePoint, type SelectionFlipAxis, type SelectionShearTransform } from './selection'
 import { proceduralBrushCoverageAt } from './brushes'
 import { balancedStairLinePoints } from './pixel-line'
-import { hasSymmetry, symmetryPoints, type SymmetryAxes, type SymmetryCenter } from './symmetry'
+import { hasSymmetry, symmetryPoints, symmetrySelectionDragRegion, type SymmetryAxes, type SymmetryCenter, type SymmetryPoint } from './symmetry'
 import { brushDitherContains, gradientColorForAmount, interpolateRgbaColor } from './gradient-color'
 import { readSurfacePackedRegion } from './runtime-raster'
-import { allOutlineDirections, outlineDirectionForOffset, outlineKernelContainsOffset } from './outline-settings'
+import { allOutlineDirections, DEFAULT_OUTLINE_SMART_HUE_DARKNESS, outlineDirectionForOffset, outlineKernelContainsOffset, resolveOutlineStrokeColor } from './outline-settings'
 import { tileRepeatRectSegments, wrapDocumentPointForTileRepeat } from './tilemap'
 import { contiguousMatchingRegion } from './contiguous-region'
 
-const paintLayerValue = (document: SpriteDocument, layer: RasterLayer, edit: PixelEdit, index: number, color: RgbaColor): number => {
-  if (color.a === 0) return layer.format === 'rgba' ? packColor(color) : 0
-  if (color.a === 255) return layer.format === 'rgba' ? packColor(color) : paletteColorIdForCanvas(document, color)
-  const original = brushPaintBaselineByEdit.get(edit)?.get(index) ?? edit.before.get(index)
-  const base = original === undefined
-    ? readLayerColor(document, layer, index)
-    : layer.format === 'rgba'
-      ? unpackColor(original)
-      : getPaletteEntry(document, original).color
+const paintLayerValue = (
+  document: SpriteDocument,
+  layer: RasterLayer,
+  edit: PixelEdit,
+  index: number,
+  color: RgbaColor,
+  compositeTransparent = false,
+  useCurrentDestination = false
+): number => {
+  // A normal transparent brush is an eraser. Dynamic gradient samples are
+  // different: a transparent sample is a source-over no-op, matching
+  // Aseprite's ink compositing and preserving the pixel underneath.
+  if (color.a === 0) {
+    if (!compositeTransparent) return layer.format === 'rgba' ? packColor(color) : 0
+    // A transparent pressure-gradient sample must use the pixel currently on
+    // the canvas as its backdrop. Using the edit/baseline snapshot here would
+    // restore the pixel from before the stroke and erase an earlier part of
+    // the same stroke when the path crosses itself.
+    if (useCurrentDestination) return readLayerPacked(document, layer, index)
+    const original = brushPaintBaselineByEdit.get(edit)?.get(index) ?? edit.before.get(index)
+    if (original !== undefined) return original
+    return readLayerPacked(document, layer, index)
+  }
+  if (color.a === 255 && !useCurrentDestination) return layer.format === 'rgba' ? packColor(color) : paletteColorIdForCanvas(document, color)
+  let base: RgbaColor
+  if (useCurrentDestination) base = readLayerColor(document, layer, index)
+  else {
+    const original = brushPaintBaselineByEdit.get(edit)?.get(index) ?? edit.before.get(index)
+    base = original === undefined
+      ? readLayerColor(document, layer, index)
+      : layer.format === 'rgba'
+        ? unpackColor(original)
+        : getPaletteEntry(document, original).color
+  }
   const blended = blendOver(base, color)
   return layer.format === 'rgba' ? packColor(blended) : paletteColorIdForCanvas(document, blended)
 }
@@ -217,6 +242,11 @@ export interface BrushGradientSample {
   dither: GradientDither
 }
 
+/** Whether a dynamic gradient needs true source-over compositing. */
+const gradientHasTransparentStop = (gradient: BrushGradientSample | undefined): boolean => Boolean(
+  gradient && (gradient.startColor.a < 255 || gradient.endColor.a < 255)
+)
+
 export interface BrushLineGradient {
   startColor: RgbaColor
   endColor: RgbaColor
@@ -391,8 +421,16 @@ export function paintBrush(
         : color.a === 0
         ? 'erase'
         : `paint:${paintColor.r},${paintColor.g},${paintColor.b},${paintColor.a}`)
-      const eraseResolvedColor = gradient ? resolvedColor.a === 0 : color.a === 0
-      const overwriteImageBrushPixel = imageBrush?.intrinsicSize === true && brushPaintMode === 'paint' && !eraseResolvedColor
+      const eraseResolvedColor = !gradient && color.a === 0
+      const sourceOverGradient = gradientHasTransparentStop(gradient) || Boolean(gradient && paintColor.a === 0)
+      const overwriteImageBrushPixel = imageBrush?.intrinsicSize === true
+        && brushPaintMode === 'paint'
+        && !eraseResolvedColor
+        // A gradient with a transparent stop must blend over the current
+        // destination, including for intrinsic image brushes. Direct
+        // replacement would let a lower-pressure crossing erase the earlier
+        // part of the same stroke.
+        && !sourceOverGradient
       if (!overwriteImageBrushPixel && !claimBrushCoverage(edit, paintCoverageKey, index, scaledCoverage, coverageKey !== undefined || gradient !== undefined)) continue
       if (eraseResolvedColor) {
         const eraseCoverage = offset.color ? Math.round(scaledCoverage * offset.color.a / 255) : scaledCoverage
@@ -409,7 +447,7 @@ export function paintBrush(
           ? layer.format === 'rgba'
             ? packColor(stamped)
             : stamped.a === 0 ? 0 : paletteColorIdForCanvas(document, stamped)
-          : paintLayerValue(document, layer, edit, index, stamped)
+          : paintLayerValue(document, layer, edit, index, stamped, gradient !== undefined, sourceOverGradient)
         recordPixel(document, layer, edit, index, next)
       }
     }
@@ -912,9 +950,10 @@ export function paintShape(
   selection?: SelectionMask | null,
   symmetryAxes?: SymmetryAxes,
   symmetryCenter?: SymmetryCenter,
-  angle = 0
+  angle = 0,
+  cornerRadius = 0
 ): void {
-  const points = [...rotatedShapePixelPoints(bounds, kind, document.width, document.height, angle)]
+  const points = [...rotatedShapePixelPoints(bounds, kind, document.width, document.height, angle, cornerRadius)]
   if (points.length === 0) return
   const destinations = points.flatMap((point) => symmetryPoints(point, document.width, document.height, symmetryAxes, symmetryCenter))
   const left = Math.min(...destinations.map((point) => point.x))
@@ -1015,39 +1054,65 @@ export function paintShapePixelPoints(
   }
 }
 
-/** Returns the exact pixels that a preview and the committed outline will paint. */
-export function outlinePixelIndices(
+export interface OutlinePixelSample {
+  index: number
+  referenceColor: RgbaColor
+}
+
+interface OutlinePixelCandidate extends OutlinePixelSample {
+  distance: number
+  rank: number
+}
+
+const setOutlinePixelCandidate = (
+  candidates: Map<number, OutlinePixelCandidate>,
+  index: number,
+  referenceColor: RgbaColor,
+  distance: number,
+  rank: number
+): void => {
+  const current = candidates.get(index)
+  if (current && (current.distance < distance || (current.distance === distance && current.rank <= rank))) return
+  candidates.set(index, { index, referenceColor, distance, rank })
+}
+
+/** Returns the exact pixels and source colors that a preview and the committed outline will paint. */
+export function outlinePixelSamples(
   document: SpriteDocument,
   layer: RasterLayer,
-  selection: SelectionMask,
+  selection: SelectionMask | null,
   thickness: number,
   position: OutlinePosition,
   directions: OutlineDirections = allOutlineDirections(),
   kernel: OutlineKernel = 'square'
-): number[] {
+): OutlinePixelSample[] {
   const radius = Math.max(1, Math.min(64, Math.round(thickness)))
-  const left = Math.max(0, selection.x - radius)
-  const top = Math.max(0, selection.y - radius)
-  const right = Math.min(document.width, selection.x + selection.width + radius)
-  const bottom = Math.min(document.height, selection.y + selection.height + radius)
+  const sourceBounds = selection ?? layerContentBounds(document, layer)
+  if (!sourceBounds) return []
+  const left = Math.max(0, sourceBounds.x - radius)
+  const top = Math.max(0, sourceBounds.y - radius)
+  const right = Math.min(document.width, sourceBounds.x + sourceBounds.width + radius)
+  const bottom = Math.min(document.height, sourceBounds.y + sourceBounds.height + radius)
+  if (right <= left || bottom <= top) return []
   const width = right - left
   const height = bottom - top
   const isSource = (x: number, y: number): boolean =>
-    x >= left && y >= top && x < right && y < bottom && selectionContains(selection, x, y) && readLayerColorAt(document, layer, x, y).a > 0
-  const result = new Set<number>()
-  const boundary: Array<{ x: number; y: number }> = []
+    x >= left && y >= top && x < right && y < bottom && (!selection || selectionContains(selection, x, y)) && readLayerColorAt(document, layer, x, y).a > 0
+  const result = new Map<number, OutlinePixelSample>()
+  const boundary: Array<{ x: number; y: number; color: RgbaColor }> = []
   for (let y = top; y < bottom; y += 1) for (let x = left; x < right; x += 1) {
     if (!isSource(x, y)) continue
     let edge = false
     for (let dy = -1; dy <= 1 && !edge; dy += 1) for (let dx = -1; dx <= 1; dx += 1) {
       if ((dx !== 0 || dy !== 0) && !isSource(x + dx, y + dy)) { edge = true; break }
     }
-    if (edge) boundary.push({ x, y })
+    if (edge) boundary.push({ x, y, color: readLayerColorAt(document, layer, x, y) })
   }
 
   if (position !== 'inside') {
-    const clipped = new Set<number>()
-    const unclipped = new Set<number>()
+    const clipped = new Map<number, OutlinePixelCandidate>()
+    const unclipped = new Map<number, OutlinePixelCandidate>()
+    const diameter = radius * 2 + 1
     for (const source of boundary) for (let dy = -radius; dy <= radius; dy += 1) for (let dx = -radius; dx <= radius; dx += 1) {
       if (!outlineKernelContainsOffset(dx, dy, radius, kernel)) continue
       const direction = outlineDirectionForOffset(dx, dy)
@@ -1057,12 +1122,14 @@ export function outlinePixelIndices(
       if (targetX < 0 || targetY < 0 || targetX >= document.width || targetY >= document.height || isSource(targetX, targetY)) continue
       const index = pixelIndex(document.width, targetX, targetY)
       if (readLayerColorAt(document, layer, targetX, targetY).a !== 0) continue
-      unclipped.add(index)
-      if (selectionContains(selection, targetX, targetY)) clipped.add(index)
+      const distance = dx * dx + dy * dy
+      const rank = (-dy + radius) * diameter + (-dx + radius)
+      setOutlinePixelCandidate(unclipped, index, source.color, distance, rank)
+      if (selection && selectionContains(selection, targetX, targetY)) setOutlinePixelCandidate(clipped, index, source.color, distance, rank)
     }
     // Prefer clipping to the selection. A tight content selection has no room for an
     // outside stroke, so fall back to adjacent canvas pixels instead of doing nothing.
-    for (const index of clipped.size > 0 ? clipped : unclipped) result.add(index)
+    for (const sample of (selection && clipped.size > 0 ? clipped : unclipped).values()) result.set(sample.index, { index: sample.index, referenceColor: sample.referenceColor })
   }
 
   if (position !== 'outside' && boundary.length > 0) {
@@ -1084,38 +1151,55 @@ export function outlinePixelIndices(
         const targetX = source.x + dx
         const targetY = source.y + dy
         if (targetX < left || targetY < top || targetX >= right || targetY >= bottom || !isSource(targetX, targetY)) continue
-        result.add(pixelIndex(document.width, targetX, targetY))
+        const index = pixelIndex(document.width, targetX, targetY)
+        if (!result.has(index)) result.set(index, { index, referenceColor: readLayerColorAt(document, layer, targetX, targetY) })
       }
     }
   }
-  return [...result]
+  return [...result.values()]
+}
+
+/** Returns the exact pixels that a preview and the committed outline will paint. */
+export function outlinePixelIndices(
+  document: SpriteDocument,
+  layer: RasterLayer,
+  selection: SelectionMask | null,
+  thickness: number,
+  position: OutlinePosition,
+  directions: OutlineDirections = allOutlineDirections(),
+  kernel: OutlineKernel = 'square'
+): number[] {
+  return outlinePixelSamples(document, layer, selection, thickness, position, directions, kernel).map((sample) => sample.index)
 }
 
 export function outlineSelection(
   document: SpriteDocument,
   layer: RasterLayer,
-  selection: SelectionMask,
+  selection: SelectionMask | null,
   color: RgbaColor,
   thickness: number,
   position: OutlinePosition,
   directions: OutlineDirections = allOutlineDirections(),
-  kernel: OutlineKernel = 'square'
+  kernel: OutlineKernel = 'square',
+  smartHue = false,
+  smartHueDarkness = DEFAULT_OUTLINE_SMART_HUE_DARKNESS
 ): PixelEdit | null {
   if (isLayerEffectivelyLocked(document, layer)) return null
   if (!ensureLayerCoversCanvas(document, layer)) return null
   const edit = beginPixelEdit(layer.id)
-  for (const documentIndex of outlinePixelIndices(document, layer, selection, thickness, position, directions, kernel)) {
-    const x = documentIndex % document.width
-    const y = Math.floor(documentIndex / document.width)
+  const colorSettings = { color, smartHue, smartHueDarkness }
+  for (const sample of outlinePixelSamples(document, layer, selection, thickness, position, directions, kernel)) {
+    const x = sample.index % document.width
+    const y = Math.floor(sample.index / document.width)
     const index = layerIndexAt(layer, x, y)
-    if (index !== null) recordPixel(document, layer, edit, index, paintLayerValue(document, layer, edit, index, color))
+    if (index !== null) recordPixel(document, layer, edit, index, paintLayerValue(document, layer, edit, index, resolveOutlineStrokeColor(colorSettings, sample.referenceColor)))
   }
   return edit.before.size > 0 ? edit : null
 }
 
-const shapeContainsOffset = (width: number, height: number, ellipse: boolean, offsetX: number, offsetY: number): boolean => {
+const shapeContainsOffset = (width: number, height: number, ellipse: boolean, offsetX: number, offsetY: number, cornerRadius = 0): boolean => {
   if (offsetX < 0 || offsetY < 0 || offsetX >= width || offsetY >= height) return false
-  if (!ellipse) return true
+  if (!ellipse) return roundedRectContainsPoint(width, height, cornerRadius, offsetX + 0.5, offsetY + 0.5)
   const centerX = (width - 1) / 2
   const centerY = (height - 1) / 2
   const radiusX = Math.max(0.5, width / 2)
@@ -1125,21 +1209,21 @@ const shapeContainsOffset = (width: number, height: number, ellipse: boolean, of
   return (dx * dx) + (dy * dy) <= 1
 }
 
-export function shapeContainsPixel(bounds: SelectionRect, kind: ShapeKind, x: number, y: number): boolean {
+export function shapeContainsPixel(bounds: SelectionRect, kind: ShapeKind, x: number, y: number, cornerRadius = 0): boolean {
   if (kind === 'freeform' || kind === 'polygon') return false
   const width = Math.max(1, bounds.width)
   const height = Math.max(1, bounds.height)
-  return shapeContainsOffset(width, height, kind === 'ellipse' || kind === 'ellipse-outline', x - bounds.x, y - bounds.y)
+  return shapeContainsOffset(width, height, kind === 'ellipse' || kind === 'ellipse-outline', x - bounds.x, y - bounds.y, cornerRadius)
 }
 
-export function shapePixelPoints(bounds: SelectionRect, kind: ShapeKind): BrushMaskPoint[] {
+export function shapePixelPoints(bounds: SelectionRect, kind: ShapeKind, cornerRadius = 0): BrushMaskPoint[] {
   if (kind === 'freeform' || kind === 'polygon') return []
   const width = Math.max(1, bounds.width)
   const height = Math.max(1, bounds.height)
   const ellipse = kind === 'ellipse' || kind === 'ellipse-outline'
   const outline = kind === 'rectangle-outline' || kind === 'ellipse-outline'
   const filled = new Uint8Array(width * height)
-  const contains = (offsetX: number, offsetY: number): boolean => shapeContainsOffset(width, height, ellipse, offsetX, offsetY)
+  const contains = (offsetX: number, offsetY: number): boolean => shapeContainsOffset(width, height, ellipse, offsetX, offsetY, cornerRadius)
   for (let offsetY = 0; offsetY < height; offsetY += 1) for (let offsetX = 0; offsetX < width; offsetX += 1) if (contains(offsetX, offsetY)) filled[offsetY * width + offsetX] = 1
   const points: BrushMaskPoint[] = []
   for (let offsetY = 0; offsetY < height; offsetY += 1) {
@@ -1157,16 +1241,17 @@ export function rotatedShapePixelPoints(
   kind: ShapeKind,
   canvasWidth: number,
   canvasHeight: number,
-  angle = 0
+  angle = 0,
+  cornerRadius = 0
 ): BrushMaskPoint[] {
   if (kind === 'freeform' || kind === 'polygon') return []
   const normalizedAngle = ((angle % 360) + 360) % 360
-  if (normalizedAngle < 1e-9 || Math.abs(normalizedAngle - 360) < 1e-9) return shapePixelPoints(bounds, kind)
+  if (normalizedAngle < 1e-9 || Math.abs(normalizedAngle - 360) < 1e-9) return shapePixelPoints(bounds, kind, cornerRadius)
   const ellipse = kind === 'ellipse' || kind === 'ellipse-outline'
   const outline = kind === 'rectangle-outline' || kind === 'ellipse-outline'
   const filled = ellipse
     ? rotatedEllipseSelection(bounds, canvasWidth, canvasHeight, angle)
-    : rotatedRectSelection(bounds, canvasWidth, canvasHeight, angle)
+    : rotatedRectSelection(bounds, canvasWidth, canvasHeight, angle, true, cornerRadius)
   if (!filled) return []
 
   const points: BrushMaskPoint[] = []
@@ -2250,7 +2335,13 @@ export function selectionTranslationPreviewEdit(document: SpriteDocument, previe
 
 function selectionTransformCells(document: SpriteDocument, sourceData: SelectionTransformSource, target: SelectionRect, angle: number, shear?: SelectionShearTransform, targetLayer?: RasterLayer): TransformCell[] {
   const source = sourceData.selection
-  const destination = clampSelection(document, transformedSelectionBounds(target, angle, shear))
+  const transformedBounds = transformedSelectionBounds(target, angle, shear)
+  const destination = clampSelection(document, {
+    x: Math.floor(transformedBounds.x),
+    y: Math.floor(transformedBounds.y),
+    width: Math.ceil(transformedBounds.x + transformedBounds.width) - Math.floor(transformedBounds.x),
+    height: Math.ceil(transformedBounds.y + transformedBounds.height) - Math.floor(transformedBounds.y)
+  })
   if (!destination) return []
   const cells = new Map<number, TransformCell>()
   const layer = targetLayer ?? getActiveLayer(document)
@@ -2369,10 +2460,10 @@ export function selectionTransformPreviewPacked(
   const layer = targetLayer ?? getActiveLayer(document)
   const simpleInverseTransform = angle % 360 === 0 && !shear
   if (simpleInverseTransform) {
-    const right = Math.min(document.width, startX + width, target.x + target.width)
-    const bottom = Math.min(document.height, startY + height, target.y + target.height)
-    const left = Math.max(0, startX, target.x)
-    const top = Math.max(0, startY, target.y)
+    const right = Math.min(document.width, startX + width, Math.ceil(target.x + target.width))
+    const bottom = Math.min(document.height, startY + height, Math.ceil(target.y + target.height))
+    const left = Math.max(0, startX, Math.floor(target.x))
+    const top = Math.max(0, startY, Math.floor(target.y))
     for (let y = top; y < bottom; y += 1) for (let x = left; x < right; x += 1) {
       const sourcePoint = transformedSelectionSourcePoint(source.selection, target, x, y)
       if (!sourcePoint) continue
@@ -2386,6 +2477,70 @@ export function selectionTransformPreviewPacked(
     output[(cell.y - startY) * width + cell.x - startX] = cell.value
   }
   return output
+}
+
+export interface SelectionTransformPreviewRasterPacked {
+  width: number
+  height: number
+  pixels: Uint32Array
+}
+
+/** Rasterizes a transform in local coordinates so integer movement can reuse the same pixels. */
+export function selectionTransformPreviewRasterPacked(
+  document: SpriteDocument,
+  source: SelectionTransformSource,
+  target: SelectionRect,
+  angle = 0,
+  shear?: SelectionShearTransform,
+  targetLayer?: RasterLayer
+): SelectionTransformPreviewRasterPacked {
+  const transformedBounds = transformedSelectionBounds(target, angle, shear)
+  const left = Math.floor(transformedBounds.x)
+  const top = Math.floor(transformedBounds.y)
+  const right = Math.ceil(transformedBounds.x + transformedBounds.width)
+  const bottom = Math.ceil(transformedBounds.y + transformedBounds.height)
+  const width = Math.max(0, right - left)
+  const height = Math.max(0, bottom - top)
+  if (width === 0 || height === 0) return { width, height, pixels: new Uint32Array(0) }
+
+  const shiftX = -left
+  const shiftY = -top
+  const shiftedTarget: SelectionRect = {
+    ...target,
+    x: target.x + shiftX,
+    y: target.y + shiftY,
+    ...(Number.isFinite(target.flipOriginX) ? { flipOriginX: target.flipOriginX! + shiftX } : {}),
+    ...(Number.isFinite(target.flipOriginY) ? { flipOriginY: target.flipOriginY! + shiftY } : {})
+  }
+  const shiftedSource: SelectionTransformSource = {
+    ...source,
+    selection: {
+      ...source.selection,
+      x: source.selection.x + shiftX,
+      y: source.selection.y + shiftY
+    }
+  }
+  const localDocument = {
+    width,
+    height,
+    palette: document.palette
+  } as SpriteDocument
+  return {
+    width,
+    height,
+    pixels: selectionTransformPreviewPacked(
+      localDocument,
+      shiftedSource,
+      shiftedTarget,
+      0,
+      0,
+      width,
+      height,
+      angle,
+      shear,
+      targetLayer
+    )
+  }
 }
 
 export function transformRgbaSelectionSurface(
@@ -2506,7 +2661,7 @@ export function transformSelectionCopy(document: SpriteDocument, selection: Sele
   return source ? applySelectionTransform(document, source, target, angle, true, shear, symmetryAxes, symmetryCenter, layer) : null
 }
 
-export function applySelectionTransform(document: SpriteDocument, source: SelectionTransformSource, target: SelectionRect, angle = 0, copy = false, shear?: SelectionShearTransform, symmetryAxes?: SymmetryAxes, symmetryCenter?: SymmetryCenter, targetLayer?: RasterLayer): PixelEdit | null {
+export function applySelectionTransform(document: SpriteDocument, source: SelectionTransformSource, target: SelectionRect, angle = 0, copy = false, shear?: SelectionShearTransform, symmetryAxes?: SymmetryAxes, symmetryCenter?: SymmetryCenter, targetLayer?: RasterLayer, symmetryStartPoint?: SymmetryPoint): PixelEdit | null {
   const layer = targetLayer ?? getActiveLayer(document)
   if (isLayerEffectivelyLocked(document, layer)) return null
   if (!ensureLayerCoversCanvas(document, layer)) return null
@@ -2517,10 +2672,50 @@ export function applySelectionTransform(document: SpriteDocument, source: Select
     const index = layerIndexAt(layer, x, y)
     if (index !== null) recordPixel(document, layer, edit, index, value)
   }
+  const symmetryRegion = symmetryStartPoint
+    && normalizedAngle === 0
+    && !shear
+    && !target.flipHorizontal
+    && !target.flipVertical
+    && target.width === sourceSelection.width
+    && target.height === sourceSelection.height
+    && Number.isInteger(target.x)
+    && Number.isInteger(target.y)
+    ? symmetrySelectionDragRegion(sourceSelection, symmetryStartPoint, document.width, document.height, symmetryAxes, symmetryCenter)
+    : null
+  if (symmetryRegion) {
+    if (!copy) forEachSelectedSourceOffset(source, (offset) => {
+      const localX = offset % sourceSelection.width
+      const localY = Math.floor(offset / sourceSelection.width)
+      recordCanvasPixel(sourceSelection.x + localX, sourceSelection.y + localY, 0)
+    })
+    const written = new Set<number>()
+    const deltaX = target.x - sourceSelection.x
+    const deltaY = target.y - sourceSelection.y
+    for (let y = symmetryRegion.y; y < symmetryRegion.y + symmetryRegion.height; y += 1) {
+      for (let x = symmetryRegion.x; x < symmetryRegion.x + symmetryRegion.width; x += 1) {
+        if (!selectionContains(symmetryRegion, x, y)) continue
+        const sourceOffset = (y - sourceSelection.y) * sourceSelection.width + x - sourceSelection.x
+        const value = source.values[sourceOffset]
+        const transparent = layer.format === 'rgba'
+          ? unpackColor(value).a === 0
+          : value === 0 || getPaletteEntry(document, value).color.a === 0
+        if (transparent) continue
+        for (const destination of symmetryPoints({ x: x + deltaX, y: y + deltaY }, document.width, document.height, symmetryAxes, symmetryCenter)) {
+          if (!isInBounds(document.width, document.height, destination.x, destination.y)) continue
+          const index = layerIndexAt(layer, destination.x, destination.y)
+          if (index === null || written.has(index)) continue
+          written.add(index)
+          recordCanvasPixel(destination.x, destination.y, value)
+        }
+      }
+    }
+    return edit.before.size > 0 ? edit : null
+  }
 
   // Moving an unscaled selection is the common interactive path. Iterate its
   // captured offsets directly instead of allocating a TransformCell per pixel.
-  if (!hasSymmetry(symmetryAxes) && normalizedAngle === 0 && !shear && target.width === sourceSelection.width && target.height === sourceSelection.height && !target.flipHorizontal && !target.flipVertical) {
+  if (!hasSymmetry(symmetryAxes) && normalizedAngle === 0 && !shear && Number.isInteger(target.x) && Number.isInteger(target.y) && target.width === sourceSelection.width && target.height === sourceSelection.height && !target.flipHorizontal && !target.flipVertical) {
     if (!copy) {
       forEachSelectedSourceOffset(source, (offset) => {
         const localX = offset % sourceSelection.width

@@ -46,7 +46,18 @@ describe('ModalShell', () => {
   it('does not apply preference dialog limits to the narrow layer settings dialog', () => {
     render(<ModalShell storageKey="layer-settings-test" className="layer-settings-modal" defaultWidth={400} minWidth={360} role="dialog"><header>图层设置</header></ModalShell>)
 
-    expect(screen.getByRole('dialog')).toHaveStyle({ width: '400px', minWidth: '360px' })
+    expect(screen.getByRole('dialog')).toHaveStyle({ width: '360px', minWidth: '360px' })
+  })
+
+  it('uses compact default bounds without changing the resize limits', () => {
+    render(<ModalShell storageKey="compact-default" fitContent={false} defaultWidth={500} defaultHeight={400} minWidth={300} minHeight={220} role="dialog"><header>紧凑弹窗</header></ModalShell>)
+
+    expect(screen.getByRole('dialog')).toHaveStyle({
+      width: '440px',
+      height: '328px',
+      minWidth: '300px',
+      minHeight: '220px'
+    })
   })
 
   it('lets a large settings dialog shrink inside a zoom-reduced viewport', () => {
@@ -96,7 +107,7 @@ describe('ModalShell', () => {
 
     render(<ModalShell storageKey="right" placement="right" defaultWidth={400} defaultHeight={300} role="dialog"><header>右侧弹窗</header></ModalShell>)
 
-    expect(screen.getByRole('dialog')).toHaveStyle({ left: '500px' })
+    expect(screen.getByRole('dialog')).toHaveStyle({ left: '524px' })
     stage.remove()
   })
 
@@ -121,6 +132,25 @@ describe('ModalShell', () => {
     fireEvent.pointerDown(screen.getByText('颜色编辑标题'), { button: 0, pointerId: 11, clientX: 40, clientY: 40 })
 
     expect(capture).not.toHaveBeenCalled()
+  })
+
+  it('brings the focused modal and its backdrop above other dialogs', () => {
+    render(<>
+      <div className="modal-backdrop" data-testid="first-backdrop"><ModalShell storageKey="stack-first" role="dialog" aria-label="第一个弹窗"><header>第一个弹窗</header><button type="button">聚焦第一个</button></ModalShell></div>
+      <div className="modal-backdrop" data-testid="second-backdrop"><ModalShell storageKey="stack-second" role="dialog" aria-label="第二个弹窗"><header>第二个弹窗</header><button type="button">聚焦第二个</button></ModalShell></div>
+    </>)
+    const firstBackdrop = screen.getByTestId('first-backdrop')
+    const secondBackdrop = screen.getByTestId('second-backdrop')
+    const firstDialog = screen.getByRole('dialog', { name: '第一个弹窗' })
+    const secondDialog = screen.getByRole('dialog', { name: '第二个弹窗' })
+
+    fireEvent.focus(screen.getByRole('button', { name: '聚焦第一个' }))
+    expect(Number(firstBackdrop.style.zIndex)).toBeGreaterThan(Number(secondBackdrop.style.zIndex))
+    expect(Number(firstDialog.style.zIndex)).toBeGreaterThan(Number(secondDialog.style.zIndex))
+
+    fireEvent.focus(screen.getByRole('button', { name: '聚焦第二个' }))
+    expect(Number(secondBackdrop.style.zIndex)).toBeGreaterThan(Number(firstBackdrop.style.zIndex))
+    expect(Number(secondDialog.style.zIndex)).toBeGreaterThan(Number(firstDialog.style.zIndex))
   })
 
   it('moves without rerender jitter and keeps only the title reachable below the viewport', () => {

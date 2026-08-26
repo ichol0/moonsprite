@@ -80,8 +80,8 @@ const GRAY_SEEDS: ThemeSeedColors = {
   accent: '#2979ff', danger: '#ef5350', success: '#66bb6a', warning: '#ffab26'
 }
 const DARK_GRAY_SEEDS: ThemeSeedColors = {
-  workspace: '#1f2125', surface: '#2b2e34', raisedSurface: '#393d45', deepSurface: '#17191c', canvasSurround: '#4c5159',
-  border: '#444a53', borderStrong: '#6b7480', controlBackground: '#16181b', textPrimary: '#f1f3f6', textSecondary: '#cdd2d9', textMuted: '#9ca3ad',
+  workspace: '#11161d', surface: '#1a222c', raisedSurface: '#253140', deepSurface: '#0d1218', canvasSurround: '#2f3a48',
+  border: '#303d4c', borderStrong: '#586b82', controlBackground: '#0b1016', textPrimary: '#f1f3f6', textSecondary: '#cdd2d9', textMuted: '#9ca3ad',
   accent: '#2979ff', danger: '#ef5350', success: '#66bb6a', warning: '#ffab26'
 }
 const AMBER_SEEDS: ThemeSeedColors = {
@@ -129,50 +129,20 @@ const COPPER_SEEDS: ThemeSeedColors = {
   border: '#837f79', borderStrong: '#58534c', controlBackground: '#e2ded5', textPrimary: '#282725', textSecondary: '#48433d', textMuted: '#5c5750',
   accent: '#8f6650', danger: '#a44d49', success: '#4f714c', warning: '#93621a'
 }
-const DARK_VISUALS: ThemeVisualDefaults = { checkerLight: { r: 215, g: 215, b: 217, a: 255 }, checkerDark: { r: 155, g: 155, b: 159, a: 255 }, pixelGrid: { r: 69, g: 77, b: 92, a: 143 }, customGrid: { r: 0, g: 0, b: 255, a: 255 }, onionPrevious: { r: 239, g: 83, b: 80, a: 255 }, onionNext: { r: 41, g: 121, b: 255, a: 255 }, symmetryAxis: { r: 0, g: 0, b: 255, a: 255 } }
-const LIGHT_VISUALS: ThemeVisualDefaults = { checkerLight: { r: 215, g: 215, b: 217, a: 255 }, checkerDark: { r: 155, g: 155, b: 159, a: 255 }, pixelGrid: { r: 119, g: 128, b: 142, a: 150 }, customGrid: { r: 0, g: 0, b: 255, a: 255 }, onionPrevious: { r: 205, g: 55, b: 53, a: 255 }, onionNext: { r: 31, g: 97, b: 210, a: 255 }, symmetryAxis: { r: 0, g: 0, b: 255, a: 255 } }
-const PINK_VISUALS: ThemeVisualDefaults = { checkerLight: { r: 215, g: 215, b: 217, a: 255 }, checkerDark: { r: 155, g: 155, b: 159, a: 255 }, pixelGrid: { r: 166, g: 112, b: 141, a: 145 }, customGrid: { r: 0, g: 0, b: 255, a: 255 }, onionPrevious: { r: 192, g: 45, b: 82, a: 255 }, onionNext: { r: 83, g: 121, b: 190, a: 255 }, symmetryAxis: { r: 0, g: 0, b: 255, a: 255 } }
-const GRAY_VISUALS: ThemeVisualDefaults = { checkerLight: { r: 215, g: 215, b: 217, a: 255 }, checkerDark: { r: 155, g: 155, b: 159, a: 255 }, pixelGrid: { r: 193, g: 198, b: 207, a: 145 }, customGrid: { r: 0, g: 0, b: 255, a: 255 }, onionPrevious: { r: 239, g: 83, b: 80, a: 255 }, onionNext: { r: 41, g: 121, b: 255, a: 255 }, symmetryAxis: { r: 0, g: 0, b: 255, a: 255 } }
-const DARK_GRAY_VISUALS: ThemeVisualDefaults = { checkerLight: { r: 215, g: 215, b: 217, a: 255 }, checkerDark: { r: 155, g: 155, b: 159, a: 255 }, pixelGrid: { r: 184, g: 184, b: 184, a: 145 }, customGrid: { r: 0, g: 0, b: 255, a: 255 }, onionPrevious: { r: 239, g: 83, b: 80, a: 255 }, onionNext: { r: 41, g: 121, b: 255, a: 255 }, symmetryAxis: { r: 0, g: 0, b: 255, a: 255 } }
-const AMBER_VISUALS: ThemeVisualDefaults = { checkerLight: { r: 215, g: 215, b: 217, a: 255 }, checkerDark: { r: 155, g: 155, b: 159, a: 255 }, pixelGrid: { r: 183, g: 158, b: 126, a: 145 }, customGrid: { r: 0, g: 0, b: 255, a: 255 }, onionPrevious: { r: 223, g: 98, b: 88, a: 255 }, onionNext: { r: 224, g: 162, b: 59, a: 255 }, symmetryAxis: { r: 0, g: 0, b: 255, a: 255 } }
-const MINT_VISUALS: ThemeVisualDefaults = { checkerLight: { r: 215, g: 215, b: 217, a: 255 }, checkerDark: { r: 155, g: 155, b: 159, a: 255 }, pixelGrid: { r: 151, g: 197, b: 187, a: 145 }, customGrid: { r: 0, g: 0, b: 255, a: 255 }, onionPrevious: { r: 220, g: 98, b: 93, a: 255 }, onionNext: { r: 56, g: 169, b: 144, a: 255 }, symmetryAxis: { r: 0, g: 0, b: 255, a: 255 } }
-const PLUM_VISUALS: ThemeVisualDefaults = { checkerLight: { r: 215, g: 215, b: 217, a: 255 }, checkerDark: { r: 155, g: 155, b: 159, a: 255 }, pixelGrid: { r: 190, g: 163, b: 205, a: 145 }, customGrid: { r: 0, g: 0, b: 255, a: 255 }, onionPrevious: { r: 223, g: 98, b: 110, a: 255 }, onionNext: { r: 168, g: 90, b: 214, a: 255 }, symmetryAxis: { r: 0, g: 0, b: 255, a: 255 } }
-const OCEAN_VISUALS: ThemeVisualDefaults = { checkerLight: { r: 215, g: 215, b: 217, a: 255 }, checkerDark: { r: 155, g: 155, b: 159, a: 255 }, pixelGrid: { r: 105, g: 154, b: 177, a: 145 }, customGrid: { r: 0, g: 0, b: 255, a: 255 }, onionPrevious: { r: 219, g: 90, b: 119, a: 255 }, onionNext: { r: 48, g: 181, b: 174, a: 255 }, symmetryAxis: { r: 0, g: 0, b: 255, a: 255 } }
-const FOREST_VISUALS: ThemeVisualDefaults = { checkerLight: { r: 215, g: 215, b: 217, a: 255 }, checkerDark: { r: 155, g: 155, b: 159, a: 255 }, pixelGrid: { r: 145, g: 166, b: 134, a: 145 }, customGrid: { r: 0, g: 0, b: 255, a: 255 }, onionPrevious: { r: 211, g: 83, b: 76, a: 255 }, onionNext: { r: 78, g: 151, b: 103, a: 255 }, symmetryAxis: { r: 0, g: 0, b: 255, a: 255 } }
-const SUNSET_VISUALS: ThemeVisualDefaults = { checkerLight: { r: 215, g: 215, b: 217, a: 255 }, checkerDark: { r: 155, g: 155, b: 159, a: 255 }, pixelGrid: { r: 168, g: 147, b: 184, a: 145 }, customGrid: { r: 0, g: 0, b: 255, a: 255 }, onionPrevious: { r: 218, g: 73, b: 91, a: 255 }, onionNext: { r: 74, g: 192, b: 176, a: 255 }, symmetryAxis: { r: 0, g: 0, b: 255, a: 255 } }
-const CLASSIC_VISUALS: ThemeVisualDefaults = { checkerLight: { r: 215, g: 215, b: 217, a: 255 }, checkerDark: { r: 155, g: 155, b: 159, a: 255 }, pixelGrid: { r: 76, g: 82, b: 88, a: 145 }, customGrid: { r: 0, g: 0, b: 255, a: 255 }, onionPrevious: { r: 178, g: 55, b: 68, a: 255 }, onionNext: { r: 49, g: 98, b: 168, a: 255 }, symmetryAxis: { r: 0, g: 0, b: 255, a: 255 } }
-const SLATE_VISUALS: ThemeVisualDefaults = { checkerLight: { r: 215, g: 215, b: 217, a: 255 }, checkerDark: { r: 155, g: 155, b: 159, a: 255 }, pixelGrid: { r: 82, g: 96, b: 84, a: 145 }, customGrid: { r: 0, g: 0, b: 255, a: 255 }, onionPrevious: { r: 174, g: 73, b: 77, a: 255 }, onionNext: { r: 64, g: 119, b: 158, a: 255 }, symmetryAxis: { r: 0, g: 0, b: 255, a: 255 } }
-const COPPER_VISUALS: ThemeVisualDefaults = { checkerLight: { r: 215, g: 215, b: 217, a: 255 }, checkerDark: { r: 155, g: 155, b: 159, a: 255 }, pixelGrid: { r: 91, g: 87, b: 81, a: 145 }, customGrid: { r: 0, g: 0, b: 255, a: 255 }, onionPrevious: { r: 174, g: 74, b: 67, a: 255 }, onionNext: { r: 67, g: 119, b: 157, a: 255 }, symmetryAxis: { r: 0, g: 0, b: 255, a: 255 } }
-
-interface PixelThemeDerivedColors {
-  surfaceHover: string
-  surfaceActive: string
-  textFaint: string
-  textDisabled: string
-  accentHover: string
-  accentSelected: string
-  accentSoft: string
-  surfaceMuted?: string
-  surfaceDisabled?: string
-  dangerSoft?: string
-  successSoft?: string
-  warningSoft?: string
-  scrollbarTrack?: string
-  scrollbarThumb?: string
-}
-
-const PIXEL_THEME_DERIVED: Record<string, PixelThemeDerivedColors> = {
-  pink: { surfaceMuted: '#faedf4', surfaceDisabled: '#f1e1ea', dangerSoft: '#f9d9e2', successSoft: '#dcece6', warningSoft: '#f5e7cf', scrollbarTrack: '#efd9e5', scrollbarThumb: '#bd88a5', surfaceHover: '#fde7f2', surfaceActive: '#f6cfe1', textFaint: '#a47c91', textDisabled: '#bca0af', accentHover: '#c04482', accentSelected: '#98295f', accentSoft: '#f9d8e8' },
-  amber: { surfaceHover: '#4a3a2c', surfaceActive: '#594523', textFaint: '#9b8976', textDisabled: '#776858', accentHover: '#b8791f', accentSelected: '#754a10', accentSoft: '#4a3215' },
-  mint: { surfaceHover: '#2a5250', surfaceActive: '#2b5b54', textFaint: '#759a91', textDisabled: '#5c7b75', accentHover: '#1d9a82', accentSelected: '#106653', accentSoft: '#163f37' },
-  plum: { surfaceHover: '#4b375a', surfaceActive: '#5a3b6b', textFaint: '#987fa2', textDisabled: '#765f80', accentHover: '#9650c0', accentSelected: '#642889', accentSoft: '#422050' },
-  ocean: { surfaceHover: '#1c3746', surfaceActive: '#343b68', textFaint: '#728ba5', textDisabled: '#586b82', accentHover: '#268b8d', accentSelected: '#10595c', accentSoft: '#16363f' },
-  forest: { surfaceHover: '#30402d', surfaceActive: '#4a422d', textFaint: '#8d886b', textDisabled: '#6d6a54', accentHover: '#a86f20', accentSelected: '#70470f', accentSoft: '#352a16' },
-  sunset: { surfaceHover: '#34304b', surfaceActive: '#52384c', textFaint: '#927f98', textDisabled: '#716276', accentHover: '#b5537c', accentSelected: '#7f3154', accentSoft: '#3a2031' },
-  classic: { surfaceMuted: '#98a0a7', surfaceDisabled: '#adb2b5', dangerSoft: '#e7aeb5', successSoft: '#a8c7ae', warningSoft: '#d8c29b', scrollbarTrack: '#909097', scrollbarThumb: '#5d5d65', surfaceHover: '#c8c9c8', surfaceActive: '#95a8ba', textFaint: '#505a63', textDisabled: '#556069', accentHover: '#6284aa', accentSelected: '#3b5877', accentSoft: '#c1cfdd' },
-  slate: { surfaceMuted: '#98a097', surfaceDisabled: '#aab0a7', dangerSoft: '#e1afb2', successSoft: '#a8c9ad', warningSoft: '#d9c79d', scrollbarTrack: '#858b80', scrollbarThumb: '#5d675d', surfaceHover: '#c8cbc0', surfaceActive: '#98af9c', textFaint: '#535e53', textDisabled: '#545f54', accentHover: '#6d9276', accentSelected: '#3f5d46', accentSoft: '#c3d2c4' },
-  copper: { surfaceMuted: '#a19a92', surfaceDisabled: '#afa9a1', dangerSoft: '#e1aeaa', successSoft: '#aec7a9', warningSoft: '#dcc79c', scrollbarTrack: '#918d87', scrollbarThumb: '#625d57', surfaceHover: '#cbc6bd', surfaceActive: '#a78d81', textFaint: '#5e5852', textDisabled: '#5e5852', accentHover: '#aa7e63', accentSelected: '#73503f', accentSoft: '#d9c6b9' }
-} as const
+const DARK_VISUALS: ThemeVisualDefaults = { checkerLight: { r: 192, g: 192, b: 192, a: 255 }, checkerDark: { r: 128, g: 128, b: 128, a: 255 }, pixelGrid: { r: 69, g: 77, b: 92, a: 143 }, customGrid: { r: 0, g: 0, b: 255, a: 255 }, onionPrevious: { r: 239, g: 83, b: 80, a: 255 }, onionNext: { r: 41, g: 121, b: 255, a: 255 }, symmetryAxis: { r: 0, g: 0, b: 255, a: 255 } }
+const LIGHT_VISUALS: ThemeVisualDefaults = { checkerLight: { r: 192, g: 192, b: 192, a: 255 }, checkerDark: { r: 128, g: 128, b: 128, a: 255 }, pixelGrid: { r: 119, g: 128, b: 142, a: 150 }, customGrid: { r: 0, g: 0, b: 255, a: 255 }, onionPrevious: { r: 205, g: 55, b: 53, a: 255 }, onionNext: { r: 31, g: 97, b: 210, a: 255 }, symmetryAxis: { r: 0, g: 0, b: 255, a: 255 } }
+const PINK_VISUALS: ThemeVisualDefaults = { checkerLight: { r: 192, g: 192, b: 192, a: 255 }, checkerDark: { r: 128, g: 128, b: 128, a: 255 }, pixelGrid: { r: 166, g: 112, b: 141, a: 145 }, customGrid: { r: 0, g: 0, b: 255, a: 255 }, onionPrevious: { r: 192, g: 45, b: 82, a: 255 }, onionNext: { r: 83, g: 121, b: 190, a: 255 }, symmetryAxis: { r: 0, g: 0, b: 255, a: 255 } }
+const GRAY_VISUALS: ThemeVisualDefaults = { checkerLight: { r: 192, g: 192, b: 192, a: 255 }, checkerDark: { r: 128, g: 128, b: 128, a: 255 }, pixelGrid: { r: 193, g: 198, b: 207, a: 145 }, customGrid: { r: 0, g: 0, b: 255, a: 255 }, onionPrevious: { r: 239, g: 83, b: 80, a: 255 }, onionNext: { r: 41, g: 121, b: 255, a: 255 }, symmetryAxis: { r: 0, g: 0, b: 255, a: 255 } }
+const DARK_GRAY_VISUALS: ThemeVisualDefaults = { checkerLight: { r: 192, g: 192, b: 192, a: 255 }, checkerDark: { r: 128, g: 128, b: 128, a: 255 }, pixelGrid: { r: 184, g: 184, b: 184, a: 145 }, customGrid: { r: 0, g: 0, b: 255, a: 255 }, onionPrevious: { r: 239, g: 83, b: 80, a: 255 }, onionNext: { r: 41, g: 121, b: 255, a: 255 }, symmetryAxis: { r: 0, g: 0, b: 255, a: 255 } }
+const AMBER_VISUALS: ThemeVisualDefaults = { checkerLight: { r: 192, g: 192, b: 192, a: 255 }, checkerDark: { r: 128, g: 128, b: 128, a: 255 }, pixelGrid: { r: 183, g: 158, b: 126, a: 145 }, customGrid: { r: 0, g: 0, b: 255, a: 255 }, onionPrevious: { r: 223, g: 98, b: 88, a: 255 }, onionNext: { r: 224, g: 162, b: 59, a: 255 }, symmetryAxis: { r: 0, g: 0, b: 255, a: 255 } }
+const MINT_VISUALS: ThemeVisualDefaults = { checkerLight: { r: 192, g: 192, b: 192, a: 255 }, checkerDark: { r: 128, g: 128, b: 128, a: 255 }, pixelGrid: { r: 151, g: 197, b: 187, a: 145 }, customGrid: { r: 0, g: 0, b: 255, a: 255 }, onionPrevious: { r: 220, g: 98, b: 93, a: 255 }, onionNext: { r: 56, g: 169, b: 144, a: 255 }, symmetryAxis: { r: 0, g: 0, b: 255, a: 255 } }
+const PLUM_VISUALS: ThemeVisualDefaults = { checkerLight: { r: 192, g: 192, b: 192, a: 255 }, checkerDark: { r: 128, g: 128, b: 128, a: 255 }, pixelGrid: { r: 190, g: 163, b: 205, a: 145 }, customGrid: { r: 0, g: 0, b: 255, a: 255 }, onionPrevious: { r: 223, g: 98, b: 110, a: 255 }, onionNext: { r: 168, g: 90, b: 214, a: 255 }, symmetryAxis: { r: 0, g: 0, b: 255, a: 255 } }
+const OCEAN_VISUALS: ThemeVisualDefaults = { checkerLight: { r: 192, g: 192, b: 192, a: 255 }, checkerDark: { r: 128, g: 128, b: 128, a: 255 }, pixelGrid: { r: 105, g: 154, b: 177, a: 145 }, customGrid: { r: 0, g: 0, b: 255, a: 255 }, onionPrevious: { r: 219, g: 90, b: 119, a: 255 }, onionNext: { r: 48, g: 181, b: 174, a: 255 }, symmetryAxis: { r: 0, g: 0, b: 255, a: 255 } }
+const FOREST_VISUALS: ThemeVisualDefaults = { checkerLight: { r: 192, g: 192, b: 192, a: 255 }, checkerDark: { r: 128, g: 128, b: 128, a: 255 }, pixelGrid: { r: 145, g: 166, b: 134, a: 145 }, customGrid: { r: 0, g: 0, b: 255, a: 255 }, onionPrevious: { r: 211, g: 83, b: 76, a: 255 }, onionNext: { r: 78, g: 151, b: 103, a: 255 }, symmetryAxis: { r: 0, g: 0, b: 255, a: 255 } }
+const SUNSET_VISUALS: ThemeVisualDefaults = { checkerLight: { r: 192, g: 192, b: 192, a: 255 }, checkerDark: { r: 128, g: 128, b: 128, a: 255 }, pixelGrid: { r: 168, g: 147, b: 184, a: 145 }, customGrid: { r: 0, g: 0, b: 255, a: 255 }, onionPrevious: { r: 218, g: 73, b: 91, a: 255 }, onionNext: { r: 74, g: 192, b: 176, a: 255 }, symmetryAxis: { r: 0, g: 0, b: 255, a: 255 } }
+const CLASSIC_VISUALS: ThemeVisualDefaults = { checkerLight: { r: 192, g: 192, b: 192, a: 255 }, checkerDark: { r: 128, g: 128, b: 128, a: 255 }, pixelGrid: { r: 76, g: 82, b: 88, a: 145 }, customGrid: { r: 0, g: 0, b: 255, a: 255 }, onionPrevious: { r: 178, g: 55, b: 68, a: 255 }, onionNext: { r: 49, g: 98, b: 168, a: 255 }, symmetryAxis: { r: 0, g: 0, b: 255, a: 255 } }
+const SLATE_VISUALS: ThemeVisualDefaults = { checkerLight: { r: 192, g: 192, b: 192, a: 255 }, checkerDark: { r: 128, g: 128, b: 128, a: 255 }, pixelGrid: { r: 82, g: 96, b: 84, a: 145 }, customGrid: { r: 0, g: 0, b: 255, a: 255 }, onionPrevious: { r: 174, g: 73, b: 77, a: 255 }, onionNext: { r: 64, g: 119, b: 158, a: 255 }, symmetryAxis: { r: 0, g: 0, b: 255, a: 255 } }
+const COPPER_VISUALS: ThemeVisualDefaults = { checkerLight: { r: 192, g: 192, b: 192, a: 255 }, checkerDark: { r: 128, g: 128, b: 128, a: 255 }, pixelGrid: { r: 91, g: 87, b: 81, a: 145 }, customGrid: { r: 0, g: 0, b: 255, a: 255 }, onionPrevious: { r: 174, g: 74, b: 67, a: 255 }, onionNext: { r: 67, g: 119, b: 157, a: 255 }, symmetryAxis: { r: 0, g: 0, b: 255, a: 255 } }
 
 export const BUILT_IN_THEMES: readonly ThemeDefinition[] = [
   { kind: 'moonsprite-theme', schemaVersion: 2, id: 'dark', name: 'MoonSprite Dark', seeds: DARK_SEEDS, visualDefaults: DARK_VISUALS },
@@ -219,30 +189,29 @@ export function resolveTheme(preferences: ThemePreferences): ResolvedTheme {
   const visualDefaults = copyVisuals({ ...definition.visualDefaults, ...preferences.visualOverrides })
   const s = definition.seeds
   const mode = inferThemeMode(s)
-  const dark = definition.id === 'dark'
-  const light = definition.id === 'light'
-  const gray = definition.id === 'gray'
-  const darkGray = definition.id === 'dark-gray'
-  const classic = definition.id === 'classic' || definition.id === 'slate' || definition.id === 'copper' || definition.id === 'pink'
-  const pixelTheme = PIXEL_THEME_DERIVED[definition.id as keyof typeof PIXEL_THEME_DERIVED]
-  const pixel = Boolean(pixelTheme)
+  const dark = mode === 'dark'
+  const light = mode === 'light'
+  const originalDark = definition.id === 'dark'
   const onAccent = '#ffffff'
   const onDanger = '#ffffff'
+  // Interaction colors are derived from the theme's seed surfaces instead of
+  // being keyed by theme id. This keeps every built-in palette layered and
+  // makes imported themes behave like first-class themes.
   const lightDerived = {
-    surfaceMuted: mixThemeColors(s.raisedSurface, s.deepSurface, 0.55),
+    surfaceMuted: mixThemeColors(s.raisedSurface, s.deepSurface, 0.7),
     surfaceHover: mixThemeColors(s.raisedSurface, s.deepSurface, 0.45),
     surfaceActive: mixThemeColors(s.surface, s.accent, 0.16),
     surfaceDisabled: mixThemeColors(s.deepSurface, s.workspace, 0.18),
     borderMuted: mixThemeColors(s.border, s.borderStrong, 0.3),
     borderHover: mixThemeColors(s.borderStrong, s.textPrimary, 0.15),
-    textFaint: mixThemeColors(s.textMuted, s.surface, 0.18),
+    textFaint: mixThemeColors(s.textMuted, s.textPrimary, 0.25),
     textSoft: mixThemeColors(s.textPrimary, s.textSecondary, 0.25),
     textSecondaryStrong: mixThemeColors(s.textSecondary, s.textPrimary, 0.15),
     textMutedStrong: mixThemeColors(s.textMuted, s.textSecondary, 0.18),
     textSoftAlt: mixThemeColors(s.textMuted, s.textSecondary, 0.45),
     textBright: mixThemeColors(s.textPrimary, '#000000', 0.18),
-    textDisabled: mixThemeColors(s.textMuted, s.surface, 0.38),
-    iconMuted: mixThemeColors(s.textMuted, s.surface, 0.14),
+    textDisabled: mixThemeColors(s.textMuted, s.textPrimary, 0.65),
+    iconMuted: mixThemeColors(s.textMuted, s.textPrimary, 0.12),
     accentHover: mixThemeColors(s.accent, s.surface, 0.12),
     accentSelected: mixThemeColors(s.accent, s.textPrimary, 0.16),
     accentSoft: mixThemeColors(s.surface, s.accent, 0.14),
@@ -255,35 +224,35 @@ export function resolveTheme(preferences: ThemePreferences): ResolvedTheme {
     scrollbarTrack: mixThemeColors(s.deepSurface, s.workspace, 0.18),
     scrollbarThumb: mixThemeColors(s.border, s.borderStrong, 0.45)
   }
-  const surfaceMuted = dark ? '#11141a' : light ? lightDerived.surfaceMuted : gray ? '#3f444b' : darkGray ? '#24272c' : classic ? pixelTheme?.surfaceMuted ?? s.deepSurface : pixel ? s.deepSurface : '#eef1f5'
-  const surfaceHover = dark ? '#20242d' : light ? lightDerived.surfaceHover : gray ? '#525965' : darkGray ? '#353a43' : pixelTheme?.surfaceHover ?? '#e3e8ef'
-  const surfaceActive = dark ? '#212c40' : light ? lightDerived.surfaceActive : gray ? '#465a78' : darkGray ? '#34445e' : pixelTheme?.surfaceActive ?? '#d7e5fb'
-  const surfaceDisabled = dark ? '#111319' : light ? lightDerived.surfaceDisabled : gray ? '#32363c' : darkGray ? '#202328' : classic ? pixelTheme?.surfaceDisabled ?? s.deepSurface : pixel ? s.deepSurface : '#e2e6eb'
-  const borderMuted = dark ? '#454d5c' : light ? lightDerived.borderMuted : gray ? '#747e8c' : darkGray ? '#555e6a' : pixel ? s.borderStrong : '#9aa6b5'
-  const borderHover = dark ? '#596476' : light ? lightDerived.borderHover : gray ? '#8e9aae' : darkGray ? '#768395' : pixel ? s.borderStrong : '#6f7d90'
-  const textFaint = dark ? '#7f8998' : light ? lightDerived.textFaint : gray ? '#9ca6b3' : darkGray ? '#818a96' : pixelTheme?.textFaint ?? '#8995a5'
-  const textSoft = dark ? '#d4dae4' : light ? lightDerived.textSoft : gray ? '#dfe4eb' : darkGray ? '#d9dee5' : pixel ? s.textSecondary : '#253246'
-  const textSecondaryStrong = dark ? '#c6ccd6' : light ? lightDerived.textSecondaryStrong : gray ? '#cdd4de' : darkGray ? '#c4cad3' : pixel ? s.textSecondary : '#405069'
-  const textMutedStrong = dark ? '#8f99a8' : light ? lightDerived.textMutedStrong : gray ? '#b4bdc8' : darkGray ? '#a1aab6' : pixel ? s.textMuted : '#667386'
-  const textSoftAlt = dark ? '#aeb8c7' : light ? lightDerived.textSoftAlt : gray ? '#bcc5d0' : darkGray ? '#aeb7c3' : pixel ? s.textMuted : '#52627a'
-  const textBright = dark ? '#edf2fb' : light ? lightDerived.textBright : gray || darkGray ? '#f5f5f5' : pixel ? s.textPrimary : '#17202b'
-  const textDisabled = dark ? '#616874' : light ? lightDerived.textDisabled : gray ? '#858e9a' : darkGray ? '#666e79' : pixelTheme?.textDisabled ?? '#9aa5b4'
-  const iconMuted = dark ? '#727b89' : light ? lightDerived.iconMuted : gray ? '#9aa4b1' : darkGray ? '#7d8793' : pixel ? s.textMuted : '#7e8998'
-  const accentHover = dark ? '#478bff' : light ? lightDerived.accentHover : gray || darkGray ? '#478bff' : pixelTheme?.accentHover ?? '#3d7bea'
-  const accentSelected = dark ? '#256de6' : light ? lightDerived.accentSelected : gray || darkGray ? '#256de6' : pixelTheme?.accentSelected ?? '#1658c6'
-  const accentSoft = dark ? '#182a46' : light ? lightDerived.accentSoft : gray ? '#354d72' : darkGray ? '#243650' : pixelTheme?.accentSoft ?? '#dbe8ff'
-  const dangerHover = dark ? '#f16b68' : light ? lightDerived.dangerHover : gray || darkGray ? '#f16b68' : classic ? '#bd4554' : pixel ? '#ef766e' : '#c94b53'
-  const dangerSoft = dark ? '#422024' : light ? lightDerived.dangerSoft : gray ? '#573a40' : darkGray ? '#45272d' : classic ? pixelTheme?.dangerSoft ?? '#f8dfe1' : pixel ? '#542a2d' : '#f8dfe1'
-  const successSoft = dark ? '#233b28' : light ? lightDerived.successSoft : gray ? '#344b3d' : darkGray ? '#263b30' : classic ? pixelTheme?.successSoft ?? '#dcefe3' : pixel ? '#294a32' : '#dcefe3'
-  const warningSoft = dark ? '#45361d' : light ? lightDerived.warningSoft : gray ? '#54472e' : darkGray ? '#433625' : classic ? pixelTheme?.warningSoft ?? '#f8ebd1' : pixel ? '#4c391c' : '#f8ebd1'
+  const surfaceMuted = originalDark ? '#11141a' : dark ? mixThemeColors(s.surface, s.deepSurface, 0.55) : lightDerived.surfaceMuted
+  const surfaceHover = originalDark ? '#20242d' : dark ? mixThemeColors(s.surface, s.raisedSurface, 0.7) : lightDerived.surfaceHover
+  const surfaceActive = originalDark ? '#212c40' : dark ? mixThemeColors(s.surface, s.accent, 0.2) : lightDerived.surfaceActive
+  const surfaceDisabled = originalDark ? '#111319' : dark ? mixThemeColors(s.deepSurface, s.workspace, 0.35) : lightDerived.surfaceDisabled
+  const borderMuted = originalDark ? '#454d5c' : dark ? mixThemeColors(s.border, s.borderStrong, 0.4) : lightDerived.borderMuted
+  const borderHover = originalDark ? '#596476' : dark ? mixThemeColors(s.borderStrong, s.textMuted, 0.2) : lightDerived.borderHover
+  const textFaint = originalDark ? '#7f8998' : dark ? mixThemeColors(s.textMuted, s.workspace, 0.24) : lightDerived.textFaint
+  const textSoft = originalDark ? '#d4dae4' : dark ? mixThemeColors(s.textPrimary, s.textSecondary, 0.3) : lightDerived.textSoft
+  const textSecondaryStrong = originalDark ? '#c6ccd6' : dark ? mixThemeColors(s.textSecondary, s.textPrimary, 0.18) : lightDerived.textSecondaryStrong
+  const textMutedStrong = originalDark ? '#8f99a8' : dark ? mixThemeColors(s.textMuted, s.textSecondary, 0.2) : lightDerived.textMutedStrong
+  const textSoftAlt = originalDark ? '#aeb8c7' : dark ? mixThemeColors(s.textMuted, s.textSecondary, 0.45) : lightDerived.textSoftAlt
+  const textBright = originalDark ? '#edf2fb' : dark ? mixThemeColors(s.textPrimary, '#ffffff', 0.08) : lightDerived.textBright
+  const textDisabled = originalDark ? '#616874' : dark ? mixThemeColors(s.textMuted, s.workspace, 0.48) : lightDerived.textDisabled
+  const iconMuted = originalDark ? '#727b89' : dark ? mixThemeColors(s.textMuted, s.workspace, 0.2) : lightDerived.iconMuted
+  const accentHover = originalDark ? '#478bff' : dark ? mixThemeColors(s.accent, s.textPrimary, 0.22) : lightDerived.accentHover
+  const accentSelected = originalDark ? '#256de6' : dark ? mixThemeColors(s.accent, s.workspace, 0.18) : lightDerived.accentSelected
+  const accentSoft = originalDark ? '#182a46' : dark ? mixThemeColors(s.surface, s.accent, 0.18) : lightDerived.accentSoft
+  const dangerHover = originalDark ? '#f16b68' : dark ? mixThemeColors(s.danger, s.textPrimary, 0.15) : lightDerived.dangerHover
+  const dangerSoft = originalDark ? '#422024' : dark ? mixThemeColors(s.surface, s.danger, 0.2) : lightDerived.dangerSoft
+  const successSoft = originalDark ? '#233b28' : dark ? mixThemeColors(s.surface, s.success, 0.2) : lightDerived.successSoft
+  const warningSoft = originalDark ? '#45361d' : dark ? mixThemeColors(s.surface, s.warning, 0.2) : lightDerived.warningSoft
   const developmentNoticeText = highestContrastColor(warningSoft, [s.warning, s.textPrimary, '#ffffff', '#101216'])
-  const canvasGridBorder = dark ? '#566170' : light ? lightDerived.canvasGridBorder : gray ? '#838e9d' : darkGray ? '#697481' : pixel ? s.borderStrong : '#7b8797'
-  const divider = dark ? '#252b36' : light ? lightDerived.divider : gray ? '#525861' : darkGray ? '#34383e' : pixel ? s.border : '#d0d7e1'
-  const layersBackground = s.surface
+  const canvasGridBorder = originalDark ? '#566170' : dark ? mixThemeColors(s.border, s.borderStrong, 0.55) : lightDerived.canvasGridBorder
+  const divider = originalDark ? '#252b36' : dark ? mixThemeColors(s.surface, s.deepSurface, 0.4) : lightDerived.divider
+  const layersBackground = originalDark ? s.surface : dark ? mixThemeColors(s.surface, s.deepSurface, 0.35) : s.surface
   const homeBackground = s.deepSurface
-  const paletteBackground = mode === 'dark' ? s.surface : s.canvasSurround
-  const scrollbarTrack = classic ? pixelTheme?.scrollbarTrack ?? s.deepSurface : dark || darkGray || pixel ? s.deepSurface : light ? lightDerived.scrollbarTrack : gray ? '#30343a' : '#e2e6eb'
-  const scrollbarThumb = classic ? pixelTheme?.scrollbarThumb ?? s.borderStrong : dark || darkGray || pixel ? s.borderStrong : light ? lightDerived.scrollbarThumb : gray ? '#7c8796' : '#9aa6b5'
+  const paletteBackground = mode === 'dark' ? layersBackground : s.canvasSurround
+  const scrollbarTrack = originalDark ? s.deepSurface : dark ? s.deepSurface : lightDerived.scrollbarTrack
+  const scrollbarThumb = originalDark ? s.borderStrong : dark ? s.borderStrong : lightDerived.scrollbarThumb
   const magnifierLine = darkestThemeSeed(s)
   const variables: Record<string, string> = {
     '--theme-workspace-background': s.workspace, '--theme-app-background': s.workspace, '--theme-home-background': homeBackground, '--theme-surface': s.surface, '--theme-raised-surface': s.raisedSurface, '--theme-control-background': s.controlBackground, '--theme-deep-surface': s.deepSurface, '--theme-magnifier-line': magnifierLine,
@@ -291,7 +260,7 @@ export function resolveTheme(preferences: ThemePreferences): ResolvedTheme {
     '--theme-border': s.border, '--theme-border-subtle': s.border, '--theme-border-strong': s.borderStrong, '--theme-border-muted': borderMuted, '--theme-border-hover': borderHover, '--theme-canvas-grid-border': canvasGridBorder, '--theme-divider': divider,
     '--theme-text-primary': s.textPrimary, '--theme-text-secondary': s.textSecondary, '--theme-text-muted': s.textMuted, '--theme-text-faint': textFaint, '--theme-text-soft': textSoft, '--theme-text-secondary-strong': textSecondaryStrong, '--theme-text-muted-strong': textMutedStrong, '--theme-text-soft-alt': textSoftAlt, '--theme-text-bright': textBright, '--theme-text-disabled': textDisabled, '--theme-icon-muted': iconMuted,
     '--theme-accent': s.accent, '--theme-accent-hover': accentHover, '--theme-accent-selected': accentSelected, '--theme-accent-soft': accentSoft, '--theme-on-accent': onAccent, '--theme-danger': s.danger, '--theme-danger-hover': dangerHover, '--theme-danger-soft': dangerSoft, '--theme-on-danger': onDanger, '--theme-success': s.success, '--theme-success-soft': successSoft, '--theme-warning': s.warning, '--theme-warning-soft': warningSoft, '--theme-development-notice-text': developmentNoticeText, '--theme-development-notice-background': warningSoft, '--theme-development-notice-border': s.warning,
-    '--theme-overlay': dark || darkGray || (pixel && !classic) ? '#00000073' : '#18202b52', '--theme-shadow': dark || darkGray || (pixel && !classic) ? '#0000006b' : '#18202b38', '--theme-shadow-strong': dark || darkGray || (pixel && !classic) ? '#0000009e' : '#18202b52', '--theme-scrollbar-track': scrollbarTrack, '--theme-scrollbar-thumb': scrollbarThumb, '--theme-selection-contrast': '#ffffff', '--theme-selection-outline-dark': '#090a0d', '--theme-selection-outline-light': '#f1f4f8',
+    '--theme-overlay': dark ? '#00000073' : '#18202b52', '--theme-shadow': dark ? '#0000006b' : '#18202b38', '--theme-shadow-strong': dark ? '#0000009e' : '#18202b52', '--theme-scrollbar-track': scrollbarTrack, '--theme-scrollbar-thumb': scrollbarThumb, '--theme-selection-contrast': '#ffffff', '--theme-selection-outline-dark': '#090a0d', '--theme-selection-outline-light': '#f1f4f8',
     '--theme-checker-light': rgbaHex(visualDefaults.checkerLight), '--theme-checker-dark': rgbaHex(visualDefaults.checkerDark), '--theme-pixel-grid': rgbaHex(visualDefaults.pixelGrid), '--theme-custom-grid': rgbaHex(visualDefaults.customGrid), '--theme-onion-previous': rgbaHex(visualDefaults.onionPrevious), '--theme-onion-next': rgbaHex(visualDefaults.onionNext), '--theme-symmetry-axis': rgbaHex(visualDefaults.symmetryAxis), '--theme-selection': s.accent
   }
   return { definition, visualDefaults, mode, variables: Object.fromEntries(Object.entries(variables).map(([key, value]) => [key, value.startsWith('#') ? cssColor(value) : value])) }

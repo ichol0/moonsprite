@@ -110,6 +110,26 @@ export const selectionBoundarySegments = (selection: SelectionMask): Int32Array 
 
 export const rectSelection = (x: number, y: number, width: number, height: number): SelectionMask => ({ x, y, width, height })
 
+export const roundedRectRadius = (width: number, height: number, cornerRadius: number): number => Math.min(
+  Math.max(0, Math.round(cornerRadius) || 0),
+  Math.floor(Math.min(Math.max(1, width), Math.max(1, height)) / 2)
+)
+
+/** Tests a point in local rectangle coordinates, where pixel centers use offset + 0.5. */
+export const roundedRectContainsPoint = (width: number, height: number, cornerRadius: number, pointX: number, pointY: number): boolean => {
+  if (pointX < 0 || pointY < 0 || pointX >= width || pointY >= height) return false
+  const radius = roundedRectRadius(width, height, cornerRadius)
+  if (radius === 0) return true
+  const innerRight = width - radius
+  const innerBottom = height - radius
+  if ((pointX >= radius && pointX <= innerRight) || (pointY >= radius && pointY <= innerBottom)) return true
+  const centerX = pointX < radius ? radius : innerRight
+  const centerY = pointY < radius ? radius : innerBottom
+  const dx = pointX - centerX
+  const dy = pointY - centerY
+  return dx * dx + dy * dy <= radius * radius + 1e-9
+}
+
 export const ellipseSelection = (x: number, y: number, width: number, height: number): SelectionMask => {
   const normalizedWidth = Math.max(1, width)
   const normalizedHeight = Math.max(1, height)
@@ -175,9 +195,11 @@ export const rotatedRectSelection = (
   canvasWidth: number,
   canvasHeight: number,
   angle = 0,
-  clipToCanvas = true
+  clipToCanvas = true,
+  cornerRadius = 0
 ): SelectionMask | null => {
   const normalizedTarget = { ...target, width: Math.max(1, target.width), height: Math.max(1, target.height) }
+  const radius = roundedRectRadius(normalizedTarget.width, normalizedTarget.height, cornerRadius)
   const normalizedAngle = ((angle % 360) + 360) % 360
   const bounds = rotatedSelectionBounds(normalizedTarget, angle)
   const x = clipToCanvas ? Math.max(0, bounds.x) : bounds.x
@@ -185,7 +207,7 @@ export const rotatedRectSelection = (
   const right = clipToCanvas ? Math.min(canvasWidth, bounds.x + bounds.width) : bounds.x + bounds.width
   const bottom = clipToCanvas ? Math.min(canvasHeight, bounds.y + bounds.height) : bounds.y + bounds.height
   if (right <= x || bottom <= y) return null
-  if (normalizedAngle < 1e-9 || Math.abs(normalizedAngle - 360) < 1e-9) return { x, y, width: right - x, height: bottom - y }
+  if (radius === 0 && (normalizedAngle < 1e-9 || Math.abs(normalizedAngle - 360) < 1e-9)) return { x, y, width: right - x, height: bottom - y }
 
   const width = right - x
   const height = bottom - y
@@ -206,12 +228,13 @@ export const rotatedRectSelection = (
       const localX = offsetX * cosine - offsetY * sine
       const localY = offsetX * sine + offsetY * cosine
       if (Math.abs(localX) >= halfWidth - 1e-9 || Math.abs(localY) >= halfHeight - 1e-9) continue
+      if (radius > 0 && !roundedRectContainsPoint(normalizedTarget.width, normalizedTarget.height, radius, localX + halfWidth, localY + halfHeight)) continue
       mask[(destinationY - y) * width + destinationX - x] = 1
       selected += 1
     }
   }
 
-  if (normalizedTarget.width > 2 && normalizedTarget.height > 2 && Math.abs(normalizedAngle % 90) > 1e-9) {
+  if (radius === 0 && normalizedTarget.width > 2 && normalizedTarget.height > 2 && Math.abs(normalizedAngle % 90) > 1e-9) {
     const cornerTips: number[] = []
     for (let offsetY = 0; offsetY < height; offsetY += 1) {
       for (let offsetX = 0; offsetX < width; offsetX += 1) {

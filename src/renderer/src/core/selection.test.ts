@@ -247,4 +247,32 @@ describe('selection preview geometry', () => {
       }
     }
   })
+
+  it('rasterizes rounded rectangle selections with clamped radii', () => {
+    const target = { x: 4, y: 5, width: 8, height: 6 }
+    const square = rotatedRectSelection(target, 32, 32, 0, true, 0)
+    const rounded = rotatedRectSelection(target, 32, 32, 0, true, 3)
+    const clamped = rotatedRectSelection(target, 32, 32, 0, true, 99)
+
+    expect(square).toEqual(target)
+    expect(rounded).not.toBeNull()
+    expect(selectionContains(rounded, target.x, target.y)).toBe(false)
+    expect(selectionContains(rounded, target.x + Math.floor(target.width / 2), target.y)).toBe(true)
+    expect(selectionContains(rounded, target.x, target.y + Math.floor(target.height / 2))).toBe(true)
+    expect(selectionContains(rounded, target.x + target.width - 1, target.y + target.height - 1)).toBe(false)
+    expect(clamped).toEqual(rounded)
+  })
+
+  it('keeps rounded corners in local space when rotating a selection', () => {
+    const target = { x: 4, y: 5, width: 8, height: 6 }
+    const rounded = rotatedRectSelection(target, 32, 32, 0, true, 3)!
+    const quarterTurn = rotatedRectSelection(target, 32, 32, 90, true, 3)!
+    const selectedCount = (selection: NonNullable<typeof rounded>): number => selection.mask
+      ? selection.mask.reduce((count, value) => count + value, 0)
+      : selection.width * selection.height
+
+    expect(selectedCount(quarterTurn)).toBe(selectedCount(rounded))
+    expect(selectionContains(quarterTurn, quarterTurn.x, quarterTurn.y)).toBe(false)
+    expect(selectionContains(quarterTurn, quarterTurn.x + Math.floor(quarterTurn.width / 2), quarterTurn.y)).toBe(true)
+  })
 })

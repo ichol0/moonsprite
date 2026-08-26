@@ -4,7 +4,6 @@ import { compositeDocument, createCompositePointSampler, createId, createNormalC
 import { createAnimationCelLookup, createDefaultAnimationTimeline, ensureAnimationDocument, normalizeAnimationTimeline, refreshActiveAnimationFrame, syncActiveAnimationLayers } from './animation'
 import { normalizeOutlineSettings } from './outline-settings'
 import { normalizeProjectDisplaySettings, normalizeProjectStatistics, normalizeTimelapseSettings } from './project-metadata'
-import { MAX_TIMELAPSE_SNAPSHOTS } from './timelapse'
 import { encodePng } from './png-encode'
 import { translateCurrent as tr } from './localization'
 import { normalizePaletteColumns, normalizePaletteSlots } from './palette-layout'
@@ -27,6 +26,7 @@ interface ManifestLayer {
   kind?: 'text' | 'tilemap' | 'free-tile'
   tilemapTilesetId?: string
   freeTileTilesetId?: string
+  freeTileSetId?: string
   freeTileSources?: FreeTileSourceLayer[]
   visible: boolean
   locked: boolean
@@ -142,7 +142,8 @@ interface ManifestTimelapse extends Omit<TimelapseSettings, 'snapshots'> {
 
 type RasterDataEncoding = 'raw' | 'sparse-tiles-v1'
 
-export const PROJECT_SCHEMA_VERSION = 17
+export const PROJECT_SCHEMA_VERSION = 18
+const FREE_TILE_SET_PROJECT_SCHEMA_VERSION = 18
 const LINKED_LAYERS_PROJECT_SCHEMA_VERSION = 17
 const LOOP_SECTIONS_PROJECT_SCHEMA_VERSION = 16
 const FREE_TILE_SOURCE_PROJECT_SCHEMA_VERSION = 15
@@ -646,6 +647,7 @@ const createProjectArchiveFiles = (
   revisionOverrides?: ReadonlyMap<string, number | null>
 ): ProjectArchiveBuild => {
   syncActiveAnimationLayers(document)
+  ensureFreeTileTilesetOwnership(document)
   const files: Record<string, Uint8Array> = {}
   const resources: ProjectArchiveResource[] = []
   const dataFileByPixels = new Map<object, { dataFile: string; dataEncoding: RasterDataEncoding; width: number; height: number }>()
@@ -694,6 +696,7 @@ const createProjectArchiveFiles = (
       ...(layer.description ? { description: layer.description } : {}),
       ...(layer.kind === 'text' || layer.kind === 'tilemap' || layer.kind === 'free-tile' ? { kind: layer.kind } : {}),
       ...(layer.kind === 'tilemap' && layer.tilemapTilesetId ? { tilemapTilesetId: layer.tilemapTilesetId } : {}),
+      ...(layer.kind === 'free-tile' && layer.freeTileSetId ? { freeTileSetId: layer.freeTileSetId } : {}),
       ...(layer.kind === 'free-tile' && layer.freeTileSources ? { freeTileSources: layer.freeTileSources.map((source) => ({ ...source, displayColor: source.displayColor ? { ...source.displayColor } : undefined })) } : {}),
       visible: layer.visible,
       locked: layer.locked,
@@ -773,6 +776,7 @@ const createProjectArchiveFiles = (
     quality: timelapseSettings.quality,
     fps: timelapseSettings.fps,
     speed: timelapseSettings.speed,
+    mode: timelapseSettings.mode,
     snapshots: timelapseSettings.snapshots.map((snapshot) => {
       const dataFile = `timelapse/${snapshot.id}.png`
       files[dataFile] = snapshot.data
@@ -1092,7 +1096,7 @@ export function migrateProjectManifest(input: unknown): ProjectManifest {
   const candidate = input as { app?: unknown; schemaVersion?: unknown; document?: Record<string, unknown> }
   if (candidate.app !== 'MoonSprite' || !candidate.document) throw new Error(tr('core.project.unsupportedVersion'))
   const version = Number(candidate.schemaVersion)
-  if (![1, 2, 3, LEGACY_PROJECT_SCHEMA_VERSION, SPARSE_RASTER_PROJECT_SCHEMA_VERSION, SLICES_PROJECT_SCHEMA_VERSION, EDITABLE_TEXT_PROJECT_SCHEMA_VERSION, STYLED_TEXT_PROJECT_SCHEMA_VERSION, TEXT_BOX_PROJECT_SCHEMA_VERSION, DOCUMENT_COLOR_MODE_PROJECT_SCHEMA_VERSION, LAYER_STYLES_PROJECT_SCHEMA_VERSION, BACKGROUND_LAYER_PROJECT_SCHEMA_VERSION, TILEMAP_PROJECT_SCHEMA_VERSION, FREE_TILE_PROJECT_SCHEMA_VERSION, FREE_TILE_SOURCE_PROJECT_SCHEMA_VERSION, LOOP_SECTIONS_PROJECT_SCHEMA_VERSION, PROJECT_SCHEMA_VERSION].includes(version) || candidate.document.schemaVersion !== candidate.schemaVersion) throw new Error(tr('core.project.unsupportedVersion'))
+  if (![1, 2, 3, LEGACY_PROJECT_SCHEMA_VERSION, SPARSE_RASTER_PROJECT_SCHEMA_VERSION, SLICES_PROJECT_SCHEMA_VERSION, EDITABLE_TEXT_PROJECT_SCHEMA_VERSION, STYLED_TEXT_PROJECT_SCHEMA_VERSION, TEXT_BOX_PROJECT_SCHEMA_VERSION, DOCUMENT_COLOR_MODE_PROJECT_SCHEMA_VERSION, LAYER_STYLES_PROJECT_SCHEMA_VERSION, BACKGROUND_LAYER_PROJECT_SCHEMA_VERSION, TILEMAP_PROJECT_SCHEMA_VERSION, FREE_TILE_PROJECT_SCHEMA_VERSION, FREE_TILE_SOURCE_PROJECT_SCHEMA_VERSION, LOOP_SECTIONS_PROJECT_SCHEMA_VERSION, LINKED_LAYERS_PROJECT_SCHEMA_VERSION, PROJECT_SCHEMA_VERSION].includes(version) || candidate.document.schemaVersion !== candidate.schemaVersion) throw new Error(tr('core.project.unsupportedVersion'))
   if (version >= SPARSE_RASTER_PROJECT_SCHEMA_VERSION) {
     const layers = Array.isArray(candidate.document.layers) ? candidate.document.layers : []
     const animation = candidate.document.animation && typeof candidate.document.animation === 'object' ? candidate.document.animation as { cels?: unknown } : null
@@ -1127,6 +1131,7 @@ export function migrateProjectManifest(input: unknown): ProjectManifest {
         } else {
           delete next.freeTileTilesetId
         }
+        if (next.kind === 'free-tile' && version < FREE_TILE_SET_PROJECT_SCHEMA_VERSION) next.freeTileSetId = createId('free-tile-set')
         return next as unknown as ManifestLayer
       })
     : candidate.document.layers
@@ -1624,6 +1629,7 @@ export function decodeProject(input: Uint8Array, onProgress?: (value: number) =>
       ...(metadata.kind === 'text' || metadata.kind === 'tilemap' || metadata.kind === 'free-tile' ? { kind: metadata.kind } : {}),
       ...(metadata.kind === 'tilemap' && typeof metadata.tilemapTilesetId === 'string' ? { tilemapTilesetId: metadata.tilemapTilesetId } : {}),
       ...(metadata.kind === 'free-tile' && typeof metadata.freeTileTilesetId === 'string' ? { freeTileTilesetId: metadata.freeTileTilesetId } : {}),
+      ...(metadata.kind === 'free-tile' && typeof metadata.freeTileSetId === 'string' ? { freeTileSetId: metadata.freeTileSetId } : {}),
       ...(metadata.kind === 'free-tile' && Array.isArray(metadata.freeTileSources) ? { freeTileSources: normalizeManifestFreeTileSources(metadata.freeTileSources) } : {}),
       groupId: typeof metadata.groupId === 'string' ? metadata.groupId : null,
       ...(normalizeDisplayColor(metadata.displayColor) ? { displayColor: normalizeDisplayColor(metadata.displayColor)! } : {}),
@@ -1642,27 +1648,59 @@ export function decodeProject(input: Uint8Array, onProgress?: (value: number) =>
   })
   if (layers.length === 0) throw new Error(tr('core.project.noLayers'))
   const tilemapTilesetIds = new Set(layers.flatMap((layer) => layer.kind === 'tilemap' && layer.tilemapTilesetId ? [layer.tilemapTilesetId] : []))
-  const freeTileOwnerIds = new Set<string>()
-  const freeTileSourceIds = new Set<string>()
+  const legacyFreeTileOwnerIds = new Set<string>()
+  const freeTileTilesetOwners = new Map<string, string>()
+  const freeTileSourceOwners = new Map<string, string>()
+  const freeTileSourcesBySet = new Map<string, FreeTileSourceLayer[]>()
   const legacyFreeTiles = (manifest.sourceSchemaVersion ?? PROJECT_SCHEMA_VERSION) < FREE_TILE_SOURCE_PROJECT_SCHEMA_VERSION
+  const sameFreeTileSource = (left: FreeTileSourceLayer, right: FreeTileSourceLayer): boolean =>
+    left.id === right.id
+    && left.name === right.name
+    && left.tilesetId === right.tilesetId
+    && left.description === right.description
+    && left.visible === right.visible
+    && left.locked === right.locked
+    && left.opacity === right.opacity
+    && left.blendMode === right.blendMode
+    && left.offsetX === right.offsetX
+    && left.offsetY === right.offsetY
+    && left.displayColor?.r === right.displayColor?.r
+    && left.displayColor?.g === right.displayColor?.g
+    && left.displayColor?.b === right.displayColor?.b
+    && left.displayColor?.a === right.displayColor?.a
   for (const layer of layers) {
     if (layer.kind !== 'free-tile') continue
     if (legacyFreeTiles) {
       if (!layer.freeTileTilesetId
         || tilemapTilesetIds.has(layer.freeTileTilesetId)
-        || freeTileOwnerIds.has(layer.freeTileTilesetId)
+        || legacyFreeTileOwnerIds.has(layer.freeTileTilesetId)
         || !tilesetsById.has(layer.freeTileTilesetId)) throw new Error(tr('core.project.layerCorrupt', { name: layer.name }))
-      freeTileOwnerIds.add(layer.freeTileTilesetId)
+      legacyFreeTileOwnerIds.add(layer.freeTileTilesetId)
       continue
     }
-    if (!layer.freeTileSources?.length) throw new Error(tr('core.project.layerCorrupt', { name: layer.name }))
+    const setId = layer.freeTileSetId?.trim()
+    if (!setId || setId !== layer.freeTileSetId || !layer.freeTileSources?.length) throw new Error(tr('core.project.layerCorrupt', { name: layer.name }))
+    const canonicalSources = freeTileSourcesBySet.get(setId)
+    if (canonicalSources && (canonicalSources.length !== layer.freeTileSources.length
+      || canonicalSources.some((source, index) => !sameFreeTileSource(source, layer.freeTileSources![index])))) {
+      throw new Error(tr('core.project.layerCorrupt', { name: layer.name }))
+    }
+    if (!canonicalSources) freeTileSourcesBySet.set(setId, layer.freeTileSources)
+    const localSourceIds = new Set<string>()
+    const localTilesetIds = new Set<string>()
     for (const source of layer.freeTileSources) {
-      if (freeTileSourceIds.has(source.id)) throw new Error(tr('core.project.layerCorrupt', { name: layer.name }))
+      const sourceOwner = freeTileSourceOwners.get(source.id)
+      const tilesetOwner = freeTileTilesetOwners.get(source.tilesetId)
+      if (localSourceIds.has(source.id) || localTilesetIds.has(source.tilesetId)
+        || (sourceOwner && sourceOwner !== setId)
+        || (tilesetOwner && tilesetOwner !== setId)) throw new Error(tr('core.project.layerCorrupt', { name: layer.name }))
       const tileset = tilesetsById.get(source.tilesetId)
       if (!tileset || tileset.tileIds.length !== 1 || tileset.columns !== 1 || tileset.rows !== 1
-        || tilemapTilesetIds.has(source.tilesetId) || freeTileOwnerIds.has(source.tilesetId)) throw new Error(tr('core.project.layerCorrupt', { name: layer.name }))
-      freeTileSourceIds.add(source.id)
-      freeTileOwnerIds.add(source.tilesetId)
+        || tilemapTilesetIds.has(source.tilesetId)) throw new Error(tr('core.project.layerCorrupt', { name: layer.name }))
+      localSourceIds.add(source.id)
+      localTilesetIds.add(source.tilesetId)
+      freeTileSourceOwners.set(source.id, setId)
+      freeTileTilesetOwners.set(source.tilesetId, setId)
     }
   }
   const sourceGroups = Array.isArray(source.groups) ? source.groups : []
@@ -1689,7 +1727,6 @@ export function decodeProject(input: Uint8Array, onProgress?: (value: number) =>
   const statistics = normalizeProjectStatistics(source.statistics)
   const manifestTimelapse = source.timelapse && typeof source.timelapse === 'object' ? source.timelapse : undefined
   const timelapseSnapshots = (Array.isArray(manifestTimelapse?.snapshots) ? manifestTimelapse.snapshots : [])
-    .slice(0, MAX_TIMELAPSE_SNAPSHOTS)
     .flatMap((snapshot) => {
       if (!snapshot || typeof snapshot.id !== 'string' || typeof snapshot.dataFile !== 'string') return []
       const width = Number(snapshot.width)

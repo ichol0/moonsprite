@@ -25,6 +25,8 @@ import { PixelUtilityIcon } from '@/components/PixelUtilityIcon'
 import { paletteSamplingShortcutActive } from '@/core/palette-sampling-shortcut'
 import { publishCanvasColorSample, publishCanvasColorSamplingCompleted } from '@/components/color-sampling-events'
 import { usePanelColorSampling } from '@/components/usePanelColorSampling'
+import { EDITOR_SHORTCUT_COMMAND_EVENT, type EditorShortcutCommandDetail } from '@/core/command-context'
+import type { ShortcutId } from '@/core/shortcuts'
 
 const PALETTE_SWATCH_SIZE_STORAGE_KEY = 'moonsprite.palette-swatch-size'
 const PALETTE_SWATCH_SIZE_ORDER: PaletteSwatchSize[] = ['tiny', 'small', 'medium', 'large', 'huge']
@@ -76,6 +78,7 @@ export function PalettePanel({ session, docked = false, onDockDragStart, onPanel
   const paletteActionsPopoverRef = useRef<HTMLSpanElement>(null)
   const libraryPopoverRef = useRef<HTMLSpanElement>(null)
   const paletteContextRef = useRef<HTMLSpanElement>(null)
+  const shortcutCommandHandlerRef = useRef<(id: ShortcutId) => void>(() => {})
   const [paletteActionsPopoverPosition, setPaletteActionsPopoverPosition] = useState({ left: 8, top: 8 })
   const [libraryPopoverPosition, setLibraryPopoverPosition] = useState({ left: 8, top: 8 })
   const dragRef = useRef<{ ids: number[]; baseSlots: Array<number | null>; previewSlots: Array<number | null>; columns: number; clickedId: number; pointerId: number; element: HTMLElement; startX: number; startY: number; moved: boolean; targetSlot: number | null } | null>(null)
@@ -172,6 +175,16 @@ export function PalettePanel({ session, docked = false, onDockDragStart, onPanel
   }
 
   useEffect(() => { void refreshPalettes() }, [session.document.id])
+
+  useEffect(() => {
+    const handleShortcutCommand = (event: Event): void => {
+      const detail = (event as CustomEvent<EditorShortcutCommandDetail>).detail
+      if (!detail || detail.documentId !== session.document.id) return
+      shortcutCommandHandlerRef.current(detail.id)
+    }
+    window.addEventListener(EDITOR_SHORTCUT_COMMAND_EVENT, handleShortcutCommand)
+    return () => window.removeEventListener(EDITOR_SHORTCUT_COMMAND_EVENT, handleShortcutCommand)
+  }, [session.document.id])
 
   useEffect(() => {
     if (!paletteActionsOpen && !libraryOpen && !paletteContext) return
@@ -639,6 +652,35 @@ export function PalettePanel({ session, docked = false, onDockDragStart, onPanel
       store.setMessage(error instanceof Error ? error.message : t('palette.imageSaveFailed'))
     } finally {
       setOperationBusy(false)
+    }
+  }
+
+  shortcutCommandHandlerRef.current = (id): void => {
+    switch (id) {
+      case 'togglePaletteEditLock': togglePaletteEditLock(); break
+      case 'extractPaletteColors': openExtractDialog(); break
+      case 'togglePaletteColorSync': togglePaletteColorSynchronization(); break
+      case 'reversePaletteColors': store.reversePaletteColors(); setPaletteActionsOpen(false); break
+      case 'createPaletteGradient': if (gradientSelectionSlots.length >= 2) applyPaletteGradient(false); break
+      case 'createPaletteHueGradient': if (gradientSelectionSlots.length >= 2) applyPaletteGradient(true); break
+      case 'sortPaletteHue': sortPalette('hue'); break
+      case 'sortPaletteSaturation': sortPalette('saturation'); break
+      case 'sortPaletteBrightness': sortPalette('brightness'); break
+      case 'sortPaletteLuminance': sortPalette('luminance'); break
+      case 'sortPaletteRed': sortPalette('red'); break
+      case 'sortPaletteGreen': sortPalette('green'); break
+      case 'sortPaletteBlue': sortPalette('blue'); break
+      case 'sortPaletteAlpha': sortPalette('alpha'); break
+      case 'paletteSortAscending': choosePaletteSortDirection('ascending'); break
+      case 'paletteSortDescending': choosePaletteSortDirection('descending'); break
+      case 'paletteSwatchTiny': chooseSwatchSize('tiny'); break
+      case 'paletteSwatchSmall': chooseSwatchSize('small'); break
+      case 'paletteSwatchMedium': chooseSwatchSize('medium'); break
+      case 'paletteSwatchLarge': chooseSwatchSize('large'); break
+      case 'paletteSwatchHuge': chooseSwatchSize('huge'); break
+      case 'savePalette': openSaveDialog(); break
+      case 'openPaletteFolder': void window.moonSprite.openPaletteFolder(); setLibraryOpen(false); break
+      case 'refreshPalettes': void refreshPalettes(activePaletteId ?? undefined); break
     }
   }
 

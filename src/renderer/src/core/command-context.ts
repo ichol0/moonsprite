@@ -1,8 +1,16 @@
+import type { ShortcutId } from './shortcuts'
+
 export type EditorCommandScope = 'canvas' | 'layers' | 'palette' | 'tileset' | 'brushes'
 
 export const COMMAND_SCOPE_EVENT = 'moonsprite:command-scope'
 export const TILESET_DELETE_COMMAND_EVENT = 'moonsprite:delete-tileset-selection'
 export const BRUSH_LIBRARY_DELETE_COMMAND_EVENT = 'moonsprite:delete-brush-selection'
+export const EDITOR_SHORTCUT_COMMAND_EVENT = 'moonsprite:editor-shortcut-command'
+
+export interface EditorShortcutCommandDetail {
+  documentId: string
+  id: ShortcutId
+}
 
 export type DeleteCommandTarget = 'selection' | 'animation' | 'free-tile-instance' | 'layers' | 'palette' | 'tileset' | 'brushes' | null
 export type CopyCommandTarget = 'selection' | 'layers' | null

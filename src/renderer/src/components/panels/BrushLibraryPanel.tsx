@@ -8,7 +8,7 @@ import { ModalShell } from '@/components/ModalShell'
 import { PixelUtilityIcon } from '@/components/PixelUtilityIcon'
 import { TextInput } from '@/components/TextInput'
 import type { DockDragProps } from '@/components/workspace-panel-types'
-import { BRUSH_LIBRARY_DELETE_COMMAND_EVENT } from '@/core/command-context'
+import { BRUSH_LIBRARY_DELETE_COMMAND_EVENT, EDITOR_SHORTCUT_COMMAND_EVENT, type EditorShortcutCommandDetail } from '@/core/command-context'
 import { brushLibraryLocation } from '@/core/brush-library-location'
 import { brushFolderParentId } from '@/core/brush-folder-tree'
 import { PALETTE_SWATCH_PIXELS, type PaletteSwatchSize } from '@/core/palette-layout'
@@ -17,6 +17,7 @@ import type { BrushLibraryController, LoadedBrush } from '@/components/app/useBr
 import { useWorkspace, type DocumentSession } from '@/store/workspace'
 import { useI18n } from '@/components/I18nProvider'
 import type { StoredBrushFolder } from '@shared/types'
+import type { ShortcutId } from '@/core/shortcuts'
 
 const BRUSH_SWATCH_SIZE_STORAGE_KEY = 'moonsprite.brush-swatch-size'
 type BrushSwatchSize = Extract<PaletteSwatchSize, 'small' | 'medium' | 'large'>
@@ -89,6 +90,7 @@ export function BrushLibraryPanel({ session, controller, docked = false, onDockD
   const folderContextRef = useRef<HTMLDivElement>(null)
   const dragRef = useRef<BrushDragState | null>(null)
   const suppressClickRef = useRef(false)
+  const shortcutCommandHandlerRef = useRef<(id: ShortcutId) => void>(() => {})
   const currentFolderId = useSyncExternalStore(brushLibraryLocation.subscribe, brushLibraryLocation.getSnapshot, brushLibraryLocation.getSnapshot)
   const [selectedIds, setSelectedIds] = useState<string[]>(() => session.brushImageId ? [session.brushImageId] : [])
   const [selectionAnchorId, setSelectionAnchorId] = useState<string | null>(null)
@@ -150,6 +152,16 @@ export function BrushLibraryPanel({ session, controller, docked = false, onDockD
     panel.addEventListener(BRUSH_LIBRARY_DELETE_COMMAND_EVENT, handleDelete)
     return () => panel.removeEventListener(BRUSH_LIBRARY_DELETE_COMMAND_EVENT, handleDelete)
   }, [controller, floating.ref, selectedBrushes])
+
+  useEffect(() => {
+    const handleShortcutCommand = (event: Event): void => {
+      const detail = (event as CustomEvent<EditorShortcutCommandDetail>).detail
+      if (!detail || detail.documentId !== session.document.id) return
+      shortcutCommandHandlerRef.current(detail.id)
+    }
+    window.addEventListener(EDITOR_SHORTCUT_COMMAND_EVENT, handleShortcutCommand)
+    return () => window.removeEventListener(EDITOR_SHORTCUT_COMMAND_EVENT, handleShortcutCommand)
+  }, [session.document.id])
 
   useEffect(() => {
     if (!addOpen && !manageOpen && !folderContext) return
@@ -420,6 +432,20 @@ export function BrushLibraryPanel({ session, controller, docked = false, onDockD
     ><PixelUtilityIcon kind="folder" /><span>{folder.name}</span><PixelUtilityIcon kind="right" /></button>
   }
 
+  shortcutCommandHandlerRef.current = (id): void => {
+    switch (id) {
+      case 'importBrushImage': void controller.importFromPicker(); setAddOpen(false); break
+      case 'createBrushFolder': openFolderDialog(); break
+      case 'openBrushFolder': void window.moonSprite.openBrushFolder(); setManageOpen(false); break
+      case 'refreshBrushLibrary': void controller.refresh(); setManageOpen(false); break
+      case 'brushLibraryParentFolder': if (currentFolderId !== null) navigateToFolder(currentParentFolderId); break
+      case 'brushSwatchSmall': chooseSwatchSize('small'); break
+      case 'brushSwatchMedium': chooseSwatchSize('medium'); break
+      case 'brushSwatchLarge': chooseSwatchSize('large'); break
+      case 'deleteBrushSelection': if (selectedBrushes.length > 0) void controller.deleteBrushes(selectedBrushes); break
+    }
+  }
+
   return <><section
     ref={floating.ref}
     className={`panel brush-library-panel ${floating.style ? 'floating-panel' : ''} ${dropActive ? 'drop-active' : ''}`}
@@ -465,7 +491,7 @@ export function BrushLibraryPanel({ session, controller, docked = false, onDockD
       </div>}
       <div className="brush-library-directory component-scrollbar" data-brush-folder-id={folderKey(currentFolderId)}>
         {visibleFolders.length > 0 && <div className="brush-folder-list">{visibleFolders.map(renderFolder)}</div>}
-        <div className="brush-swatch-grid">
+        <div className={`brush-swatch-grid ${visibleFolders.length === 0 && displayedBrushes.length === 0 ? 'is-empty' : ''}`}>
           {displayedBrushes.map(renderBrush)}
           {visibleFolders.length === 0 && displayedBrushes.length === 0 && <p className="brush-library-panel-state"><strong>{t(currentFolderId === null ? 'brush.emptyLibrary' : 'brush.emptyFolder')}</strong><span>{t(currentFolderId === null ? 'brush.emptyLibraryHint' : 'brush.emptyFolderHint')}</span></p>}
         </div>

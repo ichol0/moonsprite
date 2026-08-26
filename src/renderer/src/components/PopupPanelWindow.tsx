@@ -13,6 +13,8 @@ const POPUP_PANEL_DEFAULT_SIZES: Record<WorkspacePanelId, { width: number; heigh
   color: { width: 360, height: 520 },
   palette: { width: 360, height: 520 },
   layers: { width: 760, height: 520 },
+  freeTileInstances: { width: 360, height: 420 },
+  history: { width: 320, height: 420 },
   preview: { width: 360, height: 380 },
   tileset: { width: 420, height: 520 },
   brushes: { width: 380, height: 480 }

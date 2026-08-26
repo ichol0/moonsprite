@@ -1,6 +1,7 @@
 import type { OutlineDirection, OutlineKernel, OutlinePosition, OutlineSettings, RgbaColor } from '@shared/types'
 
 export const OUTLINE_DIRECTIONS: readonly OutlineDirection[] = ['nw', 'n', 'ne', 'w', 'e', 'sw', 's', 'se']
+export const DEFAULT_OUTLINE_SMART_HUE_DARKNESS = 45
 const positions = new Set<OutlinePosition>(['inside', 'outside', 'both'])
 const kernels = new Set<OutlineKernel>(['round', 'square', 'horizontal', 'vertical'])
 const diagonalDirections = new Set<OutlineDirection>(['nw', 'ne', 'sw', 'se'])
@@ -46,12 +47,34 @@ export const normalizeOutlineDirections = (value: unknown, fallback: OutlineSett
 const clampChannel = (value: unknown, fallback: number): number =>
   typeof value === 'number' && Number.isFinite(value) ? Math.max(0, Math.min(255, Math.round(value))) : fallback
 
+const clampPercentage = (value: unknown, fallback: number): number =>
+  typeof value === 'number' && Number.isFinite(value) ? Math.max(0, Math.min(100, Math.round(value))) : fallback
+
+type OutlineStrokeColorSettings = Pick<OutlineSettings, 'color' | 'smartHue' | 'smartHueDarkness'>
+
+export const resolveOutlineStrokeColor = (
+  settings: OutlineStrokeColorSettings,
+  referenceColor: RgbaColor,
+  resolveDynamicColor: (color: RgbaColor) => RgbaColor = (color) => color
+): RgbaColor => {
+  if (!settings.smartHue || referenceColor.a === 0) return settings.color
+  const multiplier = 1 - clampPercentage(settings.smartHueDarkness, DEFAULT_OUTLINE_SMART_HUE_DARKNESS) / 100
+  return resolveDynamicColor({
+    r: Math.round(referenceColor.r * multiplier),
+    g: Math.round(referenceColor.g * multiplier),
+    b: Math.round(referenceColor.b * multiplier),
+    a: settings.color.a
+  })
+}
+
 export const defaultOutlineSettings = (color: RgbaColor): OutlineSettings => ({
   color: { ...color },
   thickness: 1,
   position: 'outside',
   kernel: 'round',
   directions: outlineDirectionsForKernel('round'),
+  smartHue: false,
+  smartHueDarkness: DEFAULT_OUTLINE_SMART_HUE_DARKNESS,
   previewEnabled: true
 })
 
@@ -79,6 +102,8 @@ export const normalizeOutlineSettings = (value: unknown, fallbackColor?: RgbaCol
     position: normalizeOutlinePosition(candidate.position, fallback.position),
     kernel: normalizeOutlineKernel(candidate.kernel, fallback.kernel),
     directions: normalizeOutlineDirections(candidate.directions, fallback.directions),
+    smartHue: candidate.smartHue === true,
+    smartHueDarkness: clampPercentage(candidate.smartHueDarkness, fallback.smartHueDarkness),
     previewEnabled: candidate.previewEnabled !== false
   }
 }

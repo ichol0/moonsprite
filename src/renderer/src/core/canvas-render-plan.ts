@@ -25,7 +25,9 @@ export interface DeviceAlignedPixelRect { x: number; y: number; width: number; h
 
 export function deviceAlignedPixelRect(originX: number, originY: number, zoom: number, pixelX: number, pixelY: number, devicePixelRatio: number): DeviceAlignedPixelRect {
   const dpr = Number.isFinite(devicePixelRatio) && devicePixelRatio > 0 ? devicePixelRatio : 1
-  const align = (value: number): number => Math.round(value * dpr) / dpr
+  // Canvas nearest-neighbour sampling assigns an exact half-device boundary
+  // to the lower pixel. Match that tie rule so previews sit on committed pixels.
+  const align = (value: number): number => Math.ceil(value * dpr - 0.5) / dpr
   const left = align(originX + pixelX * zoom)
   const top = align(originY + pixelY * zoom)
   const right = align(originX + (pixelX + 1) * zoom)

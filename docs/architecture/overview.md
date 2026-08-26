@@ -23,7 +23,7 @@ platform/tauri-api ----> Tauri commands ----> Windows/file system
 - `src-tauri/` 校验所有来自前端的路径和参数，并返回可展示错误。
 - `src-tauri/src/platform_paths.rs` 统一管理随应用目录保存的图库、色板、笔刷、工作区和脚本目录；迁移用户数据位置时只从这里切换。
 - `src-tauri/src/platform_clipboard.rs`、`platform_files.rs` 和 `platform_resources.rs` 分别负责系统剪贴板、二进制文件和资源信息；`lib.rs` 只注册命令并协调窗口生命周期。
-- `src-tauri/src/platform_scripts.rs` 持有程序根目录脚本发现、路径校验和 Lua 会话线程；`platform_scripts/lua_api.rs` 持有受限 Lua 5.4 VM、Aseprite 兼容对象与通用对话框桥接，`platform_scripts/mse_api.rs` 只声明 MoonSprite 专属命名空间、能力表和受控只读查询。平台层只接收脚本文件名、活动目标快照和对话框事件，返回类型化像素、Cel 表面、新图层或新文档结果，不持有或直接修改 Renderer 文档状态。持久对话框回调先以 Renderer 提供的当前同目标快照重建 VM 活动表面；阻塞对话框由 Lua coroutine 挂起并在关闭事件后继续执行。
+- `src-tauri/src/platform_scripts.rs` 持有程序根目录脚本发现、路径校验和 Lua 会话线程；`platform_scripts/lua_api.rs` 持有受限 Lua 5.4 VM、Aseprite 兼容对象与通用对话框桥接，`platform_scripts/mse_api.rs` 声明 MoonSprite 专属命名空间、能力表、结构快照查询和类型化操作序列化。平台层只接收脚本文件名、活动目标快照和对话框事件，返回类型化像素、Cel 表面、新图层、新文档或 `mse` 操作批次，不持有或直接修改 Renderer 文档状态。持久对话框回调先以 Renderer 提供的当前同目标像素与结构快照重建 VM 基线；阻塞对话框由 Lua coroutine 挂起并在关闭事件后继续执行。
 - `src-tauri/src/platform_extensions.rs` 是 `.msext` ZIP 扩展包的唯一平台边界，负责清单、声明式命令、栏目、现有菜单目标和新增顶层菜单位置校验、解压安全、staging 替换、启用状态、卸载、打开扩展目录和已启用 Lua 入口解析；`platform_scripts.rs` 只接收 `extension:<id>` 或 `extension:<id>:<commandId>`，再通过该边界取得经过校验的入口并复用受限 Lua runtime。Renderer 通过 `core/extension-contributions.ts` 把平台返回的已验证贡献映射到内置菜单首尾、动态顶层菜单和 MoonSprite 自己渲染的浮动栏目，所有入口仍只调用脚本 ID；扩展不能注入 Renderer 代码、访问扩展目录或传入扩展路径。
 
 ## 当前维护风险状态
@@ -85,7 +85,7 @@ platform/tauri-api ----> Tauri commands ----> Windows/file system
 - `components/canvas-selection-renderer.ts` 负责选区屏幕几何、边界路径缓存和抓手绘制；`components/useCanvasViewPreview.ts` 负责平移、缩放预览及提交；`components/canvas-composite-cache.ts` 负责整图/分块合成缓存和局部失效。
 - `store/workspace-state.ts` 按领域组合 Workspace 数据与命令契约；`workspace-session.ts` 管理会话构造和工具设置持久化，`workspace-layer-move.ts` 管理图层拖动预览、取消和单次历史提交，`workspace-palette.ts` 管理调色板选择、排序和历史命令。生产历史路径不再使用完整工程快照。
 - Rust 平台命令按领域拆分为 `platform_palette.rs`、`platform_workspaces.rs`、`platform_brushes.rs`、`platform_gallery.rs`、`platform_recovery.rs` 和 `platform_dialogs.rs`；新增系统命令必须进入对应领域模块。
-- Lua 脚本由 `store/lua-script-service.ts` 生成执行快照、持有 Renderer 侧目标令牌并校验每次会话返回；初始执行严格匹配原 revision 与表面，持久对话框回调则在确认文档、图层和帧身份未变后，把目标令牌重建为当前 Cel 基线，再严格校验本次返回。局部结果通过 `beginPixelEdit`、`recordPixel` 和 Store `commitPixelEdit` 提交，Cel 图像尺寸/位置替换通过最小前后表面历史提交，类型化新图层通过结构历史加入当前文档，新 Sprite 结果转成独立文档会话。`components/LuaScriptDialog.tsx` 只渲染平台返回的通用控件模型并派发事件，不接触文档写入。未来扩展结构性脚本 API 时必须增加对应 Store 领域命令，不得让 Lua 返回整份可变 `SpriteDocument`。
+- Lua 脚本由 `store/lua-script-service.ts` 生成像素与 `mse` 结构快照、持有 Renderer 侧目标令牌并校验每次会话返回；初始执行严格匹配原 revision 与表面，持久对话框回调则在确认文档、图层和帧身份未变后，把目标令牌和结构快照重建为当前基线，再严格校验本次返回。局部结果通过 `beginPixelEdit`、`recordPixel` 和 Store `commitPixelEdit` 提交，Cel 图像尺寸/位置替换通过最小前后表面历史提交，`store/lua-script-operations.ts` 把 `mse` 类型化操作逐项分派到现有 Store 领域命令。一个 Lua 事务使用复合历史合并像素与结构写入，任一操作失败时中止复合历史并逆序恢复已经应用的文档修改；新 Sprite、打开/保存/导出、资源导入和栏目布局继续作为明确的文档外操作。`components/LuaScriptDialog.tsx` 只渲染平台返回的通用控件模型并派发事件，不接触文档写入。新增脚本端点必须继续增加受限操作类型和对应 Store 领域命令，不得让 Lua 返回整份可变 `SpriteDocument` 或取得 Store、DOM 与任意 Tauri 命令。
 
 后续拆分大模块时，优先把纯规则提取到无环 `core/` 模块并补测试，再让领域 Store 编排状态，最后由 React 组件接入。禁止把新的持久化 key、格式版本判断、坐标算法或文档写入直接散落到 `App.tsx`、`CanvasStage.tsx` 或面板组件中。
 

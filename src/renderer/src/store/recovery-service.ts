@@ -2,6 +2,11 @@ import type { MoonSpriteApi, RecoveryRecord, SpriteDocument } from '@shared/type
 import { decodeProject, encodeProjectAsync } from '@/core/project-format'
 import { translateCurrent as tr } from '@/core/localization'
 
+export interface RecoveryAutosaveTarget {
+  id: string
+  document: SpriteDocument
+}
+
 export class RecoveryService {
   private queue: Promise<void> = Promise.resolve()
 
@@ -22,15 +27,15 @@ export class RecoveryService {
     return document
   }
 
-  autosave(api: MoonSpriteApi, documents: readonly SpriteDocument[]): Promise<void> {
+  autosave(api: MoonSpriteApi, targets: readonly RecoveryAutosaveTarget[]): Promise<void> {
     return this.enqueue(async () => {
-      const results = await Promise.allSettled(documents.map(async (document) => {
+      const results = await Promise.allSettled(targets.map(async ({ id, document }) => {
         // Recovery only needs the manifest and editable layer data. Avoid
         // generating a full-canvas gallery preview and use light compression.
-        await api.writeRecovery(document.id, document.name, await encodeProjectAsync(document, { includePreview: false, compressionLevel: 1 }))
+        await api.writeRecovery(id, document.name, await encodeProjectAsync(document, { includePreview: false, compressionLevel: 1 }))
       }))
       const failures = results.flatMap((result, index) => result.status === 'rejected'
-        ? [new Error(`${documents[index].name}: ${result.reason instanceof Error ? result.reason.message : String(result.reason)}`)]
+        ? [new Error(`${targets[index].document.name}: ${result.reason instanceof Error ? result.reason.message : String(result.reason)}`)]
         : [])
       if (failures.length > 0) throw new AggregateError(failures, tr('core.recovery.autosaveFailed', { count: failures.length }))
     })

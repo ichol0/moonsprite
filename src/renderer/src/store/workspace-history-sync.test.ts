@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { animationCelAt, ensureAnimationDocument } from '@/core/animation'
-import { createDocument, createLayer, getActiveLayer } from '@/core/document'
+import { createDocument, createLayer, getActiveLayer, readLayerPacked } from '@/core/document'
 import { beginPixelEdit, recordPixel } from '@/core/history'
 import { useWorkspace } from './workspace'
 
@@ -74,5 +74,51 @@ describe('targeted pixel history synchronization', () => {
     session = useWorkspace.getState().sessions[0]
     expect(layer.locked).toBe(false)
     expect(session.contentRevision).toBe(beforeContentRevision)
+  })
+
+  it('exposes chronological history and jumps to a selected state through undo and redo', () => {
+    const document = createDocument('history navigation', 1, 1, 'rgba')
+    const layer = getActiveLayer(document)
+    useWorkspace.getState().addSession(document)
+    const colors = [0xff0000ff, 0xff00ff00, 0xffff0000]
+
+    colors.forEach((color, index) => {
+      const edit = beginPixelEdit(layer.id)
+      recordPixel(document, layer, edit, 0, color)
+      useWorkspace.getState().commitPixelEdit(edit, `edit ${index + 1}`)
+    })
+
+    let session = useWorkspace.getState().sessions[0]
+    expect(session.history.timeline).toEqual({
+      position: 3,
+      entries: [
+        { label: 'edit 1', position: 1 },
+        { label: 'edit 2', position: 2 },
+        { label: 'edit 3', position: 3 }
+      ]
+    })
+
+    session.view.panX = 37
+    useWorkspace.getState().setHistoryPosition(1)
+    session = useWorkspace.getState().sessions[0]
+    expect(readLayerPacked(document, layer, 0) >>> 0).toBe(colors[0])
+    expect(session.history.timeline.position).toBe(1)
+    expect(session.view.panX).toBe(37)
+
+    useWorkspace.getState().setHistoryPosition(3)
+    expect(readLayerPacked(document, layer, 0) >>> 0).toBe(colors[2])
+    expect(useWorkspace.getState().sessions[0].history.timeline.position).toBe(3)
+
+    useWorkspace.getState().setHistoryPosition(1)
+    const branch = beginPixelEdit(layer.id)
+    recordPixel(document, layer, branch, 0, 0xffffffff)
+    useWorkspace.getState().commitPixelEdit(branch, 'branch edit')
+    expect(useWorkspace.getState().sessions[0].history.timeline).toEqual({
+      position: 2,
+      entries: [
+        { label: 'edit 1', position: 1 },
+        { label: 'branch edit', position: 2 }
+      ]
+    })
   })
 })

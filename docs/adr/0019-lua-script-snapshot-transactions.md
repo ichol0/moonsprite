@@ -11,18 +11,19 @@ MoonSprite 的文档与撤销状态由 Renderer Store 持有，而 Lua 5.4 VM �
 
 ## 决定
 
-Lua VM 只接收当前普通像素图层、当前选区与必要文档元数据的独立快照。VM 内的 Aseprite 兼容对象修改该快照并输出按顺序排列的类型化事务：局部绘制返回像素差量，`Cel.image` 或 `Cel.position` 变化返回完整的前后表面快照，`Sprite:newLayer()` / `newCel()` 和 `Sprite(width, height)` 分别返回受限的新图层或新文档结构。Renderer 在目标身份、revision、活动图层、活动帧和当前表面仍匹配时，通过 Store 的像素、表面或结构领域命令逐项提交；Lua 不接收也不返回整份可变 `SpriteDocument`。
+Lua VM 只接收当前普通像素图层、当前选区、必要文档元数据和 MoonSprite 结构数据的独立快照。VM 内的 Aseprite 兼容对象修改像素快照，`mse.*` 查询读取结构快照，写入端点只把经过 Lua 值序列化的路径与参数加入当前事务。VM 输出按顺序排列的类型化结果：局部绘制返回像素差量，`Cel.image` 或 `Cel.position` 变化返回完整的前后表面快照，`Sprite:newLayer()` / `newCel()` 和 `Sprite(width, height)` 分别返回受限的新图层或新文档结构，`mse` 写入返回受允许路径集合约束的操作批次。Renderer 在目标身份、revision、活动图层、活动帧和当前表面仍匹配时，通过 Store 的像素、表面或结构领域命令逐项提交；Lua 不接收也不返回整份可变 `SpriteDocument`。
 
-脚本首次执行后若存在 `Dialog:show()` 打开的对话框，Lua VM 由 Rust 专用运行线程继续持有；Renderer 只渲染序列化控件模型，并把控件值与点击、变化、释放、关闭事件送回同一 VM。`show { wait = false }` 保持模型式回调，阻塞式 `show()` 则通过 Lua coroutine 挂起主脚本并在关闭事件后继续。每次事件回调前，Renderer 先确认仍是原文档、原图层和原帧，再把当前 Cel 表面、revision、选区与颜色传回 Rust 重建 VM 活动基线；这允许同一目标上的撤销、重做和其他已提交编辑，同时继续拒绝跨文档、跨图层或跨帧写入。回调重新启用独立的时间和指令预算，并作为一次全有或全无的调用返回事务；返回结果仍须严格匹配刚重建的基线。对话框全部关闭、目标失效、回调报错或 Renderer 主动清理时立即销毁会话。
+脚本首次执行后若存在 `Dialog:show()` 打开的对话框，Lua VM 由 Rust 专用运行线程继续持有；Renderer 只渲染序列化控件模型，并把控件值与点击、变化、释放、关闭事件送回同一 VM。`show { wait = false }` 保持模型式回调，阻塞式 `show()` 则通过 Lua coroutine 挂起主脚本并在关闭事件后继续。每次事件回调前，Renderer 先确认仍是原文档、原图层和原帧，再把当前 Cel 表面、revision、选区、颜色与 `mse` 结构快照传回 Rust 重建 VM 活动基线；这允许同一目标上的撤销、重做和其他已提交编辑，同时继续拒绝跨文档、跨图层或跨帧写入。回调重新启用独立的时间和指令预算，并作为一次全有或全无的调用返回事务；返回结果仍须严格匹配刚重建的基线。对话框全部关闭、目标失效、回调报错或 Renderer 主动清理时立即销毁会话。
 
 脚本来源固定为程序根目录 `scripts` 文件夹第一层的普通 `.lua` 文件；Renderer 只提交列表返回的文件名标识，Rust 在每次执行时重新验证单一路径组件、扩展名和普通文件类型，拒绝目录穿越、子目录与符号链接。
 
-Lua 标准库使用明确允许列表，文件、进程、网络、包加载和调试能力默认不可用。运行时设置源码、单图像与会话累计图像分配、修改量、输出、Lua 内存、指令数和时间限制。首个通用兼容层提供 `Point`、`Rectangle`、支持 RGB/HSV 的 `Color`、`Image`、只读 `Selection`、活动 `Layer/Cel/Sprite`、颜色/单选等 `Dialog` 常见控件、`app.pixelColor`、`app.transaction`、`app.alert`、`app.refresh`、有限的 `app.useTool`，以及创建普通图层和新 Sprite 的类型化结构 API。未来增加帧、调色板或其他结构性 API 时，必须为每类操作增加类型化结果和 Store 领域命令，不能扩展为任意文档序列化回写。
+Lua 标准库使用明确允许列表，文件、进程、网络、包加载和调试能力默认不可用。运行时设置源码、单图像与会话累计图像分配、修改量、输出、Lua 内存、指令数和时间限制。Aseprite 兼容层提供 `Point`、`Rectangle`、支持 RGB/HSV 的 `Color`、`Image`、只读 `Selection`、活动 `Layer/Cel/Sprite`、颜色/单选等 `Dialog` 常见控件、`app.pixelColor`、`app.transaction`、`app.alert`、`app.refresh`、有限的 `app.useTool`，以及创建普通图层和新 Sprite 的类型化结构 API。MoonSprite 专属 `mse` 层开放文档、图层、动画循环节、调色板、瓦片、自由瓦片、图案笔刷、选区、切片、图层样式、栏目、文件操作和通用 UI；每类写入都有固定操作路径、参数上限和 Store 分派，不能扩展为任意文档序列化回写。
 
 ## 结果
 
 - Lua 执行与 UI 线程、文档所有权和工程格式保持隔离。
 - 每个脚本事务可以映射到可预测的 MoonSprite 撤销步骤。
+- 同一事务中的兼容层像素修改与 `mse` 文档操作共用一个复合历史；后续操作失败时逆序撤回已经应用的历史项，不留下半完成文档状态。
 - 模型式和阻塞式脚本对话框都在同一个 Lua 全局环境中持续执行，不需要为具体脚本编写桥接特例。
 - 同一 Cel 上已经提交的编辑、撤销和重做会成为下一次持久回调的新基线；回调执行期间发生的编辑或目标切换仍会让结果失效，而不是覆盖新状态。
 - 脚本创建的普通图层进入当前文档撤销历史；脚本创建的新 Sprite 作为独立文档会话打开，两者都经过结构与像素上限校验。

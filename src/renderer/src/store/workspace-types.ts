@@ -9,6 +9,7 @@ import type {
   FillKind,
   FillMode,
   GradientDither,
+  GradientType,
   ImageBrush,
   LayerMask,
   ImageBrushSettings,
@@ -71,6 +72,8 @@ export interface OutlinePreview {
   position: OutlinePosition
   directions: OutlineDirections
   kernel: OutlineKernel
+  smartHue: boolean
+  smartHueDarkness: number
 }
 
 export interface AnimationFrameClipboardItem {
@@ -90,6 +93,13 @@ export interface SelectionPivot {
   y: number
 }
 
+export interface FloatingSelectionBoxHistoryEntry {
+  beforeSelection: SelectionMask
+  afterSelection: SelectionMask
+  beforePivot: SelectionPivot | null
+  afterPivot: SelectionPivot | null
+}
+
 export interface FloatingPaste {
   layerId: string
   layers?: SelectionTransformLayerState[]
@@ -106,6 +116,8 @@ export interface FloatingPaste {
   tilemapEditCellIndex?: number
   copy: boolean
   label: string
+  selectionBoxUndo?: FloatingSelectionBoxHistoryEntry[]
+  selectionBoxRedo?: FloatingSelectionBoxHistoryEntry[]
   freeTile?: {
     sourceId: string
     instanceId: string
@@ -189,6 +201,8 @@ export interface DocumentSession {
   lineKind: LineKind
   curveAnchorCount: number
   shapeRatio: ShapeRatio | null
+  shapeRounded: boolean
+  shapeCornerRadius: number
   fillMode: FillMode
   fillKind: FillKind
   fillTolerance: number
@@ -196,6 +210,7 @@ export interface DocumentSession {
   fillGapThreshold: number
   gradientTolerance: number
   gradientContiguous: boolean
+  gradientType: GradientType
   gradientDither: GradientDither
   moveAutoSelect: boolean
   selection: SelectionMask | null
@@ -203,6 +218,8 @@ export interface DocumentSession {
   selectionPivot?: SelectionPivot | null
   selectionKind: SelectionKind
   selectionMode: SelectionMode
+  selectionRounded: boolean
+  selectionCornerRadius: number
   wandTolerance: number
   wandContiguous: boolean
   wandGapClosing: boolean
@@ -261,6 +278,8 @@ export interface DocumentSession {
   /** Changes that require the layer/timeline panel structure to render again. */
   layersPanelRevision: number
   contentInvalidation: DocumentContentInvalidation | null
+  /** Recovery record that opened this session; kept until explicit deletion or a complete save. */
+  recoveryOriginId: string | null
   recoverySuppressed: boolean
 }
 

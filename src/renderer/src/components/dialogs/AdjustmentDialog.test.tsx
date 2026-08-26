@@ -4,9 +4,10 @@ import { AdjustmentDialog } from './AdjustmentDialog'
 import { useWorkspace } from '@/store/workspace'
 import { createDocument, createLayer, getActiveLayer, readLayerColor, writeLayerColor } from '@/core/document'
 import { beginAdjustmentPreviewEdit, endAdjustmentPreviewEdit, prepareAdjustmentPreviewEdit, renderAdjustmentPreviewEdit } from '@/core/adjustment-preview-lifecycle'
+import { notifyViewPreview } from '@/core/view-preview-lifecycle'
 
 beforeEach(() => useWorkspace.setState({ sessions: [], activeId: null, message: null, dialog: null }))
-afterEach(() => { cleanup(); vi.restoreAllMocks() })
+afterEach(() => { cleanup(); vi.useRealTimers(); vi.restoreAllMocks() })
 
 describe('AdjustmentDialog', () => {
   it('keeps the curve plot styling separate from toolbar icon buttons', () => {
@@ -16,10 +17,10 @@ describe('AdjustmentDialog', () => {
     const removeButton = screen.getByRole('button', { name: '删除选中的控制点' })
     expect(plot).toHaveClass('curve-editor-plot')
     expect(removeButton.querySelector('svg')).not.toHaveClass('curve-editor-plot')
-    expect(screen.getByRole('tablist', { name: '曲线通道' }).children).toHaveLength(4)
+    expect(screen.getByRole('group', { name: '曲线通道' }).children).toHaveLength(4)
   })
 
-  it('restores the preview snapshot when the global close request cancels it', () => {
+  it('does not rewrite the snapshot when closing before a preview was applied', () => {
     const snapshot = { layers: [{ layerId: 'layer-1', frameId: 'frame-1', width: 1, height: 1, offsetX: 0, offsetY: 0, storageOriginX: 0, storageOriginY: 0, pixels: new Uint8ClampedArray(4) }], palette: [], nextColorId: 1 }
     const state = useWorkspace.getState()
     const capture = vi.spyOn(state, 'captureActiveLayerAdjustmentSnapshot').mockReturnValue(snapshot)
@@ -31,7 +32,7 @@ describe('AdjustmentDialog', () => {
     window.dispatchEvent(new Event('moonsprite:close-dialog'))
 
     expect(capture).toHaveBeenCalled()
-    expect(restore).toHaveBeenCalledWith(snapshot)
+    expect(restore).not.toHaveBeenCalled()
     expect(onClose).toHaveBeenCalledOnce()
   })
 
@@ -113,15 +114,18 @@ describe('AdjustmentDialog', () => {
     expect(screen.getByText('明度')).toBeInTheDocument()
   })
 
-  it('coalesces rapid slider input into one preview per animation frame', () => {
-    const snapshot = { layers: [{ layerId: 'layer-1', frameId: 'frame-1', width: 1, height: 1, offsetX: 0, offsetY: 0, storageOriginX: 0, storageOriginY: 0, pixels: new Uint8ClampedArray(4) }], palette: [], nextColorId: 1 }
+  it('coalesces rapid slider input into one preview per animation frame', async () => {
+    const document = createDocument('coalesced adjustment preview', 1, 1, 'rgba')
+    useWorkspace.getState().addSession(document)
     const state = useWorkspace.getState()
+    const snapshot = state.captureActiveLayerAdjustmentSnapshot()!
     vi.spyOn(state, 'captureActiveLayerAdjustmentSnapshot').mockReturnValue(snapshot)
     const preview = vi.spyOn(state, 'previewActiveLayerAdjustment').mockImplementation(() => undefined)
     let scheduled: FrameRequestCallback | null = null
     vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => { scheduled = callback; return 1 })
     vi.spyOn(window, 'cancelAnimationFrame').mockImplementation(() => { scheduled = null })
     render(<AdjustmentDialog kind="brightness-contrast" onClose={vi.fn()} />)
+    await act(async () => { await Promise.resolve() })
     act(() => { scheduled?.(0); scheduled = null })
     preview.mockClear()
 
@@ -133,6 +137,43 @@ describe('AdjustmentDialog', () => {
     expect(preview).not.toHaveBeenCalled()
     act(() => scheduled?.(16))
     expect(preview).toHaveBeenCalledOnce()
-    expect(preview).toHaveBeenCalledWith(expect.objectContaining({ brightness: 30 }), snapshot)
+    expect(preview).toHaveBeenCalledWith(expect.objectContaining({ brightness: 30 }), snapshot, undefined, expect.any(Object))
+  })
+
+  it('does not recompute while live pan stays inside the buffered preview region', async () => {
+    vi.useFakeTimers()
+    const document = createDocument('buffered adjustment preview', 200, 200, 'rgba')
+    const layer = getActiveLayer(document)
+    writeLayerColor(document, layer, 100 * layer.width + 100, { r: 40, g: 40, b: 40, a: 255 })
+    useWorkspace.getState().addSession(document)
+    useWorkspace.getState().setViewportSize({ width: 160, height: 160 })
+    const state = useWorkspace.getState()
+    const preview = vi.spyOn(state, 'previewActiveLayerAdjustment')
+    const frames: FrameRequestCallback[] = []
+    vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => { frames.push(callback); return frames.length })
+    vi.spyOn(window, 'cancelAnimationFrame').mockImplementation(() => undefined)
+    render(<AdjustmentDialog kind="brightness-contrast" onClose={vi.fn()} />)
+    await act(async () => { await Promise.resolve() })
+    act(() => { while (frames.length > 0) frames.shift()!(0) })
+    preview.mockClear()
+
+    fireEvent.change(screen.getAllByRole('slider')[0], { target: { value: '30' } })
+    act(() => frames.shift()?.(16))
+    expect(preview).toHaveBeenCalledOnce()
+    preview.mockClear()
+
+    const view = useWorkspace.getState().sessions[0].view
+    act(() => notifyViewPreview(document.id, { ...view, panX: -16 }))
+    act(() => vi.advanceTimersByTime(120))
+    expect(frames).toHaveLength(0)
+    expect(preview).not.toHaveBeenCalled()
+
+    act(() => notifyViewPreview(document.id, { ...view, panX: -640 }))
+    act(() => vi.advanceTimersByTime(89))
+    expect(frames).toHaveLength(0)
+    act(() => vi.advanceTimersByTime(1))
+    expect(frames).toHaveLength(1)
+    act(() => frames.shift()?.(32))
+    expect(preview).toHaveBeenCalledOnce()
   })
 })

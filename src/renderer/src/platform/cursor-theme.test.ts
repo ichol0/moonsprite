@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-const { onScaleChanged, scaleChangedHandlers, scaleFactor } = vi.hoisted(() => {
+const { onScaleChanged, scaleChangedHandlers, scaleFactor, setCursorVisible } = vi.hoisted(() => {
   const handlers: Array<(event: { payload: { scaleFactor: number } }) => void> = []
   return {
     onScaleChanged: vi.fn((handler: (event: { payload: { scaleFactor: number } }) => void) => {
@@ -8,12 +8,13 @@ const { onScaleChanged, scaleChangedHandlers, scaleFactor } = vi.hoisted(() => {
       return Promise.resolve(() => undefined)
     }),
     scaleChangedHandlers: handlers,
-    scaleFactor: vi.fn(() => Promise.resolve(1))
+    scaleFactor: vi.fn(() => Promise.resolve(1)),
+    setCursorVisible: vi.fn(() => Promise.resolve())
   }
 })
 
 vi.mock('@tauri-apps/api/window', () => ({
-  getCurrentWindow: () => ({ onScaleChanged, scaleFactor })
+  getCurrentWindow: () => ({ onScaleChanged, scaleFactor, setCursorVisible })
 }))
 
 function enableTauriRuntime(): void {
@@ -34,6 +35,8 @@ describe('cursor icon library', () => {
     onScaleChanged.mockClear()
     scaleFactor.mockClear()
     scaleFactor.mockResolvedValue(1)
+    setCursorVisible.mockClear()
+    setCursorVisible.mockResolvedValue()
   })
 
   afterEach(() => {
@@ -67,6 +70,33 @@ describe('cursor icon library', () => {
     const { cursorPreferenceSource } = await import('./cursor-theme')
     expect(cursorPreferenceSource('--cursor-default', false)).toBe('moonsprite')
     expect(cursorPreferenceSource('--cursor-selection-rotate-ne', false)).toBe('moonsprite')
+  })
+
+  it('resolves a positioned overlay cursor for pen input without display-DPI coordinates', async () => {
+    const { CURSOR_ICON_LIBRARY, cursorOverlayDescriptor } = await import('./cursor-theme')
+    const pencil = CURSOR_ICON_LIBRARY.find((item) => item.variable === '--cursor-pencil-black')!
+    expect(cursorOverlayDescriptor('var(--cursor-pencil-black)', false, 1.5)).toEqual({
+      source: pencil.source,
+      size: 48,
+      hotspotX: 22.5,
+      hotspotY: 22.5
+    })
+    expect(cursorOverlayDescriptor('var(--cursor-pencil-black)', false, 1.5, 1.5)).toEqual({
+      source: pencil.source,
+      size: 32,
+      hotspotX: 15,
+      hotspotY: 15
+    })
+    expect(cursorOverlayDescriptor('none', false, 1)).toBeNull()
+    expect(cursorOverlayDescriptor('crosshair', false, 1)).toBeNull()
+  })
+
+  it('hides the native Windows cursor while a pen cursor owns the canvas', async () => {
+    enableTauriRuntime()
+    const { setNativeCursorVisible } = await import('./cursor-theme')
+    await setNativeCursorVisible(false)
+    await setNativeCursorVisible(true)
+    expect(setCursorVisible.mock.calls).toEqual([[false], [true]])
   })
 
   it('compensates cursor pixels and hotspots for display DPI changes', async () => {

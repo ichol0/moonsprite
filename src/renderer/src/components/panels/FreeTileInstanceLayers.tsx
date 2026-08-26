@@ -11,6 +11,8 @@ import { freeTileCelTargetAt } from '@/core/free-tile-document'
 import { useWorkspace, type DocumentSession } from '@/store/workspace'
 import { useI18n } from '@/components/I18nProvider'
 import { useLayerRowToggleGesture, type LayerRowToggleControl } from '@/components/panels/useLayerRowToggleGesture'
+import { EDITOR_SHORTCUT_COMMAND_EVENT, type EditorShortcutCommandDetail } from '@/core/command-context'
+import type { ShortcutId } from '@/core/shortcuts'
 
 interface FreeTileInstanceDrag {
   pointerId: number
@@ -85,6 +87,8 @@ export function FreeTileInstanceLayers({ session, layer, listRef }: FreeTileInst
   const selectedInstanceIdSet = new Set(selectedInstanceIds)
   const dragRef = useRef<FreeTileInstanceDrag | null>(null)
   const suppressRowClickRef = useRef(false)
+  const rowFlashHandledRef = useRef(false)
+  const shortcutCommandHandlerRef = useRef<(id: ShortcutId) => void>(() => {})
   const [contextMenu, setContextMenu] = useState<{ instanceId: string; x: number; y: number } | null>(null)
   const [properties, setProperties] = useState<FreeTileInstancePropertiesTarget | null>(null)
   const [drop, setDrop] = useState<{ instanceId: string; targetId: string; position: 'before' | 'after' } | null>(null)
@@ -143,14 +147,29 @@ export function FreeTileInstanceLayers({ session, layer, listRef }: FreeTileInst
     }
   }, [contextMenu])
 
+  useEffect(() => {
+    const handleShortcutCommand = (event: Event): void => {
+      const detail = (event as CustomEvent<EditorShortcutCommandDetail>).detail
+      if (!detail || detail.documentId !== session.document.id) return
+      shortcutCommandHandlerRef.current(detail.id)
+    }
+    window.addEventListener(EDITOR_SHORTCUT_COMMAND_EVENT, handleShortcutCommand)
+    return () => window.removeEventListener(EDITOR_SHORTCUT_COMMAND_EVENT, handleShortcutCommand)
+  }, [session.document.id])
+
   const entryForId = (instanceId: string): FreeTileInstanceEntry | null => entries.find(({ instance }) => instance.id === instanceId) ?? null
   const activeInstanceForId = (instanceId: string): FreeTileInstance | null => entryForId(instanceId)?.instance ?? null
   const flashInstance = (instanceId: string): void => publishFreeTileInstanceFlash({ documentId: session.document.id, instanceId })
-  const selectSingleInstance = (instance: FreeTileInstance, edit = false): void => {
+  const enterInstanceLayerView = (): void => {
+    if (session.freeTileInstanceLayerId !== layer.id) store.setFreeTileInstanceLayerView(layer.id)
+  }
+  const selectSingleInstance = (instance: FreeTileInstance, edit = false, flash = true): void => {
+    enterInstanceLayerView()
     store.setSelectedFreeTileInstance(instance.id, edit ? 'edit' : undefined)
-    flashInstance(instance.id)
+    if (flash) flashInstance(instance.id)
   }
   const selectInstanceRow = (instance: FreeTileInstance, mode: 'replace' | 'toggle' | 'range' = 'replace'): void => {
+    enterInstanceLayerView()
     store.selectFreeTileInstanceRow(instance.id, mode, displayedInstanceIds)
     flashInstance(instance.id)
   }
@@ -202,17 +221,23 @@ export function FreeTileInstanceLayers({ session, layer, listRef }: FreeTileInst
   const beginDrag = (event: ReactPointerEvent<HTMLButtonElement>, instance: FreeTileInstance): void => {
     if (event.button !== 0) return
     suppressRowClickRef.current = false
+    rowFlashHandledRef.current = false
     if (event.ctrlKey) {
       suppressRowClickRef.current = true
       selectInstanceRow(instance, 'toggle')
+      rowFlashHandledRef.current = true
       return
     }
     if (event.shiftKey) {
       suppressRowClickRef.current = true
       selectInstanceRow(instance, 'range')
+      rowFlashHandledRef.current = true
       return
     }
-    if (!selectedInstanceIdSet.has(instance.id)) selectInstanceRow(instance)
+    if (!selectedInstanceIdSet.has(instance.id)) {
+      selectInstanceRow(instance)
+      rowFlashHandledRef.current = true
+    }
     if (instance.locked === true) return
     const element = event.currentTarget
     dragRef.current = { pointerId: event.pointerId, element, instanceId: instance.id, startX: event.clientX, startY: event.clientY, moved: false, targetId: null, position: null }
@@ -243,11 +268,19 @@ export function FreeTileInstanceLayers({ session, layer, listRef }: FreeTileInst
   const selectRowFromClick = (instance: FreeTileInstance): void => {
     if (suppressRowClickRef.current) {
       suppressRowClickRef.current = false
+      rowFlashHandledRef.current = false
+      return
+    }
+    if (rowFlashHandledRef.current) {
+      rowFlashHandledRef.current = false
       return
     }
     const active = useWorkspace.getState().sessions.find((candidate) => candidate.document.id === session.document.id)
     const currentIds = active?.selectedFreeTileInstanceIds ?? []
-    if (currentIds.length === 1 && currentIds[0] === instance.id) return
+    if (currentIds.length === 1 && currentIds[0] === instance.id) {
+      flashInstance(instance.id)
+      return
+    }
     selectInstanceRow(instance)
   }
   const stopRowPointer = (event: ReactPointerEvent<HTMLElement>): void => {
@@ -260,6 +293,19 @@ export function FreeTileInstanceLayers({ session, layer, listRef }: FreeTileInst
   const contextEntry = contextMenu ? entryForId(contextMenu.instanceId) : null
   const contextInstanceIds = contextEntry && selectedInstanceIdSet.has(contextEntry.instance.id) ? selectedInstanceIds : contextEntry ? [contextEntry.instance.id] : []
   const contextDeleteDisabled = contextInstanceIds.some((instanceId) => activeInstanceForId(instanceId)?.locked === true)
+  const shortcutEntry = entryForId(selectedInstanceId ?? selectedInstanceIds[0] ?? '')
+
+  shortcutCommandHandlerRef.current = (id): void => {
+    if (!shortcutEntry) return
+    switch (id) {
+      case 'showOnlyFreeTileInstance': showOnlyInstance(shortcutEntry.instance); break
+      case 'openFreeTileInstanceProperties': openProperties(shortcutEntry.instance.id); break
+      case 'rotateFreeTileInstance90': transformInstance(shortcutEntry.instance, { rotation: (((shortcutEntry.instance.rotation ?? 0) + 1) % 4) as 0 | 1 | 2 | 3 }); break
+      case 'mirrorFreeTileInstanceHorizontal': transformInstance(shortcutEntry.instance, { flipHorizontal: shortcutEntry.instance.flipHorizontal !== true }); break
+      case 'mirrorFreeTileInstanceVertical': transformInstance(shortcutEntry.instance, { flipVertical: shortcutEntry.instance.flipVertical !== true }); break
+      case 'deleteFreeTileInstances': deleteInstances(shortcutEntry.instance); break
+    }
+  }
 
   return <>
     <div ref={listRef} className="layer-list free-tile-instance-layer-view component-scrollbar" role="listbox" aria-label={t('freeTiles.instances')} aria-multiselectable="true">
@@ -270,7 +316,7 @@ export function FreeTileInstanceLayers({ session, layer, listRef }: FreeTileInst
         const dragging = drop?.instanceId === instanceId
         const dropTarget = drop?.targetId === instanceId
         const name = t('freeTiles.instanceName', { name: sourceName, index: ordinal })
-        return <button key={instanceId} type="button" data-free-tile-instance-id={instanceId} data-free-tile-instance-active="true" className={`layer-row free-tile-instance-row ${selected ? 'selected' : ''} ${dragging ? 'dragging' : ''}`} role="option" aria-label={name} aria-selected={selected} aria-grabbed={dragging} onPointerDown={(event) => beginDrag(event, instance)} onPointerMove={moveDrag} onPointerUp={(event) => finishDrag(event.pointerId)} onPointerCancel={(event) => finishDrag(event.pointerId, true)} onClick={() => selectRowFromClick(instance)} onDoubleClick={() => { if (instance.locked !== true) selectSingleInstance(instance, true) }} onContextMenu={(event) => { event.preventDefault(); event.stopPropagation(); if (!selectedInstanceIdSet.has(instanceId)) selectInstanceRow(instance); setContextMenu({ instanceId, x: event.clientX, y: event.clientY }) }} onKeyDown={(event) => { if (event.key !== 'Delete' && event.key !== 'Backspace') return; event.preventDefault(); event.stopPropagation(); deleteInstances(instance) }}>
+        return <button key={instanceId} type="button" data-free-tile-instance-id={instanceId} data-free-tile-instance-active="true" className={`layer-row free-tile-instance-row ${selected ? 'selected' : ''} ${dragging ? 'dragging' : ''}`} role="option" aria-label={name} aria-selected={selected} aria-grabbed={dragging} onPointerDown={(event) => beginDrag(event, instance)} onPointerMove={moveDrag} onPointerUp={(event) => finishDrag(event.pointerId)} onPointerCancel={(event) => finishDrag(event.pointerId, true)} onClick={() => selectRowFromClick(instance)} onDoubleClick={() => { if (instance.locked !== true) selectSingleInstance(instance, true, false) }} onContextMenu={(event) => { event.preventDefault(); event.stopPropagation(); if (!selectedInstanceIdSet.has(instanceId)) selectInstanceRow(instance); setContextMenu({ instanceId, x: event.clientX, y: event.clientY }) }} onKeyDown={(event) => { if (event.key !== 'Delete' && event.key !== 'Backspace') return; event.preventDefault(); event.stopPropagation(); deleteInstances(instance) }}>
           {dropTarget && <span className={`layer-drop-indicator ${drop.position === 'before' ? 'above' : 'below'}`} aria-hidden="true"><i /><b /><i /></span>}
           {displayColor && <span className="layer-color-stripe" style={{ backgroundColor: `rgba(${displayColor.r}, ${displayColor.g}, ${displayColor.b}, ${displayColor.a / 255})` }} aria-hidden="true" />}
           <span className="layer-visibility" role="button" tabIndex={-1} aria-label={t(instance.visible === false ? 'layers.showLayer' : 'layers.hideLayer')} onPointerDown={(event) => toggleGesture.begin(event, { control: 'visibility', id: instance.id }, instance.visible !== false)} onPointerEnter={(event) => toggleGesture.enter(event, { control: 'visibility', id: instance.id })} onPointerUp={toggleGesture.end} onPointerCancel={toggleGesture.end} onDoubleClick={(event) => event.stopPropagation()} onClick={toggleGesture.click}>{instance.visible === false ? <PixelUtilityIcon kind="eyeOff" /> : <PixelUtilityIcon kind="eye" />}</span>

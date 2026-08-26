@@ -7,6 +7,7 @@ import { resizeDocument } from './document'
 import { createProceduralBrush, createProceduralBrushes, createSelectionBrush, proceduralBrushCoverageAt } from './brushes'
 import { packColor, unpackColor } from './raster'
 import { balancedStairLinePoints } from './pixel-line'
+import { symmetrySelection, type SymmetryAxes } from './symmetry'
 
 const blue = { r: 41, g: 121, b: 255, a: 255 }
 const red = { r: 255, g: 48, b: 48, a: 255 }
@@ -293,7 +294,7 @@ describe('pixel tools', () => {
     expect(readLayerColor(document, layer, 1)).toEqual({ ...purple, a: 128 })
   })
 
-  it('uses final transparent gradient pixels as alpha-preserving image-brush erasure', () => {
+  it('composites fully transparent dynamic gradient image-brush pixels as a no-op', () => {
     const document = createDocument('transparent gradient brush', 1, 1, 'rgba')
     const layer = getActiveLayer(document)
     writeLayerColor(document, layer, 0, blue)
@@ -315,7 +316,45 @@ describe('pixel tools', () => {
       dither: 'none'
     })
 
-    expect(readLayerColor(document, layer, 0)).toEqual({ ...blue, a: 127 })
+    expect(readLayerColor(document, layer, 0)).toEqual(blue)
+  })
+
+  it('composites pressure gradients from transparent stops without replacing the destination', () => {
+    const document = createDocument('transparent pressure gradient', 1, 1, 'rgba')
+    const layer = getActiveLayer(document)
+    writeLayerColor(document, layer, 0, blue)
+
+    paintBrush(document, layer, beginPixelEdit(layer.id), 0, 0, 1, red, 'square', null, 'solid', 1, null, undefined, 0, 'paint', undefined, undefined, undefined, undefined, 1, undefined, false, {
+      startColor: { r: 0, g: 0, b: 0, a: 0 },
+      endColor: red,
+      gradientAmount: 0.5,
+      dither: 'none'
+    })
+
+    // Aseprite carries the visible stop RGB into the transparent stop before
+    // source-over compositing: 50% of the configured foreground over blue.
+    expect(readLayerColor(document, layer, 0)).toEqual({ r: 148, g: 84, b: 151, a: 255 })
+  })
+
+  it('does not let a transparent pressure-gradient crossing cover an earlier part of the same stroke', () => {
+    const document = createDocument('transparent pressure crossing', 3, 3, 'rgba')
+    const layer = getActiveLayer(document)
+    const edit = beginPixelEdit(layer.id)
+    const transparent = { r: 0, g: 0, b: 0, a: 0 }
+
+    paintLine(document, layer, edit, 0, 0, 2, 2, 1, red, null, 'square', 'solid', 1, null, undefined, 0, 'paint', undefined, 'raster', undefined, undefined, undefined, {
+      gradient: { startColor: transparent, endColor: red, fromAmount: 1, toAmount: 1, dither: 'none' }
+    })
+    paintLine(document, layer, edit, 2, 0, 0, 2, 1, red, null, 'square', 'solid', 1, null, undefined, 0, 'paint', undefined, 'raster', undefined, undefined, undefined, {
+      gradient: { startColor: transparent, endColor: red, fromAmount: 0.25, toAmount: 0.25, dither: 'none' }
+    })
+    paintLine(document, layer, edit, 2, 0, 0, 2, 1, red, null, 'square', 'solid', 1, null, undefined, 0, 'paint', undefined, 'raster', undefined, undefined, undefined, {
+      gradient: { startColor: transparent, endColor: red, fromAmount: 0, toAmount: 0, dither: 'none' }
+    })
+
+    // The crossing receives both a partially and a fully transparent sample;
+    // neither may cover the opaque part already left by this stroke.
+    expect(readLayerColorAt(document, layer, 1, 1)).toEqual(red)
   })
 
   it('uses imported image alpha as eraser strength', () => {
@@ -585,6 +624,27 @@ describe('pixel tools', () => {
     expect(readLayerColorAt(closed.document, closed.layer, 0, 0).a).toBe(0)
     expect(readLayerColorAt(closed.document, closed.layer, 4, 2)).toEqual(red)
     expect(readLayerColorAt(closed.document, closed.layer, 3, 2)).toEqual(blue)
+  })
+
+  it('closes both sides of an isolated line pixel without leaking outside', () => {
+    const document = createDocument('smart closure island', 15, 11, 'rgba')
+    const layer = getActiveLayer(document)
+    for (let x = 2; x <= 12; x += 1) writeLayerColor(document, layer, 2 * document.width + x, blue)
+    for (let y = 2; y <= 8; y += 1) {
+      writeLayerColor(document, layer, y * document.width + 2, blue)
+      writeLayerColor(document, layer, y * document.width + 12, blue)
+    }
+    for (let x = 2; x <= 4; x += 1) writeLayerColor(document, layer, 8 * document.width + x, blue)
+    writeLayerColor(document, layer, 8 * document.width + 7, blue)
+    for (let x = 10; x <= 12; x += 1) writeLayerColor(document, layer, 8 * document.width + x, blue)
+
+    floodFill(document, layer, 7, 5, red, null, true, null, 1, undefined, 'solid', 1, 0, 'paint', 0, 2)
+
+    expect(readLayerColorAt(document, layer, 7, 5)).toEqual(red)
+    expect(readLayerColorAt(document, layer, 0, 0).a).toBe(0)
+    expect(readLayerColorAt(document, layer, 5, 8)).toEqual(red)
+    expect(readLayerColorAt(document, layer, 9, 8)).toEqual(red)
+    expect(readLayerColorAt(document, layer, 7, 8)).toEqual(blue)
   })
 
   it('fills colors within tolerance while preserving contiguous boundaries', () => {
@@ -1336,6 +1396,55 @@ describe('pixel tools', () => {
     expect(Array.from(layer.pixels)).toEqual(before)
   })
 
+  it('renders a floating clipboard resize preview when centered scaling lands on half pixels', () => {
+    const document = createDocument('half-pixel clipboard preview', 8, 3, 'rgba')
+    const layer = getActiveLayer(document)
+    const selection = { x: 1, y: 1, width: 2, height: 1 }
+    const source = {
+      selection,
+      values: Uint32Array.from([packColor(red), packColor(blue)]),
+      selectedOffsets: new Uint32Array(0),
+      opaqueOffsets: new Uint32Array(0),
+      opaqueIndices: new Uint32Array(0),
+      opaqueValues: new Uint32Array(0),
+      origin: 'clipboard' as const
+    }
+
+    const preview = selectionTransformPreviewPacked(document, source, { x: 3.5, y: 1, width: 3, height: 1 }, 3, 1, 4, 1, 0, undefined, layer)
+
+    expect(Array.from(preview)).toEqual([
+      packColor(red),
+      packColor(red),
+      packColor(blue),
+      packColor(blue)
+    ])
+  })
+
+  it('commits a floating clipboard resize when centered scaling lands on half pixels', () => {
+    const document = createDocument('half-pixel clipboard commit', 8, 3, 'rgba')
+    const layer = getActiveLayer(document)
+    const selection = { x: 1, y: 1, width: 2, height: 1 }
+    const source = {
+      selection,
+      values: Uint32Array.from([packColor(red), packColor(blue)]),
+      selectedOffsets: new Uint32Array(0),
+      opaqueOffsets: new Uint32Array(0),
+      opaqueIndices: new Uint32Array(0),
+      opaqueValues: new Uint32Array(0),
+      origin: 'clipboard' as const
+    }
+
+    const edit = applySelectionTransform(document, source, { x: 3.5, y: 1, width: 3, height: 1 }, 0, true, undefined, undefined, undefined, layer)
+
+    expect(edit).not.toBeNull()
+    expect([
+      readLayerColorAt(document, layer, 3, 1),
+      readLayerColorAt(document, layer, 4, 1),
+      readLayerColorAt(document, layer, 5, 1),
+      readLayerColorAt(document, layer, 6, 1)
+    ]).toEqual([red, red, blue, blue])
+  })
+
   it('invalidates cached opaque ranges after a selection translation preview', () => {
     const document = createDocument('cached preview move', 6, 1, 'rgba')
     const layer = getActiveLayer(document)
@@ -1462,6 +1571,31 @@ describe('pixel tools', () => {
     expect(readLayerColorAt(document, layer, 3, 3).a).toBe(0)
   })
 
+  it('uses one rounded rectangle mask for filled, outline, and sampled shape previews', () => {
+    const bounds = { x: 2, y: 3, width: 8, height: 6 }
+    const radius = 3
+    const filled = new Set(shapePixelPoints(bounds, 'rectangle', radius).map(({ x, y }) => `${x}:${y}`))
+    const outline = new Set(shapePixelPoints(bounds, 'rectangle-outline', radius).map(({ x, y }) => `${x}:${y}`))
+    const topCenter = `${bounds.x + Math.floor(bounds.width / 2)}:${bounds.y}`
+    const leftCenter = `${bounds.x}:${bounds.y + Math.floor(bounds.height / 2)}`
+    const center = `${bounds.x + Math.floor(bounds.width / 2)}:${bounds.y + Math.floor(bounds.height / 2)}`
+
+    expect(filled.has(`${bounds.x}:${bounds.y}`)).toBe(false)
+    expect(filled.has(topCenter)).toBe(true)
+    expect(filled.has(leftCenter)).toBe(true)
+    expect(filled.has(center)).toBe(true)
+    expect(outline.has(`${bounds.x}:${bounds.y}`)).toBe(false)
+    expect(outline.has(topCenter)).toBe(true)
+    expect(outline.has(center)).toBe(false)
+    expect(shapePixelPoints(bounds, 'rectangle', 99)).toEqual(shapePixelPoints(bounds, 'rectangle', radius))
+
+    for (let y = bounds.y - 1; y <= bounds.y + bounds.height; y += 1) {
+      for (let x = bounds.x - 1; x <= bounds.x + bounds.width; x += 1) {
+        expect(shapeContainsPixel(bounds, 'rectangle', x, y, radius)).toBe(filled.has(`${x}:${y}`))
+      }
+    }
+  })
+
   it('fills freeform and polygon paths with the same pixels used by their previews', () => {
     const document = createDocument('path shapes', 12, 12, 'rgba')
     const layer = getActiveLayer(document)
@@ -1557,6 +1691,24 @@ describe('pixel tools', () => {
 
     paintShape(document, layer, edit, bounds, 'rectangle', blue, null, undefined, undefined, angle)
 
+    expect([...edit.before.keys()].sort((left, right) => left - right)).toEqual(
+      preview.map(({ x, y }) => y * document.width + x).sort((left, right) => left - right)
+    )
+  })
+
+  it('commits exactly the rounded pixels shown by a rotated rectangle preview', () => {
+    const document = createDocument('rotated rounded shape preview', 24, 24, 'rgba')
+    const layer = getActiveLayer(document)
+    const bounds = { x: 5, y: 7, width: 11, height: 7 }
+    const angle = 37
+    const radius = 3
+    const preview = rotatedShapePixelPoints(bounds, 'rectangle', document.width, document.height, angle, radius)
+    const square = rotatedShapePixelPoints(bounds, 'rectangle', document.width, document.height, angle)
+    const edit = beginPixelEdit(layer.id)
+
+    paintShape(document, layer, edit, bounds, 'rectangle', blue, null, undefined, undefined, angle, radius)
+
+    expect(preview).not.toEqual(square)
     expect([...edit.before.keys()].sort((left, right) => left - right)).toEqual(
       preview.map(({ x, y }) => y * document.width + x).sort((left, right) => left - right)
     )
@@ -1922,6 +2074,7 @@ describe('pixel tools', () => {
   it('resolves fixed dynamic amounts per absolute RGBA pixel with dithering', () => {
     const document = createDocument('dynamic dither', 2, 1, 'rgba')
     const layer = getActiveLayer(document)
+    writeLayerColor(document, layer, 1, red)
     paintBrush(document, layer, beginPixelEdit(layer.id), 1, 0, 2, red, 'square', null, 'solid', 1, null, undefined, 0, 'paint', undefined, undefined, undefined, undefined, 1, undefined, false, {
       startColor: { r: 0, g: 0, b: 0, a: 0 },
       endColor: blue,
@@ -1929,7 +2082,7 @@ describe('pixel tools', () => {
       dither: 'checker'
     })
     expect(readLayerColor(document, layer, 0)).toEqual(blue)
-    expect(readLayerColor(document, layer, 1).a).toBe(0)
+    expect(readLayerColor(document, layer, 1)).toEqual(red)
   })
 
   it('paints dynamic RGBA interpolation in indexed mode without palette growth', () => {
@@ -2048,6 +2201,23 @@ describe('pixel tools', () => {
     const inside = outlineSelection(insideDocument, insideLayer, { x: 0, y: 0, width: 3, height: 3 }, { r: 255, g: 0, b: 0, a: 255 }, 1, 'inside')!
     expect(inside.before.size).toBe(8)
     expect(readLayerColor(insideDocument, insideLayer, 4)).toEqual(blue)
+  })
+
+  it('derives selection outline colors from source pixels and supports two-sided strokes', () => {
+    const smartDocument = createDocument('smart selection outline', 3, 3, 'rgba')
+    const smartLayer = getActiveLayer(smartDocument)
+    writeLayerColor(smartDocument, smartLayer, 4, { r: 200, g: 100, b: 50, a: 255 })
+    const smartEdit = outlineSelection(smartDocument, smartLayer, { x: 1, y: 1, width: 1, height: 1 }, { r: 0, g: 0, b: 0, a: 192 }, 1, 'outside', undefined, 'round', true, 50)
+    expect(smartEdit?.before.size).toBe(4)
+    expect(readLayerColorAt(smartDocument, smartLayer, 1, 0)).toEqual({ r: 100, g: 50, b: 25, a: 192 })
+
+    const bothDocument = createDocument('two-sided selection outline', 5, 5, 'rgba')
+    const bothLayer = getActiveLayer(bothDocument)
+    paintShape(bothDocument, bothLayer, beginPixelEdit(bothLayer.id), { x: 1, y: 1, width: 3, height: 3 }, 'rectangle', blue)
+    outlineSelection(bothDocument, bothLayer, { x: 1, y: 1, width: 3, height: 3 }, red, 1, 'both')
+    expect(readLayerColorAt(bothDocument, bothLayer, 0, 2)).toEqual(red)
+    expect(readLayerColorAt(bothDocument, bothLayer, 1, 2)).toEqual(red)
+    expect(readLayerColorAt(bothDocument, bothLayer, 2, 2)).toEqual(blue)
   })
 
   it('limits an outline to the configured neighboring pixel directions', () => {
@@ -2513,6 +2683,27 @@ describe('pixel tools', () => {
     expect(readLayerColorAt(document, layer, 4, 0)).toEqual(blue)
     expect(readLayerColorAt(document, layer, 0, 1).a).toBe(0)
     expect(readLayerColorAt(document, layer, 4, 1).a).toBe(0)
+  })
+
+  it('moves a rotational selection by the pressed side without splitting the content', () => {
+    const document = createDocument('rotational selection move', 8, 8, 'rgba')
+    const layer = getActiveLayer(document)
+    const symmetry: SymmetryAxes = { horizontal: false, vertical: false, diagonalUp: false, diagonalDown: false, rotational: true }
+    const selection = symmetrySelection({ x: 1, y: 1, width: 2, height: 2 }, 8, 8, symmetry)!
+    for (let y = selection.y; y < selection.y + selection.height; y += 1) for (let x = selection.x; x < selection.x + selection.width; x += 1) {
+      if (selectionContains(selection, x, y)) writeLayerColor(document, layer, y * document.width + x, blue)
+    }
+    const source = captureSelectionTransform(document, selection, layer)!
+    applySelectionTransform(document, source, { ...selection, x: selection.x + 1 }, 0, false, undefined, symmetry, { x: 4, y: 4 }, layer, { x: 5, y: 2 })
+
+    const painted: string[] = []
+    for (let y = 0; y < document.height; y += 1) for (let x = 0; x < document.width; x += 1) if (readLayerColorAt(document, layer, x, y).a > 0) painted.push(`${x},${y}`)
+    expect(painted.sort()).toEqual([
+      '1,0', '2,0', '1,1', '2,1',
+      '6,1', '7,1', '6,2', '7,2',
+      '0,5', '1,5', '0,6', '1,6',
+      '5,6', '6,6', '5,7', '6,7'
+    ].sort())
   })
 
   it.each([

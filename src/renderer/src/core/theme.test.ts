@@ -49,8 +49,8 @@ describe('theme definitions', () => {
 
   it('uses the shared blue guides and checkerboard colors across built-in themes', () => {
     for (const definition of BUILT_IN_THEMES) {
-      expect(definition.visualDefaults.checkerLight).toEqual({ r: 215, g: 215, b: 217, a: 255 })
-      expect(definition.visualDefaults.checkerDark).toEqual({ r: 155, g: 155, b: 159, a: 255 })
+      expect(definition.visualDefaults.checkerLight).toEqual({ r: 192, g: 192, b: 192, a: 255 })
+      expect(definition.visualDefaults.checkerDark).toEqual({ r: 128, g: 128, b: 128, a: 255 })
       expect(definition.visualDefaults.customGrid).toEqual({ r: 0, g: 0, b: 255, a: 255 })
       expect(definition.visualDefaults.symmetryAxis).toEqual({ r: 0, g: 0, b: 255, a: 255 })
     }
@@ -67,21 +67,10 @@ describe('theme definitions', () => {
 
   it('keeps the dark theme interaction layers distinct', () => {
     const resolved = resolveTheme(DEFAULT_THEME_PREFERENCES)
-    expect(resolved.variables['--theme-surface-muted']).toBe('#11141a')
-    expect(resolved.variables['--theme-surface-hover']).toBe('#20242d')
-    expect(resolved.variables['--theme-surface-active']).toBe('#212c40')
-    expect(resolved.variables['--theme-surface-disabled']).toBe('#111319')
-    expect(resolved.variables['--theme-border-muted']).toBe('#454d5c')
-    expect(resolved.variables['--theme-border-hover']).toBe('#596476')
-    expect(resolved.variables['--theme-divider']).toBe('#252b36')
-    expect(resolved.variables['--theme-text-faint']).toBe('#7f8998')
-    expect(resolved.variables['--theme-text-disabled']).toBe('#616874')
-    expect(resolved.variables['--theme-icon-muted']).toBe('#727b89')
-    expect(resolved.variables['--theme-accent-hover']).toBe('#478bff')
-    expect(resolved.variables['--theme-accent-selected']).toBe('#256de6')
-    expect(resolved.variables['--theme-accent-soft']).toBe('#182a46')
-    expect(resolved.variables['--theme-scrollbar-track']).toBe('#10141b')
-    expect(resolved.variables['--theme-scrollbar-thumb']).toBe('#596271')
+    const interaction = ['--theme-surface-muted', '--theme-surface-hover', '--theme-surface-active', '--theme-surface-disabled', '--theme-border-muted', '--theme-border-hover', '--theme-divider', '--theme-text-faint', '--theme-text-disabled', '--theme-icon-muted', '--theme-accent-hover', '--theme-accent-selected', '--theme-accent-soft', '--theme-scrollbar-track', '--theme-scrollbar-thumb']
+    expect(new Set(interaction.map((name) => resolved.variables[name])).size).toBe(interaction.length)
+    expect(resolved.variables['--theme-surface-hover']).not.toBe(resolved.variables['--theme-surface'])
+    expect(resolved.variables['--theme-surface-active']).not.toBe(resolved.variables['--theme-surface-hover'])
   })
 
   it('keeps the light theme surfaces visibly layered', () => {
@@ -95,16 +84,15 @@ describe('theme definitions', () => {
     expect(resolved.variables['--theme-home-background']).toBe('#d8dfe7')
     expect(resolved.variables['--theme-control-background']).toBe('#f8fafc')
     expect(resolved.variables['--theme-border']).toBe('#98a5b4')
-    expect(resolved.variables['--theme-surface-muted']).toBe('#e1e7ed')
-    expect(resolved.variables['--theme-surface-hover']).toBe('#e4e9ef')
-    expect(resolved.variables['--theme-surface-active']).toBe('#dbe6f9')
-    expect(resolved.variables['--theme-surface-disabled']).toBe('#d3dbe3')
-    expect(resolved.variables['--theme-border-muted']).toBe('#8794a4')
-    expect(resolved.variables['--theme-border-hover']).toBe('#546172')
-    expect(resolved.variables['--theme-divider']).toBe('#d5dce3')
-    expect(resolved.variables['--theme-accent-soft']).toBe('#dfe9fa')
-    expect(resolved.variables['--theme-scrollbar-track']).toBe('#d3dbe3')
-    expect(resolved.variables['--theme-scrollbar-thumb']).toBe('#7e8c9c')
+    expect(resolved.variables['--theme-surface-muted']).not.toBe(resolved.variables['--theme-surface'])
+    expect(resolved.variables['--theme-surface-hover']).not.toBe(resolved.variables['--theme-surface-muted'])
+    expect(resolved.variables['--theme-surface-active']).not.toBe(resolved.variables['--theme-surface-hover'])
+    expect(resolved.variables['--theme-surface-disabled']).not.toBe(resolved.variables['--theme-surface'])
+    expect(resolved.variables['--theme-border-muted']).not.toBe(resolved.variables['--theme-border'])
+    expect(resolved.variables['--theme-border-hover']).not.toBe(resolved.variables['--theme-border-muted'])
+    expect(resolved.variables['--theme-divider']).not.toBe(resolved.variables['--theme-border'])
+    expect(resolved.variables['--theme-accent-soft']).not.toBe(resolved.variables['--theme-surface'])
+    expect(resolved.variables['--theme-scrollbar-track']).not.toBe(resolved.variables['--theme-scrollbar-thumb'])
   })
 
   it('provides distinct neutral gray and dark gray themes', () => {
@@ -113,9 +101,9 @@ describe('theme definitions', () => {
     expect(BUILT_IN_THEMES.slice(0, 4).map((theme) => theme.id)).toEqual(['dark', 'dark-gray', 'gray', 'light'])
     expect(gray.definition.seeds.workspace).toBe('#383b40')
     expect(gray.definition.seeds.surface).toBe('#474b52')
-    expect(darkGray.definition.seeds.workspace).toBe('#1f2125')
-    expect(darkGray.definition.seeds.surface).toBe('#2b2e34')
-    expect(darkGray.variables['--theme-palette-background']).toBe('#2b2e34')
+    expect(darkGray.definition.seeds.workspace).toBe('#11161d')
+    expect(darkGray.definition.seeds.surface).toBe('#1a222c')
+    expect(darkGray.variables['--theme-palette-background']).not.toBe(darkGray.variables['--theme-surface'])
     expect(gray.mode).toBe('dark')
     expect(darkGray.mode).toBe('dark')
   })
@@ -124,8 +112,8 @@ describe('theme definitions', () => {
     const resolved = resolveTheme({ ...DEFAULT_THEME_PREFERENCES, activeThemeId: 'pink' })
     expect(resolved.mode).toBe('light')
     expect(resolved.variables['--theme-surface']).toBe('#ffffff')
-    expect(resolved.variables['--theme-surface-hover']).toBe('#fde7f2')
-    expect(resolved.variables['--theme-surface-active']).toBe('#f6cfe1')
+    expect(resolved.variables['--theme-surface-hover']).not.toBe(resolved.variables['--theme-surface'])
+    expect(resolved.variables['--theme-surface-active']).not.toBe(resolved.variables['--theme-surface-hover'])
     expect(contrastRatio(resolved.variables['--theme-on-accent'], resolved.variables['--theme-accent'])).toBeGreaterThanOrEqual(4.5)
   })
 

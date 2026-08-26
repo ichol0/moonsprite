@@ -1,13 +1,13 @@
 {
   "schemaVersion": 1,
   "status": "complete",
-  "releaseLabel": "DEV.6",
-  "auditId": "2026-08-22_17-28-58-623",
+  "releaseLabel": "1.0.0-beta.1",
+  "auditId": "2026-08-26_12-57-05-746",
   "outcome": "approved-no-change",
-  "acceptedAt": "2026-08-22T17:38:08.411Z",
+  "acceptedAt": "2026-08-26T13:22:34.656Z",
   "sourceFingerprint": {
     "algorithm": "sha256",
-    "value": "63bc228335e0e9774dd37e27d781a4fdbd510b5be61d459ca3d916d75bb2bda7",
-    "files": 491
+    "value": "b0f6f01b353f503213ea4712504fcfc060dc7d51ab7a980b0daa31edcb5cd61a",
+    "files": 517
   }
 }

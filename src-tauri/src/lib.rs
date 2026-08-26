@@ -135,6 +135,7 @@ pub fn run() {
             ..AppState::default()
         })
         .manage(platform_recovery::RecoveryState::default())
+        .manage(platform_files::ScaledPngCancellation::default())
         .manage(platform_scripts::LuaScriptRuntime::default())
         .setup(|app| {
             if let Some(window) = app.get_webview_window("main") {
@@ -171,6 +172,8 @@ pub fn run() {
             platform_files::read_project_preview,
             platform_files::cache_project_preview,
             platform_files::write_binary_atomic,
+            platform_files::cancel_scaled_png_export,
+            platform_files::write_scaled_png_atomic,
             platform_files::write_project_incremental,
             platform_clipboard::write_clipboard_image,
             platform_clipboard::read_clipboard_text,
@@ -200,6 +203,7 @@ pub fn run() {
             platform_fonts::import_system_font,
             platform_fonts::delete_font,
             platform_background_presets::list_background_presets,
+            platform_background_presets::save_background_preset,
             platform_background_presets::open_background_preset_folder,
             platform_recovery::list_recoveries,
             platform_recovery::read_recovery,

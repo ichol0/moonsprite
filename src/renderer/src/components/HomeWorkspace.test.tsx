@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { MoonSpriteApi, ProjectPreview } from '@shared/types'
 import { createDocument } from '@/core/document'
@@ -43,13 +43,34 @@ describe('HomeWorkspace', () => {
 
     render(<HomeWorkspace onNew={vi.fn()} onOpen={vi.fn()} onOpenProject={vi.fn(async () => true)} onRestoreRecovery={vi.fn(async () => true)} />)
 
-    expect(screen.getByText('DEV.6')).toBeInTheDocument()
+    expect(screen.getByText('1.0.0-beta.1')).toBeInTheDocument()
     expect(document.querySelector('.start-screen-version')).not.toBeInTheDocument()
     expect(document.querySelectorAll('.start-screen-links .start-screen-link')).toHaveLength(4)
     expect(document.querySelectorAll('.start-screen-links svg.start-screen-link-icon')).toHaveLength(4)
     expect(document.querySelector('.start-screen-attribution')).not.toBeInTheDocument()
     expect(screen.getByText('仅供内部使用')).toBeInTheDocument()
     expect(screen.getByText('未经允许请勿分发')).toBeInTheDocument()
+  })
+
+  it('spins the logo after five quick clicks', () => {
+    vi.useFakeTimers()
+    try {
+      installApi({})
+
+      render(<HomeWorkspace onNew={vi.fn()} onOpen={vi.fn()} onOpenProject={vi.fn(async () => true)} onRestoreRecovery={vi.fn(async () => true)} />)
+
+      const logo = screen.getByRole('button', { name: 'MoonSprite' })
+      for (let index = 0; index < 5; index += 1) fireEvent.click(logo)
+
+      expect(logo).toHaveClass('logo-spin-playing')
+      expect(logo.querySelector('img')).toHaveClass('start-screen-mark-logo')
+
+      act(() => { vi.advanceTimersByTime(2_000) })
+      expect(logo).not.toHaveClass('logo-spin-playing')
+      expect(logo.querySelector('img')).toBeInTheDocument()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('shows the latest packaged release news and opens its full update', () => {
@@ -60,13 +81,13 @@ describe('HomeWorkspace', () => {
 
     expect(screen.getByRole('region', { name: '新闻' })).toBeInTheDocument()
     expect(screen.queryByRole('heading', { name: '新闻' })).not.toBeInTheDocument()
-    expect(screen.getByText('DEV.6 已发布')).toBeInTheDocument()
-    expect(screen.getByText('2026/08/23')).toBeInTheDocument()
-    expect(screen.getByText('本次更新新增自由瓦片、动画循环节、Lua 脚本、扩展和关联图层，并完善多帧编辑与文件兼容。')).toBeInTheDocument()
+    expect(screen.getByText('1.0.0-beta.1 已发布')).toBeInTheDocument()
+    expect(screen.getByText('2026/08/26')).toBeInTheDocument()
+    expect(screen.getByText('本次 Beta 更新加入 ISO 视角、智能对齐、径向渐变、导出优化和更完整的脚本 API，并修复大画布、粘贴变换与数位板指针问题。')).toBeInTheDocument()
     expect(screen.queryByText(/支持：MoonSprite/)).not.toBeInTheDocument()
     expect(screen.queryByText('最新发布')).not.toBeInTheDocument()
     expect(screen.queryByText('查看完整更新')).not.toBeInTheDocument()
-    const newsButton = screen.getByRole('button', { name: '查看 DEV.6 更新内容' })
+    const newsButton = screen.getByRole('button', { name: '查看 1.0.0-beta.1 更新内容' })
     expect(newsButton.querySelector('.start-screen-news-title time')).toBeInTheDocument()
     expect(newsButton.querySelector('svg')).not.toBeInTheDocument()
     fireEvent.click(newsButton)

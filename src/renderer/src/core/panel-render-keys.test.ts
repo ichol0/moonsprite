@@ -45,7 +45,7 @@ describe('panel render keys', () => {
     expect(layersPanelRenderKey(current)).toBe(before[2])
     current.layersPanelRevision += 1
     expect(layersPanelRenderKey(current)).not.toBe(before[2])
-    expect(previewPanelRenderKey(current)).toBe(`${current.document.id}:1:0:0:1:0:1`)
+    expect(previewPanelRenderKey(current)).toBe(`${current.document.id}:1:0:0:1:0:1:${current.document.animation!.activeFrameId}`)
   })
 
   it('invalidates only keys whose visible panel data changed', () => {
@@ -75,6 +75,21 @@ describe('panel render keys', () => {
     const current = session()
     const before = previewPanelRenderKey(current)
     current.animationPlaying = true
+    expect(previewPanelRenderKey(current)).not.toBe(before)
+  })
+
+  it('invalidates the stopped preview when the selected animation frame changes', () => {
+    const current = session()
+    const before = previewPanelRenderKey(current)
+    current.document.animation!.activeFrameId = 'selected-frame'
+    expect(previewPanelRenderKey(current)).not.toBe(before)
+  })
+
+  it('invalidates the preview render key while canvas playback advances frames', () => {
+    const current = session()
+    current.animationPlaying = true
+    const before = previewPanelRenderKey(current)
+    current.document.animation!.activeFrameId = 'playback-frame'
     expect(previewPanelRenderKey(current)).not.toBe(before)
   })
 

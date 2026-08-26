@@ -10,6 +10,7 @@ import {
   rasterStorageIdentity,
   readSurfacePackedLocal,
   readSurfacePackedRegion,
+  readSurfaceRgbaRegion,
   rehydrateRuntimeRasterDocument,
   runtimeRasterForSurface,
   runtimeRasterResidentBytes,
@@ -55,6 +56,17 @@ describe('runtime sparse raster', () => {
     expect(Array.from(readSurfacePackedRegion(layer, -1, 0, 4, 2))).toEqual([
       0, 0x04030201, 0x08070605, 0,
       0, 0x0c0b0a09, 0x100f0e0d, 0
+    ])
+    expect(surfacePixelsMaterialized(layer)).toBe(false)
+  })
+
+  it('copies a clipped RGBA region directly from sparse tile bytes', () => {
+    const layer = rgbaLayer()
+    installRuntimeRaster(layer, rgbaRuntime())
+
+    expect(Array.from(readSurfaceRgbaRegion(layer, -1, 0, 4, 2))).toEqual([
+      0, 0, 0, 0, 1, 2, 3, 4, 5, 6, 7, 8, 0, 0, 0, 0,
+      0, 0, 0, 0, 9, 10, 11, 12, 13, 14, 15, 16, 0, 0, 0, 0
     ])
     expect(surfacePixelsMaterialized(layer)).toBe(false)
   })

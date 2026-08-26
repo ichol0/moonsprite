@@ -1,24 +1,28 @@
 import type { AnimationCel, MoveKind, RasterLayer, RgbaColor, SelectionMask, SelectionMode, SelectionRect, ShapeRatio, SpriteDocument, TilemapCell, ToolId } from '@shared/types'
 import { revertPixelEdit, type PixelEdit } from './history'
 import { restoreSelectionTranslationPreview, type BrushGradientSample, type SelectionTransformLayerState, type SelectionTransformSource, type SelectionTranslationPreview } from './tools'
-import { combineSelection, inverseTransformedSelectionPoint, rasterLinePoints, rectSelection, remapTransformedSelectionPoint, selectionBoundarySegments, selectionContains, transformedSelectionPivotPreset, type SelectionShearTransform } from './selection'
+import { combineSelection, inverseTransformedSelectionPoint, rasterLinePoints, rectSelection, remapTransformedSelectionPoint, selectionBoundarySegments, selectionContains, transformedSelectionBounds, transformedSelectionPivotPreset, type SelectionShearTransform } from './selection'
 import { balancedStairLinePoints } from './pixel-line'
 import { modifierShortcutHeld } from './shortcuts'
 import type { TilemapEdit, TilemapSelectionMoveSource } from './tilemap'
 import type { FreeTilePlacementEdit, FreeTileSourceEditSnapshot } from './free-tile-document'
 import type { FreeTileInstanceTransform } from './free-tile'
+import type { AlignmentGuide } from './alignment'
+import type { IsoLineDirection } from './isometric'
+import { POINTER_DEFAULT_PRESSURE, POINTER_PRESSURE_EPSILON, hasReliableBrushPressure, isPressurePointerType } from './pressure'
 
 const selectionHitBoundaryCache = new WeakMap<SelectionMask, Int32Array>()
+
+export const temporaryMoveToolAllowed = (tool: ToolId, moveKind: MoveKind = 'move'): boolean => tool !== 'selection'
+  && tool !== 'shape'
+  && (tool !== 'move' || moveKind !== 'move')
 
 export const shouldUseTemporaryMoveTool = (
   tool: ToolId,
   event: Pick<KeyboardEvent, 'ctrlKey' | 'metaKey' | 'altKey' | 'shiftKey'>,
   shortcut: string,
   moveKind: MoveKind = 'move'
-): boolean => tool !== 'selection'
-  && tool !== 'shape'
-  && (tool !== 'move' || moveKind !== 'move')
-  && modifierShortcutHeld(event, shortcut)
+): boolean => temporaryMoveToolAllowed(tool, moveKind) && modifierShortcutHeld(event, shortcut)
 
 export const brushLineConnectionOverridesTemporaryMove = (
   tool: ToolId,
@@ -32,6 +36,14 @@ export const brushLineConnectionOverridesTemporaryMove = (
 export const selectionInteractionOverridesTemporaryMove = (tool: ToolId, hit: SelectionHit, addingToSelection = false): boolean =>
   tool === 'selection' && (hit !== 'outside' || addingToSelection)
 
+export const temporaryMoveForCanvasInteractionAllowed = (
+  tool: ToolId,
+  moveKind: MoveKind,
+  hit: SelectionHit,
+  addingToSelection = false
+): boolean => temporaryMoveToolAllowed(tool, moveKind)
+  && !selectionInteractionOverridesTemporaryMove(tool, hit, addingToSelection)
+
 export const shouldUseTemporaryMoveForCanvasInteraction = (
   tool: ToolId,
   event: Pick<KeyboardEvent, 'ctrlKey' | 'metaKey' | 'altKey' | 'shiftKey'>,
@@ -39,8 +51,8 @@ export const shouldUseTemporaryMoveForCanvasInteraction = (
   moveKind: MoveKind,
   hit: SelectionHit,
   addingToSelection = false
-): boolean => shouldUseTemporaryMoveTool(tool, event, shortcut, moveKind)
-  && !selectionInteractionOverridesTemporaryMove(tool, hit, addingToSelection)
+): boolean => modifierShortcutHeld(event, shortcut)
+  && temporaryMoveForCanvasInteractionAllowed(tool, moveKind, hit, addingToSelection)
 
 export const temporaryMoveSuppressesToolPreview = (
   temporaryMoveActive: boolean,
@@ -69,16 +81,111 @@ export interface CanvasStrokePoint extends CanvasPoint {
   overrideImageBrushColor?: boolean
 }
 
+export interface CanvasIsoGridStrokeEdge {
+  key: string
+  from: CanvasStrokePoint
+  to: CanvasStrokePoint
+}
+
 export interface PointerClientPoint {
   clientX: number
   clientY: number
   pressure?: number
   pointerType?: string
+  pressureAvailable?: boolean
+  previousPressure?: number
   timeStamp?: number
 }
 
 export interface CoalescedPointerEvent extends PointerClientPoint {
   getCoalescedEvents?: () => PointerClientPoint[]
+}
+
+export interface CanvasPointerDeviceEvent {
+  pointerId: number
+  pointerType: string
+  timeStamp: number
+  pressure?: number
+  buttons?: number
+}
+
+export const PEN_COMPATIBLE_MOUSE_SUPPRESSION_MS = 240
+
+export interface AdaptedPointerPressure {
+  pointerType: string
+  pressure?: number
+  previousPressure?: number
+  pressureAvailable: boolean
+}
+
+interface PointerPressureStream {
+  pointerType: string
+  lastPressure?: number
+  pressureAvailable: boolean
+}
+
+/**
+ * Keeps device classification separate from pressure capability.  This is
+ * important on Windows where some tablet stacks expose a stylus as a mouse:
+ * the ordinary compatibility value (0.5) stays mouse input, while a stream
+ * that emits an actual non-default/changing pressure value is promoted for
+ * the rest of that pointer interaction.
+ */
+export class PointerPressureAdapter {
+  private streams = new Map<number, PointerPressureStream>()
+
+  adapt(event: Pick<CanvasPointerDeviceEvent, 'pointerId' | 'pointerType' | 'pressure' | 'buttons'>): AdaptedPointerPressure {
+    const previous = this.streams.get(event.pointerId)
+    const pointerType = event.pointerType?.trim() || previous?.pointerType || 'mouse'
+    const pressure = Number.isFinite(event.pressure) ? Math.max(0, Math.min(1, event.pressure!)) : undefined
+    const effectivePressure = pressure ?? previous?.lastPressure
+    let pressureAvailable = previous?.pressureAvailable ?? false
+
+    // A few WebView/tablet combinations expose the pen path but report a
+    // missing/zero pressure sample (and sometimes even `buttons=0`) while the
+    // tip is down. Some unsupported pen stacks instead repeat the browser's
+    // compatibility value (0.5) for the whole stroke. Keep both cases on the
+    // full-strength fallback until a non-default or changing sample proves
+    // that its pressure axis is working. Once proven, later zero samples are
+    // genuine light-pressure values and remain usable.
+    const pressureChanged = previous?.lastPressure !== undefined
+      && pressure !== undefined
+      && Math.abs(pressure - previous.lastPressure) > POINTER_PRESSURE_EPSILON
+    const pressureIsNonDefault = pressure !== undefined
+      && pressure > 0
+      && Math.abs(pressure - POINTER_DEFAULT_PRESSURE) > POINTER_PRESSURE_EPSILON
+    if (isPressurePointerType(pointerType)) pressureAvailable = pressureAvailable || pressureChanged || pressureIsNonDefault
+    else if (!pressureAvailable && hasReliableBrushPressure(pointerType, pressure, previous?.lastPressure)) pressureAvailable = true
+
+    this.streams.set(event.pointerId, {
+      pointerType,
+      // Missing samples are common when a WebView drops a coalesced packet;
+      // retain the last finite value so a later changing sample can still
+      // prove the pressure axis.
+      lastPressure: pressure ?? previous?.lastPressure,
+      pressureAvailable
+    })
+    return {
+      pointerType,
+      // Reuse the last finite sample if this packet omitted pressure. This
+      // avoids a one-frame full-strength jump after a dropped coalesced packet.
+      ...(effectivePressure === undefined ? {} : { pressure: effectivePressure }),
+      ...(previous?.lastPressure === undefined ? {} : { previousPressure: previous.lastPressure }),
+      pressureAvailable
+    }
+  }
+
+  release(pointerId: number): void {
+    this.streams.delete(pointerId)
+  }
+
+  reset(): void {
+    this.streams.clear()
+  }
+
+  isPressureCapable(pointerId: number): boolean {
+    return this.streams.get(pointerId)?.pressureAvailable ?? false
+  }
 }
 
 export const coalescedPointerClientPoints = (event: CoalescedPointerEvent): PointerClientPoint[] => {
@@ -249,6 +356,7 @@ export interface CanvasDragState {
   freeTileSourceId?: string
   freeTileInstanceId?: string
   freeTileInstanceStart?: CanvasPoint
+  freeTileInstanceSelectionMove?: boolean
   freeTileEditDocument?: SpriteDocument
   freeTileEditLayer?: RasterLayer
   freeTileSourceBefore?: FreeTileSourceEditSnapshot
@@ -288,6 +396,15 @@ export interface CanvasDragState {
   constrain?: boolean
   path?: CanvasStrokePoint[]
   pathRedo?: CanvasStrokePoint[]
+  isoAlignedStroke?: 'pencil' | 'eraser'
+  isoAlignedDirection?: IsoLineDirection
+  isoAlignedRawAnchor?: CanvasPoint
+  isoAlignedRawEndpoint?: CanvasPoint
+  isoAlignedGridVertex?: CanvasPoint
+  isoAlignedDirectionSamples?: number
+  isoGridStrokeEdges?: CanvasIsoGridStrokeEdge[]
+  isoGridPointer?: CanvasPoint
+  isoGridHoveredEdgeKey?: string | null
   curvePhase?: 'endpoint' | 'anchors'
   curveEnd?: CanvasPoint
   curveControls?: CanvasPoint[]
@@ -296,6 +413,7 @@ export interface CanvasDragState {
   canvasEdge?: 'n' | 'e' | 's' | 'w' | 'ne' | 'nw' | 'se' | 'sw'
   canvasPreview?: { width: number; height: number; offsetX: number; offsetY: number }
   floatingPaste?: boolean
+  floatingPasteSelectionBox?: boolean
   previewSelection?: SelectionMask | null
   appliedSelection?: SelectionMask | null
   previewTarget?: SelectionRect
@@ -337,6 +455,12 @@ export interface CanvasDragState {
   layerOffsets?: Record<string, CanvasPoint>
   layerContentBounds?: Record<string, SelectionRect | null>
   layerPreviewOffset?: CanvasPoint
+  alignmentMovingBounds?: SelectionRect[]
+  alignmentTargetBounds?: SelectionRect[]
+  alignmentGuides?: AlignmentGuide[]
+  alignmentGridEnabled?: boolean
+  alignmentSmartEnabled?: boolean
+  alignmentThreshold?: number
   layerFrameId?: string
   animationCellKeys?: string[]
   animationCellOffsets?: Record<string, CanvasPoint>
@@ -363,6 +487,7 @@ export interface CanvasDragState {
   brushSpeed?: BrushSpeedState
   gradientEndColor?: RgbaColor
   gradientPaintRegion?: SelectionMask | null
+  gradientFromCenter?: boolean
   axisLock?: 'x' | 'y'
   sampleSecondary?: boolean
   tileSampling?: boolean
@@ -372,7 +497,7 @@ export interface CanvasDragState {
   startedAt?: number
   nextAirbrushAt?: number
   resumeDrag?: CanvasDragState
-  /** Raw pointer endpoint retained while a gradient is direction-constrained. */
+  /** Raw pointer endpoint retained while gradient geometry modifiers change. */
   rawLast?: CanvasPoint
 }
 
@@ -411,6 +536,17 @@ export const deferredSelectionCommitInvalidationRects = (
   drag.selectionStart,
   drag.previewSelection
 ].filter((selection): selection is SelectionRect => Boolean(selection))
+
+export const selectionTransformGeometrySource = (
+  drag: Pick<CanvasDragState, 'freeTileSelectionTransform' | 'freeTileSelectionSource' | 'selectionSource' | 'selectionStart'>
+): SelectionMask | null => {
+  if (drag.freeTileSelectionTransform) return drag.freeTileSelectionSource ?? drag.selectionStart ?? null
+  const source = drag.selectionSource?.selection
+  if (!source) return drag.selectionStart ?? null
+  return drag.selectionSource?.origin === 'clipboard'
+    ? { x: source.x, y: source.y, width: source.width, height: source.height }
+    : source
+}
 
 export type MarqueeModifierMode = 'rotate' | 'resize'
 
@@ -460,6 +596,12 @@ export const selectionTransformDeferredPreviewEnabled = (
   angle = 0,
   shear?: SelectionShearTransform
 ): boolean => supported && (kind !== 'transform-content' || (angle % 360 === 0 && !shear))
+
+export const deferredSelectionPreviewMaterializationRequired = (
+  simpleTranslation: boolean,
+  floatingPaste: boolean,
+  sourceOrigin?: SelectionTransformSource['origin']
+): boolean => !simpleTranslation && !(floatingPaste && sourceOrigin === 'clipboard')
 
 export const deferredSelectionPreviewOwner = (
   drag: Pick<CanvasDragState, 'kind' | 'selectionPreparationPending' | 'deferredSelectionPreview' | 'selectionSource' | 'previewTarget'> | null | undefined,
@@ -549,6 +691,18 @@ export const createCanvasPanDrag = (
   startClient: { ...startClient },
   resumeDrag: resumeDrag?.kind === 'polygon-lasso' ? resumeDrag : undefined
 })
+
+export const viewDragClientDelta = (
+  currentClient: CanvasPoint,
+  startClient: CanvasPoint,
+  sensitivity = 1
+): CanvasPoint => {
+  const scale = Number.isFinite(sensitivity) && sensitivity > 0 ? sensitivity : 1
+  return {
+    x: (currentClient.x - startClient.x) * scale,
+    y: (currentClient.y - startClient.y) * scale
+  }
+}
 
 export const restoreCanvasDragAfterPan = (
   panDrag: CanvasDragState,
@@ -647,6 +801,16 @@ export const polygonLassoClosedPathPoints = (path: readonly CanvasPoint[], balan
 export const shouldRestartFloatingSelectionForCopy = (_floatingCopy: boolean, copyRequested: boolean): boolean =>
   copyRequested
 
+export const shouldReuseFloatingSelectionSourceForCopy = (
+  sourceOrigin: SelectionTransformSource['origin'],
+  copyRequested: boolean,
+  selectionMatchesTarget: boolean,
+  hasCompositeSource: boolean
+): boolean => (sourceOrigin === 'clipboard' || sourceOrigin === 'selection')
+  && copyRequested
+  && selectionMatchesTarget
+  && !hasCompositeSource
+
 export const floatingSelectionCopyMode = (floatingCopy: boolean | null, copyRequested: boolean): boolean =>
   floatingCopy ?? copyRequested
 
@@ -742,6 +906,59 @@ export class CanvasInputState {
   spaceHeld = false
   shiftLinePreview = false
   modifierBrushSize: { x: number; y: number; size: number } | null = null
+  private penPointerId: number | null = null
+  private lastPenPointerTime = Number.NEGATIVE_INFINITY
+  private pressurePointerIds = new Set<number>()
+
+  acceptPointerDeviceEvent(event: CanvasPointerDeviceEvent, forceMouseTakeover = false): boolean {
+    const pointerType = event.pointerType || 'mouse'
+    // Some Windows tablet stacks expose the stylus as a mouse in WebView.
+    // Treat a proven pressure-bearing stream like a pen for compatibility
+    // mouse suppression, but never promote the browser's ordinary 0.5 mouse
+    // value here (hasReliableBrushPressure rejects it without a prior change).
+    const pressurePointer = this.pressurePointerIds.has(event.pointerId)
+      || isPressurePointerType(pointerType)
+      || hasReliableBrushPressure(pointerType, event.pressure)
+    if (pressurePointer) {
+      this.pressurePointerIds.add(event.pointerId)
+      this.penPointerId = event.pointerId
+      this.lastPenPointerTime = Number.isFinite(event.timeStamp) ? event.timeStamp : this.lastPenPointerTime
+      return true
+    }
+    if (pointerType !== 'mouse') {
+      this.penPointerId = null
+      return true
+    }
+    if (this.penPointerId === null) return true
+    const elapsed = event.timeStamp - this.lastPenPointerTime
+    const followsPen = !Number.isFinite(elapsed) || elapsed < 0 || elapsed <= PEN_COMPATIBLE_MOUSE_SUPPRESSION_MS
+    if (!forceMouseTakeover && followsPen) return false
+    this.penPointerId = null
+    return true
+  }
+
+  releasePointerDeviceEvent(event: Pick<CanvasPointerDeviceEvent, 'pointerId' | 'pointerType'>): void {
+    this.pressurePointerIds.delete(event.pointerId)
+    if (event.pointerId === this.penPointerId) {
+      this.penPointerId = null
+      this.lastPenPointerTime = Number.NEGATIVE_INFINITY
+    }
+  }
+
+  /**
+   * Clears device ownership after a lost pointer, window blur, or document
+   * switch. Pointer Events do not guarantee a matching cancel/up event in
+   * those cases, so a later pointerId reuse must start a fresh session.
+   */
+  resetPointerDeviceState(): void {
+    this.pressurePointerIds.clear()
+    this.penPointerId = null
+    this.lastPenPointerTime = Number.NEGATIVE_INFINITY
+  }
+
+  penPointerIsActive(): boolean {
+    return this.penPointerId !== null
+  }
 
   begin(drag: CanvasDragState): CanvasDragState {
     this.drag = drag
@@ -843,15 +1060,7 @@ export const zoomDragTarget = (startZoom: number, horizontalDistance: number, mo
 
 export const zoomDragModeForModifiers = (defaultMode: 'smooth' | 'stepped', shiftKey: boolean): 'smooth' | 'stepped' => shiftKey ? 'stepped' : defaultMode
 
-export const shouldStartCanvasPan = (tool: string, shiftKey: boolean, selectionTool: boolean): boolean => tool === 'hand' || (
-  shiftKey
-  && !selectionTool
-  && tool !== 'shape'
-  && tool !== 'line'
-  && tool !== 'pencil'
-  && tool !== 'eraser'
-  && tool !== 'zoom'
-)
+export const shouldStartCanvasPan = (tool: string): boolean => tool === 'hand'
 
 export const rotationHandles = (box: { x: number; y: number; width: number; height: number }): Array<[SelectionRotationHandle, number, number]> => {
   const offset = 22
@@ -945,6 +1154,11 @@ export const selectionInteractionHit = (
   return selectionContentHit(selection, point, safeZoom)
 }
 
+export const selectionHitStartsContentMove = (
+  hit: SelectionHit,
+  copyRequested: boolean
+): boolean => hit === 'inside' || (copyRequested && hit === 'edge')
+
 const selectionContentHit = (
   selection: SelectionMask,
   point: CanvasPoint,
@@ -1028,6 +1242,48 @@ export const translatedSelectionRect = (rect: SelectionRect, offset: CanvasPoint
   ...(Number.isFinite(rect.flipOriginX) ? { flipOriginX: rect.flipOriginX! + offset.x } : {}),
   ...(Number.isFinite(rect.flipOriginY) ? { flipOriginY: rect.flipOriginY! + offset.y } : {})
 })
+
+const selectionShearsEqual = (left: SelectionShearTransform | undefined, right: SelectionShearTransform | undefined): boolean =>
+  left === right || Boolean(left && right && left.axis === right.axis && left.edge === right.edge && left.amount === right.amount)
+
+/** Reuses an already transformed mask when a drag only changes its integer position. */
+export const translatedSelectionTransformPreviewMask = (
+  drag: Pick<CanvasDragState, 'kind' | 'selectionStart' | 'transformStartTarget' | 'startAngle' | 'transformStartShear'>,
+  target: SelectionRect,
+  angle: number,
+  shear: SelectionShearTransform | undefined,
+  canvasWidth: number,
+  canvasHeight: number
+): SelectionMask | undefined => {
+  const selection = drag.selectionStart
+  const startTarget = drag.transformStartTarget
+  const startAngle = drag.startAngle ?? 0
+  if (drag.kind !== 'move-content' || !selection || !startTarget || angle !== startAngle || !selectionShearsEqual(shear, drag.transformStartShear)) return undefined
+
+  const delta = { x: target.x - startTarget.x, y: target.y - startTarget.y }
+  if (!Number.isInteger(delta.x) || !Number.isInteger(delta.y)) return undefined
+  const translatedTarget = translatedSelectionRect(startTarget, delta)
+  if (target.width !== translatedTarget.width
+    || target.height !== translatedTarget.height
+    || Boolean(target.flipHorizontal) !== Boolean(translatedTarget.flipHorizontal)
+    || Boolean(target.flipVertical) !== Boolean(translatedTarget.flipVertical)
+    || (target.flipHorizontal && target.flipOriginX !== translatedTarget.flipOriginX)
+    || (target.flipVertical && target.flipOriginY !== translatedTarget.flipOriginY)) return undefined
+
+  const startBounds = transformedSelectionBounds(startTarget, startAngle, drag.transformStartShear)
+  const targetBounds = transformedSelectionBounds(target, angle, shear)
+  const withinCanvas = (bounds: SelectionRect): boolean => bounds.x >= 0
+    && bounds.y >= 0
+    && bounds.x + bounds.width <= canvasWidth
+    && bounds.y + bounds.height <= canvasHeight
+  if (!withinCanvas(startBounds) || !withinCanvas(targetBounds)) return undefined
+
+  return {
+    ...selection,
+    x: selection.x + delta.x,
+    y: selection.y + delta.y
+  }
+}
 
 export const temporaryTransformOffset = (
   start: { pointer: CanvasPoint; offset: CanvasPoint },

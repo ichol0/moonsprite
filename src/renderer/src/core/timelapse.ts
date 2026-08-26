@@ -1,16 +1,20 @@
-import type { SelectionRect, SpriteDocument, TimelapseQuality, TimelapseSettings, TimelapseSnapshot, TimelapseVideoFormat } from '@shared/types'
+import type { SelectionRect, SpriteDocument, TimelapseExportFormat, TimelapseQuality, TimelapseRecordingMode, TimelapseSettings, TimelapseSnapshot, TimelapseVideoFormat } from '@shared/types'
 import { compositeRegion, createCompositePointSampler, createId, createNormalCompositePointSampler, DocumentCompositeCache } from './document'
 import { encodePng } from './png-encode'
 import { normalizeTimelapseSettings } from './project-metadata'
 import { translateCurrent as tr } from './localization'
-
-export const MAX_TIMELAPSE_SNAPSHOTS = 600
 
 export type TimelapseExportMode = 'duration' | 'speed'
 
 export interface TimelapseExportOptions {
   mode: TimelapseExportMode
   durationSeconds: number
+  scalePercent?: number
+}
+
+export interface TimelapseVideoFrame {
+  snapshotIndex: number
+  durationMs: number
 }
 
 export interface TimelapseCaptureInvalidation {
@@ -29,6 +33,11 @@ export interface TimelapseCaptureCache {
   revision: number
   pixels: Uint8ClampedArray | null
   composite: DocumentCompositeCache
+  /** In-memory adaptive sampling state used only by smart recording. */
+  smartMode: TimelapseRecordingMode | null
+  smartStride: number
+  smartSamplingPhase: number
+  smartCompactionArmed: boolean
 }
 
 export interface TimelapseCaptureOptions {
@@ -43,6 +52,7 @@ export interface PreparedTimelapseSnapshot {
   width: number
   height: number
   pixels: Uint8ClampedArray
+  cache?: TimelapseCaptureCache
 }
 
 const qualityMaxDimension: Record<TimelapseQuality, number> = {
@@ -78,6 +88,21 @@ export const timelapseOutputDimensions = (settings: Pick<TimelapseSettings, 'qua
   return { width, height }
 }
 
+export const timelapseImageOutputDimensions = (
+  snapshots: readonly TimelapseSnapshot[],
+  scalePercent: number
+): { width: number; height: number } => {
+  const reference = snapshots.reduce(
+    (largest, snapshot) => Math.max(snapshot.width, snapshot.height) > Math.max(largest.width, largest.height) ? snapshot : largest,
+    { width: 0, height: 0 }
+  )
+  const ratio = Math.max(0.01, Math.min(64, scalePercent / 100))
+  return {
+    width: reference.width > 0 ? Math.max(1, Math.round(reference.width * ratio)) : 0,
+    height: reference.height > 0 ? Math.max(1, Math.round(reference.height * ratio)) : 0
+  }
+}
+
 export const createTimelapseCaptureCache = (): TimelapseCaptureCache => ({
   sourceWidth: 0,
   sourceHeight: 0,
@@ -86,19 +111,43 @@ export const createTimelapseCaptureCache = (): TimelapseCaptureCache => ({
   frameId: null,
   revision: Number.NaN,
   pixels: null,
-  composite: new DocumentCompositeCache()
+  composite: new DocumentCompositeCache(),
+  smartMode: null,
+  smartStride: 1,
+  smartSamplingPhase: 0,
+  smartCompactionArmed: false
 })
+
+/** Target number of retained frames before the next adaptive compaction. */
+export const TIMELAPSE_SMART_TARGET_FRAMES = 120
+/** Prevent integer overflow after extremely long recordings. */
+export const TIMELAPSE_SMART_MAX_STRIDE = 2 ** 30
+
+export const resetTimelapseSmartCapture = (cache: TimelapseCaptureCache): void => {
+  cache.smartMode = null
+  cache.smartStride = 1
+  cache.smartSamplingPhase = 0
+  cache.smartCompactionArmed = false
+}
+
+// Public capture helpers may be called without an explicit workspace cache.
+// Keep their adaptive sampling state per document so smart mode remains smart.
+const implicitTimelapseCaptureCaches = new WeakMap<SpriteDocument, TimelapseCaptureCache>()
+
+const timelapseCaptureCacheFor = (document: SpriteDocument, provided?: TimelapseCaptureCache): TimelapseCaptureCache => {
+  if (provided) return provided
+  const existing = implicitTimelapseCaptureCaches.get(document)
+  if (existing) return existing
+  const created = createTimelapseCaptureCache()
+  implicitTimelapseCaptureCaches.set(document, created)
+  return created
+}
 
 const captureDimensions = (sourceWidth: number, sourceHeight: number, maximumDimension: number): { width: number; height: number } => {
   const ratio = Math.min(1, maximumDimension / Math.max(sourceWidth, sourceHeight))
   const width = Math.max(1, Math.round(sourceWidth * ratio))
   const height = Math.max(1, Math.round(sourceHeight * ratio))
   return { width, height }
-}
-
-const compactSnapshots = (snapshots: TimelapseSnapshot[]): TimelapseSnapshot[] => {
-  if (snapshots.length <= MAX_TIMELAPSE_SNAPSHOTS) return snapshots
-  return snapshots.slice(snapshots.length - MAX_TIMELAPSE_SNAPSHOTS)
 }
 
 const targetRangeForSourceRange = (start: number, end: number, sourceSize: number, targetSize: number): { start: number; end: number } => ({
@@ -294,7 +343,63 @@ const appendTimelapseSnapshot = (settings: TimelapseSettings, now: number, width
     height,
     data
   }
-  settings.snapshots = compactSnapshots([...settings.snapshots, snapshot])
+  settings.snapshots = [...settings.snapshots, snapshot]
+}
+
+interface SmartTimelapsePlan {
+  mode: TimelapseRecordingMode
+  keep: boolean
+  transition: boolean
+  nextStride: number
+  nextSamplingPhase: number
+}
+
+const decimateTimelapseSnapshots = (snapshots: TimelapseSnapshot[]): TimelapseSnapshot[] =>
+  snapshots.length < 2 ? snapshots : snapshots.filter((_snapshot, index) => index % 2 === 0)
+
+/**
+ * Plans one source operation without mutating the document or cache. The
+ * caller applies the plan only after the operation has successfully committed.
+ */
+const planSmartTimelapseCapture = (settings: TimelapseSettings, cache?: TimelapseCaptureCache): SmartTimelapsePlan => {
+  const mode = settings.mode ?? 'full'
+  if (!cache || mode !== 'smart') return { mode, keep: true, transition: false, nextStride: 1, nextSamplingPhase: 0 }
+
+  const sameMode = cache.smartMode === mode && settings.snapshots.length > 0
+  let stride = sameMode ? Math.min(TIMELAPSE_SMART_MAX_STRIDE, Math.max(1, Math.trunc(cache.smartStride))) : 1
+  let samplingPhase = sameMode ? Math.max(0, Math.trunc(cache.smartSamplingPhase)) % stride : 0
+  const transition = sameMode
+    && cache.smartCompactionArmed
+    && settings.snapshots.length >= TIMELAPSE_SMART_TARGET_FRAMES
+    && stride < TIMELAPSE_SMART_MAX_STRIDE
+  if (transition) {
+    stride = Math.min(TIMELAPSE_SMART_MAX_STRIDE, stride * 2)
+    samplingPhase = 0
+  }
+  const keep = transition || samplingPhase === 0
+  return {
+    mode,
+    keep,
+    transition,
+    nextStride: stride,
+    nextSamplingPhase: (samplingPhase + 1) % stride
+  }
+}
+
+const applySmartTimelapsePlan = (settings: TimelapseSettings, cache: TimelapseCaptureCache | undefined, plan: SmartTimelapsePlan): void => {
+  if (!cache || plan.mode !== 'smart') {
+    if (cache) resetTimelapseSmartCapture(cache)
+    return
+  }
+  if (plan.transition) settings.snapshots = decimateTimelapseSnapshots(settings.snapshots)
+  cache.smartMode = plan.mode
+  cache.smartStride = plan.nextStride
+  cache.smartSamplingPhase = plan.nextSamplingPhase
+}
+
+const markSmartTimelapseSnapshotAdded = (settings: TimelapseSettings, cache: TimelapseCaptureCache | undefined): void => {
+  if (!cache || settings.mode !== 'smart') return
+  if (settings.snapshots.length >= TIMELAPSE_SMART_TARGET_FRAMES) cache.smartCompactionArmed = true
 }
 
 interface TimelapseEncodeWorkerResponse { id: number; data?: Uint8Array; error?: string }
@@ -321,42 +426,75 @@ const encodeTimelapsePngAsync = (pixels: Uint8ClampedArray, width: number, heigh
   })
 }
 
-const prepareTimelapseCapture = (document: SpriteDocument, options: TimelapseCaptureOptions): { settings: TimelapseSettings; pixels: Uint8ClampedArray; width: number; height: number } | null => {
+const prepareTimelapseCapture = (document: SpriteDocument, options: TimelapseCaptureOptions): { settings: TimelapseSettings; pixels: Uint8ClampedArray; width: number; height: number; cache: TimelapseCaptureCache } | null => {
   const settings = normalizeTimelapseSettings(document.timelapse, document.timelapse?.snapshots ?? [])
   document.timelapse = settings
   if (!settings.enabled) return null
-  return { settings, ...compositeTimelapsePixels(document, qualityMaxDimension[settings.quality], options) }
+  const cache = timelapseCaptureCacheFor(document, options.cache)
+  return { settings, cache, ...compositeTimelapsePixels(document, qualityMaxDimension[settings.quality], { ...options, cache }) }
 }
 
 export function prepareTimelapseSnapshot(document: SpriteDocument, now = Date.now(), options: TimelapseCaptureOptions = {}): PreparedTimelapseSnapshot | null {
   const capture = prepareTimelapseCapture(document, options)
-  return capture ? { capturedAt: now, width: capture.width, height: capture.height, pixels: capture.pixels.slice() } : null
+  return capture ? { capturedAt: now, width: capture.width, height: capture.height, pixels: capture.pixels.slice(), cache: capture.cache } : null
 }
 
 export async function commitPreparedTimelapseSnapshot(document: SpriteDocument, snapshot: PreparedTimelapseSnapshot, shouldCommit: () => boolean = () => true): Promise<void> {
-  const data = await encodeTimelapsePngAsync(snapshot.pixels, snapshot.width, snapshot.height)
   if (!shouldCommit()) return
   const settings = normalizeTimelapseSettings(document.timelapse, document.timelapse?.snapshots ?? [])
   document.timelapse = settings
   if (!settings.enabled) return
-  appendTimelapseSnapshot(settings, snapshot.capturedAt, snapshot.width, snapshot.height, data)
+  const plan = planSmartTimelapseCapture(settings, snapshot.cache)
+  if (!plan.keep) {
+    if (shouldCommit()) applySmartTimelapsePlan(settings, snapshot.cache, plan)
+    return
+  }
+  const data = await encodeTimelapsePngAsync(snapshot.pixels, snapshot.width, snapshot.height)
+  if (!shouldCommit()) return
+  const latestSettings = normalizeTimelapseSettings(document.timelapse, document.timelapse?.snapshots ?? [])
+  document.timelapse = latestSettings
+  if (!latestSettings.enabled) return
+  if ((latestSettings.mode ?? 'full') !== plan.mode) return
+  applySmartTimelapsePlan(latestSettings, snapshot.cache, plan)
+  appendTimelapseSnapshot(latestSettings, snapshot.capturedAt, snapshot.width, snapshot.height, data)
+  markSmartTimelapseSnapshotAdded(latestSettings, snapshot.cache)
 }
 
 export function captureTimelapseSnapshot(document: SpriteDocument, now = Date.now(), options: TimelapseCaptureOptions = {}): void {
   const capture = prepareTimelapseCapture(document, options)
   if (!capture) return
-  appendTimelapseSnapshot(capture.settings, now, capture.width, capture.height, encodePng(capture.pixels, capture.width, capture.height, true).bytes)
+  const plan = planSmartTimelapseCapture(capture.settings, capture.cache)
+  if (!plan.keep) {
+    applySmartTimelapsePlan(capture.settings, capture.cache, plan)
+    return
+  }
+  const data = encodePng(capture.pixels, capture.width, capture.height, true).bytes
+  applySmartTimelapsePlan(capture.settings, capture.cache, plan)
+  appendTimelapseSnapshot(capture.settings, now, capture.width, capture.height, data)
+  markSmartTimelapseSnapshotAdded(capture.settings, capture.cache)
 }
 
 export async function captureTimelapseSnapshotAsync(document: SpriteDocument, now = Date.now(), options: TimelapseCaptureOptions = {}): Promise<void> {
   const settings = normalizeTimelapseSettings(document.timelapse, document.timelapse?.snapshots ?? [])
   document.timelapse = settings
   if (!settings.enabled) return
-  const capture = await compositeTimelapsePixelsAsync(document, qualityMaxDimension[settings.quality], options)
+  const cache = timelapseCaptureCacheFor(document, options.cache)
+  const capture = await compositeTimelapsePixelsAsync(document, qualityMaxDimension[settings.quality], { ...options, cache })
   if (!capture || options.shouldCommit?.() === false) return
+  const plan = planSmartTimelapseCapture(settings, cache)
+  if (!plan.keep) {
+    if (options.shouldCommit?.() !== false) applySmartTimelapsePlan(settings, cache, plan)
+    return
+  }
   const data = await encodeTimelapsePngAsync(capture.pixels, capture.width, capture.height)
   if (options.shouldCommit?.() === false) return
-  appendTimelapseSnapshot(settings, now, capture.width, capture.height, data)
+  const latestSettings = normalizeTimelapseSettings(document.timelapse, document.timelapse?.snapshots ?? [])
+  document.timelapse = latestSettings
+  if (!latestSettings.enabled) return
+  if ((latestSettings.mode ?? 'full') !== plan.mode) return
+  applySmartTimelapsePlan(latestSettings, cache, plan)
+  appendTimelapseSnapshot(latestSettings, now, capture.width, capture.height, data)
+  markSmartTimelapseSnapshotAdded(latestSettings, cache)
 }
 
 const wait = (duration: number): Promise<void> => new Promise((resolve) => window.setTimeout(resolve, duration))
@@ -377,6 +515,28 @@ export const timelapseFrameDurations = (
   const frameDuration = outputDuration / settings.snapshots.length
   return settings.snapshots.map(() => frameDuration)
 }
+
+export const timelapseVideoFramePlan = (
+  settings: Pick<TimelapseSettings, 'fps' | 'speed' | 'snapshots'>,
+  options: TimelapseExportOptions
+): TimelapseVideoFrame[] => {
+  const snapshotCount = settings.snapshots.length
+  if (snapshotCount === 0) return []
+  const fps = Math.max(1, Math.min(60, Math.round(settings.fps)))
+  const requestedDurationMs = options.mode === 'duration'
+    ? Math.max(0.1, Math.min(3600, options.durationSeconds)) * 1000
+    : timelapseSourceDurationMs(settings) / Math.max(1, Math.min(64, settings.speed))
+  const frameCount = Math.max(1, Math.round(requestedDurationMs * fps / 1000))
+  const durationMs = 1000 / fps
+  return Array.from({ length: frameCount }, (_, index) => ({
+    snapshotIndex: frameCount === 1
+      ? snapshotCount - 1
+      : Math.round(index * (snapshotCount - 1) / (frameCount - 1)),
+    durationMs
+  }))
+}
+
+export const isTimelapseVideoFormat = (format: TimelapseExportFormat): format is TimelapseVideoFormat => format === 'mp4' || format === 'webm'
 
 const VIDEO_MIME_TYPES: Record<TimelapseVideoFormat, readonly string[]> = {
   mp4: ['video/mp4;codecs=avc1.42E01E', 'video/mp4'],
@@ -407,7 +567,27 @@ export async function encodeTimelapseVideo(settings: TimelapseSettings, format: 
   const context = canvas.getContext('2d')
   if (!context) throw new Error(tr('timelapse.canvasUnavailable'))
   context.imageSmoothingEnabled = false
-  const stream = canvas.captureStream(settings.fps)
+  const framePlan = timelapseVideoFramePlan(settings, options)
+  const outputFps = Math.max(1, Math.min(60, Math.round(settings.fps)))
+  let activeBitmap: ImageBitmap | null = null
+  let activeSnapshotIndex = -1
+  const drawFrame = async (snapshotIndex: number): Promise<void> => {
+    if (activeSnapshotIndex !== snapshotIndex) {
+      activeBitmap?.close()
+      activeBitmap = await decodeSnapshot(settings.snapshots[snapshotIndex])
+      activeSnapshotIndex = snapshotIndex
+    }
+    const snapshot = settings.snapshots[snapshotIndex]
+    context.clearRect(0, 0, width, height)
+    const scale = Math.min(geometry.drawWidth / snapshot.width, geometry.drawHeight / snapshot.height)
+    const drawWidth = Math.max(1, Math.round(snapshot.width * scale))
+    const drawHeight = Math.max(1, Math.round(snapshot.height * scale))
+    const bitmap = activeBitmap
+    if (!bitmap) throw new Error(tr('timelapse.exportFailed'))
+    context.drawImage(bitmap, Math.floor((width - drawWidth) / 2), Math.floor((height - drawHeight) / 2), drawWidth, drawHeight)
+  }
+  await drawFrame(framePlan[0].snapshotIndex)
+  const stream = canvas.captureStream(outputFps)
   const mimeType = resolveTimelapseMimeType(format, (candidate) => MediaRecorder.isTypeSupported(candidate))
   if (!mimeType) throw new Error(tr('timelapse.formatUnsupported', { format: format.toUpperCase() }))
   const bitrate = settings.quality === 'high' ? 8_000_000 : settings.quality === 'low' ? 1_500_000 : 4_000_000
@@ -420,19 +600,15 @@ export async function encodeTimelapseVideo(settings: TimelapseSettings, format: 
   })
   recorder.start()
   try {
-    const frameDurations = timelapseFrameDurations(settings, options)
-    for (const [index, snapshot] of settings.snapshots.entries()) {
-      const bitmap = await decodeSnapshot(snapshot)
-      context.clearRect(0, 0, width, height)
-      const scale = Math.min(geometry.drawWidth / snapshot.width, geometry.drawHeight / snapshot.height)
-      const drawWidth = Math.max(1, Math.round(snapshot.width * scale))
-      const drawHeight = Math.max(1, Math.round(snapshot.height * scale))
-      context.drawImage(bitmap, Math.floor((width - drawWidth) / 2), Math.floor((height - drawHeight) / 2), drawWidth, drawHeight)
-      bitmap.close()
-      onProgress?.((index + 1) / settings.snapshots.length * 100)
-      await wait(frameDurations[index])
+    for (const [index, frame] of framePlan.entries()) {
+      if (index > 0) await drawFrame(frame.snapshotIndex)
+      onProgress?.((index + 1) / framePlan.length * 100)
+      await wait(frame.durationMs)
     }
   } finally {
+    const bitmapToClose = activeBitmap as ImageBitmap | null
+    activeBitmap = null
+    bitmapToClose?.close()
     recorder.stop()
     stream.getTracks().forEach((track) => track.stop())
   }

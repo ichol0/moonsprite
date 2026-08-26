@@ -290,7 +290,81 @@ export function brushPressureFromDynamics(settings: BrushDynamicsSettings): Brus
 export interface BrushDynamicsInput {
   pointerType?: string
   pressure?: number
+  /**
+   * Pressure from a pointer event is not always accompanied by a reliable
+   * `pointerType`.  The canvas input adapter can set this flag once it has
+   * observed a pressure-capable stream (for example a device that reports
+   * itself as `mouse` but emits changing pressure values).  When omitted we
+   * use the conservative browser-event heuristic in
+   * `hasReliableBrushPressure`.
+   */
+  pressureAvailable?: boolean
+  /** The previous finite sample in the same pointer stream, when known. */
+  previousPressure?: number
   speed?: number | null
+}
+
+/** Browser's compatibility mouse/touch pressure value when no force sensor is available. */
+export const POINTER_DEFAULT_PRESSURE = 0.5
+export const POINTER_PRESSURE_EPSILON = 0.001
+
+const normalizedPointerType = (pointerType: string | undefined): string | undefined => {
+  if (typeof pointerType !== 'string') return undefined
+  const normalized = pointerType.trim().toLowerCase()
+  return normalized.length > 0 ? normalized : undefined
+}
+
+/**
+ * Aseprite treats pen and eraser pointers as pressure-capable devices and
+ * leaves mouse input at full pressure.  Pointer Events implementations can
+ * expose styluses under a vendor-specific type, so keep the common aliases
+ * in the same trusted class.  Unknown/mouse/touch streams are only accepted
+ * after a non-default pressure value (or a change from the previous sample)
+ * proves that a force sensor is actually present.
+ */
+export function isPressurePointerType(pointerType: string | undefined): boolean {
+  const normalized = normalizedPointerType(pointerType)
+  if (!normalized) return false
+  const compact = normalized.replace(/[\s_-]+/g, '')
+  return compact === 'pen'
+    || compact === 'eraser'
+    || compact === 'stylus'
+    || compact === 'pencil'
+    || compact === 'applepencil'
+    || compact === 'tablet'
+    || compact === 'tabletpen'
+    || compact === 'wintab'
+    || compact === 'wintabpen'
+    || compact === 'windowsink'
+    || compact === 'windowsinkpen'
+}
+
+export function hasReliableBrushPressure(
+  pointerType: string | undefined,
+  pressure: number | undefined,
+  previousPressure?: number,
+  pressureAvailable?: boolean
+): boolean {
+  if (!Number.isFinite(pressure)) return false
+  if (pressureAvailable !== undefined) return pressureAvailable
+  if (isPressurePointerType(pointerType)) return true
+
+  // Aseprite only routes tablet pen/eraser input through pressure dynamics.
+  // Touch contacts may expose a non-default PointerEvent pressure value, but
+  // that value is not a brush pressure axis and must not change brush size or
+  // opacity unexpectedly.
+  if (normalizedPointerType(pointerType) === 'touch') return false
+
+  const current = clamp(pressure!, 0, 1)
+  // A zero value is the PointerEvent hover/up sentinel for non-pen devices;
+  // it must not turn an ordinary mouse stream into a pressure stream.
+  if (current <= 0) return false
+  const previous = Number.isFinite(previousPressure) ? clamp(previousPressure!, 0, 1) : undefined
+  const changed = previous !== undefined && Math.abs(current - previous) > POINTER_PRESSURE_EPSILON
+  // Mouse and touch events commonly report exactly 0.5 while active.  Keep
+  // that compatibility value on the non-pressure path unless the stream has
+  // demonstrated a real change.
+  return changed || Math.abs(current - POINTER_DEFAULT_PRESSURE) > POINTER_PRESSURE_EPSILON
 }
 
 export function calibrateBrushPressure(pressure: number | undefined): number | null {
@@ -302,7 +376,7 @@ export function calibrateBrushPressure(pressure: number | undefined): number | n
 const sensorValue = (mapping: BrushDynamicsMapping, input: BrushDynamicsInput): number | null => {
   if (mapping.sensor === null) return null
   if (mapping.sensor === 'pressure') {
-    if (input.pointerType !== 'pen') return null
+    if (!hasReliableBrushPressure(input.pointerType, input.pressure, input.previousPressure, input.pressureAvailable)) return null
     return calibrateBrushPressure(input.pressure)
   }
   return Number.isFinite(input.speed) ? clamp(input.speed!, 0, BRUSH_SPEED_INPUT_LIMIT) : 0
@@ -342,8 +416,13 @@ export function resolveBrushDynamics(
   }
 }
 
-export function normalizePointerPressure(pointerType: string | undefined, pressure: number | undefined): number {
-  if (pointerType !== 'pen') return 1
+export function normalizePointerPressure(
+  pointerType: string | undefined,
+  pressure: number | undefined,
+  previousPressure?: number,
+  pressureAvailable?: boolean
+): number {
+  if (!hasReliableBrushPressure(pointerType, pressure, previousPressure, pressureAvailable)) return 1
   return (calibrateBrushPressure(pressure) ?? 100) / 100
 }
 
@@ -351,11 +430,13 @@ export function resolveBrushPressure(
   settings: BrushPressureSettings,
   pointerType: string | undefined,
   pressure: number | undefined,
-  baseSize: number
+  baseSize: number,
+  previousPressure?: number,
+  pressureAvailable?: boolean
 ): { pressure: number; size: number; opacityScale: number } {
   const legacy = normalizeBrushPressureSettings(settings)
-  const normalizedPressure = normalizePointerPressure(pointerType, pressure)
-  const resolved = resolveBrushDynamics(migrateBrushPressureSettings(legacy), { pointerType, pressure }, baseSize)
+  const normalizedPressure = normalizePointerPressure(pointerType, pressure, previousPressure, pressureAvailable)
+  const resolved = resolveBrushDynamics(migrateBrushPressureSettings(legacy), { pointerType, pressure, previousPressure, pressureAvailable }, baseSize)
   return {
     pressure: legacy.curve === 'soft'
       ? Math.sqrt(normalizedPressure)

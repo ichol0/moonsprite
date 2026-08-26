@@ -28,6 +28,33 @@ export interface FreeTileSourceOwner {
   tileset: Tileset
 }
 
+const cloneFreeTileSource = (source: FreeTileSourceLayer): FreeTileSourceLayer => ({
+  ...source,
+  displayColor: source.displayColor ? { ...source.displayColor } : undefined
+})
+
+export const freeTileSetIdForLayer = (layer: RasterLayer): string | null =>
+  layer.kind === 'free-tile' ? layer.freeTileSetId ?? layer.id : null
+
+export const freeTileLayersForSet = (document: SpriteDocument, setId: string | null | undefined): RasterLayer[] => {
+  if (!setId) return []
+  return document.layers.filter((layer) => layer.kind === 'free-tile' && freeTileSetIdForLayer(layer) === setId)
+}
+
+export const replaceFreeTileSetSources = (
+  document: SpriteDocument,
+  layer: RasterLayer,
+  sources: readonly FreeTileSourceLayer[]
+): RasterLayer[] => {
+  if (layer.kind !== 'free-tile') return []
+  layer.freeTileSetId ??= createId('free-tile-set')
+  const members = freeTileLayersForSet(document, layer.freeTileSetId)
+  if (!members.includes(layer)) members.push(layer)
+  const sharedSources = sources.map(cloneFreeTileSource)
+  for (const member of members) member.freeTileSources = sharedSources
+  return members
+}
+
 export interface FreeTilePlacementEdit {
   layerId: string
   frameId: string
@@ -162,47 +189,80 @@ const migrateLegacyFreeTileLayer = (document: SpriteDocument, layer: RasterLayer
 }
 
 export const ensureFreeTileTilesetOwnership = (document: SpriteDocument): void => {
-  const tilesets = document.tilesets ?? []
-  const byId = new Map(tilesets.map((tileset) => [tileset.id, tileset]))
-  const claimed = new Set(document.layers.flatMap((layer) => layer.kind === 'tilemap' && layer.tilemapTilesetId ? [layer.tilemapTilesetId] : []))
+  const byId = new Map((document.tilesets ?? []).map((tileset) => [tileset.id, tileset]))
+  const tilemapClaims = new Set(document.layers.flatMap((layer) => layer.kind === 'tilemap' && layer.tilemapTilesetId ? [layer.tilemapTilesetId] : []))
   for (const layer of document.layers) {
     if (layer.kind !== 'free-tile') continue
+    layer.freeTileSetId ??= createId('free-tile-set')
     if ((!layer.freeTileSources || layer.freeTileSources.length === 0) && layer.freeTileTilesetId) {
       const legacyTileset = byId.get(layer.freeTileTilesetId)
-      if (legacyTileset && !claimed.has(legacyTileset.id)) {
+      if (legacyTileset && !tilemapClaims.has(legacyTileset.id)) {
         migrateLegacyFreeTileLayer(document, layer, legacyTileset)
         byId.delete(legacyTileset.id)
         for (const tileset of document.tilesets ?? []) byId.set(tileset.id, tileset)
       }
     }
-    const validSources = (layer.freeTileSources ?? []).filter((source) => byId.has(source.tilesetId))
-    layer.freeTileSources = validSources
-    for (const source of validSources) {
-      const tileset = byId.get(source.tilesetId)
-      if (!tileset || claimed.has(tileset.id)) continue
-      tileset.name = source.name
-      claimed.add(tileset.id)
+  }
+  const sets = new Map<string, RasterLayer[]>()
+  for (const layer of document.layers) {
+    if (layer.kind !== 'free-tile' || !layer.freeTileSetId) continue
+    const members = sets.get(layer.freeTileSetId) ?? []
+    members.push(layer)
+    sets.set(layer.freeTileSetId, members)
+  }
+  const tilesetOwners = new Map<string, string>()
+  const sourceOwners = new Map<string, string>()
+  for (const [setId, members] of sets) {
+    let sharedSources: FreeTileSourceLayer[] = []
+    for (const member of members) {
+      const localTilesets = new Set<string>()
+      const localSources = new Set<string>()
+      const candidates = (member.freeTileSources ?? []).filter((source) => {
+        if (!byId.has(source.tilesetId) || tilemapClaims.has(source.tilesetId)) return false
+        const tilesetOwner = tilesetOwners.get(source.tilesetId)
+        const sourceOwner = sourceOwners.get(source.id)
+        if ((tilesetOwner && tilesetOwner !== setId) || (sourceOwner && sourceOwner !== setId)) return false
+        if (localTilesets.has(source.tilesetId) || localSources.has(source.id)) return false
+        localTilesets.add(source.tilesetId)
+        localSources.add(source.id)
+        return true
+      })
+      if (candidates.length > 0) {
+        sharedSources = candidates
+        break
+      }
     }
-    // A malformed or newly-created layer still gets one editable transparent source.
-    if (layer.freeTileSources.length === 0) {
+    // A malformed or newly-created set still gets one editable transparent source.
+    if (sharedSources.length === 0) {
+      const owner = members[0]
       const sourceId = createId('free-tile-source')
-      const tileset = createBlankTileset(createId('tileset'), `${layer.name} 1`, 1, 1, createId('tile'), 1)
+      const tileset = createBlankTileset(createId('tileset'), `${owner.name} 1`, 1, 1, createId('tile'), 1)
       document.tilesets = [...(document.tilesets ?? []), tileset]
       byId.set(tileset.id, tileset)
-      layer.freeTileSources = [{ id: sourceId, name: `${layer.name} 1`, tilesetId: tileset.id, visible: true, locked: false, opacity: 1, blendMode: 'normal', offsetX: 0, offsetY: 0 }]
-      claimed.add(tileset.id)
+      sharedSources = [{ id: sourceId, name: `${owner.name} 1`, tilesetId: tileset.id, visible: true, locked: false, opacity: 1, blendMode: 'normal', offsetX: 0, offsetY: 0 }]
     }
+    for (const source of sharedSources) {
+      const tileset = byId.get(source.tilesetId)
+      if (!tileset) continue
+      tileset.name = source.name
+      tilesetOwners.set(source.tilesetId, setId)
+      sourceOwners.set(source.id, setId)
+    }
+    for (const member of members) member.freeTileSources = sharedSources
   }
 }
 
 export const freeTileLayerTilesets = (document: SpriteDocument): FreeTileLayerTileset[] => {
   ensureFreeTileTilesetOwnership(document)
   const byId = new Map((document.tilesets ?? []).map((tileset) => [tileset.id, tileset]))
+  const seen = new Set<string>()
   return document.layers.flatMap((layer) => {
     if (layer.kind !== 'free-tile') return []
     return (layer.freeTileSources ?? []).flatMap((source) => {
       const tileset = byId.get(source.tilesetId)
-      return tileset ? [{ layer, tileset, source }] : []
+      if (!tileset || seen.has(tileset.id)) return []
+      seen.add(tileset.id)
+      return [{ layer, tileset, source }]
     })
   })
 }
@@ -218,17 +278,43 @@ export const freeTileSourceForId = (document: SpriteDocument, layer: RasterLayer
 }
 
 export const freeTileSourceOwnerForId = (document: SpriteDocument, sourceId: string | null | undefined): FreeTileSourceOwner | null => {
-  if (!sourceId) return null
+  return freeTileSourceOwnersForId(document, sourceId)[0] ?? null
+}
+
+export const freeTileSourceOwnersForId = (document: SpriteDocument, sourceId: string | null | undefined): FreeTileSourceOwner[] => {
+  if (!sourceId) return []
   ensureFreeTileTilesetOwnership(document)
   const tilesets = new Map((document.tilesets ?? []).map((tileset) => [tileset.id, tileset]))
+  const owners: FreeTileSourceOwner[] = []
   for (const layer of document.layers) {
     if (layer.kind !== 'free-tile') continue
     const source = (layer.freeTileSources ?? []).find((candidate) => candidate.id === sourceId || candidate.tilesetId === sourceId)
     if (!source) continue
     const tileset = tilesets.get(source.tilesetId)
-    if (tileset) return { layer, source, tileset }
+    if (tileset) owners.push({ layer, source, tileset })
   }
-  return null
+  return owners
+}
+
+export const freeTileLayerIdsForSource = (document: SpriteDocument, sourceId: string): string[] =>
+  freeTileSourceOwnersForId(document, sourceId).map((owner) => owner.layer.id)
+
+export const applyFreeTileSourceLayerSnapshot = (document: SpriteDocument, snapshot: FreeTileSourceLayer): boolean => {
+  const owners = freeTileSourceOwnersForId(document, snapshot.id)
+  if (owners.length === 0) return false
+  const updated = new Set<FreeTileSourceLayer>()
+  for (const owner of owners) {
+    if (!updated.has(owner.source)) {
+      const normalized = cloneFreeTileSource(snapshot)
+      Object.assign(owner.source, normalized)
+      if (normalized.description === undefined) delete owner.source.description
+      if (normalized.displayColor === undefined) delete owner.source.displayColor
+      updated.add(owner.source)
+    }
+    owner.tileset.name = snapshot.name
+  }
+  rerenderFreeTileSourceReferences(document, snapshot.id)
+  return true
 }
 
 export const freeTileTilesetIdsForLayer = (layer: RasterLayer): string[] => layer.kind === 'free-tile'
@@ -247,6 +333,7 @@ export const validateFreeTileImageResize = (document: SpriteDocument, width: num
 }
 
 export const captureFreeTileImageResizeState = (document: SpriteDocument): FreeTileImageResizeState => {
+  ensureFreeTileTilesetOwnership(document)
   const seen = new Set<FreeTileCelData>()
   const cels: FreeTileImageResizeState['cels'] = []
   for (const cel of ensureAnimationDocument(document).cels) {
@@ -259,8 +346,13 @@ export const captureFreeTileImageResizeState = (document: SpriteDocument): FreeT
       offsetY: cel.surface.offsetY
     })
   }
+  const seenSources = new Set<string>()
   const sources = document.layers.flatMap((layer) => layer.kind === 'free-tile'
-    ? (layer.freeTileSources ?? []).map((source) => ({ source, offsetX: source.offsetX, offsetY: source.offsetY }))
+    ? (layer.freeTileSources ?? []).flatMap((source) => {
+        if (seenSources.has(source.id)) return []
+        seenSources.add(source.id)
+        return [{ source, offsetX: source.offsetX, offsetY: source.offsetY }]
+      })
     : [])
   return { sourceWidth: document.width, sourceHeight: document.height, sources, cels }
 }
@@ -400,7 +492,8 @@ export const freeTileSourceEditSnapshotsEqual = (left: FreeTileSourceEditSnapsho
 export const freeTileSourceEditSnapshotBytes = (snapshot: FreeTileSourceEditSnapshot): number => snapshot.pixels.byteLength + 64
 
 export const applyFreeTileSourceSnapshot = (document: SpriteDocument, snapshot: FreeTileSourceEditSnapshot): boolean => {
-  const owner = freeTileSourceOwnerForId(document, snapshot.sourceId)
+  const owners = freeTileSourceOwnersForId(document, snapshot.sourceId)
+  const owner = owners[0]
   const pixelCount = snapshot.width * snapshot.height
   if (!owner || owner.tileset.id !== snapshot.tilesetId
     || !Number.isSafeInteger(snapshot.width) || !Number.isSafeInteger(snapshot.height)
@@ -416,8 +509,13 @@ export const applyFreeTileSourceSnapshot = (document: SpriteDocument, snapshot: 
   owner.tileset.tileIds = [tileId]
   owner.tileset.tileSlots = [tileId]
   owner.tileset.pixels = snapshot.pixels.slice()
-  owner.source.offsetX = Math.trunc(snapshot.offsetX)
-  owner.source.offsetY = Math.trunc(snapshot.offsetY)
+  const updatedSources = new Set<FreeTileSourceLayer>()
+  for (const current of owners) {
+    if (updatedSources.has(current.source)) continue
+    current.source.offsetX = Math.trunc(snapshot.offsetX)
+    current.source.offsetY = Math.trunc(snapshot.offsetY)
+    updatedSources.add(current.source)
+  }
   markRasterStorageContentChanged(owner.tileset.pixels)
   rerenderFreeTileSourceReferences(document, owner.source.id)
   return true

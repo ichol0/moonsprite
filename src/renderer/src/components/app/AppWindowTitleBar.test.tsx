@@ -42,7 +42,7 @@ describe('AppWindowTitleBar', () => {
   it('starts native dragging only after a held primary pointer actually moves', async () => {
     render(<I18nProvider><AppWindowTitleBar /></I18nProvider>)
 
-    expect(document.querySelector('.app-window-titlebar')).toHaveTextContent('MoonSprite DEV.6')
+    expect(document.querySelector('.app-window-titlebar')).toHaveTextContent('MoonSprite 1.0.0-beta.1')
     await waitFor(() => expect(mocks.appWindow.onResized).toHaveBeenCalledTimes(1))
 
     const dragRegion = document.querySelector<HTMLElement>('.app-window-titlebar-drag')

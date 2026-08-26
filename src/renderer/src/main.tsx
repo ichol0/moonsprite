@@ -19,6 +19,7 @@ if (!rootElement) throw new Error('MoonSprite root element is missing.')
 
 const startupPreferences = loadEditorPreferences()
 applyThemeToDocument(startupPreferences.theme)
+document.documentElement.dataset.uiMotion = startupPreferences.uiMotionLevel
 applyToolIconScale(startupPreferences.toolIconScale)
 void applyCursorPreferences(startupPreferences.useLocalCursors, startupPreferences.cursorScale).catch(() => undefined)
 

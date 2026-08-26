@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { selectionContains } from './selection'
-import { moveSymmetryCenter, symmetryAxisSegment, symmetryPoints, symmetrySelection, symmetrySelectionDragDelta, transformSymmetrySelection, type SymmetryAxes } from './symmetry'
+import { moveSymmetryCenter, symmetryAxisDragAllowed, symmetryAxisSegment, symmetryPoints, symmetrySelection, symmetrySelectionDragDelta, transformSymmetrySelection, type SymmetryAxes } from './symmetry'
 
 const axes = (values: Partial<SymmetryAxes>): SymmetryAxes => ({
   horizontal: false,
@@ -12,6 +12,12 @@ const axes = (values: Partial<SymmetryAxes>): SymmetryAxes => ({
 })
 
 describe('symmetry', () => {
+  it('allows Ctrl to temporarily move a locked symmetry axis', () => {
+    expect(symmetryAxisDragAllowed(false, false)).toBe(true)
+    expect(symmetryAxisDragAllowed(true, false)).toBe(false)
+    expect(symmetryAxisDragAllowed(true, true)).toBe(true)
+  })
+
   it('reflects points across each canvas-centered axis', () => {
     expect(symmetryPoints({ x: 1, y: 0 }, 6, 4, axes({ horizontal: true }))).toEqual([
       { x: 1, y: 0 },
@@ -104,6 +110,23 @@ describe('symmetry', () => {
     const movedFromLower = transformSymmetrySelection(selection, { ...selection, y: selection.y - 1 }, 6, 6, 0, undefined, horizontalAxes)!
     expect(selectionContains(movedFromLower, 1, 5)).toBe(true)
     expect(selectionContains(movedFromLower, 1, 0)).toBe(true)
+  })
+
+  it('moves a rotational side as one region instead of splitting its pixel orbits', () => {
+    const rotationalAxes = axes({ rotational: true })
+    const selection = symmetrySelection({ x: 1, y: 1, width: 2, height: 2 }, 8, 8, rotationalAxes)!
+    const target = { ...selection, x: selection.x + 1 }
+    expect(symmetrySelectionDragDelta(selection, { x: 5, y: 2 }, { x: 1, y: 0 }, 8, 8, rotationalAxes, undefined, true)).toEqual({ x: 1, y: 0 })
+
+    const moved = transformSymmetrySelection(selection, target, 8, 8, 0, undefined, rotationalAxes, undefined, true, { x: 5, y: 2 })!
+    const movedPoints: string[] = []
+    for (let y = moved.y; y < moved.y + moved.height; y += 1) for (let x = moved.x; x < moved.x + moved.width; x += 1) if (selectionContains(moved, x, y)) movedPoints.push(`${x},${y}`)
+    expect(movedPoints.sort()).toEqual([
+      '1,0', '2,0', '1,1', '2,1',
+      '6,1', '7,1', '6,2', '7,2',
+      '0,5', '1,5', '0,6', '1,6',
+      '5,6', '6,6', '5,7', '6,7'
+    ].sort())
   })
 
   it('maps diagonal mirror drags back to the canonical selection orientation', () => {

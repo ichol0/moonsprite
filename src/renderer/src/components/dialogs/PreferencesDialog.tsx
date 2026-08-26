@@ -1,18 +1,22 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import {
   DEFAULT_COLOR_EDITOR_MODES,
+  EYEDROPPER_MAGNIFIER_SIZE_VALUES,
   DEFAULT_LAYER_DISPLAY_COLOR_PRESETS,
   DEFAULT_QUICK_COMMAND_PREFERENCES,
   UI_SCALE_VALUES,
+  VIEW_DRAG_SENSITIVITY_VALUES,
   loadEditorPreferences,
   parseDocumentSizePresets,
   parseExportScalePresets,
+  parseAlignmentThreshold,
   parseLayerDisplayColorPresets,
   saveEditorPreferences,
   setEditorPreferencesPreview,
   type BrushPreviewMode,
   type CursorScale,
   type DocumentSizePreset,
+  type EyedropperMagnifierSize,
   type EyedropperMagnifierStyle,
   type MoveLayerClickFlashDuration,
   MOVE_LAYER_CLICK_FLASH_DURATIONS,
@@ -21,7 +25,9 @@ import {
   type RotationIndicatorPosition,
   type SelectionPreviewColorMode,
   type ToolIconScale,
+  type UiMotionLevel,
   type UiScale,
+  type ViewDragSensitivity,
   type WheelZoomMode,
   type ZoomToolDragMode
 } from '@/core/file-preferences'
@@ -74,12 +80,12 @@ const PREFERENCE_SECTIONS: Array<[PreferenceSection, TranslationKey]> = [
 const QUICK_COMMAND_SEARCH_KEYS = Object.values(QUICK_COMMAND_METADATA).flatMap(({ description, label }) => [label, description])
 
 const PREFERENCE_SEARCH_KEYS: Record<PreferenceSection, TranslationKey[]> = {
-  general: ['preferences.groups.interface', 'preferences.groups.project', 'preferences.language', 'preferences.uiScale', 'preferences.toolIconScale', 'preferences.timelapseRecording'],
+  general: ['preferences.groups.interface', 'preferences.groups.project', 'preferences.language', 'preferences.uiScale', 'preferences.toolIconScale', 'preferences.animations', 'preferences.timelapseRecording'],
   quickCommands: ['preferences.sections.quickCommands', 'preferences.groups.quickCommandLayout', 'preferences.quickCommandBar', 'preferences.quickCommandBarTranslucent', 'preferences.quickCommandBarTranslucentHint', 'preferences.quickCommandOrderHint', ...QUICK_COMMAND_SEARCH_KEYS],
   appearance: ['preferences.groups.canvas', 'preferences.checkerSize', 'preferences.checkerColors', 'preferences.lightColor', 'preferences.darkColor', 'preferences.pixelGridColor', 'preferences.gridColor', 'preferences.sliceColor', 'preferences.textBoxColor', 'preferences.canvasResizeColor', 'preferences.luminanceScope'],
   theme: ['preferences.groups.theme', 'preferences.theme.available', 'preferences.theme.current'],
-  input: ['preferences.groups.cursor', 'preferences.localCursor', 'preferences.cursorScale', 'preferences.groups.zoom', 'preferences.wheelZoom', 'preferences.wheelZoomMode', 'preferences.zoomMode', 'preferences.position'],
-  tools: ['preferences.groups.previews', 'preferences.brushPreview', 'preferences.drawingBrushPreview', 'preferences.selectionCrosshair', 'preferences.selectionPreviewColor', 'preferences.selectionPreviewColor.auto', 'preferences.selectionPreviewColor.custom', 'preferences.selectionPreviewCustomColor', 'preferences.selectionSizeVisible', 'preferences.moveLayerContentPreview', 'preferences.moveLayerClickFlash', 'preferences.moveLayerClickFlashDuration', 'preferences.groups.drawing', 'preferences.shiftLinePreview', 'preferences.balancedLine', 'preferences.lineDirectionStep', 'preferences.lassoClosed', 'preferences.eyedropperPencil', 'preferences.groups.eyedropper', 'preferences.eyedropperMagnifier', 'preferences.eyedropperMagnifierStyle', 'preferences.eyedropperMagnifierDistortion'],
+  input: ['preferences.groups.cursor', 'preferences.localCursor', 'preferences.cursorScale', 'preferences.groups.zoom', 'preferences.wheelZoom', 'preferences.wheelZoomMode', 'preferences.zoomMode', 'preferences.viewDragSensitivity', 'preferences.position'],
+  tools: ['preferences.groups.previews', 'preferences.brushPreview', 'preferences.drawingBrushPreview', 'preferences.selectionCrosshair', 'preferences.selectionPreviewColor', 'preferences.selectionPreviewColor.auto', 'preferences.selectionPreviewColor.custom', 'preferences.selectionPreviewCustomColor', 'preferences.selectionSizeVisible', 'preferences.moveLayerContentPreview', 'preferences.moveLayerClickFlash', 'preferences.moveLayerClickFlashDuration', 'preferences.groups.alignment', 'preferences.gridAlignment', 'preferences.gridAlignmentHint', 'preferences.smartAlignment', 'preferences.smartAlignmentHint', 'preferences.alignmentGuides', 'preferences.alignmentGuidesHint', 'preferences.alignmentThreshold', 'preferences.alignmentThresholdHint', 'preferences.groups.drawing', 'preferences.shiftLinePreview', 'preferences.balancedLine', 'preferences.lineDirectionStep', 'preferences.lassoClosed', 'preferences.eyedropperPencil', 'preferences.groups.eyedropper', 'preferences.eyedropperMagnifier', 'preferences.eyedropperMagnifierSize', 'preferences.eyedropperMagnifierStyle', 'preferences.eyedropperMagnifierDistortion'],
   files: ['preferences.groups.locations', 'preferences.saveDirectory', 'preferences.exportDirectory', 'preferences.groups.formats', 'preferences.saveFormat', 'preferences.exportFormat', 'preferences.groups.recovery', 'preferences.recovery', 'preferences.recoveryRetentionDays', 'preferences.recoveryRetentionDaysHint'],
   colorLayers: ['preferences.colorModes', 'preferences.restoreDefaults'],
   presets: ['preferences.newDocumentPresets', 'preferences.addSize', 'preferences.exportScalePresets', 'preferences.addScale', 'preferences.layerColors', 'preferences.addColor', 'preferences.restoreDefaults'],
@@ -347,6 +353,15 @@ export function PreferencesDialog({ initialSection = 'general', onClose, onPrese
           <FormField className="preference-field" label={t('preferences.language')}><ThemedSelect value={preferences.language} groups={[{ label: t('preferences.languageGroup'), options: AVAILABLE_APP_LOCALES.map((value) => ({ value, label: localeDisplayName(value, locale) })) }]} label={t('preferences.language')} onChange={(value) => update('language', value as AppLocale)} /></FormField>
           <FormField className="preference-field" label={t('preferences.uiScale')}><ThemedSelect value={String(preferences.uiScale)} groups={[{ label: t('preferences.uiScaleGroup'), options: UI_SCALE_VALUES.map((value) => ({ value: String(value), label: `${Math.round(value * 100)}%`, description: value === 0.75 ? t('preferences.uiScaleFractionalHint') : undefined })) }]} label={t('preferences.uiScale')} onChange={(value) => update('uiScale', Number(value) as UiScale)} /></FormField>
           <FormField className="preference-field" label={t('preferences.toolIconScale')}><ThemedSelect value={String(preferences.toolIconScale)} groups={[{ label: t('preferences.toolIconScaleGroup'), options: [{ value: '1', label: t('preferences.toolIconScale.normal') }, { value: '2', label: t('preferences.toolIconScale.large') }] }]} label={t('preferences.toolIconScale')} onChange={(value) => update('toolIconScale', Number(value) as ToolIconScale)} /></FormField>
+          <FormField className="preference-field" label={t('preferences.animations')} hint={t('preferences.animationsHint')}><ThemedSelect value={preferences.uiMotionLevel} groups={[{ label: t('preferences.animationsGroup'), options: [
+            { value: 'off', label: t('preferences.animationsLevel.off'), description: t('preferences.animationsLevel.offHint') },
+            { value: 'subtle', label: t('preferences.animationsLevel.subtle'), description: t('preferences.animationsLevel.subtleHint') },
+            { value: 'normal', label: t('preferences.animationsLevel.normal'), description: t('preferences.animationsLevel.normalHint') },
+            { value: 'full', label: t('preferences.animationsLevel.full'), description: t('preferences.animationsLevel.fullHint') }
+          ] }]} label={t('preferences.animations')} onChange={(value) => {
+            const uiMotionLevel = value as UiMotionLevel
+            setPreferences((current) => ({ ...current, uiMotionLevel, animationsEnabled: uiMotionLevel !== 'off' }))
+          }} /></FormField>
         </PreferenceGroup>
         <PreferenceGroup title={t('preferences.groups.project')}>
           {toggle(t('preferences.timelapseRecording'), preferences.timelapseRecordingEnabled, (value) => update('timelapseRecordingEnabled', value), t('preferences.timelapseRecordingHint'))}
@@ -381,6 +396,7 @@ export function PreferencesDialog({ initialSection = 'general', onClose, onPrese
           {toggle(t('preferences.wheelZoom'), preferences.wheelZoomEnabled, (value) => update('wheelZoomEnabled', value))}
           <FormField className="preference-field" label={t('preferences.wheelZoomMode')}><ThemedSelect value={preferences.wheelZoomMode} groups={[{ label: t('preferences.wheelZoomModeGroup'), options: [{ value: 'smooth', label: t('preferences.wheelZoomMode.smooth') }, { value: 'stepped', label: t('preferences.wheelZoomMode.stepped') }] }]} label={t('preferences.wheelZoomMode')} disabled={!preferences.wheelZoomEnabled} onChange={(value) => update('wheelZoomMode', value as WheelZoomMode)} /></FormField>
           <FormField className="preference-field" label={t('preferences.zoomMode')}><ThemedSelect value={preferences.zoomToolDragMode} groups={[{ label: t('preferences.zoomModeGroup'), options: [{ value: 'smooth', label: t('preferences.zoomMode.smooth') }, { value: 'stepped', label: t('preferences.zoomMode.stepped') }] }]} label={t('preferences.zoomMode')} onChange={(value) => update('zoomToolDragMode', value as ZoomToolDragMode)} /></FormField>
+          <FormField className="preference-field" label={t('preferences.viewDragSensitivity')}><ThemedSelect value={String(preferences.viewDragSensitivity)} groups={[{ label: t('preferences.viewDragSensitivityGroup'), options: VIEW_DRAG_SENSITIVITY_VALUES.map((value) => ({ value: String(value), label: `${value}x` })) }]} label={t('preferences.viewDragSensitivity')} onChange={(value) => update('viewDragSensitivity', Number(value) as ViewDragSensitivity)} /></FormField>
           <FormField className="preference-field" label={t('preferences.position')}><ThemedSelect value={preferences.rotationIndicatorPosition} groups={[{ label: t('preferences.positionGroup'), options: [{ value: 'view', label: t('preferences.position.view') }, { value: 'canvas', label: t('preferences.position.canvas') }] }]} label={t('preferences.position')} onChange={(value) => update('rotationIndicatorPosition', value as RotationIndicatorPosition)} /></FormField>
         </PreferenceGroup>
       </>}
@@ -396,6 +412,12 @@ export function PreferencesDialog({ initialSection = 'general', onClose, onPrese
           {toggle(t('preferences.moveLayerClickFlash'), preferences.moveLayerClickFlashEnabled, (value) => update('moveLayerClickFlashEnabled', value), t('preferences.moveLayerClickFlashHint'))}
           <FormField className="preference-field" label={t('preferences.moveLayerClickFlashDuration')} tooltip={t('preferences.moveLayerClickFlashDurationHint')}><ThemedSelect value={String(preferences.moveLayerClickFlashDuration)} groups={[{ label: t('preferences.moveLayerClickFlashDurationGroup'), options: MOVE_LAYER_CLICK_FLASH_DURATIONS.map((duration) => ({ value: String(duration), label: t(duration === 80 ? 'preferences.moveLayerClickFlashDuration.fast' : duration === 180 ? 'preferences.moveLayerClickFlashDuration.long' : 'preferences.moveLayerClickFlashDuration.standard') })) }]} label={t('preferences.moveLayerClickFlashDuration')} disabled={!preferences.moveLayerClickFlashEnabled} onChange={(value) => update('moveLayerClickFlashDuration', Number(value) as MoveLayerClickFlashDuration)} /></FormField>
         </PreferenceGroup>
+        <PreferenceGroup title={t('preferences.groups.alignment')}>
+          {toggle(t('preferences.gridAlignment'), preferences.gridAlignmentEnabled, (value) => update('gridAlignmentEnabled', value), t('preferences.gridAlignmentHint'))}
+          {toggle(t('preferences.smartAlignment'), preferences.smartAlignmentEnabled, (value) => update('smartAlignmentEnabled', value), t('preferences.smartAlignmentHint'))}
+          {toggle(t('preferences.alignmentGuides'), preferences.alignmentGuidesVisible, (value) => update('alignmentGuidesVisible', value), t('preferences.alignmentGuidesHint'))}
+          <FormField className="preference-field" label={t('preferences.alignmentThreshold')} tooltip={t('preferences.alignmentThresholdHint')}><NumberInput aria-label={t('preferences.alignmentThreshold')} min={1} max={32} suffix="px" value={preferences.alignmentThreshold} disabled={!preferences.gridAlignmentEnabled && !preferences.smartAlignmentEnabled} onValueChange={(value) => update('alignmentThreshold', parseAlignmentThreshold(String(value)))} /></FormField>
+        </PreferenceGroup>
         <PreferenceGroup title={t('preferences.groups.drawing')}>
           {toggle(t('preferences.shiftLinePreview'), preferences.shiftLinePreviewEnabled, (value) => update('shiftLinePreviewEnabled', value))}
           {toggle(t('preferences.balancedLine'), preferences.balancedShiftLineEnabled, (value) => update('balancedShiftLineEnabled', value), t('preferences.balancedLineHint'))}
@@ -405,6 +427,7 @@ export function PreferencesDialog({ initialSection = 'general', onClose, onPrese
         </PreferenceGroup>
         <PreferenceGroup title={t('preferences.groups.eyedropper')}>
           {toggle(t('preferences.eyedropperMagnifier'), preferences.eyedropperMagnifierEnabled, (value) => update('eyedropperMagnifierEnabled', value), t('preferences.eyedropperMagnifierHint'))}
+          {preferences.eyedropperMagnifierEnabled && <FormField className="preference-field" label={t('preferences.eyedropperMagnifierSize')}><ThemedSelect value={String(preferences.eyedropperMagnifierSize)} groups={[{ label: t('preferences.eyedropperMagnifierSizeGroup'), options: EYEDROPPER_MAGNIFIER_SIZE_VALUES.map((value) => ({ value: String(value), label: t(value === 0.5 ? 'preferences.eyedropperMagnifierSize.minimum' : value === 0.75 ? 'preferences.eyedropperMagnifierSize.small' : value === 1.25 ? 'preferences.eyedropperMagnifierSize.large' : 'preferences.eyedropperMagnifierSize.medium') })) }]} label={t('preferences.eyedropperMagnifierSize')} onChange={(value) => update('eyedropperMagnifierSize', Number(value) as EyedropperMagnifierSize)} /></FormField>}
           <FormField className="preference-field" label={t('preferences.eyedropperMagnifierStyle')} tooltip={t('preferences.eyedropperMagnifierStyleHint')}><ThemedSelect value={preferences.eyedropperMagnifierStyle} groups={[{ label: t('preferences.eyedropperMagnifierStyleGroup'), options: [{ value: 'pixel', label: t('preferences.eyedropperMagnifierStyle.pixel') }, { value: 'line', label: t('preferences.eyedropperMagnifierStyle.line') }] }]} label={t('preferences.eyedropperMagnifierStyle')} onChange={(value) => update('eyedropperMagnifierStyle', value as EyedropperMagnifierStyle)} /></FormField>
           {toggle(t('preferences.eyedropperMagnifierDistortion'), preferences.eyedropperMagnifierDistortionEnabled, (value) => update('eyedropperMagnifierDistortionEnabled', value), t('preferences.eyedropperMagnifierDistortionHint'))}
         </PreferenceGroup>

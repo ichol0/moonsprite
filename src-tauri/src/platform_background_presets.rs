@@ -9,6 +9,10 @@ use crate::platform_storage::atomic_write;
 
 const PRESET_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg", "webp", "bmp", "gif"];
 const BUILTIN_SEED_MARKER: &str = ".moonsprite-background-presets";
+const MAX_PRESET_FILE_BYTES: usize = 32 * 1024 * 1024;
+const MAX_PRESET_DIMENSION: u32 = 4096;
+const MAX_PRESET_PIXELS: u64 = 16_777_216;
+const PNG_SIGNATURE: &[u8; 8] = b"\x89PNG\r\n\x1a\n";
 const BUILTIN_PRESETS: &[(&str, &[u8])] = &[
     (
         "grid.png",
@@ -95,6 +99,84 @@ fn readable_name(path: &Path) -> String {
         .join(" ")
 }
 
+fn clean_preset_name(name: &str) -> String {
+    let cleaned = name
+        .trim()
+        .chars()
+        .filter(|character| {
+            !character.is_control()
+                && !['/', '\\', ':', '*', '?', '"', '<', '>', '|'].contains(character)
+        })
+        .take(80)
+        .collect::<String>();
+    let cleaned =
+        cleaned.trim_matches(|character: char| character.is_whitespace() || character == '.');
+    if cleaned.is_empty() {
+        "选区背景预设".to_string()
+    } else {
+        cleaned.to_string()
+    }
+}
+
+fn validate_png_preset(data: &[u8]) -> Result<(), String> {
+    if data.len() > MAX_PRESET_FILE_BYTES {
+        return Err("背景预设文件不能超过 32 MB。".to_string());
+    }
+    if data.len() < 24 || !data.starts_with(PNG_SIGNATURE) || data.get(12..16) != Some(b"IHDR") {
+        return Err("背景预设必须是有效的 PNG 图片。".to_string());
+    }
+    let width = u32::from_be_bytes([data[16], data[17], data[18], data[19]]);
+    let height = u32::from_be_bytes([data[20], data[21], data[22], data[23]]);
+    if width == 0
+        || height == 0
+        || width > MAX_PRESET_DIMENSION
+        || height > MAX_PRESET_DIMENSION
+        || u64::from(width) * u64::from(height) > MAX_PRESET_PIXELS
+    {
+        return Err("背景预设尺寸无效或超过限制。".to_string());
+    }
+    Ok(())
+}
+
+fn stored_background_preset(path: &Path) -> Option<StoredBackgroundPreset> {
+    let id = path.file_name()?.to_str()?.to_string();
+    Some(StoredBackgroundPreset {
+        name: readable_name(path),
+        file_path: path.to_string_lossy().to_string(),
+        built_in: built_in_order(&id) != usize::MAX,
+        id,
+    })
+}
+
+fn unique_preset_path(directory: &Path, name: &str) -> PathBuf {
+    let mut suffix = 1;
+    loop {
+        let file_name = if suffix == 1 {
+            format!("{name}.png")
+        } else {
+            format!("{name} {suffix}.png")
+        };
+        let path = directory.join(file_name);
+        if !path.exists() {
+            return path;
+        }
+        suffix += 1;
+    }
+}
+
+fn save_background_preset_to(
+    directory: &Path,
+    name: &str,
+    data: &[u8],
+) -> Result<StoredBackgroundPreset, String> {
+    validate_png_preset(data)?;
+    fs::create_dir_all(directory)
+        .map_err(|error| format!("无法创建背景图层预设文件夹：{error}"))?;
+    let path = unique_preset_path(directory, &clean_preset_name(name));
+    atomic_write(&path, data)?;
+    stored_background_preset(&path).ok_or_else(|| "无法读取已保存的背景预设。".to_string())
+}
+
 fn built_in_order(id: &str) -> usize {
     BUILTIN_PRESETS
         .iter()
@@ -114,15 +196,7 @@ pub(crate) fn list_background_presets() -> Result<BackgroundPresetListing, Strin
         .filter_map(Result::ok)
         .map(|entry| entry.path())
         .filter(|path| is_preset_file(path))
-        .filter_map(|path| {
-            let id = path.file_name()?.to_str()?.to_string();
-            Some(StoredBackgroundPreset {
-                name: readable_name(&path),
-                file_path: path.to_string_lossy().to_string(),
-                built_in: built_in_order(&id) != usize::MAX,
-                id,
-            })
-        })
+        .filter_map(|path| stored_background_preset(&path))
         .collect::<Vec<_>>();
     presets.sort_by(|left, right| {
         built_in_order(&left.id)
@@ -134,6 +208,15 @@ pub(crate) fn list_background_presets() -> Result<BackgroundPresetListing, Strin
         directory_path: directory.to_string_lossy().to_string(),
         presets,
     })
+}
+
+#[tauri::command]
+pub(crate) fn save_background_preset(
+    name: String,
+    data: Vec<u8>,
+) -> Result<StoredBackgroundPreset, String> {
+    let directory = preset_dir()?;
+    save_background_preset_to(&directory, &name, &data)
 }
 
 #[tauri::command]
@@ -154,7 +237,9 @@ pub(crate) fn open_background_preset_folder() -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{seed_builtin_presets, BUILTIN_PRESETS, BUILTIN_SEED_MARKER};
+    use super::{
+        save_background_preset_to, seed_builtin_presets, BUILTIN_PRESETS, BUILTIN_SEED_MARKER,
+    };
     use std::{
         fs,
         time::{SystemTime, UNIX_EPOCH},
@@ -179,6 +264,30 @@ mod tests {
         fs::remove_file(&deleted).unwrap();
         seed_builtin_presets(&directory).unwrap();
         assert!(!deleted.exists());
+
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn saves_valid_png_presets_without_overwriting_existing_files() {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory =
+            std::env::temp_dir().join(format!("moonsprite-save-background-presets-{stamp}"));
+        fs::create_dir_all(&directory).unwrap();
+        let bytes = BUILTIN_PRESETS[0].1;
+
+        let first = save_background_preset_to(&directory, "选区:/背景预设.", bytes).unwrap();
+        let second = save_background_preset_to(&directory, "选区:/背景预设.", bytes).unwrap();
+
+        assert_eq!(first.id, "选区背景预设.png");
+        assert_eq!(first.name, "选区背景预设");
+        assert!(!first.built_in);
+        assert_eq!(second.id, "选区背景预设 2.png");
+        assert_eq!(fs::read(first.file_path).unwrap(), bytes);
+        assert!(save_background_preset_to(&directory, "invalid", b"not a png").is_err());
 
         let _ = fs::remove_dir_all(directory);
     }

@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { BRUSH_SPEED_STOP_MS, CanvasInputState, SELECTION_CORNER_RESIZE_HIT_RADIUS, SELECTION_RESIZE_HIT_RADIUS, appendCanvasPathStep, appendPolygonLassoVertex, beginBrushSpeedTracking, beginTemporaryCenteredMarqueeResize, brushLineConnectionOverridesTemporaryMove, cachedSelectionTransformSource, canvasGestureForPreview, centerMarqueeBoundsAtCreationPoint, centeredShapeBounds, clampCanvasZoom, coalescedPointerClientPoints, constrainedTranslation, consumePendingCanvasGestureHistory, createCanvasPanDrag, createMarqueeResizeStart, deferredSelectionCommitInvalidationRects, deferredSelectionPreviewOwner, finalizeMarqueeSelection, floatingSelectionCopyMode, isPendingCanvasPathGesture, isQuickSelectionSecondPress, marqueePreviewTargetForDrag, marqueeSelectionCommit, normalizeCanvasWheelDelta, paletteSamplingShortcutStartsPrimarySample, polygonLassoClosedPathPoints, polygonLassoPreviewPoints, quickSelectCellDragBounds, quickSelectCellSelection, redoCanvasPathStep, registerPendingCanvasGestureHistory, resizeRotatedMarqueeBounds, resizeSelectionBounds, resizeTransformedSelectionBounds, resolveMarqueeModifierMode, restoreCanvasDragAfterPan, restoreTemporaryCenteredMarqueeResize, revertCancelledCanvasDragPixelChanges, rotationHandles, sampledForegroundColorToAdd, selectionGestureMoved, selectionInteractionHit, selectionInteractionOverridesTemporaryMove, selectionMarqueeUsesConstraint, selectionMovePointerDelta, selectionOverlayFrameForDrag, selectionOverlayMaskForDrag, selectionPivotAfterResize, selectionPivotAtDragPoint, selectionPivotHit, selectionResizeHit, selectionRotationAngle, selectionRotationHit, selectionShearHit, selectionTransformedInteractionHit, selectionTransformDeferredPreviewEnabled, selectionTransformModifiers, selectionTransformPreviewChanged, shapeBounds, shouldClosePolygonLasso, shouldRestartFloatingSelectionForCopy, shouldStartCanvasPan, shouldUseTemporaryMoveForCanvasInteraction, shouldUseTemporaryMoveTool, snapSelectionRotation, steppedCanvasZoom, temporaryMoveSuppressesToolPreview, temporaryTransformOffset, translatedSelectionRect, undoActiveCanvasPathGesture, undoCanvasPathStep, updateBrushSpeedTracking, wheelCanvasZoom, zoomDragModeForModifiers, zoomDragTarget, type CanvasDragState } from './canvas-input'
+import { PointerPressureAdapter } from './canvas-input'
+import { BRUSH_SPEED_STOP_MS, CanvasInputState, PEN_COMPATIBLE_MOUSE_SUPPRESSION_MS, SELECTION_CORNER_RESIZE_HIT_RADIUS, SELECTION_RESIZE_HIT_RADIUS, appendCanvasPathStep, appendPolygonLassoVertex, beginBrushSpeedTracking, beginTemporaryCenteredMarqueeResize, brushLineConnectionOverridesTemporaryMove, cachedSelectionTransformSource, canvasGestureForPreview, centerMarqueeBoundsAtCreationPoint, centeredShapeBounds, clampCanvasZoom, coalescedPointerClientPoints, constrainedTranslation, consumePendingCanvasGestureHistory, createCanvasPanDrag, createMarqueeResizeStart, deferredSelectionCommitInvalidationRects, deferredSelectionPreviewMaterializationRequired, deferredSelectionPreviewOwner, finalizeMarqueeSelection, floatingSelectionCopyMode, isPendingCanvasPathGesture, isQuickSelectionSecondPress, marqueePreviewTargetForDrag, marqueeSelectionCommit, normalizeCanvasWheelDelta, paletteSamplingShortcutStartsPrimarySample, polygonLassoClosedPathPoints, polygonLassoPreviewPoints, quickSelectCellDragBounds, quickSelectCellSelection, redoCanvasPathStep, registerPendingCanvasGestureHistory, resizeRotatedMarqueeBounds, resizeSelectionBounds, resizeTransformedSelectionBounds, resolveMarqueeModifierMode, restoreCanvasDragAfterPan, restoreTemporaryCenteredMarqueeResize, revertCancelledCanvasDragPixelChanges, rotationHandles, sampledForegroundColorToAdd, selectionGestureMoved, selectionHitStartsContentMove, selectionInteractionHit, selectionInteractionOverridesTemporaryMove, selectionMarqueeUsesConstraint, selectionMovePointerDelta, selectionOverlayFrameForDrag, selectionOverlayMaskForDrag, selectionPivotAfterResize, selectionPivotAtDragPoint, selectionPivotHit, selectionResizeHit, selectionRotationAngle, selectionRotationHit, selectionShearHit, selectionTransformedInteractionHit, selectionTransformDeferredPreviewEnabled, selectionTransformGeometrySource, selectionTransformModifiers, selectionTransformPreviewChanged, shapeBounds, shouldClosePolygonLasso, shouldRestartFloatingSelectionForCopy, shouldReuseFloatingSelectionSourceForCopy, shouldStartCanvasPan, shouldUseTemporaryMoveForCanvasInteraction, shouldUseTemporaryMoveTool, snapSelectionRotation, steppedCanvasZoom, temporaryMoveForCanvasInteractionAllowed, temporaryMoveSuppressesToolPreview, temporaryMoveToolAllowed, temporaryTransformOffset, translatedSelectionRect, translatedSelectionTransformPreviewMask, undoActiveCanvasPathGesture, undoCanvasPathStep, updateBrushSpeedTracking, viewDragClientDelta, wheelCanvasZoom, zoomDragModeForModifiers, zoomDragTarget, type CanvasDragState } from './canvas-input'
 import { balancedStairLinePoints } from './pixel-line'
-import { createDocument, getActiveLayer, readLayerColor } from './document'
+import { createDocument, getActiveLayer, readLayerColor, writeLayerColor } from './document'
 import { beginPixelEdit } from './history'
-import { paintBrush } from './tools'
+import { applySelectionTransform, captureSelectionTransform, paintBrush } from './tools'
 
 const drag = (): CanvasDragState => ({ kind: 'move-content', start: { x: 0, y: 0 }, last: { x: 0, y: 0 } })
 
@@ -114,6 +115,106 @@ describe('canvas input helpers', () => {
       ]
     })
     expect(points).toEqual([{ clientX: 2, clientY: 3 }, { clientX: 5, clientY: 6 }, { clientX: 8, clientY: 7 }])
+  })
+
+  it('keeps a pen pointer authoritative over its trailing compatibility mouse events', () => {
+    const input = new CanvasInputState()
+    expect(input.acceptPointerDeviceEvent({ pointerId: 8, pointerType: 'pen', timeStamp: 100 })).toBe(true)
+    expect(input.penPointerIsActive()).toBe(true)
+    expect(input.acceptPointerDeviceEvent({ pointerId: 1, pointerType: 'mouse', timeStamp: 100 + PEN_COMPATIBLE_MOUSE_SUPPRESSION_MS })).toBe(false)
+    expect(input.penPointerIsActive()).toBe(true)
+    expect(input.acceptPointerDeviceEvent({ pointerId: 1, pointerType: 'mouse', timeStamp: 101 }, true)).toBe(true)
+    expect(input.penPointerIsActive()).toBe(false)
+  })
+
+  it('releases pen ownership on pointer leave and lets an idle mouse take over', () => {
+    const input = new CanvasInputState()
+    const pen = { pointerId: 9, pointerType: 'pen', timeStamp: 40 }
+    input.acceptPointerDeviceEvent(pen)
+    input.releasePointerDeviceEvent(pen)
+    expect(input.penPointerIsActive()).toBe(false)
+
+    input.acceptPointerDeviceEvent({ ...pen, timeStamp: 80 })
+    expect(input.acceptPointerDeviceEvent({ pointerId: 1, pointerType: 'mouse', timeStamp: 80 + PEN_COMPATIBLE_MOUSE_SUPPRESSION_MS + 1 })).toBe(true)
+    expect(input.penPointerIsActive()).toBe(false)
+  })
+
+  it('releases pressure ownership when a pointer ends normally', () => {
+    const input = new CanvasInputState()
+    const pen = { pointerId: 14, pointerType: 'pen', timeStamp: 40 }
+    expect(input.acceptPointerDeviceEvent(pen)).toBe(true)
+    expect(input.penPointerIsActive()).toBe(true)
+    input.releasePointerDeviceEvent({ pointerId: pen.pointerId, pointerType: pen.pointerType })
+    expect(input.penPointerIsActive()).toBe(false)
+    expect(input.acceptPointerDeviceEvent({ pointerId: 14, pointerType: 'mouse', pressure: 0.5, timeStamp: 41 })).toBe(true)
+  })
+
+  it('resets device ownership after a lost pointer before pointerId reuse', () => {
+    const input = new CanvasInputState()
+    expect(input.acceptPointerDeviceEvent({ pointerId: 15, pointerType: 'mouse', pressure: 0.72, timeStamp: 1 })).toBe(true)
+    expect(input.penPointerIsActive()).toBe(true)
+    input.resetPointerDeviceState()
+    expect(input.penPointerIsActive()).toBe(false)
+    expect(input.acceptPointerDeviceEvent({ pointerId: 15, pointerType: 'mouse', pressure: 0.5, timeStamp: 2 })).toBe(true)
+    expect(input.penPointerIsActive()).toBe(false)
+  })
+
+  it('recognizes a mouse-labelled tablet only after pressure evidence appears', () => {
+    const input = new CanvasInputState()
+    expect(input.acceptPointerDeviceEvent({ pointerId: 10, pointerType: 'mouse', pressure: 0.5, timeStamp: 1 })).toBe(true)
+    expect(input.penPointerIsActive()).toBe(false)
+    expect(input.acceptPointerDeviceEvent({ pointerId: 10, pointerType: 'mouse', pressure: 0.72, timeStamp: 2 })).toBe(true)
+    expect(input.penPointerIsActive()).toBe(true)
+    // Once promoted, the same pointer id remains authoritative even if the
+    // browser briefly emits its compatibility 0.5 value again.
+    expect(input.acceptPointerDeviceEvent({ pointerId: 10, pointerType: 'mouse', pressure: 0.5, timeStamp: 3 })).toBe(true)
+    input.releasePointerDeviceEvent({ pointerId: 10, pointerType: 'mouse' })
+    expect(input.penPointerIsActive()).toBe(false)
+  })
+
+  it('adapts vendor pointer types and preserves explicit pressure capability', () => {
+    const adapter = new PointerPressureAdapter()
+    expect(adapter.adapt({ pointerId: 3, pointerType: 'Windows-Ink', pressure: 0.25 })).toMatchObject({ pressureAvailable: true, pressure: 0.25 })
+    expect(adapter.adapt({ pointerId: 4, pointerType: 'mouse', pressure: 0.5 })).toMatchObject({ pressureAvailable: false })
+    expect(adapter.adapt({ pointerId: 4, pointerType: 'mouse', pressure: 0.6 })).toMatchObject({ pressureAvailable: true })
+    expect(adapter.adapt({ pointerId: 4, pointerType: 'mouse', pressure: 0.5 })).toMatchObject({ pressureAvailable: true, previousPressure: 0.6 })
+    adapter.release(4)
+    expect(adapter.adapt({ pointerId: 4, pointerType: 'mouse', pressure: 0.5 })).toMatchObject({ pressureAvailable: false })
+  })
+
+  it('does not treat a no-pressure contact sample as zero force before the axis is proven', () => {
+    const adapter = new PointerPressureAdapter()
+    expect(adapter.adapt({ pointerId: 5, pointerType: 'stylus', pressure: 0, buttons: 1 })).toMatchObject({ pressureAvailable: false })
+    expect(adapter.adapt({ pointerId: 5, pointerType: 'stylus', pressure: 0.18, buttons: 1 })).toMatchObject({ pressureAvailable: true })
+  })
+
+  it('does not turn a pressure-less pen contact into a zero-opacity stroke', () => {
+    const adapter = new PointerPressureAdapter()
+    expect(adapter.adapt({ pointerId: 11, pointerType: 'pen', pressure: 0, buttons: 1 })).toMatchObject({ pressureAvailable: false })
+    expect(adapter.adapt({ pointerId: 11, pointerType: 'pen', pressure: 0, buttons: 1 })).toMatchObject({ pressureAvailable: false })
+    expect(adapter.adapt({ pointerId: 11, pointerType: 'pen', pressure: 0.42, buttons: 1 })).toMatchObject({ pressureAvailable: true })
+  })
+
+  it('keeps zero-pressure pen samples in the fallback path even when buttons are missing', () => {
+    const adapter = new PointerPressureAdapter()
+    expect(adapter.adapt({ pointerId: 12, pointerType: 'pen', pressure: 0, buttons: 0 })).toMatchObject({ pressureAvailable: false })
+    expect(adapter.adapt({ pointerId: 12, pointerType: 'pen', pressure: 0, buttons: 0 })).toMatchObject({ pressureAvailable: false })
+    expect(adapter.adapt({ pointerId: 12, pointerType: 'pen', pressure: 0.35, buttons: 0 })).toMatchObject({ pressureAvailable: true })
+    expect(adapter.adapt({ pointerId: 12, pointerType: 'pen', pressure: 0, buttons: 0 })).toMatchObject({ pressureAvailable: true })
+  })
+
+  it('does not treat a constant compatibility 0.5 pen stream as real pressure', () => {
+    const adapter = new PointerPressureAdapter()
+    expect(adapter.adapt({ pointerId: 13, pointerType: 'pen', pressure: 0.5, buttons: 1 })).toMatchObject({ pressureAvailable: false })
+    expect(adapter.adapt({ pointerId: 13, pointerType: 'pen', pressure: 0.5, buttons: 1 })).toMatchObject({ pressureAvailable: false })
+    expect(adapter.adapt({ pointerId: 13, pointerType: 'pen', pressure: 0.62, buttons: 1 })).toMatchObject({ pressureAvailable: true })
+  })
+
+  it('retains the last finite sample when an intermediate packet omits pressure', () => {
+    const adapter = new PointerPressureAdapter()
+    expect(adapter.adapt({ pointerId: 16, pointerType: 'mouse', pressure: 0.5 })).toMatchObject({ pressureAvailable: false })
+    expect(adapter.adapt({ pointerId: 16, pointerType: 'mouse', pressure: undefined })).toMatchObject({ pressure: 0.5, pressureAvailable: false, previousPressure: 0.5 })
+    expect(adapter.adapt({ pointerId: 16, pointerType: 'mouse', pressure: 0.72 })).toMatchObject({ pressureAvailable: true, previousPressure: 0.5 })
   })
 
   it('preserves pen pressure changes even when the pointer stays on one coordinate', () => {
@@ -293,6 +394,12 @@ describe('canvas input helpers', () => {
     expect(selectionOverlayMaskForDrag(null, pan)).toEqual(polygon.selectionStart)
   })
 
+  it('applies view drag sensitivity to both axes', () => {
+    expect(viewDragClientDelta({ x: 130, y: 70 }, { x: 100, y: 90 }, 0.5)).toEqual({ x: 15, y: -10 })
+    expect(viewDragClientDelta({ x: 130, y: 70 }, { x: 100, y: 90 }, 2)).toEqual({ x: 60, y: -40 })
+    expect(viewDragClientDelta({ x: 130, y: 70 }, { x: 100, y: 90 }, Number.NaN)).toEqual({ x: 30, y: -20 })
+  })
+
   it('uses the live marquee target for selection dimension displays', () => {
     const previewTarget = { x: 3, y: 4, width: 18, height: 11 }
     expect(marqueePreviewTargetForDrag({
@@ -384,6 +491,61 @@ describe('canvas input helpers', () => {
     expect(shouldRestartFloatingSelectionForCopy(true, false)).toBe(false)
   })
 
+  it('reuses the original floating source when Ctrl repeats a copy without recapturing the background', () => {
+    expect(shouldReuseFloatingSelectionSourceForCopy('clipboard', true, true, false)).toBe(true)
+    expect(shouldReuseFloatingSelectionSourceForCopy('selection', true, true, false)).toBe(true)
+    expect(shouldReuseFloatingSelectionSourceForCopy('selection', true, false, false)).toBe(false)
+    expect(shouldReuseFloatingSelectionSourceForCopy('selection', false, true, false)).toBe(false)
+    expect(shouldReuseFloatingSelectionSourceForCopy('selection', true, true, true)).toBe(false)
+    expect(shouldReuseFloatingSelectionSourceForCopy(undefined, true, true, false)).toBe(false)
+  })
+
+  it('keeps destination background pixels out of repeated Ctrl copies', () => {
+    const document = createDocument('floating copy source', 6, 1, 'rgba')
+    const layer = getActiveLayer(document)
+    const sourceColor = { r: 20, g: 40, b: 220, a: 255 }
+    const destinationBackground = { r: 180, g: 70, b: 30, a: 255 }
+    const repeatedBackground = { r: 30, g: 160, b: 80, a: 255 }
+    writeLayerColor(document, layer, 0, sourceColor)
+    writeLayerColor(document, layer, 3, destinationBackground)
+    writeLayerColor(document, layer, 5, repeatedBackground)
+    const originalSource = captureSelectionTransform(document, { x: 0, y: 0, width: 2, height: 1 }, layer)!
+
+    applySelectionTransform(document, originalSource, { x: 2, y: 0, width: 2, height: 1 }, 0, false, undefined, undefined, undefined, layer)
+    const repeatedSource = shouldReuseFloatingSelectionSourceForCopy(originalSource.origin, true, true, false)
+      ? originalSource
+      : captureSelectionTransform(document, { x: 2, y: 0, width: 2, height: 1 }, layer)!
+    applySelectionTransform(document, repeatedSource, { x: 4, y: 0, width: 2, height: 1 }, 0, true, undefined, undefined, undefined, layer)
+
+    expect(readLayerColor(document, layer, 4)).toEqual(sourceColor)
+    expect(readLayerColor(document, layer, 5)).toEqual(repeatedBackground)
+  })
+
+  it('keeps pasted transform geometry on its original rectangle after rotate or shear previews', () => {
+    const sourceSelection = { x: 4, y: 3, width: 5, height: 4, mask: Uint8Array.from([
+      0, 1, 1, 0, 0,
+      1, 1, 1, 1, 0,
+      0, 1, 1, 1, 1,
+      0, 0, 1, 1, 0
+    ]) }
+    const previousTransformSelection = {
+      x: 2,
+      y: 1,
+      width: 8,
+      height: 7,
+      mask: new Uint8Array(56).fill(1)
+    }
+    const selectionSource = {
+      selection: sourceSelection,
+      origin: 'clipboard'
+    } as NonNullable<CanvasDragState['selectionSource']>
+
+    expect(selectionTransformGeometrySource({
+      selectionSource,
+      selectionStart: previousTransformSelection
+    })).toEqual({ x: 4, y: 3, width: 5, height: 4 })
+  })
+
   it('preserves the floating copy mode while rotating after Ctrl is released', () => {
     expect(floatingSelectionCopyMode(true, false)).toBe(true)
     expect(floatingSelectionCopyMode(false, true)).toBe(false)
@@ -469,10 +631,16 @@ describe('canvas input helpers', () => {
   })
 
   it('keeps Shift zoom drags out of pan and temporarily uses stepped zoom', () => {
-    expect(shouldStartCanvasPan('zoom', true, false)).toBe(false)
-    expect(shouldStartCanvasPan('hand', true, false)).toBe(true)
+    expect(shouldStartCanvasPan('zoom')).toBe(false)
+    expect(shouldStartCanvasPan('hand')).toBe(true)
     expect(zoomDragModeForModifiers('smooth', true)).toBe('stepped')
     expect(zoomDragModeForModifiers('smooth', false)).toBe('smooth')
+  })
+
+  it('does not use Shift as a generic canvas pan gesture', () => {
+    expect(shouldStartCanvasPan('fill')).toBe(false)
+    expect(shouldStartCanvasPan('selection')).toBe(false)
+    expect(shouldStartCanvasPan('shape')).toBe(false)
   })
 
   it('keeps invisible rotation handles outside the visible resize handles', () => {
@@ -602,6 +770,13 @@ describe('canvas input helpers', () => {
     expect(selectionInteractionHit(selection, { x: 155, y: 90 }, 1)).toBe('outside')
     expect(selectionInteractionHit(selection, { x: 205, y: 225 }, 1)).toBe('edge')
     expect(selectionInteractionHit(selection, { x: 245, y: 239 }, 1)).toBe('rotate-se')
+  })
+
+  it('keeps plain edge drags on the selection box and lets Ctrl copy from the edge', () => {
+    expect(selectionHitStartsContentMove('inside', false)).toBe(true)
+    expect(selectionHitStartsContentMove('edge', false)).toBe(false)
+    expect(selectionHitStartsContentMove('edge', true)).toBe(true)
+    expect(selectionHitStartsContentMove('nw', true)).toBe(false)
   })
 
   it('uses Ctrl only for centered marquee creation and Shift for the 1:1 constraint', () => {
@@ -905,6 +1080,52 @@ describe('canvas input helpers', () => {
       previousTarget,
       nextTarget
     ])
+  })
+
+  it('keeps transformed clipboard pixels deferred until the floating paste is confirmed', () => {
+    expect(deferredSelectionPreviewMaterializationRequired(false, true, 'clipboard')).toBe(false)
+    expect(deferredSelectionPreviewMaterializationRequired(false, false, 'clipboard')).toBe(true)
+    expect(deferredSelectionPreviewMaterializationRequired(false, true, 'selection')).toBe(true)
+    expect(deferredSelectionPreviewMaterializationRequired(true, true, 'clipboard')).toBe(false)
+  })
+
+  it('reuses an existing transformed mask while only its position changes', () => {
+    const mask = Uint8Array.from([
+      0, 1, 0,
+      1, 1, 1,
+      0, 1, 0
+    ])
+    const selection = { x: 10, y: 12, width: 3, height: 3, mask }
+    const transformStartTarget = { x: 9, y: 11, width: 4, height: 3 }
+    const shear = { axis: 'x', edge: 's', amount: 1 } as const
+    const drag = {
+      kind: 'move-content',
+      selectionStart: selection,
+      transformStartTarget,
+      startAngle: 30,
+      transformStartShear: shear
+    } as Pick<CanvasDragState, 'kind' | 'selectionStart' | 'transformStartTarget' | 'startAngle' | 'transformStartShear'>
+    const target = translatedSelectionRect(transformStartTarget, { x: 5, y: -2 })
+
+    const moved = translatedSelectionTransformPreviewMask(drag, target, 30, shear, 64, 64)
+
+    expect(moved).toEqual({ ...selection, x: 15, y: 10 })
+    expect(moved?.mask).toBe(mask)
+    expect(translatedSelectionTransformPreviewMask(drag, target, 31, shear, 64, 64)).toBeUndefined()
+    expect(translatedSelectionTransformPreviewMask(drag, target, 30, { ...shear, amount: 2 }, 64, 64)).toBeUndefined()
+  })
+
+  it('falls back to full mask materialization when transformed movement crosses the canvas edge', () => {
+    const selection = { x: 2, y: 2, width: 4, height: 4, mask: new Uint8Array(16).fill(1) }
+    const transformStartTarget = { x: 2, y: 2, width: 4, height: 4 }
+    const drag = {
+      kind: 'move-content',
+      selectionStart: selection,
+      transformStartTarget,
+      startAngle: 45
+    } as Pick<CanvasDragState, 'kind' | 'selectionStart' | 'transformStartTarget' | 'startAngle' | 'transformStartShear'>
+
+    expect(translatedSelectionTransformPreviewMask(drag, { ...transformStartTarget, x: -2 }, 45, undefined, 32, 32)).toBeUndefined()
   })
 
   it('keeps a shape ratio and fixed center while resizing after rotation', () => {

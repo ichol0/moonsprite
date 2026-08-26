@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { ensureAnimationDocument, refreshActiveAnimationFrame, resizeAnimationCelsAt } from './animation'
 import { captureDocumentImageResizeSnapshot, createDocument, getActiveLayer, readLayerColorAt, resizeDocumentAt, resizeDocumentImage, restoreDocumentImageResizeSnapshot } from './document'
 import { applyFreeTileSourceSnapshot, captureFreeTileImageResizeState, rasterSurfaceToFreeTileStamps, resizeFreeTileDocumentImage } from './free-tile-document'
-import { createFreeTileSourceEditRaster, freeTileSelectionForInstanceEdit, freeTileSelectionToEditRaster, freeTileSourceSnapshotFromEditRaster, freeTileTransformTargetToEditRaster } from './free-tile-edit'
+import { createFreeTileSourceEditRaster, freeTileSelectionForInstanceEdit, freeTileSelectionToEditRaster, freeTileSourceSnapshotFromEditRaster, freeTileTransformTargetToEditRaster, selectionCoversRect } from './free-tile-edit'
 import { revertPixelEdit } from './history'
 import { createBlankTileset, createSolidTileset, readTilesetTilePixels, writeTilesetTilePixels } from './tilemap'
 import { freeTileCelDataEqual, freeTileInstanceAtPoint, freeTileInstanceBounds, freeTileInstanceForSource, freeTileInstancesForSource, freeTileSourceEditTargetAtPoint, freeTileSourceHasVisiblePixels, freeTileSourcePointForInstance, freeTileSourceRefs, normalizeFreeTileCelData, renderFreeTileSurface } from './free-tile'
@@ -316,6 +316,16 @@ describe('free tile core', () => {
     }
     expect(observedCroppedPadding).toBe(true)
     expect(freeTileSelectionForInstanceEdit(selection, { x: 20, y: 12, width: 2, height: 2 })).toBeNull()
+  })
+
+  it('detects when a document-space selection fully covers an instance rectangle', () => {
+    const bounds = { x: 3, y: 4, width: 2, height: 3 }
+    expect(selectionCoversRect({ x: 1, y: 2, width: 6, height: 7 }, bounds)).toBe(true)
+    expect(selectionCoversRect({ x: 3, y: 4, width: 1, height: 3 }, bounds)).toBe(false)
+
+    const mask = new Uint8Array(6 * 7).fill(1)
+    mask[(5 - 2) * 6 + 4 - 1] = 0
+    expect(selectionCoversRect({ x: 1, y: 2, width: 6, height: 7, mask }, bounds)).toBe(false)
   })
 
   it('keeps Free Tile move previews on the exact selection target during continuous updates', () => {

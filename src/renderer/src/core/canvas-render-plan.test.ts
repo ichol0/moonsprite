@@ -23,6 +23,14 @@ describe('createCanvasRenderPlan', () => {
     expect(second.x * 1.5).toBe(Math.round(second.x * 1.5))
   })
 
+  it('matches nearest-neighbour canvas sampling at exact half-device boundaries', () => {
+    const first = deviceAlignedPixelRect(13.5, 32.5, 96, 6, 4, 1)
+    const below = deviceAlignedPixelRect(13.5, 32.5, 96, 6, 5, 1)
+
+    expect(first).toEqual({ x: 589, y: 416, width: 96, height: 96 })
+    expect(first.y + first.height).toBe(below.y)
+  })
+
   it('computes the visible document rectangle for an unrotated view', () => {
     const plan = createCanvasRenderPlan(320, 240, { width: 128, height: 128 }, view(), 'view')
     expect(plan.rotated).toBe(false)

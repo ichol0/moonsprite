@@ -1,30 +1,35 @@
--- A small read-only MSE API smoke example.
--- app.* remains the Aseprite-compatible surface; mse.* is MoonSprite-specific.
+-- MSE API 0.2.0：查询结构快照，并在一个可撤销事务中修改工程。
+-- app.* 用于兼容 Aseprite 脚本；mse.* 是 MoonSprite 专属接口。
 
 local document = mse.document.info()
-local selection = mse.selection.info()
+local layers = mse.layers.list()
 
 print(string.format(
-  "%s (%dx%d, %s), frame %d",
+  "%s (%dx%d, %s), frame %d, %d layers",
   document.name,
   document.width,
   document.height,
   document.colorMode,
-  document.frame
+  document.frame,
+  #layers
 ))
 
-if selection.empty then
-  print("No non-empty selection")
-else
-  print(string.format(
-    "Selection: %dx%d at (%d, %d)",
-    selection.bounds.width,
-    selection.bounds.height,
-    selection.bounds.x,
-    selection.bounds.y
-  ))
+if #layers == 0 then
+  return
 end
 
-if not mse.isSupported("tiles.createLayer") then
-  print("Tilemap scripting is not available in this runtime yet")
-end
+app.transaction("MSE API example", function()
+  mse.layers.update(layers[1].id, {
+    name = layers[1].name .. " (Lua)",
+    opacity = 224
+  })
+
+  mse.selection.set {
+    x = 0,
+    y = 0,
+    width = math.min(16, document.width),
+    height = math.min(16, document.height)
+  }
+end)
+
+mse.ui.notify("MSE example applied; use Undo to revert it.")

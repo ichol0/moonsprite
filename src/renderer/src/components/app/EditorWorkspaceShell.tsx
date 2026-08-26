@@ -10,6 +10,7 @@ import { useI18n } from '@/components/I18nProvider'
 import { useAnimationPlaybackClock } from '@/components/useAnimationPlaybackClock'
 import type { DocumentPaneDirection, DocumentPaneNode } from '@/core/document-pane-layout'
 import type { QuickCommandSettingsTarget } from './quick-command-registry'
+import type { ShortcutId } from '@/core/shortcuts'
 
 interface EditorWorkspaceShellProps {
   editorOnly: boolean
@@ -51,7 +52,7 @@ interface EditorWorkspaceShellProps {
   onOpenColorReplacement: () => void
   onOpenPreferences: () => void
   onOpenCommandSettings?: (target: QuickCommandSettingsTarget) => void
-  shortcutFor: (id: string) => string
+  shortcutFor: (id: ShortcutId) => string
   onToggleMirror: (axis: 'horizontal' | 'vertical') => void
 }
 

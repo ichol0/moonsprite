@@ -104,8 +104,15 @@ const positionDraggedTab = (documentId: string, pointerX: number, pointerOffsetX
   tab.style.transform = `translateX(${pointerX - pointerOffsetX - baseLeft}px)`
 }
 
+const uiMotionEnabled = (): boolean => (
+  document.documentElement.dataset.uiMotion !== 'off'
+  && !window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
+)
+
 const animateTabPositions = (before: Map<string, number>, draggedDocumentId: string): void => {
+  if (!uiMotionEnabled()) return
   window.requestAnimationFrame(() => {
+    if (!uiMotionEnabled()) return
     for (const tab of document.querySelectorAll<HTMLButtonElement>('.document-tab')) {
       const documentId = tab.dataset.documentId
       if (documentId === draggedDocumentId) continue
@@ -131,6 +138,18 @@ export const DocumentTabs = memo(function DocumentTabs({ homeOpen, hiddenDocumen
   const dragRef = useRef<DocumentTabDragState | null>(null)
   const suppressClickRef = useRef(false)
   const state = useWorkspace.getState()
+
+  useEffect(() => {
+    const syncMotion = (): void => {
+      if (uiMotionEnabled()) return
+      for (const tab of document.querySelectorAll<HTMLButtonElement>('.document-tab')) {
+        for (const animation of tab.getAnimations?.() ?? []) animation.cancel()
+      }
+    }
+    window.addEventListener('moonsprite:preferences-changed', syncMotion)
+    syncMotion()
+    return () => window.removeEventListener('moonsprite:preferences-changed', syncMotion)
+  }, [])
 
   useEffect(() => {
     const move = (event: PointerEvent): void => {

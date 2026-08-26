@@ -9,11 +9,14 @@ import { layersPanelRenderKey } from '@/core/panel-render-keys'
 import { ONION_SKIN_PREFERENCE_KEY, TIMELINE_HIDDEN_PREFERENCE_KEY } from '@/core/file-preferences'
 import { useWorkspace } from '@/store/workspace'
 import { finishAnimationCellOperation, revealLayerInPanel } from '@/components/layer-panel-reveal'
+import { FREE_TILE_INSTANCE_FLASH_EVENT } from '@/components/free-tile-instance-events'
 import { LayersPanel } from './LayersPanel'
 import { createDefaultLayerStyles } from '@/core/layer-styles'
+import { FREE_TILE_INSTANCE_PANEL_LAYOUT_STORAGE_KEY } from '@/core/layer-panel-preferences'
 
 beforeEach(() => {
   localStorage.clear()
+  localStorage.setItem(FREE_TILE_INSTANCE_PANEL_LAYOUT_STORAGE_KEY, 'integrated')
   Object.defineProperty(window, 'moonSprite', {
     configurable: true,
     writable: true,
@@ -35,6 +38,16 @@ function ConnectedLayersPanel() {
 }
 
 describe('LayersPanel Free Tile instances', () => {
+  it('keeps the instance layout control out of the general layer settings', () => {
+    const document = createDocument('layer settings without instance layout', 8, 8, 'rgba')
+    useWorkspace.getState().addSession(document)
+
+    render(<ConnectedLayersPanel />)
+    fireEvent.click(screen.getByRole('button', { name: '图层设置' }))
+
+    expect(screen.queryByRole('button', { name: '实例图层位置' })).toBeNull()
+  })
+
   it('keeps the layer view open and reports when the active frame has no instances', async () => {
     const document = createDocument('empty free tile instance layers', 8, 8, 'rgba')
     useWorkspace.getState().addSession(document)
@@ -76,6 +89,7 @@ describe('LayersPanel Free Tile instances', () => {
     expect(row.querySelector('.layer-visibility')).toBeTruthy()
     expect(row.querySelector('.layer-lock-toggle')).toBeTruthy()
     expect(row.querySelector('.layer-instance-properties')).toBeTruthy()
+    expect(screen.getByRole('button', { name: '实例图层设置' })).toBeTruthy()
 
     fireEvent.pointerDown(row, { button: 0, pointerId: 42 })
     expect(row).toHaveClass('selected')
@@ -98,6 +112,29 @@ describe('LayersPanel Free Tile instances', () => {
     expect(container.querySelector('.layer-animation-list')).toBeTruthy()
     expect(useWorkspace.getState().sessions[0].freeTileInstanceLayerId).toBeNull()
     expect(useWorkspace.getState().sessions[0].selectedFreeTileInstanceId).toBeNull()
+  })
+
+  it('flashes an instance again every time its selected row is clicked', async () => {
+    const document = createDocument('repeat instance flash', 8, 8, 'rgba')
+    useWorkspace.getState().addSession(document)
+    await useWorkspace.getState().createFreeTileLayer({ name: 'Repeat Flash' })
+    const target = activeFreeTileCelTarget(document)!
+    const placement = useWorkspace.getState().beginFreeTilePlacement()!
+    placement.after.instances = [{ id: 'repeat-flash-instance', sourceId: target.layer.freeTileSources![0].id, x: 2, y: 2 }]
+    useWorkspace.getState().previewFreeTilePlacement(placement)
+    useWorkspace.getState().commitFreeTilePlacement(placement, 'Place repeat flash instance')
+    useWorkspace.getState().setFreeTileInstanceLayerView(target.layer.id)
+    useWorkspace.getState().setSelectedFreeTileInstance('repeat-flash-instance', 'edit')
+    const flash = vi.fn()
+    window.addEventListener(FREE_TILE_INSTANCE_FLASH_EVENT, flash)
+
+    const { container } = render(<ConnectedLayersPanel />)
+    const row = container.querySelector<HTMLButtonElement>('[data-free-tile-instance-id="repeat-flash-instance"]')!
+    fireEvent.click(row)
+    fireEvent.click(row)
+
+    expect(flash).toHaveBeenCalledTimes(2)
+    window.removeEventListener(FREE_TILE_INSTANCE_FLASH_EVENT, flash)
   })
 
   it('shows only the instances from the outer Free Tile layer active frame', async () => {
@@ -461,6 +498,39 @@ describe('LayersPanel animation', () => {
     fireEvent.contextMenu(loopBar, { clientX: 50, clientY: 40 })
     fireEvent.click(screen.getByRole('menuitem', { name: '删除循环节' }))
     expect(container.querySelector(`[data-animation-loop-section-id="${loopId}"]`)).not.toBeInTheDocument()
+  })
+
+  it('resizes loop section boundaries by dragging either bracket edge', () => {
+    const document = createDocument('timeline loop section resize', 2, 2, 'rgba')
+    useWorkspace.getState().addSession(document)
+    for (let index = 0; index < 3; index += 1) useWorkspace.getState().duplicateAnimationFrame()
+    const timeline = ensureAnimationDocument(document)
+    const loopId = useWorkspace.getState().createAnimationLoopSection({
+      name: '可调整循环节',
+      startFrameId: timeline.frames[0].id,
+      endFrameId: timeline.frames[2].id,
+      direction: 'forward',
+      repeatCount: null
+    })!
+    const { container } = render(<ConnectedLayersPanel />)
+    const firstHeader = container.querySelector<HTMLElement>('[data-frame-index="0"]')!
+    vi.spyOn(firstHeader, 'getBoundingClientRect').mockReturnValue({ left: 0, right: 34, top: 0, bottom: 30, width: 34, height: 30, x: 0, y: 0, toJSON: () => ({}) })
+
+    let loopBar = container.querySelector<HTMLButtonElement>(`[data-animation-loop-section-id="${loopId}"]`)!
+    const startEdge = loopBar.querySelector<HTMLElement>('.animation-loop-section-edge-start')!
+    fireEvent.pointerDown(startEdge, { button: 0, clientX: 0, clientY: 10, pointerId: 71 })
+    fireEvent.pointerMove(window, { clientX: 68, clientY: 10, pointerId: 71 })
+    expect(loopBar.style.gridColumn).toBe('3 / span 1')
+    fireEvent.pointerUp(window, { clientX: 68, clientY: 10, pointerId: 71 })
+    expect(ensureAnimationDocument(document).loopSections?.[0]).toMatchObject({ startFrameId: timeline.frames[2].id, endFrameId: timeline.frames[2].id })
+
+    loopBar = container.querySelector<HTMLButtonElement>(`[data-animation-loop-section-id="${loopId}"]`)!
+    const endEdge = loopBar.querySelector<HTMLElement>('.animation-loop-section-edge-end')!
+    fireEvent.pointerDown(endEdge, { button: 0, clientX: 102, clientY: 10, pointerId: 72 })
+    fireEvent.pointerMove(window, { clientX: 136, clientY: 10, pointerId: 72 })
+    expect(loopBar.style.gridColumn).toBe('3 / span 2')
+    fireEvent.pointerUp(window, { clientX: 136, clientY: 10, pointerId: 72 })
+    expect(ensureAnimationDocument(document).loopSections?.[0]).toMatchObject({ startFrameId: timeline.frames[2].id, endFrameId: timeline.frames[3].id })
   })
 
   it('renders a contained loop section inside its parent bracket', () => {
@@ -1594,7 +1664,7 @@ describe('LayersPanel properties', () => {
     const { container } = render(<LayersPanel session={useWorkspace.getState().sessions[0]} docked />)
 
     fireEvent.contextMenu(container.querySelector(`[data-layer-id="${layer.id}"]`)!, { clientX: 20, clientY: 20 })
-    const contextMenu = container.querySelector<HTMLElement>('.layer-context-menu')!
+    const contextMenu = globalThis.document.body.querySelector<HTMLElement>('.layer-context-menu')!
     expect(within(contextMenu).getByRole('button', { name: '转换为' })).toBeInTheDocument()
     expect(within(contextMenu).queryByRole('menuitem', { name: '停用图层样式' })).not.toBeInTheDocument()
     expect(within(contextMenu).queryByRole('menuitem', { name: '启用图层样式' })).not.toBeInTheDocument()
@@ -2495,7 +2565,7 @@ describe('LayersPanel properties', () => {
 
     fireEvent.contextMenu(container.querySelector(`[data-layer-id="${layer.id}"]`)!, { clientX: 20, clientY: 20 })
     fireEvent.click(screen.getByRole('menuitem', { name: '属性' }))
-    const preset = container.querySelectorAll<HTMLButtonElement>('.layer-color-preset:not(.no-color)')[1]
+    const preset = globalThis.document.body.querySelectorAll<HTMLButtonElement>('.layer-color-preset:not(.no-color)')[1]
     fireEvent.click(preset)
 
     await waitFor(() => expect(layer.displayColor).toBeDefined())

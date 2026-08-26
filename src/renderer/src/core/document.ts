@@ -4,7 +4,7 @@ import { translateCurrent as tr } from './localization'
 import { DEFAULT_PROJECT_DISPLAY_SETTINGS, DEFAULT_PROJECT_STATISTICS, DEFAULT_TIMELAPSE_SETTINGS } from './project-metadata'
 import { buildLayerPanelTree } from './layer-panel-layout'
 import { addPaletteIdToSlots, normalizePaletteColumns, normalizePaletteSlots, paletteOrderFromSlots, PALETTE_GRID_COLUMNS } from './palette-layout'
-import { cachedRuntimeRasterVisibleBounds, detachRuntimeRaster, installRuntimeRaster, lazyRuntimeRasterForSurface, rasterStorageIdentity, readSurfacePackedLocal, runtimeRasterForSurface, runtimeRasterVisibleBounds, runtimeTileHasVisiblePixels } from './runtime-raster'
+import { cachedRuntimeRasterVisibleBounds, detachRuntimeRaster, installRuntimeRaster, lazyRuntimeRasterForSurface, rasterStorageIdentity, readSurfacePackedLocal, readSurfaceRgbaRegion, runtimeRasterForSurface, runtimeRasterVisibleBounds, runtimeTileHasVisiblePixels } from './runtime-raster'
 import { applyLayerStylesAt, cloneLayerStyles, hasEnabledLayerStyles, layerStyleAffectedRect, layerStyleOutputBounds, layerStylesEqual, mapLayerStyleColors, MAX_LAYER_STYLE_SIZE, resolveLayerStyles, type LayerStyleGeometry } from './layer-styles'
 import { tileBackgroundSurfaceToCanvas } from './background-patterns'
 
@@ -187,7 +187,7 @@ export function createDocument(name: string, width: number, height: number, colo
     ? { format: 'rgba' as const, width, height, offsetX: 0, offsetY: 0, pixels: layer.pixels }
     : { format: 'indexed' as const, width, height, offsetX: 0, offsetY: 0, pixels: layer.pixels }
   return {
-    schemaVersion: 17,
+    schemaVersion: 18,
     id: createId('doc'),
     name,
     width,
@@ -303,6 +303,7 @@ type ImageResizePixels = Uint8ClampedArray | Uint32Array
 
 interface ImageResizeSurfaceSnapshot {
   surface: ImageResizeSurface
+  format: ImageResizeSurface['format']
   width: number
   height: number
   offsetX: number
@@ -369,6 +370,7 @@ export const captureDocumentImageResizeSnapshot = (document: SpriteDocument): Do
       const runtime = lazyRuntimeRasterForSurface(surface)
       return {
         surface,
+        format: surface.format,
         width: surface.width,
         height: surface.height,
         offsetX: surface.offsetX,
@@ -414,13 +416,14 @@ export const restoreDocumentImageResizeSnapshot = (document: SpriteDocument, sna
   }
   for (const state of snapshot.surfaces) {
     const surface = state.surface
+    surface.format = state.format
     surface.width = state.width
     surface.height = state.height
     surface.offsetX = state.offsetX
     surface.offsetY = state.offsetY
     setSurfaceStorageOrigin(surface, state.storageOriginX, state.storageOriginY)
     if (state.storage.kind === 'runtime') installRuntimeRaster(surface, state.storage.runtime)
-    else if (surface.format === 'rgba') surface.pixels = state.storage.pixels as Uint8ClampedArray
+    else if (state.format === 'rgba') surface.pixels = state.storage.pixels as Uint8ClampedArray
     else surface.pixels = state.storage.pixels as Uint32Array
   }
 }
@@ -1711,6 +1714,48 @@ export class DocumentCompositeCache {
 const MAX_ROW_RANGE_SCAN_PIXELS = 1024 * 1024
 const COMPOSITE_TILE_SIZE = 64
 
+/** Copies opaque spans in one operation while preserving transparent and translucent pixels. */
+const compositeRgbaRowWithOpaqueSpans = (
+  output: Uint8ClampedArray<ArrayBufferLike>,
+  source: Uint8Array<ArrayBufferLike> | Uint8ClampedArray<ArrayBufferLike>,
+  sourceOffset: number,
+  outputOffset: number,
+  pixelCount: number
+): void => {
+  let pixel = 0
+  while (pixel < pixelCount) {
+    const sourcePixelOffset = sourceOffset + pixel * 4
+    const sourceAlpha = source[sourcePixelOffset + 3]
+    if (sourceAlpha === 0) {
+      pixel += 1
+      continue
+    }
+    if (sourceAlpha === 255) {
+      const spanStart = pixel
+      pixel += 1
+      while (pixel < pixelCount && source[sourceOffset + pixel * 4 + 3] === 255) pixel += 1
+      output.set(
+        source.subarray(sourceOffset + spanStart * 4, sourceOffset + pixel * 4),
+        outputOffset + spanStart * 4
+      )
+      continue
+    }
+
+    const targetPixelOffset = outputOffset + pixel * 4
+    const bottomAlpha = output[targetPixelOffset + 3]
+    const topAlpha = sourceAlpha / 255
+    const bottomAlphaNormalized = bottomAlpha / 255
+    const outputAlpha = topAlpha + bottomAlphaNormalized * (1 - topAlpha)
+    if (outputAlpha > 0) {
+      output[targetPixelOffset] = Math.round((source[sourcePixelOffset] * topAlpha + output[targetPixelOffset] * bottomAlphaNormalized * (1 - topAlpha)) / outputAlpha)
+      output[targetPixelOffset + 1] = Math.round((source[sourcePixelOffset + 1] * topAlpha + output[targetPixelOffset + 1] * bottomAlphaNormalized * (1 - topAlpha)) / outputAlpha)
+      output[targetPixelOffset + 2] = Math.round((source[sourcePixelOffset + 2] * topAlpha + output[targetPixelOffset + 2] * bottomAlphaNormalized * (1 - topAlpha)) / outputAlpha)
+      output[targetPixelOffset + 3] = Math.round(outputAlpha * 255)
+    }
+    pixel += 1
+  }
+}
+
 const compositeNormalLayers = (document: SpriteDocument, layers: readonly RasterLayer[], startX: number, startY: number, width: number, height: number, cache?: DocumentCompositeCache, revision = 0, output: Uint8ClampedArray<ArrayBufferLike> = new Uint8ClampedArray(width * height * 4), dirtyRect?: SelectionRect): Uint8ClampedArray => {
   const paletteById = new Map(document.palette.map((entry) => [entry.id, entry.color]))
   for (const layer of layers) {
@@ -1726,7 +1771,8 @@ const compositeNormalLayers = (document: SpriteDocument, layers: readonly Raster
     const opacity = layer.opacity
     const rowRanges = !runtime && layer.width * layer.height <= MAX_ROW_RANGE_SCAN_PIXELS ? cache?.rowsFor(layer, document.palette, revision, dirtyRect) : undefined
     const largeLayerTiles = Boolean(runtime) || (!rowRanges && Boolean(cache))
-    const tileSize = largeLayerTiles ? COMPOSITE_TILE_SIZE : Math.max(layer.width, layer.height)
+    const tileSize = runtime?.tileSize ?? (largeLayerTiles ? COMPOSITE_TILE_SIZE : Math.max(layer.width, layer.height))
+    const runtimeTileColumns = runtime ? Math.ceil(runtime.width / runtime.tileSize) : 0
     const fromTileX = largeLayerTiles ? Math.floor((layerLeft - layer.offsetX) / tileSize) : 0
     const toTileX = largeLayerTiles ? Math.floor((layerRight - 1 - layer.offsetX) / tileSize) : 0
     const fromTileY = largeLayerTiles ? Math.floor((top - layer.offsetY) / tileSize) : 0
@@ -1742,14 +1788,30 @@ const compositeNormalLayers = (document: SpriteDocument, layers: readonly Raster
       const tileTop = layer.offsetY + tileY * tileSize
       const tileRight = Math.min(layer.offsetX + layer.width, tileLeft + tileSize)
       const tileBottom = Math.min(layer.offsetY + layer.height, tileTop + tileSize)
+      const runtimeTileWidth = runtime ? Math.min(runtime.tileSize, runtime.width - tileX * runtime.tileSize) : 0
+      const runtimeTileDataOffset = runtime
+        ? runtime.tileOffsets[tileY * runtimeTileColumns + tileX] - 1
+        : 0
       for (let documentY = Math.max(top, tileTop); documentY < Math.min(bottom, tileBottom); documentY += 1) {
         const localY = documentY - layer.offsetY
         const left = rowRanges ? Math.max(layerLeft, layer.offsetX + rowRanges[localY * 2]) : Math.max(layerLeft, tileLeft)
         const right = rowRanges ? Math.min(layerRight, layer.offsetX + rowRanges[localY * 2 + 1]) : Math.min(layerRight, tileRight)
         if (right <= left) continue
-      let sourceIndex = (documentY - layer.offsetY) * layer.width + left - layer.offsetX
-      let outputOffset = ((documentY - startY) * width + left - startX) * 4
-      for (let documentX = left; documentX < right; documentX += 1, sourceIndex += 1, outputOffset += 4) {
+        let sourceIndex = (documentY - layer.offsetY) * layer.width + left - layer.offsetX
+        let outputOffset = ((documentY - startY) * width + left - startX) * 4
+        const runtimeRowDataOffset = runtime
+          ? runtimeTileDataOffset + ((localY - tileY * runtime.tileSize) * runtimeTileWidth + left - tileLeft) * 4
+          : 0
+        if (opacity === 1 && rgbaPixels) {
+          compositeRgbaRowWithOpaqueSpans(output, rgbaPixels, sourceIndex * 4, outputOffset, right - left)
+          continue
+        }
+        if (opacity === 1 && runtime?.format === 'rgba') {
+          compositeRgbaRowWithOpaqueSpans(output, runtime.data, runtimeRowDataOffset, outputOffset, right - left)
+          continue
+        }
+        let runtimeSourceOffset = runtimeRowDataOffset
+        for (let documentX = left; documentX < right; documentX += 1, sourceIndex += 1, outputOffset += 4) {
         let sourceR: number
         let sourceG: number
         let sourceB: number
@@ -1763,12 +1825,8 @@ const compositeNormalLayers = (document: SpriteDocument, layers: readonly Raster
         } else {
           let packed: number
           if (runtime) {
-          const localX = documentX - layer.offsetX
-          const localY = documentY - layer.offsetY
-          const tileWidth = Math.min(runtime.tileSize, runtime.width - tileX * runtime.tileSize)
-          const dataOffset = runtime.tileOffsets[tileY * Math.ceil(runtime.width / runtime.tileSize) + tileX] - 1
-            + (((localY - tileY * runtime.tileSize) * tileWidth + localX - tileX * runtime.tileSize) * 4)
-          packed = (runtime.data[dataOffset] | (runtime.data[dataOffset + 1] << 8) | (runtime.data[dataOffset + 2] << 16) | (runtime.data[dataOffset + 3] << 24)) >>> 0
+            packed = (runtime.data[runtimeSourceOffset] | (runtime.data[runtimeSourceOffset + 1] << 8) | (runtime.data[runtimeSourceOffset + 2] << 16) | (runtime.data[runtimeSourceOffset + 3] << 24)) >>> 0
+            runtimeSourceOffset += 4
           } else packed = indexedPixels?.[sourceIndex] ?? readSurfacePackedLocal(layer, sourceIndex % layer.width, Math.floor(sourceIndex / layer.width))
           if (layer.format === 'rgba') {
             sourceR = packed & 0xff
@@ -1800,7 +1858,7 @@ const compositeNormalLayers = (document: SpriteDocument, layers: readonly Raster
         output[outputOffset + 1] = Math.round((sourceG * topAlpha + output[outputOffset + 1] * bottomAlpha * (1 - topAlpha)) / outputAlpha)
         output[outputOffset + 2] = Math.round((sourceB * topAlpha + output[outputOffset + 2] * bottomAlpha * (1 - topAlpha)) / outputAlpha)
         output[outputOffset + 3] = Math.round(outputAlpha * 255)
-      }
+        }
       }
     }
   }
@@ -1906,6 +1964,9 @@ export function compositeRegion(document: SpriteDocument, startX: number, startY
     const activeMasks = activeCelMasksByLayer(document)
     if (!layer.visible || layer.opacity <= 0) return output
     if (!hasEnabledLayerStyles(layer.layerStyles) && !activeMasks.has(layer.id) && layer.opacity === 1 && layer.format === 'rgba') {
+      if (lazyRuntimeRasterForSurface(layer)) {
+        return readSurfaceRgbaRegion(layer, startX - layer.offsetX, startY - layer.offsetY, width, height)
+      }
       for (let y = 0; y < height; y += 1) {
         const localY = startY + y - layer.offsetY
         const localStartX = startX - layer.offsetX
@@ -1913,19 +1974,8 @@ export function compositeRegion(document: SpriteDocument, startX: number, startY
         const toX = Math.min(layer.width, localStartX + width)
         if (localY < 0 || localY >= layer.height || toX <= fromX) continue
         const destinationX = fromX - localStartX
-        if (!lazyRuntimeRasterForSurface(layer)) {
-          const sourceOffset = (localY * layer.width + fromX) * 4
-          output.set(layer.pixels.subarray(sourceOffset, sourceOffset + (toX - fromX) * 4), (y * width + destinationX) * 4)
-          continue
-        }
-        for (let localX = fromX; localX < toX; localX += 1) {
-          const packed = readSurfacePackedLocal(layer, localX, localY)
-          const targetOffset = (y * width + destinationX + localX - fromX) * 4
-          output[targetOffset] = packed & 0xff
-          output[targetOffset + 1] = (packed >>> 8) & 0xff
-          output[targetOffset + 2] = (packed >>> 16) & 0xff
-          output[targetOffset + 3] = (packed >>> 24) & 0xff
-        }
+        const sourceOffset = (localY * layer.width + fromX) * 4
+        output.set(layer.pixels.subarray(sourceOffset, sourceOffset + (toX - fromX) * 4), (y * width + destinationX) * 4)
       }
       return output
     }

@@ -1,15 +1,19 @@
 import { describe, expect, it } from 'vitest'
 import {
+  ANIMATIONS_ENABLED_PREFERENCE_KEY,
   BRUSH_SHIFT_LINE_ENABLED_KEY,
   CANVAS_RESIZE_COLOR_PREFERENCE_KEY,
   DEFAULT_COLOR_EDITOR_MODES,
   DEFAULT_GRID_COLOR,
+  DEFAULT_ISO_VIEW_PREFERENCES,
   DEFAULT_PIXEL_GRID_COLOR,
   DEFAULT_QUICK_COMMAND_PREFERENCES,
   DEFAULT_SELECTION_PREVIEW_COLOR,
+  EYEDROPPER_MAGNIFIER_SIZE_PREFERENCE_KEY,
   EXPORT_DIRECTORY_PREFERENCE_KEY,
   EXPORT_FORMAT_PREFERENCE_KEY,
   GRID_COLOR_PREFERENCE_KEY,
+  ISO_VIEW_PREFERENCE_KEY,
   LANGUAGE_PREFERENCE_KEY,
   LAYER_DISPLAY_COLOR_PRESETS_KEY,
   MOVE_LAYER_CLICK_FLASH_DURATION_PREFERENCE_KEY,
@@ -32,7 +36,9 @@ import {
   TIMELAPSE_RECORDING_ENABLED_PREFERENCE_KEY,
   TIMELINE_HIDDEN_PREFERENCE_KEY,
   TOOL_ICON_SCALE_PREFERENCE_KEY,
+  UI_MOTION_LEVEL_PREFERENCE_KEY,
   UI_SCALE_PREFERENCE_KEY,
+  VIEW_DRAG_SENSITIVITY_PREFERENCE_KEY,
   WHEEL_ZOOM_MODE_PREFERENCE_KEY,
   ZOOM_TOOL_DRAG_MODE_PREFERENCE_KEY,
   imageExportKindForPreference,
@@ -44,9 +50,11 @@ import {
   parseCursorScale,
   parseDocumentSizePresets,
   parseDrawingBrushPreviewEnabled,
+  parseEyedropperMagnifierSize,
   parseExportScalePresets,
   parseEyedropperMagnifierStyle,
   parseLayerDisplayColorPresets,
+  parseIsoViewPreferences,
   parseLineDirectionStep,
   parseMoveLayerClickFlashDuration,
   parseQuickCommandPreferences,
@@ -56,6 +64,7 @@ import {
   parseSymmetryAxisPreferences,
   parseToolIconScale,
   parseUiScale,
+  parseViewDragSensitivity,
   parseWheelZoomMode,
   parseZoomToolDragMode,
   saveEditorPreferences,
@@ -183,6 +192,33 @@ describe('canvas preferences', () => {
     expect(parseSymmetryAxisPreferences(JSON.stringify({ color: { r: 12, g: 34, b: 56, a: 255 }, opacity: 42 }))).toEqual({ locked: false, color: { r: 12, g: 34, b: 56, a: 107 }, thickness: 1 })
   })
 
+  it('normalizes ISO guide appearance, migrates the old default color, and preserves forced line alignment', () => {
+    expect(parseIsoViewPreferences(null)).toEqual(DEFAULT_ISO_VIEW_PREFERENCES)
+    expect(DEFAULT_ISO_VIEW_PREFERENCES.guideColors).toEqual({
+      solid: { r: 57, g: 255, b: 20, a: 160 },
+      pixel: { r: 57, g: 255, b: 20, a: 26 }
+    })
+    expect(parseIsoViewPreferences(JSON.stringify({ guideLineStyle: 'pixel', guideColor: { r: 41, g: 121, b: 255, a: 26 } })).guideColors).toEqual({
+      solid: { r: 57, g: 255, b: 20, a: 160 },
+      pixel: { r: 57, g: 255, b: 20, a: 26 }
+    })
+    expect(parseIsoViewPreferences(JSON.stringify({ stairStep: 40, guideLineStyle: 'pixel', guideOriginX: 12.9, guideOriginY: -4.9, guideUnitSize: 999, guideColor: { r: 12.4, g: 34.6, b: 56.2, a: 80.8 }, guideThickness: 20, forceLineAlignment: false, snapToGrid: true }))).toEqual({
+      stairStep: 16,
+      guideLineStyle: 'pixel',
+      guideOriginX: 12,
+      guideOriginY: -4,
+      guideUnitSize: 256,
+      guideColors: {
+        solid: { r: 57, g: 255, b: 20, a: 160 },
+        pixel: { r: 12, g: 35, b: 56, a: 81 }
+      },
+      guideThickness: 8,
+      forceLineAlignment: false,
+      snapToGrid: true
+    })
+    expect(parseIsoViewPreferences(JSON.stringify({ guideColor: { r: -1, g: 0, b: 0, a: 255 }, guideThickness: 0 }))).toEqual(DEFAULT_ISO_VIEW_PREFERENCES)
+  })
+
   it('normalizes quick command visibility and order while appending new commands', () => {
     expect(parseQuickCommandPreferences(null)).toEqual(DEFAULT_QUICK_COMMAND_PREFERENCES)
     const parsed = parseQuickCommandPreferences(JSON.stringify([{ id: 'resetView', enabled: true }, { id: 'customGrid', enabled: false }, { id: 'resetView', enabled: false }, { id: 'unknown', enabled: true }]))
@@ -210,6 +246,8 @@ describe('editor preferences persistence boundary', () => {
     expect(defaults.language).toBe('zh-CN')
     expect(defaults.uiScale).toBe(1)
     expect(defaults.toolIconScale).toBe(1)
+    expect(defaults.uiMotionLevel).toBe('normal')
+    expect(defaults.animationsEnabled).toBe(true)
     expect(defaults.exportFormat).toBe('png')
     expect(defaults.saveDirectory).toBe('')
     expect(defaults.exportDirectory).toBe('')
@@ -220,6 +258,9 @@ describe('editor preferences persistence boundary', () => {
     expect(defaults.checkerboard.size).toBe(16)
     expect(defaults.pixelGridColor).toEqual(DEFAULT_PIXEL_GRID_COLOR)
     expect(defaults.gridColor).toEqual(DEFAULT_GRID_COLOR)
+    expect(defaults.gridAlignmentEnabled).toBe(false)
+    expect(defaults.smartAlignmentEnabled).toBe(false)
+    expect(defaults.alignmentGuidesVisible).toBe(false)
     expect(defaults.sliceColor).toEqual({ r: 0, g: 0, b: 255, a: 255 })
     expect(defaults.textBoxColor).toEqual({ r: 0, g: 0, b: 255, a: 255 })
     expect(defaults.canvasResizeColor).toEqual({ r: 0, g: 0, b: 255, a: 255 })
@@ -227,10 +268,12 @@ describe('editor preferences persistence boundary', () => {
     expect(defaults.wheelZoomEnabled).toBe(true)
     expect(defaults.wheelZoomMode).toBe('stepped')
     expect(defaults.zoomToolDragMode).toBe('stepped')
+    expect(defaults.viewDragSensitivity).toBe(1)
     expect(defaults.lassoPreviewClosed).toBe(false)
     expect(defaults.eyedropperSwitchToPencil).toBe(false)
     expect(defaults.eyedropperMagnifierEnabled).toBe(true)
     expect(defaults.eyedropperMagnifierStyle).toBe('pixel')
+    expect(defaults.eyedropperMagnifierSize).toBe(1)
     expect(defaults.eyedropperMagnifierDistortionEnabled).toBe(true)
     expect(defaults.moveLayerContentPreviewEnabled).toBe(true)
     expect(defaults.moveLayerClickFlashEnabled).toBe(true)
@@ -243,6 +286,7 @@ describe('editor preferences persistence boundary', () => {
     expect(defaults.lineDirectionStep).toBe(1)
     expect(defaults.layerDisplayColorPresets.length).toBeGreaterThan(0)
     expect(defaults.symmetryAxis).toEqual({ locked: false, color: { r: 0, g: 0, b: 255, a: 255 }, thickness: 1 })
+    expect(defaults.isoView).toEqual(DEFAULT_ISO_VIEW_PREFERENCES)
     expect(defaults.timelapseRecordingEnabled).toBe(false)
     expect(defaults.quickCommandBarEnabled).toBe(true)
     expect(defaults.quickCommandBarExpanded).toBe(false)
@@ -256,12 +300,23 @@ describe('editor preferences persistence boundary', () => {
     expect(parseRecoveryRetentionDays('0')).toBe(1)
     storage.set(LANGUAGE_PREFERENCE_KEY, 'en-US')
     expect(loadEditorPreferences(adapter).language).toBe('en-US')
+    for (const language of ['ja-JP', 'ko-KR', 'es-ES', 'fr-FR', 'de-DE', 'pt-BR', 'ru-RU'] as const) {
+      storage.set(LANGUAGE_PREFERENCE_KEY, language)
+      expect(loadEditorPreferences(adapter).language).toBe(language)
+    }
     storage.set(UI_SCALE_PREFERENCE_KEY, '0.75')
     expect(loadEditorPreferences(adapter).uiScale).toBe(0.75)
     storage.set(UI_SCALE_PREFERENCE_KEY, '1.23')
     expect(loadEditorPreferences(adapter).uiScale).toBe(1)
     storage.set(TOOL_ICON_SCALE_PREFERENCE_KEY, '1')
     expect(loadEditorPreferences(adapter).toolIconScale).toBe(1)
+    storage.set(ANIMATIONS_ENABLED_PREFERENCE_KEY, 'false')
+    expect(loadEditorPreferences(adapter).animationsEnabled).toBe(false)
+    storage.delete(UI_MOTION_LEVEL_PREFERENCE_KEY)
+    storage.set(UI_MOTION_LEVEL_PREFERENCE_KEY, 'full')
+    expect(loadEditorPreferences(adapter).uiMotionLevel).toBe('full')
+    storage.set(UI_MOTION_LEVEL_PREFERENCE_KEY, 'unsupported')
+    expect(loadEditorPreferences(adapter).uiMotionLevel).toBe('normal')
   })
 
   it('round-trips normalized values through storage', () => {
@@ -275,11 +330,13 @@ describe('editor preferences persistence boundary', () => {
       get length() { return storage.size }
     } as Storage
     const current = loadEditorPreferences(adapter)
-    saveEditorPreferences({ ...current, uiScale: 1.5, toolIconScale: 1, saveFormat: 'aseprite', exportFormat: 'svg', saveDirectory: '  D:\\MoonSprite\\gallery  ', exportDirectory: 'D:/MoonSprite/exports', recoveryMinutes: 12, recoveryRetentionDays: 21, documentSizePresets: [{ width: 32, height: 16 }, { width: 32, height: 16 }], exportScalePresets: [100, 100, 250] }, adapter)
+    saveEditorPreferences({ ...current, uiScale: 1.5, toolIconScale: 1, animationsEnabled: false, saveFormat: 'aseprite', exportFormat: 'svg', saveDirectory: '  D:\\MoonSprite\\gallery  ', exportDirectory: 'D:/MoonSprite/exports', recoveryMinutes: 12, recoveryRetentionDays: 21, documentSizePresets: [{ width: 32, height: 16 }, { width: 32, height: 16 }], exportScalePresets: [100, 100, 250] }, adapter)
     expect(storage.get(SAVE_FORMAT_PREFERENCE_KEY)).toBe('aseprite')
     expect(storage.get(EXPORT_FORMAT_PREFERENCE_KEY)).toBe('svg')
     expect(storage.get(UI_SCALE_PREFERENCE_KEY)).toBe('1.5')
     expect(storage.get(TOOL_ICON_SCALE_PREFERENCE_KEY)).toBe('1')
+    expect(storage.get(ANIMATIONS_ENABLED_PREFERENCE_KEY)).toBe('false')
+    expect(storage.get(UI_MOTION_LEVEL_PREFERENCE_KEY)).toBe('off')
     expect(storage.get(SAVE_DIRECTORY_PREFERENCE_KEY)).toBe('D:\\MoonSprite\\gallery')
     expect(storage.get(EXPORT_DIRECTORY_PREFERENCE_KEY)).toBe('D:/MoonSprite/exports')
     expect(parseToolIconScale('1')).toBe(1)
@@ -299,6 +356,9 @@ describe('editor preferences persistence boundary', () => {
     expect(storage.has(NEW_DOCUMENT_SIZE_PRESETS_KEY)).toBe(true)
     saveEditorPreferences({ ...loadEditorPreferences(adapter), zoomToolDragMode: 'stepped' }, adapter)
     expect(storage.get(ZOOM_TOOL_DRAG_MODE_PREFERENCE_KEY)).toBe('stepped')
+    saveEditorPreferences({ ...loadEditorPreferences(adapter), viewDragSensitivity: 1.5 }, adapter)
+    expect(storage.get(VIEW_DRAG_SENSITIVITY_PREFERENCE_KEY)).toBe('1.5')
+    expect(loadEditorPreferences(adapter).viewDragSensitivity).toBe(1.5)
     saveEditorPreferences({ ...loadEditorPreferences(adapter), wheelZoomMode: 'smooth' }, adapter)
     expect(storage.get(WHEEL_ZOOM_MODE_PREFERENCE_KEY)).toBe('smooth')
     expect(loadEditorPreferences(adapter).wheelZoomMode).toBe('smooth')
@@ -327,9 +387,11 @@ describe('editor preferences persistence boundary', () => {
     expect(loadEditorPreferences(adapter).quickCommandBarExpanded).toBe(true)
     expect(loadEditorPreferences(adapter).quickCommandBarTranslucent).toBe(false)
     expect(loadEditorPreferences(adapter).quickCommandPreferences).toEqual(reorderedQuickCommands)
-    saveEditorPreferences({ ...loadEditorPreferences(adapter), eyedropperMagnifierStyle: 'line' }, adapter)
+    saveEditorPreferences({ ...loadEditorPreferences(adapter), eyedropperMagnifierStyle: 'line', eyedropperMagnifierSize: 1.25 }, adapter)
     expect(loadEditorPreferences(adapter).eyedropperMagnifierStyle).toBe('line')
-    saveEditorPreferences({ ...loadEditorPreferences(adapter), useLocalCursors: false, cursorScale: 1.5, brushPreviewMode: 'edge', checkerboard: { size: 12, lightColor: { r: 1, g: 2, b: 3, a: 255 }, darkColor: { r: 4, g: 5, b: 6, a: 255 } }, pixelGridColor: { r: 10, g: 20, b: 30, a: 40 }, gridColor: { r: 50, g: 60, b: 70, a: 80 }, sliceColor: { r: 90, g: 100, b: 110, a: 120 }, textBoxColor: { r: 130, g: 140, b: 150, a: 160 }, canvasResizeColor: { r: 170, g: 180, b: 190, a: 200 }, selectionPreviewColorMode: 'custom', selectionPreviewColor: { r: 18, g: 52, b: 86, a: 120 }, selectionSizeVisible: false, wheelZoomEnabled: false, shiftLinePreviewEnabled: false, lassoPreviewClosed: true, eyedropperSwitchToPencil: true, balancedShiftLineEnabled: false, lineDirectionStep: 2, layerDisplayColorPresets: [{ r: 12, g: 34, b: 56, a: 99 }], symmetryAxis: { locked: true, color: { r: 22, g: 44, b: 66, a: 7 }, thickness: 6 } }, adapter)
+    expect(storage.get(EYEDROPPER_MAGNIFIER_SIZE_PREFERENCE_KEY)).toBe('1.25')
+    expect(loadEditorPreferences(adapter).eyedropperMagnifierSize).toBe(1.25)
+    saveEditorPreferences({ ...loadEditorPreferences(adapter), useLocalCursors: false, cursorScale: 1.5, brushPreviewMode: 'edge', checkerboard: { size: 12, lightColor: { r: 1, g: 2, b: 3, a: 255 }, darkColor: { r: 4, g: 5, b: 6, a: 255 } }, pixelGridColor: { r: 10, g: 20, b: 30, a: 40 }, gridColor: { r: 50, g: 60, b: 70, a: 80 }, sliceColor: { r: 90, g: 100, b: 110, a: 120 }, textBoxColor: { r: 130, g: 140, b: 150, a: 160 }, canvasResizeColor: { r: 170, g: 180, b: 190, a: 200 }, selectionPreviewColorMode: 'custom', selectionPreviewColor: { r: 18, g: 52, b: 86, a: 120 }, selectionSizeVisible: false, wheelZoomEnabled: false, shiftLinePreviewEnabled: false, lassoPreviewClosed: true, eyedropperSwitchToPencil: true, balancedShiftLineEnabled: false, lineDirectionStep: 2, layerDisplayColorPresets: [{ r: 12, g: 34, b: 56, a: 99 }], symmetryAxis: { locked: true, color: { r: 22, g: 44, b: 66, a: 7 }, thickness: 6 }, isoView: { ...loadEditorPreferences(adapter).isoView, guideColors: { solid: { r: 70, g: 90, b: 110, a: 130 }, pixel: { r: 20, g: 40, b: 60, a: 80 } }, guideThickness: 4, forceLineAlignment: false, snapToGrid: true } }, adapter)
     const customized = loadEditorPreferences(adapter)
     expect(customized.useLocalCursors).toBe(false)
     expect(customized.cursorScale).toBe(1.5)
@@ -355,8 +417,10 @@ describe('editor preferences persistence boundary', () => {
     expect(customized.lineDirectionStep).toBe(2)
     expect(customized.layerDisplayColorPresets).toEqual([{ r: 12, g: 34, b: 56, a: 255 }])
     expect(customized.symmetryAxis).toEqual({ locked: true, color: { r: 22, g: 44, b: 66, a: 7 }, thickness: 6 })
+    expect(customized.isoView).toEqual({ stairStep: 2, guideLineStyle: 'solid', guideOriginX: 0, guideOriginY: 0, guideUnitSize: 16, guideColors: { solid: { r: 70, g: 90, b: 110, a: 130 }, pixel: { r: 20, g: 40, b: 60, a: 80 } }, guideThickness: 4, forceLineAlignment: false, snapToGrid: true })
     expect(storage.has(LAYER_DISPLAY_COLOR_PRESETS_KEY)).toBe(true)
     expect(storage.has(SYMMETRY_AXIS_PREFERENCE_KEY)).toBe(true)
+    expect(storage.has(ISO_VIEW_PREFERENCE_KEY)).toBe(true)
     expect(storage.has(PIXEL_GRID_COLOR_PREFERENCE_KEY)).toBe(true)
     expect(storage.has(GRID_COLOR_PREFERENCE_KEY)).toBe(true)
   })
@@ -383,6 +447,16 @@ describe('editor preferences persistence boundary', () => {
     expect(parseEyedropperMagnifierStyle('pixel')).toBe('pixel')
     expect(parseEyedropperMagnifierStyle('line')).toBe('line')
     expect(parseEyedropperMagnifierStyle('unknown')).toBe('pixel')
+  })
+
+  it('accepts only supported magnifier sizes and view drag sensitivities', () => {
+    expect(parseEyedropperMagnifierSize('0.5')).toBe(0.5)
+    expect(parseEyedropperMagnifierSize('0.75')).toBe(0.75)
+    expect(parseEyedropperMagnifierSize('1.25')).toBe(1.25)
+    expect(parseEyedropperMagnifierSize('2')).toBe(1)
+    expect(parseViewDragSensitivity('0.5')).toBe(0.5)
+    expect(parseViewDragSensitivity('2')).toBe(2)
+    expect(parseViewDragSensitivity('1.25')).toBe(1)
   })
 
   it('switches theme defaults while preserving explicit visual overrides', () => {

@@ -35,7 +35,8 @@ describe('recovery service', () => {
       deleteRecovery: vi.fn(async () => { events.push('delete') })
     })
     const service = new RecoveryService()
-    const autosave = service.autosave(bridge, [createDocument('draft', 8, 8, 'rgba')])
+    const document = createDocument('draft', 8, 8, 'rgba')
+    const autosave = service.autosave(bridge, [{ id: document.id, document }])
     await vi.waitFor(() => expect(events).toEqual(['write:start']))
     const discard = service.discard(bridge, 'doc')
     expect(events).toEqual(['write:start'])
@@ -48,7 +49,7 @@ describe('recovery service', () => {
     let saved: Uint8Array | null = null
     const document = createDocument('large draft', 8, 8, 'rgba')
     const service = new RecoveryService()
-    await service.autosave(api({ writeRecovery: async (_id, _name, data) => { saved = data } }), [document])
+    await service.autosave(api({ writeRecovery: async (_id, _name, data) => { saved = data } }), [{ id: document.id, document }])
 
     expect(saved).not.toBeNull()
     expect(unzipSync(saved!)['preview.png']).toBeUndefined()
@@ -71,8 +72,8 @@ describe('recovery service', () => {
     const service = new RecoveryService()
     const document = createDocument('draft', 8, 8, 'rgba')
 
-    await expect(service.autosave(api({ writeRecovery }), [document])).rejects.toThrow('自动恢复保存失败')
-    await expect(service.autosave(api({ writeRecovery }), [document])).resolves.toBeUndefined()
+    await expect(service.autosave(api({ writeRecovery }), [{ id: document.id, document }])).rejects.toThrow('自动恢复保存失败')
+    await expect(service.autosave(api({ writeRecovery }), [{ id: document.id, document }])).resolves.toBeUndefined()
     expect(writeRecovery).toHaveBeenCalledTimes(2)
   })
 

@@ -14,6 +14,7 @@ import { registerViewPreviewFlusher } from '@/core/view-preview-lifecycle'
 import { registerPendingCanvasGestureHistory } from '@/core/canvas-input'
 import { RECENT_EXPORT_PATHS_STORAGE_KEY } from '@/core/export-settings'
 import { decodeProject, encodeProject, registerProjectSaveBaseline } from '@/core/project-format'
+import { loadEditorPreferences, saveEditorPreferences } from '@/core/file-preferences'
 import { LAYER_PANEL_STATE_STORAGE_KEY } from '@/core/layer-panel-state'
 import { saveProgress } from '@/core/save-progress'
 import { repositionPaletteSlots } from '@/core/palette-layout'
@@ -81,7 +82,7 @@ beforeEach(() => {
   localStorage.clear()
   brushLibraryLocation.set(null)
   saveProgress.dismiss()
-  useWorkspace.setState({ sessions: [], activeId: null, message: null, saveProgress: null, dialog: null })
+  useWorkspace.setState({ sessions: [], activeId: null, message: null, saveProgress: null, dialog: null, recoveryRecords: [] })
 })
 
 describe('symmetry axis placement', () => {
@@ -800,7 +801,24 @@ describe('animation workspace', () => {
     }
     useWorkspace.getState().addSession(document)
 
-    await expect(useWorkspace.getState().createSpriteSheetFromActive()).resolves.toBe(true)
+    await expect(useWorkspace.getState().exportSpriteSheet({
+      layout: 'horizontal',
+      constraint: 'none',
+      fixedColumns: 1,
+      fixedWidth: 2,
+      fixedRows: 1,
+      fixedHeight: 1,
+      mergeDuplicates: false,
+      ignoreEmpty: false,
+      area: 'canvas',
+      layerScope: 'visible',
+      splitLayers: false,
+      frameScope: 'all',
+      splitLoopSections: false,
+      outputFile: false,
+      name: 'animated-sprite-sheet',
+      directory: 'exports'
+    })).resolves.toBe(true)
 
     const state = useWorkspace.getState()
     expect(state.sessions).toHaveLength(2)
@@ -815,6 +833,108 @@ describe('animation workspace', () => {
       0, 0, 0, 0,
       0, 80, 255, 255
     ])
+  })
+
+  it('stacks split layer sprite sheets into one generated document', async () => {
+    const document = createDocument('split layers', 1, 1, 'rgba')
+    const bottom = getActiveLayer(document)
+    writeLayerColor(document, bottom, 0, red)
+    const top = createLayer('Top', 1, 1, 'rgba')
+    document.layers.push(top)
+    writeLayerColor(document, top, 0, blue)
+    useWorkspace.getState().addSession(document)
+
+    await expect(useWorkspace.getState().exportSpriteSheet({
+      layout: 'rows',
+      constraint: 'none',
+      fixedColumns: 1,
+      fixedWidth: 1,
+      fixedRows: 1,
+      fixedHeight: 1,
+      mergeDuplicates: false,
+      ignoreEmpty: false,
+      area: 'canvas',
+      layerScope: 'all',
+      splitLayers: true,
+      frameScope: 'all',
+      splitLoopSections: false,
+      outputFile: false,
+      name: 'split-layers',
+      directory: 'exports'
+    })).resolves.toBe(true)
+
+    const state = useWorkspace.getState()
+    expect(state.sessions).toHaveLength(2)
+    const sheet = state.sessions.find((session) => session.document.id === state.activeId)!.document
+    expect(sheet).toMatchObject({ width: 1, height: 2, dirty: true })
+    expect(Array.from(getActiveLayer(sheet).pixels)).toEqual([
+      red.r, red.g, red.b, red.a,
+      blue.r, blue.g, blue.b, blue.a
+    ])
+  })
+
+  it('replaces temporary sprite sheet previews and closes them without displacing a final result', async () => {
+    const document = createDocument('preview source', 2, 1, 'rgba')
+    const layer = getActiveLayer(document)
+    writeLayerColor(document, layer, 0, red)
+    const secondFrameId = addBlankAnimationFrame(document)
+    animationCelAt(ensureAnimationDocument(document), layer.id, secondFrameId)!.surface = {
+      format: 'rgba',
+      width: 2,
+      height: 1,
+      offsetX: 0,
+      offsetY: 0,
+      pixels: Uint8ClampedArray.from([0, 0, 0, 0, blue.r, blue.g, blue.b, blue.a])
+    }
+    useWorkspace.getState().addSession(document)
+    const options = {
+      layout: 'rows' as const,
+      constraint: 'none' as const,
+      fixedColumns: 1,
+      fixedWidth: 2,
+      fixedRows: 1,
+      fixedHeight: 1,
+      mergeDuplicates: false,
+      ignoreEmpty: false,
+      area: 'canvas' as const,
+      layerScope: 'visible' as const,
+      splitLayers: false,
+      frameScope: 'all' as const,
+      splitLoopSections: false,
+      outputFile: false,
+      name: '',
+      directory: ''
+    }
+
+    const firstPreviewIds = await useWorkspace.getState().previewSpriteSheet(document.id, options, [])
+    expect(firstPreviewIds).toHaveLength(1)
+    expect(useWorkspace.getState().activeId).toBe(firstPreviewIds![0])
+    expect(useWorkspace.getState().sessions.find((session) => session.document.id === firstPreviewIds![0])?.document).toMatchObject({ width: 4, height: 1, dirty: false })
+    useWorkspace.getState().setView({ zoom: 7, panX: 31, panY: -19, rotation: 90 })
+    useWorkspace.getState().setViewportSize({ width: 720, height: 480 })
+
+    const secondPreviewIds = await useWorkspace.getState().previewSpriteSheet(document.id, { ...options, layout: 'vertical' }, firstPreviewIds!)
+    expect(secondPreviewIds).toHaveLength(1)
+    expect(secondPreviewIds![0]).not.toBe(firstPreviewIds![0])
+    expect(useWorkspace.getState().sessions.some((session) => session.document.id === firstPreviewIds![0])).toBe(false)
+    const secondPreviewSession = useWorkspace.getState().sessions.find((session) => session.document.id === secondPreviewIds![0])
+    expect(secondPreviewSession?.document).toMatchObject({ width: 2, height: 2, dirty: false })
+    expect(secondPreviewSession?.view).toMatchObject({ zoom: 7, panX: 31, panY: -19, rotation: 90 })
+    expect(secondPreviewSession?.viewportSize).toEqual({ width: 720, height: 480 })
+
+    await expect(useWorkspace.getState().exportSpriteSheet({ ...options, layout: 'vertical' }, document.id)).resolves.toBe(true)
+    const finalDocumentId = useWorkspace.getState().activeId!
+    expect(finalDocumentId).not.toBe(secondPreviewIds![0])
+    expect(useWorkspace.getState().sessions.find((session) => session.document.id === finalDocumentId)?.document.dirty).toBe(true)
+
+    useWorkspace.getState().closeSpriteSheetPreview(secondPreviewIds!, document.id)
+    expect(useWorkspace.getState().activeId).toBe(finalDocumentId)
+    expect(useWorkspace.getState().sessions.map((session) => session.document.id)).toEqual([document.id, finalDocumentId])
+
+    const lastPreviewIds = await useWorkspace.getState().previewSpriteSheet(document.id, options, [])
+    useWorkspace.getState().closeSpriteSheetPreview(lastPreviewIds!, document.id)
+    expect(useWorkspace.getState().activeId).toBe(document.id)
+    expect(document.dirty).toBe(false)
   })
 
   it('selects cel content and adds another cel content with undo support', () => {
@@ -1657,16 +1777,24 @@ describe('brush settings', () => {
   it('keeps pencil and eraser dynamics independent and outside document history', () => {
     vi.useFakeTimers()
     try {
+      saveEditorPreferences({ ...loadEditorPreferences(), drawingBrushPreviewEnabled: false, brushPreviewMode: 'none' })
       const document = createDocument('dynamics profiles', 8, 8, 'rgba')
       useWorkspace.getState().addSession(document)
       useWorkspace.getState().setBrushDynamicsMapping('size', { sensor: 'pressure', outputMin: 32, curve: 'soft' })
       useWorkspace.getState().setBrushDynamicsMapping('gradient', { sensor: 'pressure', outputMin: 0, inputMax: 70, curve: 'hard' })
       useWorkspace.getState().setBrushDynamicsGradientDither('bayer-4')
 
+      expect(loadEditorPreferences()).toMatchObject({ drawingBrushPreviewEnabled: true, brushPreviewMode: 'full-edge' })
+
       let session = useWorkspace.getState().sessions[0]
       expect(session.brushDynamics.effects.size).toMatchObject({ sensor: 'pressure', outputMin: 32, curve: 'soft' })
       expect(session.brushDynamics.effects.gradient).toMatchObject({ sensor: 'pressure', outputMin: 0, inputMax: 70, curve: 'hard' })
       expect(session.brushDynamics.gradientDither).toBe('bayer-4')
+
+      saveEditorPreferences({ ...loadEditorPreferences(), drawingBrushPreviewEnabled: false })
+      useWorkspace.getState().setBrushDynamicsMapping('size', { outputMin: 40 })
+      expect(loadEditorPreferences().drawingBrushPreviewEnabled).toBe(false)
+      useWorkspace.getState().setBrushDynamicsMapping('size', { outputMin: 32 })
       expect(document.dirty).toBe(false)
       expect(session.history.canUndo).toBe(false)
 
@@ -2044,6 +2172,38 @@ describe('layer duplication', () => {
 })
 
 describe('selection clipboard', () => {
+  it('keeps a copied selection when a stale timeline cel clipboard exists across frames', async () => {
+    const document = createDocument('cross-frame selection clipboard', 2, 1, 'rgba')
+    const layer = getActiveLayer(document)
+    const green = { r: 24, g: 190, b: 72, a: 255 }
+    writeLayerColor(document, layer, 0, red)
+    writeLayerColor(document, layer, 1, green)
+    useWorkspace.getState().addSession(document)
+    const firstFrameId = ensureAnimationDocument(document).activeFrameId
+
+    useWorkspace.getState().addAnimationFrame()
+    const secondFrameId = ensureAnimationDocument(document).activeFrameId
+    ensureLayerCoversCanvas(document, layer)
+    writeLayerColor(document, layer, 0, blue)
+    writeLayerColor(document, layer, 1, blue)
+
+    useWorkspace.getState().selectAnimationCell(animationCelKey(layer.id, firstFrameId))
+    useWorkspace.getState().copySelectedAnimationCels()
+    expect(useWorkspace.getState().sessions[0].animationCellClipboard).toHaveLength(1)
+
+    useWorkspace.getState().setSelection({ x: 0, y: 0, width: 1, height: 1 })
+    useWorkspace.getState().copySelection()
+    expect(useWorkspace.getState().sessions[0].animationCellClipboard).toHaveLength(0)
+
+    useWorkspace.getState().selectAnimationCell(animationCelKey(layer.id, secondFrameId))
+    expect(readLayerColorAt(document, layer, 1, 0)).toEqual(blue)
+    await useWorkspace.getState().pasteSelection()
+    useWorkspace.getState().commitFloatingPaste()
+
+    expect(readLayerColorAt(document, layer, 0, 0)).toEqual(red)
+    expect(readLayerColorAt(document, layer, 1, 0)).toEqual(blue)
+  })
+
   it('moves a transformed selection boundary without moving the committed pixels again', () => {
     const document = createDocument('transformed selection boundary move', 10, 10, 'rgba')
     const layer = getActiveLayer(document)
@@ -2670,9 +2830,12 @@ describe('selection clipboard', () => {
     expect(readLayerColor(document, pasted, 1)).toEqual(transparent)
     expect(readLayerColor(document, pasted, 2)).toEqual(blue)
     expect(readLayerColor(document, source, 0)).toEqual(red)
-    expect(useWorkspace.getState().sessions[0].selection?.mask).toEqual(Uint8Array.from([1, 0]))
-    expect(useWorkspace.getState().sessions[0].pendingPaste).not.toBeNull()
-    expect(useWorkspace.getState().sessions[0].tool).toBe('selection')
+    const floatingSession = useWorkspace.getState().sessions[0]
+    expect(floatingSession.selection).toEqual(floatingSession.pendingPaste?.target)
+    expect(floatingSession.selection?.mask).toBeUndefined()
+    expect(floatingSession.pendingPaste?.source.selection.mask).toEqual(Uint8Array.from([1, 0]))
+    expect(floatingSession.pendingPaste).not.toBeNull()
+    expect(floatingSession.tool).toBe('selection')
 
     useWorkspace.getState().commitFloatingPaste()
     expect(useWorkspace.getState().sessions[0].pendingPaste).toBeNull()
@@ -2773,6 +2936,108 @@ describe('selection clipboard', () => {
     expect(useWorkspace.getState().sessions[0].selection).toEqual({ x: 1, y: 0, width: 1, height: 1 })
   })
 
+  it('keeps a pasted selection box movable without losing the floating clipboard copy', async () => {
+    const document = createDocument('floating paste undo move', 6, 1, 'rgba')
+    const layer = getActiveLayer(document)
+    const darkBlue = { r: 12, g: 38, b: 86, a: 255 }
+    const green = { r: 18, g: 96, b: 52, a: 255 }
+    const amber = { r: 164, g: 92, b: 24, a: 255 }
+    writeLayerColor(document, layer, 0, red)
+    writeLayerColor(document, layer, 1, transparent)
+    writeLayerColor(document, layer, 2, darkBlue)
+    writeLayerColor(document, layer, 3, green)
+    writeLayerColor(document, layer, 4, blue)
+    writeLayerColor(document, layer, 5, amber)
+    useWorkspace.getState().addSession(document)
+    useWorkspace.getState().setSelection({ x: 0, y: 0, width: 2, height: 1 })
+    useWorkspace.getState().copySelection()
+    await useWorkspace.getState().pasteSelection()
+
+    let pending = useWorkspace.getState().sessions[0].pendingPaste
+    if (!pending) throw new Error('missing floating paste')
+    expect(pending.source.selection.mask).toEqual(Uint8Array.from([1, 0]))
+    expect(pending.target).toEqual({ x: 0, y: 0, width: 2, height: 1 })
+    expect(useWorkspace.getState().sessions[0].selection).toEqual(pending.target)
+
+    useWorkspace.getState().commitFloatingSelectionBoxMove(
+      pending.target,
+      { ...pending.target, x: 2 },
+      null,
+      null
+    )
+
+    pending = useWorkspace.getState().sessions[0].pendingPaste
+    expect(pending?.target).toEqual({ x: 0, y: 0, width: 2, height: 1 })
+    expect(useWorkspace.getState().sessions[0].selection).toEqual({ x: 2, y: 0, width: 2, height: 1 })
+    expect(readLayerColorAt(document, layer, 0, 0)).toEqual(red)
+    expect(readLayerColorAt(document, layer, 2, 0)).toEqual(darkBlue)
+    expect(readLayerColorAt(document, layer, 3, 0)).toEqual(green)
+
+    useWorkspace.getState().undo()
+
+    pending = useWorkspace.getState().sessions[0].pendingPaste
+    expect(pending?.target).toEqual({ x: 0, y: 0, width: 2, height: 1 })
+    expect(pending?.source.origin).toBe('clipboard')
+    expect(pending?.source.selection.mask).toEqual(Uint8Array.from([1, 0]))
+    expect(pending?.copy).toBe(true)
+    expect(useWorkspace.getState().sessions[0].selection).toEqual(pending?.target)
+    expect(readLayerColorAt(document, layer, 0, 0)).toEqual(red)
+    expect(readLayerColorAt(document, layer, 2, 0)).toEqual(darkBlue)
+    expect(readLayerColorAt(document, layer, 3, 0)).toEqual(green)
+
+    useWorkspace.getState().redo()
+    expect(useWorkspace.getState().sessions[0].selection).toEqual({ x: 2, y: 0, width: 2, height: 1 })
+    expect(useWorkspace.getState().sessions[0].pendingPaste).not.toBeNull()
+    useWorkspace.getState().undo()
+
+    if (!pending) throw new Error('floating paste was cancelled by undo')
+    useWorkspace.getState().moveActiveSelectionWithSelectionHistory(4, 0)
+
+    expect(readLayerColorAt(document, layer, 0, 0)).toEqual(red)
+    expect(readLayerColorAt(document, layer, 2, 0)).toEqual(darkBlue)
+    expect(readLayerColorAt(document, layer, 4, 0)).toEqual(red)
+    expect(readLayerColorAt(document, layer, 5, 0)).toEqual(amber)
+    expect(useWorkspace.getState().sessions[0].selection).toEqual({ x: 4, y: 0, width: 2, height: 1 })
+    useWorkspace.getState().cancelFloatingPaste()
+    expect(readLayerColorAt(document, layer, 4, 0)).toEqual(blue)
+    expect(readLayerColorAt(document, layer, 5, 0)).toEqual(amber)
+  })
+
+  it('keeps clipboard transparency when Ctrl starts another floating copy', async () => {
+    const document = createDocument('repeat transparent clipboard copy', 4, 1, 'rgba')
+    const layer = getActiveLayer(document)
+    const green = { r: 18, g: 96, b: 52, a: 255 }
+    writeLayerColor(document, layer, 0, red)
+    writeLayerColor(document, layer, 1, transparent)
+    writeLayerColor(document, layer, 2, blue)
+    writeLayerColor(document, layer, 3, green)
+    useWorkspace.getState().addSession(document)
+    useWorkspace.getState().setSelection({ x: 0, y: 0, width: 2, height: 1 })
+    useWorkspace.getState().copySelection()
+    await useWorkspace.getState().pasteSelection()
+
+    const pending = useWorkspace.getState().sessions[0].pendingPaste
+    if (!pending) throw new Error('missing floating paste')
+    const source = pending.source
+    const before = { ...pending.target }
+    expect(source.selection.mask).toEqual(Uint8Array.from([1, 0]))
+    useWorkspace.getState().commitFloatingPaste()
+
+    const target = { ...before, x: 2 }
+    const preview = applySelectionTranslationPreview(document, source, target, true)
+    const edit = selectionTranslationPreviewEdit(document, preview)
+    if (!edit) throw new Error('missing repeated clipboard copy')
+    useWorkspace.getState().beginFloatingSelectionTransform(source, edit, before, target, true, '复制选区内容', preview)
+
+    expect(readLayerColorAt(document, layer, 2, 0)).toEqual(red)
+    expect(readLayerColorAt(document, layer, 3, 0)).toEqual(green)
+    expect(useWorkspace.getState().sessions[0].selection).toEqual(target)
+    expect(useWorkspace.getState().sessions[0].selection?.mask).toBeUndefined()
+    useWorkspace.getState().cancelFloatingPaste()
+    expect(readLayerColorAt(document, layer, 2, 0)).toEqual(blue)
+    expect(readLayerColorAt(document, layer, 3, 0)).toEqual(green)
+  })
+
   it('prefers an image currently copied by another application', async () => {
     installApi({ readClipboardImage: vi.fn(async () => ({
       width: 2,
@@ -2785,8 +3050,11 @@ describe('selection clipboard', () => {
     await useWorkspace.getState().pasteSelection()
 
     const layer = getActiveLayer(document)
-    expect(useWorkspace.getState().sessions[0].tool).toBe('selection')
-    expect(useWorkspace.getState().sessions[0].selection?.mask).toEqual(Uint8Array.from([0, 1]))
+    const floatingSession = useWorkspace.getState().sessions[0]
+    expect(floatingSession.tool).toBe('selection')
+    expect(floatingSession.selection).toEqual(floatingSession.pendingPaste?.target)
+    expect(floatingSession.selection?.mask).toBeUndefined()
+    expect(floatingSession.pendingPaste?.source.selection.mask).toEqual(Uint8Array.from([0, 1]))
     expect(readLayerColor(document, layer, 1).a).toBe(0)
     expect(readLayerColor(document, layer, 2)).toEqual(blue)
   })
@@ -4295,6 +4563,55 @@ describe('resize history', () => {
   })
 })
 
+describe('color mode history', () => {
+  it('restores RGBA surfaces and generated indexed colors together', async () => {
+    const document = createDocument('color mode undo', 2, 1, 'rgba')
+    const layer = getActiveLayer(document)
+    const custom = { r: 17, g: 93, b: 201, a: 173 }
+    writeLayerColor(document, layer, 0, custom)
+    writeLayerColor(document, layer, 1, red)
+    useWorkspace.getState().addSession(document)
+    const cel = ensureAnimationDocument(document).cels[0]
+    const beforePalette = document.palette.map((entry) => ({ ...entry, color: { ...entry.color } }))
+    const beforePaletteOrder = [...document.paletteOrder]
+    const beforeNextColorId = document.nextColorId
+
+    await useWorkspace.getState().convertColorMode('indexed')
+
+    const indexedPalette = document.palette.map((entry) => ({ ...entry, color: { ...entry.color } }))
+    const indexedPaletteOrder = [...document.paletteOrder]
+    const indexedNextColorId = document.nextColorId
+    const indexedColor = readLayerColor(document, layer, 0)
+    expect(document.colorMode).toBe('indexed')
+    expect(layer.format).toBe('indexed')
+    expect(cel.surface?.format).toBe('indexed')
+    expect(document.palette.length).toBeGreaterThan(beforePalette.length)
+    expect(indexedColor).not.toEqual(custom)
+
+    useWorkspace.getState().undo()
+
+    expect(document.colorMode).toBe('rgba')
+    expect(layer.format).toBe('rgba')
+    expect(cel.surface?.format).toBe('rgba')
+    expect(layer.pixels).toBeInstanceOf(Uint8ClampedArray)
+    expect(readLayerColor(document, layer, 0)).toEqual(custom)
+    expect(readLayerColor(document, layer, 1)).toEqual(red)
+    expect(document.palette).toEqual(beforePalette)
+    expect(document.paletteOrder).toEqual(beforePaletteOrder)
+    expect(document.nextColorId).toBe(beforeNextColorId)
+
+    useWorkspace.getState().redo()
+
+    expect(document.colorMode).toBe('indexed')
+    expect(layer.format).toBe('indexed')
+    expect(cel.surface?.format).toBe('indexed')
+    expect(document.palette).toEqual(indexedPalette)
+    expect(document.paletteOrder).toEqual(indexedPaletteOrder)
+    expect(document.nextColorId).toBe(indexedNextColorId)
+    expect(readLayerColor(document, layer, 0)).toEqual(indexedColor)
+  })
+})
+
 describe('layer merge history', () => {
   it('merges selected layers as one undoable structural operation', () => {
     const document = createDocument('merge history', 1, 1, 'rgba')
@@ -4360,6 +4677,86 @@ describe('layer merge history', () => {
 })
 
 describe('recovery cleanup', () => {
+  it('keeps an opened recovery record and rewrites the same id on the next autosave', async () => {
+    const document = createDocument('crash draft', 2, 2, 'rgba')
+    const record = { id: document.id, name: document.name, updatedAt: new Date().toISOString() }
+    const writeRecovery = vi.fn(async () => {})
+    const deleteRecovery = vi.fn(async () => {})
+    installApi({
+      readRecovery: vi.fn(async () => encodeProject(document)),
+      writeRecovery,
+      deleteRecovery
+    })
+    useWorkspace.setState({ recoveryRecords: [record] })
+
+    await expect(useWorkspace.getState().restoreRecovery(record.id)).resolves.toBe(true)
+
+    const restoredSession = useWorkspace.getState().sessions[0]
+    expect(restoredSession.recoveryOriginId).toBe(record.id)
+    expect(useWorkspace.getState().recoveryRecords).toEqual([record])
+    expect(deleteRecovery).not.toHaveBeenCalled()
+
+    await useWorkspace.getState().autosaveDirty()
+
+    expect(writeRecovery).toHaveBeenCalledTimes(1)
+    expect(writeRecovery).toHaveBeenCalledWith(record.id, expect.any(String), expect.any(Uint8Array))
+    expect(deleteRecovery).not.toHaveBeenCalled()
+  })
+
+  it('keeps the original recovery when a restored session is closed and discarded', async () => {
+    const document = createDocument('close recovered draft', 2, 2, 'rgba')
+    const record = { id: document.id, name: document.name, updatedAt: new Date().toISOString() }
+    const deleteRecovery = vi.fn(async () => {})
+    installApi({ readRecovery: vi.fn(async () => encodeProject(document)), deleteRecovery })
+    useWorkspace.setState({ recoveryRecords: [record] })
+    await useWorkspace.getState().restoreRecovery(record.id)
+
+    const restoredId = useWorkspace.getState().sessions[0].document.id
+    const closing = useWorkspace.getState().closeDocument(restoredId)
+    await vi.waitFor(() => expect(useWorkspace.getState().dialog).not.toBeNull())
+    useWorkspace.getState().resolveDialog('discard')
+    await closing
+
+    expect(useWorkspace.getState().sessions).toHaveLength(0)
+    expect(useWorkspace.getState().recoveryRecords).toEqual([record])
+    expect(deleteRecovery).not.toHaveBeenCalled()
+  })
+
+  it('deletes an opened recovery only after the restored project is fully saved', async () => {
+    const document = createDocument('saved recovered draft', 2, 2, 'rgba')
+    const record = { id: document.id, name: document.name, updatedAt: new Date().toISOString() }
+    const deleteRecovery = vi.fn(async () => {})
+    installApi({
+      readRecovery: vi.fn(async () => encodeProject(document)),
+      saveProject: vi.fn(async () => ({ canceled: false, filePath: 'D:/gallery/saved-recovered-draft.moonsprite' })),
+      writeBinaryAtomic: vi.fn(async () => {}),
+      deleteRecovery
+    })
+    useWorkspace.setState({ recoveryRecords: [record] })
+    await useWorkspace.getState().restoreRecovery(record.id)
+
+    await expect(useWorkspace.getState().saveActive()).resolves.toBe(true)
+    await vi.waitFor(() => expect(deleteRecovery).toHaveBeenCalledWith(record.id))
+
+    expect(useWorkspace.getState().recoveryRecords).toHaveLength(0)
+    expect(useWorkspace.getState().sessions[0].recoveryOriginId).toBeNull()
+  })
+
+  it('still deletes a restored recovery when the recovery list explicitly discards it', async () => {
+    const document = createDocument('explicit recovery discard', 2, 2, 'rgba')
+    const record = { id: document.id, name: document.name, updatedAt: new Date().toISOString() }
+    const deleteRecovery = vi.fn(async () => {})
+    installApi({ readRecovery: vi.fn(async () => encodeProject(document)), deleteRecovery })
+    useWorkspace.setState({ recoveryRecords: [record] })
+    await useWorkspace.getState().restoreRecovery(record.id)
+
+    await useWorkspace.getState().discardRecovery(record.id)
+
+    expect(deleteRecovery).toHaveBeenCalledWith(record.id)
+    expect(useWorkspace.getState().recoveryRecords).toHaveLength(0)
+    expect(useWorkspace.getState().sessions[0]).toMatchObject({ recoveryOriginId: null, recoverySuppressed: true })
+  })
+
   it('waits for an in-flight autosave before deleting a discarded recovery and suppresses recreation', async () => {
     const deferred: { resolve?: () => void } = {}
     let writeCount = 0
@@ -4477,9 +4874,10 @@ describe('save concurrency', () => {
     dialog.resolve?.({ canceled: false, filePath: 'D:/gallery/export-progress.png' })
     await vi.waitFor(() => expect(writeBinaryAtomic).toHaveBeenCalledTimes(1))
     expect(useWorkspace.getState().saveProgress).toMatchObject({ title: '正在导出' })
-    useWorkspace.getState().dismissSaveProgress()
+    useWorkspace.getState().cancelExport()
+    expect(useWorkspace.getState().saveProgress).toBeNull()
     write.resolve?.()
-    await expect(exporting).resolves.toBe(true)
+    await expect(exporting).resolves.toBe(false)
     expect(useWorkspace.getState().saveProgress).toBeNull()
   })
 
@@ -4499,7 +4897,7 @@ describe('save concurrency', () => {
 
     await expect(useWorkspace.getState().exportActive({ name: 'ignored.gif', format: 'gif', scalePercent: 200, target: 'slices', directory: 'D:/exports', gifDirection: 'forward' })).resolves.toBe(true)
 
-    expect(chooseDirectory).toHaveBeenCalledWith('D:/exports')
+    expect(chooseDirectory).not.toHaveBeenCalled()
     expect(exportImage).not.toHaveBeenCalled()
     expect(writes.map((entry) => entry.filePath)).toEqual(['D:/exports/Left.gif', 'D:/exports/Right.gif'])
     expect(writes.map(({ data }) => ({ signature: new TextDecoder().decode(data.subarray(0, 6)), width: data[6] | data[7] << 8, height: data[8] | data[9] << 8 }))).toEqual([
@@ -4521,7 +4919,7 @@ describe('save concurrency', () => {
 
     await expect(useWorkspace.getState().exportActive({ name: 'ignored.png', format: 'png-rgba', scalePercent: 100, target: 'slices', sliceId: 'right', directory: 'D:/exports' })).resolves.toBe(true)
 
-    expect(chooseDirectory).toHaveBeenCalledWith('D:/exports')
+    expect(chooseDirectory).not.toHaveBeenCalled()
     expect(writeBinaryAtomic.mock.calls.map(([filePath]) => filePath)).toEqual(['D:/exports/Right.png'])
   })
 
@@ -4614,7 +5012,8 @@ describe('save concurrency', () => {
     useWorkspace.getState().addSession(createDocument('custom', 2, 2, 'rgba'))
 
     await expect(useWorkspace.getState().exportActive({ name: 'custom.png', format: 'png-rgba', scalePercent: 100, directory: 'E:/delivery' })).resolves.toBe(true)
-    expect(exportImage).toHaveBeenCalledWith('E:/delivery/custom.png', 'png')
+    expect(exportImage).not.toHaveBeenCalled()
+    expect(writeBinaryAtomic).toHaveBeenCalledWith('E:/delivery/custom.png', expect.any(Uint8Array))
     expect(localStorage.getItem(RECENT_EXPORT_PATHS_STORAGE_KEY)).toContain('E:/delivery/custom.png')
   })
 
@@ -4639,7 +5038,7 @@ describe('save concurrency', () => {
 
     await expect(useWorkspace.getState().exportActive({ name: 'walk.png', format: 'png-rgba', scalePercent: 100, target: 'frames', directory: 'E:/frames' })).resolves.toBe(true)
 
-    expect(chooseDirectory).toHaveBeenCalledWith('E:/frames')
+    expect(chooseDirectory).not.toHaveBeenCalled()
     expect(writeBinaryAtomic.mock.calls.map(([filePath]) => filePath)).toEqual(['E:/frames/walk-001.png', 'E:/frames/walk-002.png'])
     const first = decodePng(writeBinaryAtomic.mock.calls[0][1])
     const second = decodePng(writeBinaryAtomic.mock.calls[1][1])

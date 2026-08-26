@@ -1,15 +1,23 @@
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { createDocument } from '@/core/document'
+import { useWorkspace } from '@/store/workspace'
 import { CanvasResizeDialog } from './CanvasResizeDialog'
 
-afterEach(() => cleanup())
+afterEach(() => {
+  cleanup()
+  useWorkspace.setState({ sessions: [], activeId: null, message: null, saveProgress: null, dialog: null })
+})
 
 describe('CanvasResizeDialog', () => {
+  const documentId = 'canvas-resize-document'
+
   it('submits the trim-outside option to the resize command', () => {
     const resize = vi.fn(async () => {})
     render(
       <CanvasResizeDialog
         open
+        documentId={documentId}
         currentWidth={32}
         currentHeight={32}
         onClose={vi.fn()}
@@ -30,6 +38,7 @@ describe('CanvasResizeDialog', () => {
     const view = render(
       <CanvasResizeDialog
         open
+        documentId={documentId}
         currentWidth={32}
         currentHeight={32}
         onClose={vi.fn()}
@@ -46,6 +55,7 @@ describe('CanvasResizeDialog', () => {
     view.rerender(
       <CanvasResizeDialog
         open
+        documentId={documentId}
         currentWidth={32}
         currentHeight={32}
         onClose={vi.fn()}
@@ -63,6 +73,7 @@ describe('CanvasResizeDialog', () => {
     render(
       <CanvasResizeDialog
         open
+        documentId={documentId}
         currentWidth={32}
         currentHeight={32}
         onClose={vi.fn()}
@@ -83,6 +94,7 @@ describe('CanvasResizeDialog', () => {
     render(
       <CanvasResizeDialog
         open
+        documentId={documentId}
         currentWidth={32}
         currentHeight={32}
         onClose={vi.fn()}
@@ -103,6 +115,7 @@ describe('CanvasResizeDialog', () => {
     render(
       <CanvasResizeDialog
         open
+        documentId={documentId}
         currentWidth={32}
         currentHeight={32}
         onClose={vi.fn()}
@@ -121,16 +134,20 @@ describe('CanvasResizeDialog', () => {
 
   it('undoes a complete live dimension edit instead of one browser character', () => {
     const preview = vi.fn()
+    const bubbledKeyDown = vi.fn()
     render(
-      <CanvasResizeDialog
-        open
-        currentWidth={32}
-        currentHeight={32}
-        onClose={vi.fn()}
-        onResize={vi.fn(async () => {})}
-        onPreview={preview}
-        preview={null}
-      />
+      <div onKeyDown={bubbledKeyDown}>
+        <CanvasResizeDialog
+          open
+          documentId={documentId}
+          currentWidth={32}
+          currentHeight={32}
+          onClose={vi.fn()}
+          onResize={vi.fn(async () => {})}
+          onPreview={preview}
+          preview={null}
+        />
+      </div>
     )
     const width = screen.getAllByRole('spinbutton')[0]
     fireEvent.focus(width)
@@ -140,11 +157,13 @@ describe('CanvasResizeDialog', () => {
     fireEvent.keyDown(width, { key: 'z', ctrlKey: true })
 
     expect(width).toHaveValue('32')
+    expect(bubbledKeyDown).not.toHaveBeenCalled()
   })
 
   it('undoes a canvas guide dragged outside the dialog without touching document history', () => {
     const props = {
       open: true,
+      documentId,
       currentWidth: 32,
       currentHeight: 32,
       onClose: vi.fn(),
@@ -158,5 +177,42 @@ describe('CanvasResizeDialog', () => {
     fireEvent.keyDown(screen.getAllByRole('spinbutton')[0], { key: 'z', ctrlKey: true })
 
     expect(screen.getAllByRole('spinbutton')[0]).toHaveValue('32')
+  })
+
+  it('keeps document history locked while canvas guide positions undo and redo', () => {
+    const document = createDocument('canvas resize history lock', 32, 32, 'rgba')
+    useWorkspace.getState().addSession(document)
+    const session = useWorkspace.getState().sessions[0]
+    let documentUndo = 0
+    let documentRedo = 0
+    session.history.push({
+      label: 'earlier document edit',
+      bytes: 0,
+      undo: () => { documentUndo += 1 },
+      redo: () => { documentRedo += 1 },
+      documentChanged: false
+    })
+    const props = {
+      open: true,
+      documentId: document.id,
+      currentWidth: 32,
+      currentHeight: 32,
+      onClose: vi.fn(),
+      onResize: vi.fn(async () => {}),
+      onPreview: vi.fn()
+    }
+    const view = render(<CanvasResizeDialog {...props} preview={null} />)
+    view.rerender(<CanvasResizeDialog {...props} preview={{ width: 40, height: 36, offsetX: 4, offsetY: 2 }} />)
+
+    act(() => useWorkspace.getState().undo())
+    expect(screen.getAllByRole('spinbutton')[0]).toHaveValue('32')
+    expect(documentUndo).toBe(0)
+
+    act(() => useWorkspace.getState().undo())
+    expect(documentUndo).toBe(0)
+
+    act(() => useWorkspace.getState().redo())
+    expect(screen.getAllByRole('spinbutton')[0]).toHaveValue('40')
+    expect(documentRedo).toBe(0)
   })
 })

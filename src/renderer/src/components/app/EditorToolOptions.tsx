@@ -1,7 +1,7 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { createPortal } from 'react-dom'
 import { ArrowLeftRight } from 'lucide-react'
-import type { BrushDitherTemplate, BrushPaintMode, BrushShape, BrushTexture, GradientDither, ProceduralBrushId, ProceduralBrushSettings, RgbaColor, SelectionMode, SelectionRect } from '@shared/types'
+import type { BrushDitherTemplate, BrushPaintMode, BrushShape, BrushTexture, GradientDither, GradientType, ProceduralBrushId, ProceduralBrushSettings, RgbaColor, SelectionMode, SelectionRect } from '@shared/types'
 import { BrushThumbnail } from '@/components/BrushThumbnail'
 import { NumberInput } from '@/components/NumberInput'
 import { ColorValueControl } from '@/components/ColorValueControl'
@@ -30,9 +30,11 @@ import { BRUSH_SPEED_INPUT_LIMIT, DEFAULT_PRESSURE_INPUT_RANGE, DEFAULT_SPEED_IN
 import { getBrushDynamicsTelemetry, subscribeBrushDynamicsTelemetry, type BrushDynamicsTelemetrySnapshot } from '@/core/brush-dynamics-telemetry'
 import { MAX_GAP_CLOSING_THRESHOLD, MIN_GAP_CLOSING_THRESHOLD } from '@/core/contiguous-region'
 import { BRUSH_DITHER_TEMPLATES, DEFAULT_BRUSH_DITHER_SETTINGS, brushDitherContains, brushDitherSettingsForTemplate, ditherStageCount } from '@/core/gradient-color'
+import { EDITOR_SHORTCUT_COMMAND_EVENT, type EditorShortcutCommandDetail } from '@/core/command-context'
 import { useWorkspace } from '@/store/workspace'
 import { PixelDownIcon as ChevronDown, PixelUtilityIcon } from '@/components/PixelUtilityIcon'
-import { PixelAssetIcon, PixelShapeIcon, selectionModes, temporarySelectionModeForModifiers } from './editor-tools'
+import { useFloatingWindowStack } from '@/components/floating-panel'
+import { GRADIENT_TYPE_ICONS, PixelAssetIcon, PixelShapeIcon, selectionModes, temporarySelectionModeForModifiers } from './editor-tools'
 import { SelectionPivotControls } from './SelectionPivotControls'
 import { SymmetryControls } from './SymmetryControls'
 
@@ -414,6 +416,7 @@ export const EditorToolOptions = memo(function EditorToolOptions({ onOpenColorRe
   const pressureControlRef = useRef<HTMLDivElement>(null)
   const brushDitherTriggerRef = useRef<HTMLButtonElement>(null)
   const brushDitherPopoverRef = useRef<HTMLDivElement>(null)
+  const brushDitherWindowStack = useFloatingWindowStack(brushDitherPopoverRef, brushDitherFlyoutOpen)
   const brushDitherDragRef = useRef<{ pointerX: number; pointerY: number; left: number; top: number } | null>(null)
   const brushDitherResidentRef = useRef(false)
   const brushDitherPositionedRef = useRef(false)
@@ -450,6 +453,25 @@ export const EditorToolOptions = memo(function EditorToolOptions({ onOpenColorRe
     const syncPreferences = (): void => setLineDirectionStep(loadEditorPreferences().lineDirectionStep)
     window.addEventListener('moonsprite:preferences-changed', syncPreferences)
     return () => window.removeEventListener('moonsprite:preferences-changed', syncPreferences)
+  }, [])
+
+  useEffect(() => {
+    const handleShortcutCommand = (event: Event): void => {
+      const detail = (event as CustomEvent<EditorShortcutCommandDetail>).detail
+      const active = detail ? useWorkspace.getState().sessions.find((item) => item.document.id === detail.documentId) : null
+      if (!active) return
+      if (detail.id === 'openAutoSlice') {
+        setAutoSlicePreviewEnabled(true)
+        setAutoSliceSettings({ width: Math.min(16, active.document.width), height: Math.min(16, active.document.height), gapX: 0, gapY: 0, startX: 0, startY: 0 })
+        return
+      }
+      if (detail.id !== 'openSliceProperties') return
+      const selectedSliceIds = active.selectedSliceIds?.length ? active.selectedSliceIds : active.selectedSliceId ? [active.selectedSliceId] : []
+      const selectedSlice = selectedSliceIds.length === 1 ? active.document.slices?.find((slice) => slice.id === selectedSliceIds[0]) : null
+      if (selectedSlice) setSliceProperties({ id: selectedSlice.id, x: selectedSlice.x, y: selectedSlice.y, width: selectedSlice.width, height: selectedSlice.height })
+    }
+    window.addEventListener(EDITOR_SHORTCUT_COMMAND_EVENT, handleShortcutCommand)
+    return () => window.removeEventListener(EDITOR_SHORTCUT_COMMAND_EVENT, handleShortcutCommand)
   }, [])
 
   useEffect(() => {
@@ -762,7 +784,7 @@ export const EditorToolOptions = memo(function EditorToolOptions({ onOpenColorRe
             }
           }}><PixelUtilityIcon kind="dither" /></button>
         </div>
-        {brushDitherFlyoutOpen && createPortal(<div ref={brushDitherPopoverRef} className={`brush-dither-popover ${brushDitherResident ? 'resident' : 'transient'}`} role="dialog" aria-label={t('toolOptions.brushDither')} style={brushDitherPopoverPosition}>
+        {brushDitherFlyoutOpen && createPortal(<div ref={brushDitherPopoverRef} className={`brush-dither-popover ${brushDitherResident ? 'resident' : 'transient'}`} role="dialog" aria-label={t('toolOptions.brushDither')} style={{ ...brushDitherPopoverPosition, zIndex: brushDitherWindowStack.zIndex }} onPointerDownCapture={brushDitherWindowStack.bringToFront} onFocusCapture={brushDitherWindowStack.bringToFront}>
           <header className="brush-dither-titlebar" onPointerDown={(event) => {
             if (event.button !== 0 || (event.target as HTMLElement).closest('button') || !brushDitherPopoverRef.current) return
             const bounds = brushDitherPopoverRef.current.getBoundingClientRect()
@@ -830,12 +852,18 @@ export const EditorToolOptions = memo(function EditorToolOptions({ onOpenColorRe
         onPivotChange={workspace.setSelectionPivot}
         onVisibleChange={(showSelectionPivot) => workspace.setView({ showSelectionPivot })}
       />
+      {session.selectionKind === 'rectangle' && <div className="corner-radius-control"><CheckboxField className="tool-checkbox" checked={session.selectionRounded} label={t('toolOptions.roundedCorners')} onChange={workspace.setSelectionRounded} />{session.selectionRounded && <NumberInput aria-label={t('toolOptions.cornerRadius')} density="compact" min={0} max={256} suffix="px" value={session.selectionCornerRadius} onValueChange={workspace.setSelectionCornerRadius} />}</div>}
       {session.selectionKind === 'magic' && <><ToleranceControl value={session.wandTolerance} open={toleranceFlyoutOpen === 'wand'} label={t('toolOptions.tolerance')} inputLabel={t('toolOptions.magicWandTolerance')} sliderLabel={t('toolOptions.magicWandToleranceSlider')} onOpen={() => setToleranceFlyoutOpen('wand')} onChange={workspace.setWandTolerance} /><CheckboxField className="tool-checkbox" aria-label={t('toolOptions.contiguousSelection')} checked={session.wandContiguous} label={t('toolOptions.contiguous')} onChange={workspace.setWandContiguous} />{session.wandContiguous && <GapClosingControls enabled={session.wandGapClosing} threshold={session.wandGapThreshold} open={toleranceFlyoutOpen === 'wand-gap'} onEnabledChange={workspace.setWandGapClosing} onThresholdChange={workspace.setWandGapThreshold} onOpen={() => setToleranceFlyoutOpen('wand-gap')} />}</>}
     </>}
+    {session.tool === 'shape' && (session.shapeKind === 'rectangle' || session.shapeKind === 'rectangle-outline') && <div className="corner-radius-control"><CheckboxField className="tool-checkbox" checked={session.shapeRounded} label={t('toolOptions.roundedCorners')} onChange={workspace.setShapeRounded} />{session.shapeRounded && <NumberInput aria-label={t('toolOptions.cornerRadius')} density="compact" min={0} max={256} suffix="px" value={session.shapeCornerRadius} onValueChange={workspace.setShapeCornerRadius} />}</div>}
     {session.tool === 'shape' && (session.shapeKind === 'rectangle' || session.shapeKind === 'rectangle-outline' || session.shapeKind === 'ellipse' || session.shapeKind === 'ellipse-outline') && <div className="shape-ratio-control"><CheckboxField className="tool-checkbox" checked={session.shapeRatio !== null} label={t('toolOptions.fixedRatio')} onChange={(checked) => workspace.setShapeRatio(checked ? { width: 1, height: 1 } : null)} />{session.shapeRatio !== null && <div className="shape-ratio-inputs"><NumberInput aria-label={t('toolOptions.shapeWidthRatio')} density="compact" min={0.1} max={100} step={0.1} value={session.shapeRatio.width} onValueChange={(width) => workspace.setShapeRatio({ ...session.shapeRatio!, width })} /><span>:</span><NumberInput aria-label={t('toolOptions.shapeHeightRatio')} density="compact" min={0.1} max={100} step={0.1} value={session.shapeRatio.height} onValueChange={(height) => workspace.setShapeRatio({ ...session.shapeRatio!, height })} /><button type="button" className="icon-button shape-ratio-swap" title={t('toolOptions.swapRatio')} aria-label={t('toolOptions.swapRatio')} onClick={() => workspace.setShapeRatio({ width: session.shapeRatio!.height, height: session.shapeRatio!.width })}><ArrowLeftRight size={13} /></button></div>}</div>}
     {session.tool === 'line' && session.lineKind === 'curve' && <FormField className="curve-anchor-count-control" layout="inline" label={t('toolOptions.curveAnchorCount')} tooltip={t('toolOptions.curveAnchorCountHint')}><NumberInput aria-label={t('toolOptions.curveAnchorCount')} density="compact" min={1} max={8} value={session.curveAnchorCount} onValueChange={workspace.setCurveAnchorCount} /></FormField>}
     {session.tool === 'fill' && fillKind === 'bucket' && <><ToleranceControl value={session.fillTolerance} open={toleranceFlyoutOpen === 'fill'} label={t('toolOptions.tolerance')} inputLabel={t('toolOptions.fillTolerance')} sliderLabel={t('toolOptions.fillToleranceSlider')} onOpen={() => setToleranceFlyoutOpen('fill')} onChange={workspace.setFillTolerance} /><CheckboxField className="tool-checkbox" aria-label={t('toolOptions.contiguousFill')} checked={session.fillMode === 'contiguous'} label={t('toolOptions.contiguous')} onChange={(checked) => workspace.setFillMode(checked ? 'contiguous' : 'global')} />{session.fillMode === 'contiguous' && <GapClosingControls enabled={session.fillGapClosing} threshold={session.fillGapThreshold} open={toleranceFlyoutOpen === 'fill-gap'} onEnabledChange={workspace.setFillGapClosing} onThresholdChange={workspace.setFillGapThreshold} onOpen={() => setToleranceFlyoutOpen('fill-gap')} />}</>}
     {session.tool === 'fill' && fillKind === 'gradient' && <>
+      <div className="gradient-type-control" role="group" aria-label={t('toolOptions.gradientType')}>{([
+        { value: 'linear', label: t('toolOptions.gradientLinear') },
+        { value: 'radial', label: t('toolOptions.gradientRadial') }
+      ] as const).map((option) => <Tooltip key={option.value} className="gradient-type-button-tooltip" content={option.label}><button type="button" className={`icon-button ${session.gradientType === option.value ? 'selected' : ''}`.trim()} aria-label={option.label} aria-pressed={session.gradientType === option.value} onClick={() => workspace.setGradientType(option.value)}><PixelAssetIcon src={GRADIENT_TYPE_ICONS[option.value]} /></button></Tooltip>)}</div>
       <ToleranceControl value={session.gradientTolerance} open={toleranceFlyoutOpen === 'gradient'} label={t('toolOptions.tolerance')} inputLabel={t('toolOptions.gradientTolerance')} sliderLabel={t('toolOptions.gradientToleranceSlider')} onOpen={() => setToleranceFlyoutOpen('gradient')} onChange={workspace.setGradientTolerance} />
       <CheckboxField className="tool-checkbox" aria-label={t('toolOptions.contiguousGradient')} checked={session.gradientContiguous} label={t('toolOptions.contiguous')} onChange={workspace.setGradientContiguous} />
       <GradientDitherSelect className="gradient-dither-select" value={gradientDither} density="compact" onChange={workspace.setGradientDither} />

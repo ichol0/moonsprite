@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { loadFloatingPosition, parseColorPickerConfig, resizeFloatingPosition, saveColorPickerConfig, saveFloatingPosition } from './panel-preferences'
+import { loadFreeTileInstancePanelLayout, loadLayerDensity, loadLayerSideDockAutoHide, saveFreeTileInstancePanelLayout, saveLayerDensity, saveLayerSideDockAutoHide } from './layer-panel-preferences'
 
 function createStorage(): Storage {
   const values = new Map<string, string>()
@@ -58,5 +59,20 @@ describe('panel preference boundaries', () => {
 
   it('uses saturation and value as the default color picker scheme', () => {
     expect(parseColorPickerConfig(null, null, [0, 6, 12], [0, 5, 9])).toMatchObject({ scheme: 'sv-square' })
+  })
+
+  it('persists layer panel density, compact actions and instance panel placement', () => {
+    const storage = createStorage()
+    expect(loadLayerDensity(storage)).toBe('compact')
+    expect(loadLayerSideDockAutoHide(storage)).toBe(true)
+    expect(loadFreeTileInstancePanelLayout(storage)).toBe('separate')
+
+    saveLayerDensity('expanded', storage)
+    saveLayerSideDockAutoHide(false, storage)
+    saveFreeTileInstancePanelLayout('integrated', storage)
+
+    expect(loadLayerDensity(storage)).toBe('expanded')
+    expect(loadLayerSideDockAutoHide(storage)).toBe(false)
+    expect(loadFreeTileInstancePanelLayout(storage)).toBe('integrated')
   })
 })

@@ -180,6 +180,7 @@ export type LineKind = 'line' | 'curve'
 export interface ShapeRatio { width: number; height: number }
 export type FillMode = 'contiguous' | 'global'
 export type FillKind = 'bucket' | 'gradient'
+export type GradientType = 'linear' | 'radial'
 export type GradientDither = 'none' | 'checker' | 'diagonal' | 'diagonal-reverse' | 'horizontal' | 'vertical' | 'bayer-2' | 'bayer-4' | 'bayer-8'
 export type BrushDitherTemplate = Exclude<GradientDither, 'none'>
 
@@ -311,7 +312,7 @@ export interface TilemapCelData {
   cells: Array<TilemapCell | null>
 }
 
-/** A reusable source owned by one free-tile layer. Source dimensions come from its Tileset. */
+/** A reusable source owned by one Free Tile set and shared by every member layer. Source dimensions come from its Tileset. */
 export interface FreeTileSourceLayer {
   id: string
   name: string
@@ -446,7 +447,9 @@ export interface RgbaLayer {
   tilemapTilesetId?: string
   /** Legacy v14 Free Tile ownership, retained only while decoding and migrating older projects. */
   freeTileTilesetId?: string
-  /** Reusable source layers owned by this Free Tile layer. */
+  /** Stable source-library identity shared by compatible Free Tile layers. */
+  freeTileSetId?: string
+  /** Reusable source layers shared by every Free Tile layer with the same set identity. */
   freeTileSources?: FreeTileSourceLayer[]
   visible: boolean
   locked: boolean
@@ -485,7 +488,9 @@ export interface IndexedLayer {
   tilemapTilesetId?: string
   /** Legacy v14 Free Tile ownership, retained only while decoding and migrating older projects. */
   freeTileTilesetId?: string
-  /** Reusable source layers owned by this Free Tile layer. */
+  /** Stable source-library identity shared by compatible Free Tile layers. */
+  freeTileSetId?: string
+  /** Reusable source layers shared by every Free Tile layer with the same set identity. */
   freeTileSources?: FreeTileSourceLayer[]
   visible: boolean
   locked: boolean
@@ -629,7 +634,11 @@ export interface ProjectStatistics {
 }
 
 export type TimelapseQuality = 'low' | 'medium' | 'high'
+/** How newly captured timelapse operations are retained. */
+export type TimelapseRecordingMode = 'full' | 'smart'
 export type TimelapseVideoFormat = 'mp4' | 'webm'
+export type TimelapseImageFormat = 'png' | 'jpeg'
+export type TimelapseExportFormat = TimelapseVideoFormat | TimelapseImageFormat
 
 export interface TimelapseSnapshot {
   id: string
@@ -645,6 +654,8 @@ export interface TimelapseSettings {
   quality: TimelapseQuality
   fps: number
   speed: number
+  /** Omitted by legacy projects; normalization treats it as `full`. */
+  mode?: TimelapseRecordingMode
   snapshots: TimelapseSnapshot[]
 }
 
@@ -667,7 +678,7 @@ export interface DocumentSlice {
 }
 
 export interface SpriteDocument {
-  schemaVersion: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 17
+  schemaVersion: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 17 | 18
   id: string
   name: string
   width: number
@@ -697,7 +708,7 @@ export interface SpriteDocument {
   layerPanelState?: ProjectLayerPanelState
   /** Persisted editing statistics used by the project information view. */
   statistics?: ProjectStatistics
-  /** Optional bounded history of drawing snapshots for timelapse export. */
+  /** Optional complete history of drawing snapshots for timelapse export. */
   timelapse?: TimelapseSettings
   /** Named export regions stored in document pixel coordinates. */
   slices?: DocumentSlice[]
@@ -733,6 +744,8 @@ export interface OutlineSettings {
   position: OutlinePosition
   kernel: OutlineKernel
   directions: OutlineDirections
+  smartHue: boolean
+  smartHueDarkness: number
   previewEnabled: boolean
 }
 export type CanvasAnchor = 'nw' | 'n' | 'ne' | 'w' | 'center' | 'e' | 'sw' | 's' | 'se'
@@ -757,6 +770,8 @@ export interface ViewState {
   showGrid: boolean
   /** View-only configurable grid origin and cell size. */
   grid?: GridSettings
+  /** View-only 2:1 isometric guides and optional straight-line alignment. */
+  isoViewEnabled?: boolean
   relativeLuminance: boolean
   /** View-only repeated canvas preview and wrapped painting mode. */
   tileRepeatMode?: TileRepeatMode
@@ -839,7 +854,7 @@ export interface PaletteListing {
   palettes: StoredPalette[]
 }
 
-export type WorkspacePanelId = 'color' | 'palette' | 'layers' | 'preview' | 'tileset' | 'brushes'
+export type WorkspacePanelId = 'color' | 'palette' | 'layers' | 'freeTileInstances' | 'history' | 'preview' | 'tileset' | 'brushes'
 export type WorkspacePanelDock = 'right' | 'left' | 'bottom' | 'floating'
 export type ToolRailSide = 'left' | 'right' | 'top' | 'bottom'
 
@@ -930,6 +945,8 @@ export interface LuaScriptExecutionContext {
   transparentColor: number
   foreground: number
   background: number
+  /** Renderer-owned structural snapshot exposed through the sandboxed `mse` namespace. */
+  mseSnapshot: Record<string, unknown>
 }
 
 export type LuaScriptDialogValue = string | number | boolean | RgbaColor | null
@@ -978,6 +995,12 @@ export interface LuaScriptBatch {
     before: LuaScriptSurfaceSnapshot
     after: LuaScriptSurfaceSnapshot
   } | null
+  operations?: LuaScriptOperation[]
+}
+
+export interface LuaScriptOperation {
+  path: string
+  arguments: unknown
 }
 
 export interface LuaScriptSurfaceSnapshot {
@@ -1020,6 +1043,22 @@ export interface LuaScriptRunResult {
   elapsedMs: number
 }
 
+export interface ScaledPngWriteOptions {
+  sourceWidth: number
+  sourceHeight: number
+  outputWidth: number
+  outputHeight: number
+  forceRgba: boolean
+  /** The renderer can pass a compact indexed source for simple indexed documents. */
+  sourceFormat?: 'rgba' | 'indexed'
+  /** RGBA palette entries packed as [r, g, b, a] when sourceFormat is indexed. */
+  palette?: Uint8Array
+}
+
+export interface ScaledPngWriteResult {
+  indexed: boolean
+}
+
 export interface MoonSpriteApi {
   openFiles(): Promise<OpenDialogResult>
   openBrushImages(): Promise<OpenDialogResult>
@@ -1036,6 +1075,7 @@ export interface MoonSpriteApi {
   readProjectPreview(filePath: string): Promise<ProjectPreview>
   cacheProjectPreview(filePath: string, preview: ProjectPreview): Promise<void>
   writeBinaryAtomic(filePath: string, data: Uint8Array): Promise<void>
+  writeScaledPngAtomic?(filePath: string, source: Uint8Array, options: ScaledPngWriteOptions, onProgress?: (value: number) => void, onCancelReady?: (cancel: () => void) => void): Promise<ScaledPngWriteResult>
   writeProjectIncremental(filePath: string, sourcePath: string, data: Uint8Array): Promise<void>
   writeClipboardImage(image: ClipboardImage): Promise<void>
   readClipboardText(): Promise<string | null>
@@ -1064,6 +1104,7 @@ export interface MoonSpriteApi {
   importSystemFont(id: string): Promise<StoredFont>
   deleteFont(id: string): Promise<void>
   listBackgroundPresets(): Promise<BackgroundPresetListing>
+  saveBackgroundPreset(name: string, data: Uint8Array): Promise<StoredBackgroundPreset>
   openBackgroundPresetFolder(): Promise<void>
   listRecoveries(retentionDays: number): Promise<RecoveryRecord[]>
   readRecovery(id: string): Promise<Uint8Array>

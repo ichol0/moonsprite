@@ -62,9 +62,9 @@ describe('canvas visual rules', () => {
   })
 
   it('uses stable checkerboard colors at the same pixel coordinates', () => {
-    expect(transparencyColorAt(0, 0)).toEqual({ r: 215, g: 215, b: 217, a: 255 })
-    expect(transparencyColorAt(16, 0)).toEqual({ r: 155, g: 155, b: 159, a: 255 })
-    expect(transparencyColorAt(32, 0)).toEqual({ r: 215, g: 215, b: 217, a: 255 })
+    expect(transparencyColorAt(0, 0)).toEqual({ r: 192, g: 192, b: 192, a: 255 })
+    expect(transparencyColorAt(16, 0)).toEqual({ r: 128, g: 128, b: 128, a: 255 })
+    expect(transparencyColorAt(32, 0)).toEqual({ r: 192, g: 192, b: 192, a: 255 })
     const custom = { size: 4 as const, lightColor: { r: 1, g: 2, b: 3, a: 255 }, darkColor: { r: 4, g: 5, b: 6, a: 255 } }
     expect(transparencyColorAt(3, 0, custom)).toEqual(custom.lightColor)
     expect(transparencyColorAt(4, 0, custom)).toEqual(custom.darkColor)

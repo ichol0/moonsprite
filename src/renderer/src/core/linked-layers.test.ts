@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { activateAnimationFrame, addBlankAnimationFrame, animationCelAt, cloneAnimationCelsForLayer, detachLinkedLayerContent, ensureAnimationDocument, syncActiveAnimationLayer } from './animation'
 import { createDocument, duplicateLayer, ensureLayerCoversCanvas, getActiveLayer, layerIndexAt, readLayerColorAt, writeLayerColor } from './document'
 import { beginPixelEdit, commitPixelEdit, recordPixel } from './history'
+import { normalizeLinkedLayerMetadata } from './linked-layers'
 import { rasterStorageIdentity } from './runtime-raster'
 
 const transparent = { r: 0, g: 0, b: 0, a: 0 }
@@ -22,6 +23,18 @@ const createLinkedPair = () => {
 }
 
 describe('linked raster layer content', () => {
+  it('normalizes every member of a linked group to the same display color', () => {
+    const { document, source, linked } = createLinkedPair()
+    source.displayColor = { ...red }
+    linked.displayColor = { ...blue }
+
+    normalizeLinkedLayerMetadata(document)
+
+    expect(source.displayColor).toEqual(red)
+    expect(linked.displayColor).toEqual(red)
+    expect(linked.displayColor).not.toBe(source.displayColor)
+  })
+
   it('shares edits and bitmap expansion while preserving each member position', () => {
     const { document, source, linked } = createLinkedPair()
     linked.offsetX = 3

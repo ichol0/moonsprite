@@ -1,3 +1,4 @@
+import { createPortal } from 'react-dom'
 import { useState } from 'react'
 import type { AnimationLoopDirection } from '@shared/types'
 import { CheckboxField } from '@/components/CheckboxField'
@@ -58,7 +59,7 @@ export function AnimationLoopSectionDialog({ mode, frameCount, initialValue, onC
     })
   }
 
-  return <div className="modal-backdrop" role="presentation" onPointerDown={(event) => { if (event.target === event.currentTarget) onClose() }}>
+  return createPortal(<div className="modal-backdrop dialog-backdrop" role="presentation" onPointerDown={(event) => { if (event.target === event.currentTarget) onClose() }}>
     <ModalShell as="form" data-preserve-animation-selection storageKey="animation-loop-section-properties" defaultWidth={430} defaultHeight={420} minWidth={360} minHeight={390} maxWidth={580} maxHeight={540} className="layer-modal animation-loop-section-modal" onSubmit={(event) => { event.preventDefault(); submit() }}>
       <DialogHeader eyebrow="LOOP SECTION" title={t(mode === 'create' ? 'timeline.createLoopSection' : 'timeline.loopSectionProperties')} closeLabel={t('common.close')} onClose={onClose} />
       <div className="modal-body animation-loop-section-fields">
@@ -98,5 +99,5 @@ export function AnimationLoopSectionDialog({ mode, frameCount, initialValue, onC
       </div>
       <footer><button type="button" className="quiet-button" onClick={onClose}>{t('common.cancel')}</button><button type="submit" className="primary-button">{t('common.save')}</button></footer>
     </ModalShell>
-  </div>
+  </div>, document.body)
 }

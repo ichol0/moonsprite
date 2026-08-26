@@ -52,6 +52,7 @@ describe('app render keys', () => {
     const gradientOptions = toolOptionsRenderKey(session)
     session.gradientTolerance = 64
     session.gradientContiguous = false
+    session.gradientType = 'radial'
     expect(toolOptionsRenderKey(session)).not.toBe(gradientOptions)
 
     const menu = appMenuRenderKey(session)
@@ -91,6 +92,19 @@ describe('app render keys', () => {
       change()
       expect(toolOptionsRenderKey(session)).not.toBe(before)
     }
+  })
+
+  it('invalidates tool options when rounded-corner settings change', () => {
+    const session = createSession()
+    const shapeOptions = toolOptionsRenderKey(session)
+    session.shapeRounded = true
+    session.shapeCornerRadius = 9
+    expect(toolOptionsRenderKey(session)).not.toBe(shapeOptions)
+
+    const selectionOptions = toolOptionsRenderKey(session)
+    session.selectionRounded = true
+    session.selectionCornerRadius = 6
+    expect(toolOptionsRenderKey(session)).not.toBe(selectionOptions)
   })
 
   it('invalidates tool options when rotational symmetry changes', () => {

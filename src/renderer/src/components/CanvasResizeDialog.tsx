@@ -9,6 +9,7 @@ import { PixelUtilityIcon, type PixelUtilityIconKind } from './PixelUtilityIcon'
 import { CheckboxField } from './CheckboxField'
 import { FormField } from './FormField'
 import type { TranslationKey } from '@/core/localization'
+import { registerCanvasResizePreviewHistory } from '@/core/canvas-resize-preview'
 
 const anchors: Array<{ id: CanvasAnchor; labelKey: TranslationKey; icon: PixelUtilityIconKind }> = [
   { id: 'nw', labelKey: 'canvasResize.anchor.nw', icon: 'canvasTopLeft' }, { id: 'n', labelKey: 'canvasResize.anchor.n', icon: 'canvasTop' }, { id: 'ne', labelKey: 'canvasResize.anchor.ne', icon: 'canvasTopRight' },
@@ -18,7 +19,7 @@ const anchors: Array<{ id: CanvasAnchor; labelKey: TranslationKey; icon: PixelUt
 
 type Edge = 'left' | 'right' | 'top' | 'bottom'
 
-export function CanvasResizeDialog({ open, currentWidth, currentHeight, onClose, onResize, onPreview, preview }: { open: boolean; currentWidth: number; currentHeight: number; onClose: () => void; onResize: (width: number, height: number, anchor: CanvasAnchor, offsetX?: number, offsetY?: number, trimOutside?: boolean) => Promise<void>; onPreview: (preview: CanvasResizePreview | null) => void; preview: CanvasResizePreview | null }) {
+export function CanvasResizeDialog({ open, documentId, currentWidth, currentHeight, onClose, onResize, onPreview, preview }: { open: boolean; documentId: string; currentWidth: number; currentHeight: number; onClose: () => void; onResize: (width: number, height: number, anchor: CanvasAnchor, offsetX?: number, offsetY?: number, trimOutside?: boolean) => Promise<void>; onPreview: (preview: CanvasResizePreview | null) => void; preview: CanvasResizePreview | null }) {
   const { t } = useI18n()
   const [anchor, setAnchor] = useState<CanvasAnchor>('center')
   const [syncEdges, setSyncEdges] = useState(false)
@@ -32,6 +33,7 @@ export function CanvasResizeDialog({ open, currentWidth, currentHeight, onClose,
   const redoStackRef = useRef<CanvasResizePreview[]>([])
   const historyGroupRef = useRef<string | null>(null)
   const externalHistoryTimerRef = useRef<number | null>(null)
+  const restorePreviewRef = useRef<(direction: 'undo' | 'redo') => void>(() => {})
   onPreviewRef.current = onPreview
   valueRef.current = value
 
@@ -76,7 +78,16 @@ export function CanvasResizeDialog({ open, currentWidth, currentHeight, onClose,
     historyGroupRef.current = null
     queuePreview({ ...target })
   }
+  restorePreviewRef.current = restorePreview
   const finishHistoryGroup = (): void => { historyGroupRef.current = null }
+
+  useEffect(() => {
+    if (!open) return
+    return registerCanvasResizePreviewHistory(documentId, {
+      undo: () => restorePreviewRef.current('undo'),
+      redo: () => restorePreviewRef.current('redo')
+    })
+  }, [documentId, open])
 
   useEffect(() => {
     if (open) {
@@ -150,7 +161,7 @@ export function CanvasResizeDialog({ open, currentWidth, currentHeight, onClose,
   const right = value.width - currentWidth - left; const bottom = value.height - currentHeight - top
 
   return <div className="modal-backdrop" role="presentation">
-    <ModalShell as="form" storageKey="canvas-resize-v5" placement="right" defaultWidth={340} defaultHeight={500} minWidth={320} minHeight={430} maxWidth={400} maxHeight={720} className="canvas-resize-modal" onSubmit={submit} onKeyDown={(event) => { if (!(event.ctrlKey || event.metaKey) || event.altKey) return; if (event.key.toLowerCase() === 'z') { event.preventDefault(); restorePreview(event.shiftKey ? 'redo' : 'undo') } else if (event.key.toLowerCase() === 'y') { event.preventDefault(); restorePreview('redo') } }} aria-label={t('canvasResize.aria')}>
+    <ModalShell as="form" storageKey="canvas-resize-v5" placement="right" defaultWidth={340} defaultHeight={500} minWidth={320} minHeight={430} maxWidth={400} maxHeight={720} className="canvas-resize-modal" onSubmit={submit} onKeyDown={(event) => { if (!(event.ctrlKey || event.metaKey) || event.altKey) return; if (event.key.toLowerCase() === 'z') { event.preventDefault(); event.stopPropagation(); restorePreview(event.shiftKey ? 'redo' : 'undo') } else if (event.key.toLowerCase() === 'y') { event.preventDefault(); event.stopPropagation(); restorePreview('redo') } }} aria-label={t('canvasResize.aria')}>
       <DialogHeader eyebrow={t('canvasResize.eyebrow')} title={t('canvasResize.title')} closeLabel={t('common.close')} onClose={onClose} />
       <div className="modal-body canvas-resize-body">
         <section><h3>{t('canvasResize.size')}</h3><div className="canvas-size-grid"><div className="resize-fields"><FormField className="canvas-resize-number-row" layout="inline" label={t('common.width')}><NumberInput live autoFocus onFocus={(event) => { finishHistoryGroup(); event.currentTarget.select() }} onBlur={finishHistoryGroup} aria-label={t('newDocument.widthAria')} min={1} suffix="px" value={value.width} onValueChange={(next) => setDimension('width', next)} /></FormField><FormField className="canvas-resize-number-row" layout="inline" label={t('common.height')}><NumberInput live onFocus={finishHistoryGroup} onBlur={finishHistoryGroup} aria-label={t('newDocument.heightAria')} min={1} suffix="px" value={value.height} onValueChange={(next) => setDimension('height', next)} /></FormField></div><div className="anchor-grid" aria-label={t('canvasResize.anchorAria')}>{anchors.map((item) => { const label = t(item.labelKey); return <button type="button" key={item.id} aria-label={label} title={label} className={`icon-button ${anchor === item.id ? 'selected' : ''}`} onClick={() => { finishHistoryGroup(); setAnchor(item.id); applyAnchor(value.width, value.height, item.id); finishHistoryGroup() }}><PixelUtilityIcon kind={item.icon} /></button> })}</div></div></section>

@@ -41,6 +41,58 @@ describe('workspace Free Tile layer ownership', () => {
     expect(layer.freeTileSources?.map((source) => source.name)).toEqual(['自由瓦片1', '自由瓦片2', '自由瓦片3'])
   })
 
+  it('reuses one Free Tile source set across multiple layers', async () => {
+    const document = createDocument('shared free tile set', 6, 2, 'rgba')
+    useWorkspace.getState().addSession(document)
+
+    await useWorkspace.getState().createFreeTileLayer({ name: 'Shared A' })
+    const first = document.layers.find((candidate) => candidate.name === 'Shared A')!
+    const setId = first.freeTileSetId!
+    const sourceId = first.freeTileSources![0].id
+    await useWorkspace.getState().createFreeTileLayer({ name: 'Shared B', freeTileSetId: setId })
+    const second = document.layers.find((candidate) => candidate.name === 'Shared B')!
+
+    expect(second.freeTileSetId).toBe(setId)
+    expect(second.freeTileSources).toBe(first.freeTileSources)
+    expect(second.freeTileSources?.map((source) => source.id)).toEqual([sourceId])
+    expect(document.tilesets).toHaveLength(1)
+
+    useWorkspace.getState().selectLayer(first.id)
+    const firstPlacement = useWorkspace.getState().beginFreeTilePlacement()!
+    firstPlacement.after.instances = [{ id: 'shared-first', sourceId, x: 0, y: 0 }]
+    expect(useWorkspace.getState().previewFreeTilePlacement(firstPlacement)).toBe(true)
+    expect(useWorkspace.getState().commitFreeTilePlacement(firstPlacement, 'Place shared source')).not.toBeNull()
+
+    useWorkspace.getState().selectLayer(second.id)
+    const secondPlacement = useWorkspace.getState().beginFreeTilePlacement()!
+    secondPlacement.after.instances = [{ id: 'shared-second', sourceId, x: 2, y: 0 }]
+    expect(useWorkspace.getState().previewFreeTilePlacement(secondPlacement)).toBe(true)
+    expect(useWorkspace.getState().commitFreeTilePlacement(secondPlacement, 'Place shared source')).not.toBeNull()
+
+    const before = captureFreeTileSourceSnapshot(document, sourceId)!
+    const after = { ...before, pixels: new Uint8ClampedArray([12, 34, 56, 255]) }
+    expect(useWorkspace.getState().commitFreeTileSourceEdit(sourceId, before, after, 'Edit shared source')).not.toBeNull()
+    expect(readLayerColorAt(document, first, 0, 0)).toEqual({ r: 12, g: 34, b: 56, a: 255 })
+    expect(readLayerColorAt(document, second, 2, 0)).toEqual({ r: 12, g: 34, b: 56, a: 255 })
+
+    useWorkspace.getState().undo()
+    expect(readLayerColorAt(document, first, 0, 0).a).toBe(0)
+    expect(readLayerColorAt(document, second, 2, 0).a).toBe(0)
+    useWorkspace.getState().redo()
+    expect(readLayerColorAt(document, first, 0, 0)).toEqual({ r: 12, g: 34, b: 56, a: 255 })
+    expect(readLayerColorAt(document, second, 2, 0)).toEqual({ r: 12, g: 34, b: 56, a: 255 })
+
+    const addedSourceId = useWorkspace.getState().addFreeTileSource(second.id)!
+    expect(first.freeTileSources).toBe(second.freeTileSources)
+    expect(first.freeTileSources).toHaveLength(2)
+    expect(useWorkspace.getState().deleteFreeTileSource(addedSourceId)).toBe(true)
+    expect(first.freeTileSources).toBe(second.freeTileSources)
+    expect(first.freeTileSources).toHaveLength(1)
+    useWorkspace.getState().undo()
+    expect(first.freeTileSources).toBe(second.freeTileSources)
+    expect(first.freeTileSources).toHaveLength(2)
+  })
+
   it('stores source properties separately from instance appearance', async () => {
     const document = createDocument('free tile source properties', 4, 4, 'rgba')
     useWorkspace.getState().addSession(document)
@@ -227,6 +279,45 @@ describe('workspace Free Tile layer ownership', () => {
     })
   })
 
+  it('clears instance selection in placement mode and restores one in source edit mode', async () => {
+    const document = createDocument('free tile mode selection', 8, 4, 'rgba')
+    useWorkspace.getState().addSession(document)
+    await useWorkspace.getState().createFreeTileLayer({ name: 'Mode selection' })
+    const target = activeFreeTileCelTarget(document)!
+    const sourceId = target.layer.freeTileSources![0].id
+    const placement = useWorkspace.getState().beginFreeTilePlacement()!
+    placement.after.instances = [
+      { id: 'mode-instance-a', sourceId, x: 1, y: 1 },
+      { id: 'mode-instance-b', sourceId, x: 4, y: 1 }
+    ]
+    expect(useWorkspace.getState().previewFreeTilePlacement(placement)).toBe(true)
+    expect(useWorkspace.getState().commitFreeTilePlacement(placement, 'Place mode instances')).not.toBeNull()
+
+    useWorkspace.getState().setSelectedFreeTileInstance('mode-instance-b', 'edit')
+    expect(useWorkspace.getState().sessions[0].selectedFreeTileInstanceId).toBe('mode-instance-b')
+
+    useWorkspace.getState().setFreeTileMode('paint')
+    expect(useWorkspace.getState().sessions[0]).toMatchObject({
+      freeTileMode: 'paint',
+      selectedFreeTileInstanceId: null,
+      selectedFreeTileInstanceIds: []
+    })
+    useWorkspace.getState().setSelectedFreeTileInstance('mode-instance-b')
+    useWorkspace.getState().beginLayerTransform()
+    expect(useWorkspace.getState().sessions[0]).toMatchObject({
+      selection: null,
+      selectedFreeTileInstanceId: null,
+      selectedFreeTileInstanceIds: []
+    })
+
+    useWorkspace.getState().setFreeTileMode('edit')
+    const session = useWorkspace.getState().sessions[0]
+    expect(session.freeTileMode).toBe('edit')
+    expect(session.selectedFreeTileInstanceId).not.toBeNull()
+    expect(session.selectedFreeTileInstanceIds).toEqual([session.selectedFreeTileInstanceId])
+    expect(activeFreeTileCelTarget(document)!.freeTiles.instances.some((instance) => instance.id === session.selectedFreeTileInstanceId)).toBe(true)
+  })
+
   it('commits a Free Tile source transform and its selection as one history step', async () => {
     const document = createDocument('free tile source selection history', 8, 4, 'rgba')
     useWorkspace.getState().addSession(document)
@@ -279,6 +370,63 @@ describe('workspace Free Tile layer ownership', () => {
     expect(source.offsetX).toBe(1)
     expect(useWorkspace.getState().sessions[0].selection).toMatchObject(afterSelection)
     expect(useWorkspace.getState().sessions[0].selectionPivot).toEqual({ x: 2.5, y: 1.5 })
+  })
+
+  it('moves only the selected instance when a selection fully covers it', async () => {
+    const document = createDocument('free tile whole instance move', 8, 4, 'rgba')
+    useWorkspace.getState().addSession(document)
+    await useWorkspace.getState().createFreeTileLayer({ name: 'Whole instance move' })
+    const target = activeFreeTileCelTarget(document)!
+    const source = target.layer.freeTileSources![0]
+    const tileset = document.tilesets!.find((candidate) => candidate.id === source.tilesetId)!
+    writeTilesetTilePixels(tileset, tileset.tileIds[0], new Uint8ClampedArray([220, 40, 60, 255]))
+    const placement = useWorkspace.getState().beginFreeTilePlacement()!
+    placement.after.instances = [
+      { id: 'whole-selected', sourceId: source.id, x: 1, y: 1 },
+      { id: 'whole-sibling', sourceId: source.id, x: 5, y: 1 }
+    ]
+    expect(useWorkspace.getState().previewFreeTilePlacement(placement)).toBe(true)
+    expect(useWorkspace.getState().commitFreeTilePlacement(placement, 'Place whole instances')).not.toBeNull()
+
+    useWorkspace.getState().setSelectedFreeTileInstance('whole-selected', 'edit')
+    const beforeSelection = { x: 0, y: 0, width: 3, height: 3 }
+    const afterSelection = { ...beforeSelection, x: 1 }
+    useWorkspace.getState().setSelection(beforeSelection)
+    useWorkspace.getState().setSelectionPivot({ x: 1.5, y: 1.5 })
+    const sourceSnapshot = captureFreeTileSourceSnapshot(document, source.id)!
+    const moveEdit = useWorkspace.getState().beginFreeTilePlacement()!
+    moveEdit.after.instances.find((instance) => instance.id === 'whole-selected')!.x = 2
+    expect(useWorkspace.getState().previewFreeTilePlacement(moveEdit)).toBe(true)
+    expect(useWorkspace.getState().commitFreeTilePlacement(
+      moveEdit,
+      'Move whole instance',
+      {
+        before: beforeSelection,
+        after: afterSelection,
+        beforePivot: { x: 1.5, y: 1.5 },
+        afterPivot: { x: 2.5, y: 1.5 }
+      }
+    )).not.toBeNull()
+
+    expect(activeFreeTileCelTarget(document)!.freeTiles.instances.map(({ id, x, y }) => ({ id, x, y }))).toEqual([
+      { id: 'whole-selected', x: 2, y: 1 },
+      { id: 'whole-sibling', x: 5, y: 1 }
+    ])
+    expect(readLayerColorAt(document, target.layer, 1, 1).a).toBe(0)
+    expect(readLayerColorAt(document, target.layer, 2, 1)).toEqual({ r: 220, g: 40, b: 60, a: 255 })
+    expect(readLayerColorAt(document, target.layer, 5, 1)).toEqual({ r: 220, g: 40, b: 60, a: 255 })
+    expect(captureFreeTileSourceSnapshot(document, source.id)?.pixels).toEqual(sourceSnapshot.pixels)
+    expect(useWorkspace.getState().sessions[0].selection).toMatchObject(afterSelection)
+
+    useWorkspace.getState().undo()
+    expect(activeFreeTileCelTarget(document)!.freeTiles.instances.map(({ id, x, y }) => ({ id, x, y }))).toEqual([
+      { id: 'whole-selected', x: 1, y: 1 },
+      { id: 'whole-sibling', x: 5, y: 1 }
+    ])
+    expect(useWorkspace.getState().sessions[0].selection).toMatchObject(beforeSelection)
+    useWorkspace.getState().redo()
+    expect(activeFreeTileCelTarget(document)!.freeTiles.instances[0]).toMatchObject({ id: 'whole-selected', x: 2, y: 1 })
+    expect(activeFreeTileCelTarget(document)!.freeTiles.instances[1]).toMatchObject({ id: 'whole-sibling', x: 5, y: 1 })
   })
 
   it('keeps repeated Free Tile selection drags on one floating source baseline', async () => {
@@ -530,7 +678,7 @@ describe('workspace Free Tile layer ownership', () => {
     expect(useWorkspace.getState().sessions[0].selectedFreeTileInstanceId).toBe('instance-b')
     expect(useWorkspace.getState().deleteFreeTileInstance('instance-b')).toBe(true)
     expect(activeFreeTileCelTarget(document)!.freeTiles.instances.map((instance) => instance.id)).toEqual(['instance-a'])
-    expect(useWorkspace.getState().sessions[0].selectedFreeTileInstanceId).toBeNull()
+    expect(useWorkspace.getState().sessions[0].selectedFreeTileInstanceId).toBe('instance-a')
 
     useWorkspace.getState().undo()
     expect(activeFreeTileCelTarget(document)!.freeTiles.instances.map((instance) => instance.id)).toEqual(['instance-a', 'instance-b'])
@@ -559,12 +707,119 @@ describe('workspace Free Tile layer ownership', () => {
     const selectedIds = useWorkspace.getState().sessions[0].selectedFreeTileInstanceIds
     expect(useWorkspace.getState().deleteFreeTileInstances(selectedIds)).toBe(true)
     expect(activeFreeTileCelTarget(document)!.freeTiles.instances.map((instance) => instance.id)).toEqual(['delete-c'])
-    expect(useWorkspace.getState().sessions[0].selectedFreeTileInstanceIds).toEqual([])
+    expect(useWorkspace.getState().sessions[0].selectedFreeTileInstanceIds).toEqual(['delete-c'])
 
     useWorkspace.getState().undo()
     expect(activeFreeTileCelTarget(document)!.freeTiles.instances.map((instance) => instance.id)).toEqual(['delete-a', 'delete-b', 'delete-c'])
     useWorkspace.getState().redo()
     expect(activeFreeTileCelTarget(document)!.freeTiles.instances.map((instance) => instance.id)).toEqual(['delete-c'])
+  })
+
+  it('writes selection deletion and cutting back to the shared Free Tile source', async () => {
+    const document = createDocument('delete free tile source selection', 8, 2, 'rgba')
+    useWorkspace.getState().addSession(document)
+    await useWorkspace.getState().createFreeTileLayer({ name: 'Selection Delete' })
+    const target = activeFreeTileCelTarget(document)!
+    const source = target.layer.freeTileSources![0]
+    const tileset = document.tilesets!.find((candidate) => candidate.id === source.tilesetId)!
+    tileset.tileWidth = 2
+    tileset.tileHeight = 1
+    tileset.columns = 1
+    tileset.rows = 1
+    tileset.pixels = new Uint8ClampedArray(2 * 4)
+    expect(writeTilesetTilePixels(tileset, tileset.tileIds[0], new Uint8ClampedArray([
+      220, 40, 60, 255,
+      20, 80, 230, 255
+    ]))).toBe(true)
+
+    const placement = useWorkspace.getState().beginFreeTilePlacement()!
+    placement.after.instances = [
+      { id: 'delete-source-a', sourceId: source.id, x: 1, y: 0 },
+      { id: 'delete-source-b', sourceId: source.id, x: 4, y: 0 }
+    ]
+    expect(useWorkspace.getState().previewFreeTilePlacement(placement)).toBe(true)
+    expect(useWorkspace.getState().commitFreeTilePlacement(placement, 'Place source instances')).not.toBeNull()
+    useWorkspace.getState().setSelectedFreeTileInstance('delete-source-a', 'edit')
+    useWorkspace.getState().setSelection({ x: 1, y: 0, width: 1, height: 1 })
+
+    useWorkspace.getState().deleteSelection()
+    expect(captureFreeTileSourceSnapshot(document, source.id)).toMatchObject({ width: 1, height: 1, offsetX: 1, offsetY: 0 })
+    expect(readLayerColorAt(document, target.layer, 1, 0).a).toBe(0)
+    expect(readLayerColorAt(document, target.layer, 2, 0)).toEqual({ r: 20, g: 80, b: 230, a: 255 })
+    expect(readLayerColorAt(document, target.layer, 4, 0).a).toBe(0)
+    expect(readLayerColorAt(document, target.layer, 5, 0)).toEqual({ r: 20, g: 80, b: 230, a: 255 })
+
+    useWorkspace.getState().undo()
+    expect(captureFreeTileSourceSnapshot(document, source.id)).toMatchObject({ width: 2, height: 1, offsetX: 0, offsetY: 0 })
+    expect(readLayerColorAt(document, target.layer, 1, 0)).toEqual({ r: 220, g: 40, b: 60, a: 255 })
+    expect(readLayerColorAt(document, target.layer, 4, 0)).toEqual({ r: 220, g: 40, b: 60, a: 255 })
+
+    useWorkspace.getState().cutSelection()
+    expect(captureFreeTileSourceSnapshot(document, source.id)).toMatchObject({ width: 1, height: 1, offsetX: 1, offsetY: 0 })
+    expect(readLayerColorAt(document, target.layer, 1, 0).a).toBe(0)
+    expect(readLayerColorAt(document, target.layer, 4, 0).a).toBe(0)
+    useWorkspace.getState().undo()
+    expect(readLayerColorAt(document, target.layer, 1, 0)).toEqual({ r: 220, g: 40, b: 60, a: 255 })
+    expect(readLayerColorAt(document, target.layer, 4, 0)).toEqual({ r: 220, g: 40, b: 60, a: 255 })
+  })
+
+  it('starts Ctrl+T from only the selected Free Tile instance bounds', async () => {
+    const document = createDocument('free tile instance transform target', 10, 4, 'rgba')
+    useWorkspace.getState().addSession(document)
+    await useWorkspace.getState().createFreeTileLayer({ name: 'Transform Target' })
+    const target = activeFreeTileCelTarget(document)!
+    const source = target.layer.freeTileSources![0]
+    const tileset = document.tilesets!.find((candidate) => candidate.id === source.tilesetId)!
+    tileset.tileWidth = 2
+    tileset.tileHeight = 1
+    tileset.pixels = new Uint8ClampedArray([
+      220, 40, 60, 255,
+      20, 80, 230, 255
+    ])
+    const placement = useWorkspace.getState().beginFreeTilePlacement()!
+    placement.after.instances = [
+      { id: 'transform-a', sourceId: source.id, x: 1, y: 1 },
+      { id: 'transform-b', sourceId: source.id, x: 6, y: 2 }
+    ]
+    expect(useWorkspace.getState().previewFreeTilePlacement(placement)).toBe(true)
+    expect(useWorkspace.getState().commitFreeTilePlacement(placement, 'Place transform instances')).not.toBeNull()
+    useWorkspace.getState().setFreeTileInstanceLayerView(target.layer.id)
+    useWorkspace.getState().setSelectedFreeTileInstance('transform-b', 'edit')
+
+    const selectedInstance = activeFreeTileCelTarget(document)!.freeTiles.instances.find((instance) => instance.id === 'transform-b')!
+    const expected = freeTileInstanceBounds(selectedInstance, activeFreeTileCelTarget(document)!.sources)
+    useWorkspace.getState().beginLayerTransform()
+
+    expect(useWorkspace.getState().sessions[0].selection).toMatchObject(expected)
+    expect(useWorkspace.getState().sessions[0].selectedFreeTileInstanceId).toBe('transform-b')
+  })
+
+  it('keeps the instance subview active after deleting its final instance', async () => {
+    const document = createDocument('delete final free tile instance', 4, 4, 'rgba')
+    const originalLayerId = document.activeLayerId
+    useWorkspace.getState().addSession(document)
+    await useWorkspace.getState().createFreeTileLayer({ name: 'Final Instance' })
+    const target = activeFreeTileCelTarget(document)!
+    const placement = useWorkspace.getState().beginFreeTilePlacement()!
+    placement.after.instances = [{ id: 'final-instance', sourceId: target.layer.freeTileSources![0].id, x: 1, y: 1 }]
+    expect(useWorkspace.getState().previewFreeTilePlacement(placement)).toBe(true)
+    expect(useWorkspace.getState().commitFreeTilePlacement(placement, 'Place final instance')).not.toBeNull()
+    useWorkspace.getState().setFreeTileInstanceLayerView(target.layer.id)
+    useWorkspace.getState().setSelectedFreeTileInstance('final-instance')
+    expect(useWorkspace.getState().sessions[0].freeTileMode).toBe('edit')
+
+    expect(useWorkspace.getState().deleteFreeTileInstance('final-instance')).toBe(true)
+    expect(activeFreeTileCelTarget(document)!.freeTiles.instances).toHaveLength(0)
+    expect(useWorkspace.getState().sessions[0]).toMatchObject({
+      freeTileInstanceLayerId: target.layer.id,
+      selectedFreeTileInstanceId: null,
+      selectedFreeTileInstanceIds: [],
+      freeTileMode: 'paint'
+    })
+
+    useWorkspace.getState().deleteActiveLayer()
+    useWorkspace.getState().deleteSelectedLayers()
+    expect(document.layers.map((layer) => layer.id)).toEqual(expect.arrayContaining([originalLayerId, target.layer.id]))
   })
 
   it('edits instance coordinates and reorders instances as one undoable operation', async () => {
@@ -725,7 +980,7 @@ describe('workspace Free Tile layer ownership', () => {
 
     useWorkspace.getState().setFreeTileMode('paint')
     expect(isToolAvailableForSession(session, 'fill')).toBe(false)
-    expect(isToolAvailableForSession(session, 'selection')).toBe(true)
+    expect(isToolAvailableForSession(session, 'selection')).toBe(false)
   })
 
   it('removes the owned source and hides the panel when rasterizing the final Free Tile layer', async () => {

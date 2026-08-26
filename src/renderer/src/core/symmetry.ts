@@ -28,6 +28,9 @@ export const hasSymmetry = (axes: SymmetryAxes | null | undefined): boolean =>
 
 export const defaultSymmetryCenter = (width: number, height: number): SymmetryCenter => ({ x: width / 2, y: height / 2 })
 
+/** A locked symmetry axis can only be moved while the temporary Ctrl override is held. */
+export const symmetryAxisDragAllowed = (locked: boolean, ctrlHeld: boolean): boolean => !locked || ctrlHeld
+
 const resolvedCenter = (width: number, height: number, center?: SymmetryCenter | null): SymmetryCenter => center ?? defaultSymmetryCenter(width, height)
 const snapHalf = (value: number): number => Math.round(value * 2) / 2
 const clamp = (value: number, minimum: number, maximum: number): number => Math.max(minimum, Math.min(maximum, value))
@@ -177,9 +180,96 @@ export function symmetryPoints(point: SymmetryPoint, width: number, height: numb
   return symmetryOrbit(point, width, height, axes, center, clipToCanvas).map((candidate) => candidate.point)
 }
 
+const isRotationalOnly = (axes: SymmetryAxes | null | undefined): boolean => Boolean(
+  axes?.rotational
+  && !axes.horizontal
+  && !axes.vertical
+  && !axes.diagonalUp
+  && !axes.diagonalDown
+)
+
+/** Returns the quadrant used as the representative region for a four-way rotation. */
+const rotationalSector = (point: SymmetryPoint, width: number, height: number, center?: SymmetryCenter | null): number => {
+  const pivot = resolvedCenter(width, height, center)
+  const dx = point.x + 0.5 - pivot.x
+  const dy = point.y + 0.5 - pivot.y
+  const epsilon = 1e-9
+  if (Math.abs(dx) < epsilon && Math.abs(dy) < epsilon) return -1
+  if (Math.abs(dx) < epsilon) return dy < 0 ? 0 : 2
+  if (Math.abs(dy) < epsilon) return dx >= 0 ? 1 : 3
+  if (dx >= 0) return dy < 0 ? 1 : 2
+  return dy < 0 ? 0 : 3
+}
+
+const selectionMaskFromPoints = (points: SymmetryPoint[]): SelectionMask | null => {
+  if (points.length === 0) return null
+  let left = points[0].x
+  let top = points[0].y
+  let right = points[0].x
+  let bottom = points[0].y
+  for (const point of points) {
+    left = Math.min(left, point.x)
+    top = Math.min(top, point.y)
+    right = Math.max(right, point.x)
+    bottom = Math.max(bottom, point.y)
+  }
+  const width = right - left + 1
+  const height = bottom - top + 1
+  const mask = new Uint8Array(width * height)
+  for (const point of points) mask[(point.y - top) * width + point.x - left] = 1
+  return { x: left, y: top, width, height, mask }
+}
+
+/** Returns the side of a rotationally symmetric selection that contains the pressed pixel. */
+export function symmetrySelectionDragRegion(selection: SelectionMask, startPoint: SymmetryPoint, width: number, height: number, axes: SymmetryAxes | null | undefined, center?: SymmetryCenter | null): SelectionMask | null {
+  if (!isRotationalOnly(axes) || !selectionContains(selection, startPoint.x, startPoint.y)) return null
+  const startSector = rotationalSector(startPoint, width, height, center)
+  const points: SymmetryPoint[] = []
+  for (let y = selection.y; y < selection.y + selection.height; y += 1) {
+    for (let x = selection.x; x < selection.x + selection.width; x += 1) {
+      if (!selectionContains(selection, x, y)) continue
+      const sector = rotationalSector({ x, y }, width, height, center)
+      if (sector === startSector || (startSector === -1 && sector === -1)) points.push({ x, y })
+    }
+  }
+  return selectionMaskFromPoints(points)
+}
+
+/** Translates one pressed rotational region and generates its complete symmetry closure. */
+export function translateSymmetrySelection(selection: SelectionMask, target: SelectionRect, width: number, height: number, axes: SymmetryAxes | null | undefined, center: SymmetryCenter | null | undefined, startPoint: SymmetryPoint, clipToCanvas = true): SelectionMask | null {
+  if (!isRotationalOnly(axes)
+    || target.width !== selection.width
+    || target.height !== selection.height
+    || target.flipHorizontal
+    || target.flipVertical
+    || !Number.isInteger(target.x - selection.x)
+    || !Number.isInteger(target.y - selection.y)) return null
+  const region = symmetrySelectionDragRegion(selection, startPoint, width, height, axes, center)
+  if (!region) return null
+  const deltaX = target.x - selection.x
+  const deltaY = target.y - selection.y
+  const points: SymmetryPoint[] = []
+  const seen = new Set<string>()
+  const append = (point: SymmetryPoint): void => {
+    if (clipToCanvas && (point.x < 0 || point.y < 0 || point.x >= width || point.y >= height)) return
+    const key = pointKey(point)
+    if (seen.has(key)) return
+    seen.add(key)
+    points.push(point)
+  }
+  for (let y = region.y; y < region.y + region.height; y += 1) {
+    for (let x = region.x; x < region.x + region.width; x += 1) {
+      if (!selectionContains(region, x, y)) continue
+      for (const destination of symmetryPoints({ x: x + deltaX, y: y + deltaY }, width, height, axes, center, clipToCanvas)) append(destination)
+    }
+  }
+  return selectionMaskFromPoints(points)
+}
+
 /** Maps a drag from the pressed mirror region into the canonical region transformed by transformSymmetrySelection. */
-export function symmetrySelectionDragDelta(selection: SelectionMask, startPoint: SymmetryPoint, delta: SymmetryPoint, width: number, height: number, axes: SymmetryAxes | null | undefined, center?: SymmetryCenter | null): SymmetryPoint {
+export function symmetrySelectionDragDelta(selection: SelectionMask, startPoint: SymmetryPoint, delta: SymmetryPoint, width: number, height: number, axes: SymmetryAxes | null | undefined, center?: SymmetryCenter | null, followPressedRegion = false): SymmetryPoint {
   if (!hasSymmetry(axes)) return { ...delta }
+  if (followPressedRegion && isRotationalOnly(axes) && selectionContains(selection, startPoint.x, startPoint.y)) return { ...delta }
   const orbit = symmetryOrbit(startPoint, width, height, axes, center, false)
   const selectedCandidates = orbit.filter((candidate) => selectionContains(selection, candidate.point.x, candidate.point.y))
   const candidates = selectedCandidates.length > 0 ? selectedCandidates : orbit
@@ -232,7 +322,12 @@ const isSelectionSymmetryRepresentative = (point: SymmetryPoint, selection: Sele
 }
 
 /** Transforms one fundamental selection region and mirrors the result without duplicating an already symmetric source. */
-export function transformSymmetrySelection(selection: SelectionMask, target: SelectionRect, width: number, height: number, angle = 0, shear?: SelectionShearTransform, axes?: SymmetryAxes | null, center?: SymmetryCenter | null, clipToCanvas = true): SelectionMask | null {
+export function transformSymmetrySelection(selection: SelectionMask, target: SelectionRect, width: number, height: number, angle = 0, shear?: SelectionShearTransform, axes?: SymmetryAxes | null, center?: SymmetryCenter | null, clipToCanvas = true, startPoint?: SymmetryPoint): SelectionMask | null {
+  const normalizedAngle = ((angle % 360) + 360) % 360
+  if (startPoint && normalizedAngle === 0 && !shear) {
+    const translated = translateSymmetrySelection(selection, target, width, height, axes, center, startPoint, clipToCanvas)
+    if (translated) return translated
+  }
   const bounds = transformedSelectionBounds(target, angle, shear)
   const left = clipToCanvas ? Math.max(0, bounds.x) : bounds.x
   const top = clipToCanvas ? Math.max(0, bounds.y) : bounds.y

@@ -240,6 +240,55 @@ export const readSurfacePackedRegion = (surface: RasterSurface, x: number, y: nu
   return output
 }
 
+/** Reads an RGBA surface region without packing each pixel through Uint32Array. */
+export const readSurfaceRgbaRegion = (surface: RasterSurface, x: number, y: number, width: number, height: number): Uint8ClampedArray => {
+  const outputWidth = Math.max(0, width)
+  const outputHeight = Math.max(0, height)
+  const output = new Uint8ClampedArray(outputWidth * outputHeight * 4)
+  if (surface.format !== 'rgba' || outputWidth === 0 || outputHeight === 0) return output
+  const left = Math.max(0, x)
+  const top = Math.max(0, y)
+  const right = Math.min(surface.width, x + width)
+  const bottom = Math.min(surface.height, y + height)
+  if (right <= left || bottom <= top) return output
+
+  const runtime = lazyRuntimeRasterForSurface(surface)
+  if (runtime) {
+    const columns = Math.ceil(runtime.width / runtime.tileSize)
+    const fromTileX = Math.floor(left / runtime.tileSize)
+    const toTileX = Math.floor((right - 1) / runtime.tileSize)
+    const fromTileY = Math.floor(top / runtime.tileSize)
+    const toTileY = Math.floor((bottom - 1) / runtime.tileSize)
+    for (let tileY = fromTileY; tileY <= toTileY; tileY += 1) for (let tileX = fromTileX; tileX <= toTileX; tileX += 1) {
+      const encodedOffset = runtime.tileOffsets[tileY * columns + tileX]
+      if (encodedOffset === 0) continue
+      const tileLeft = tileX * runtime.tileSize
+      const tileTop = tileY * runtime.tileSize
+      const tileWidth = Math.min(runtime.tileSize, runtime.width - tileLeft)
+      const tileHeight = Math.min(runtime.tileSize, runtime.height - tileTop)
+      const copyLeft = Math.max(left, tileLeft)
+      const copyTop = Math.max(top, tileTop)
+      const copyRight = Math.min(right, tileLeft + tileWidth)
+      const copyBottom = Math.min(bottom, tileTop + tileHeight)
+      const copyWidth = copyRight - copyLeft
+      if (copyWidth <= 0 || copyBottom <= copyTop) continue
+      for (let sourceY = copyTop; sourceY < copyBottom; sourceY += 1) {
+        const sourceOffset = encodedOffset - 1 + ((sourceY - tileTop) * tileWidth + copyLeft - tileLeft) * 4
+        const targetOffset = ((sourceY - y) * outputWidth + copyLeft - x) * 4
+        output.set(runtime.data.subarray(sourceOffset, sourceOffset + copyWidth * 4), targetOffset)
+      }
+    }
+    return output
+  }
+
+  for (let sourceY = top; sourceY < bottom; sourceY += 1) {
+    const sourceOffset = (sourceY * surface.width + left) * 4
+    const targetOffset = ((sourceY - y) * outputWidth + left - x) * 4
+    output.set(surface.pixels.subarray(sourceOffset, sourceOffset + (right - left) * 4), targetOffset)
+  }
+  return output
+}
+
 export const runtimeTileHasVisiblePixels = (surface: RasterSurface, tileX: number, tileY: number, opaquePaletteIds?: ReadonlySet<number>): boolean | null => {
   const runtime = runtimeRasterForSurface(surface)
   if (!runtime || materializedByRuntime.has(runtime)) return null

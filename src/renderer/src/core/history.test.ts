@@ -127,6 +127,35 @@ describe('HistoryStack', () => {
     expect(committed.affectedLayerIds).toEqual([firstLayer.id, secondLayer.id])
   })
 
+  it('keeps nested compound commands inside the outer transaction', () => {
+    const state = { value: 2 }
+    const history = new HistoryStack()
+    history.beginCompound()
+    history.push(entry(state, 1, 'outer'))
+    history.beginCompound()
+    history.push(entry(state, 2, 'inner'))
+    history.endCompound('inner label')
+    expect(history.canUndo).toBe(false)
+    history.endCompound('script transaction')
+
+    expect(history.latestUndoEntry?.label).toBe('script transaction')
+    history.undo()
+    expect(state.value).toBe(0)
+  })
+
+  it('rolls back every buffered entry when a compound transaction aborts', () => {
+    const state = { value: 2 }
+    const history = new HistoryStack()
+    history.beginCompound()
+    history.push(entry(state, 1, 'first'))
+    history.push(entry(state, 2, 'second'))
+    history.abortCompound()
+
+    expect(state.value).toBe(0)
+    expect(history.canUndo).toBe(false)
+    expect(history.canRedo).toBe(false)
+  })
+
   it('merges an anchor stroke and its connected line into one undo step', () => {
     const state = { value: 2 }
     const history = new HistoryStack()

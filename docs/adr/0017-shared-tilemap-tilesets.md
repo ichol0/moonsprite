@@ -15,7 +15,7 @@
 - 新建 Tilemap 图层弹窗默认选择新增 Tileset，也可选择当前工程已有的 Tilemap Tileset。
 - 选择已有 Tileset 后，图层网格尺寸采用该 Tileset 的 `tileWidth` 与 `tileHeight`，创建只增加空白 Tilemap cel，不复制 Tileset。
 - 多个 Tilemap 图层可以共享同一个 Tileset；共享 Tileset 的像素、槽位和瓦片引用修改由现有 Tileset 领域命令统一重绘全部引用。
-- 自由瓦片源的单瓦片 Tileset 所有权保持独占，不允许通过 Tilemap 创建器选择自由瓦片源 Tileset。
+- 自由瓦片源的单瓦片 Tileset 不允许通过 Tilemap 创建器选择；自由瓦片图层之间的集合级共享由 [ADR 0022](0022-shared-free-tile-sets.md) 定义。
 - 共享 Tileset 不跟随任意单独图层改名；只有唯一 Tilemap 引用者才保持旧的名称同步行为。删除引用图层时，只在无其他所有者或格子引用时清理 Tileset。
 - 该关系使用现有 `tilemapTilesetId` 字段，不提升工程 schema 版本；旧工程格式仍按原验证规则读取。
 
